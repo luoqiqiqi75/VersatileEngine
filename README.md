@@ -1,2 +1,9 @@
-# engix
-Engine X mixes multiple engines together.
+# Versatile Engine
+```
+   ._     _.  .----,
+    \     7  /
+     \   /  />===
+      \ /  /
+       '   `----'
+```
+## Interdisciplinary Platform

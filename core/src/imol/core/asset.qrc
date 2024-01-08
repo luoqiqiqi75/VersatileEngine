@@ -1,0 +1,28 @@
+<RCC>
+    <qresource prefix="/imol">
+        <file>language/qt_de.qm</file>
+        <file>language/qt_en.qm</file>
+        <file>language/qt_zh_CN.qm</file>
+        <file>language/qt_ar.qm</file>
+        <file>language/qt_bg.qm</file>
+        <file>language/qt_ca.qm</file>
+        <file>language/qt_cs.qm</file>
+        <file>language/qt_da.qm</file>
+        <file>language/qt_es.qm</file>
+        <file>language/qt_fi.qm</file>
+        <file>language/qt_fr.qm</file>
+        <file>language/qt_gd.qm</file>
+        <file>language/qt_he.qm</file>
+        <file>language/qt_hu.qm</file>
+        <file>language/qt_it.qm</file>
+        <file>language/qt_ja.qm</file>
+        <file>language/qt_ko.qm</file>
+        <file>language/qt_lv.qm</file>
+        <file>language/qt_pl.qm</file>
+        <file>language/qt_ru.qm</file>
+        <file>language/qt_sk.qm</file>
+        <file>language/qt_tr.qm</file>
+        <file>language/qt_uk.qm</file>
+        <file>language/qt_zh_TW.qm</file>
+    </qresource>
+</RCC>

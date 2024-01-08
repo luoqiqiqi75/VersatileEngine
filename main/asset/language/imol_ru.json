@@ -1,0 +1,23 @@
+{
+    "Imol": "Имол",
+    "Program starting...": "Программа запускается...",
+    "Loading submodules...": "Загрузка подмодулей...",
+    "Initializing interface elements...": "Инициализация элементов интерфейса...",
+    "Rendering...": "Рендеринг эффектов отображения...",
+    "Preparing content...": "Подготовить контент...",
+    "Loading submodule: %1...": "Загрузка подмодулей: %1...",
+    "Loading: %1%2...": "Загрузка: %1%2...",
+    "Initializing: %1%2...": "Инициализация: %1%2...",
+    "Rendering: %1%2...": "Рендеринг: %1%2...",
+    "Preparing: %1%2...": "Подготовить: %1%2...",
+    "Detaching: %1%2...": "Отсоединение: %1%2...",
+    "Imol Terminal": "Имол Терминал",
+    "License error": "Ошибка лицензии",
+    "No valid license file!": "Нет действительного файла лицензии!",
+    "File error": "Ошибка файла",
+    "Cannot find %1!": "Не удается найти %1!",
+    "Authorization expired!": "Срок действия авторизации истек!",
+    "Error occurs while loading %1!": "Ошибка возникает при загрузке %1!",
+    "Imol Program Crash": "Имол сбой программы",
+    "Program is terminated unexpectedly (0x%1).\nWe are very sorry about this error, would you like to record runtime data for further analysis?": "Программа неожиданно завершает работу (0x%1).\nМы очень сожалеем об этой ошибке, хотели бы вы записать данные времени выполнения для дальнейшего анализа?"
+}

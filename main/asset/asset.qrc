@@ -1,0 +1,34 @@
+<RCC>
+    <qresource prefix="/imol">
+        <file>splash.png</file>
+        <file>asset/font/DroidSansMono-1.ttf</file>
+        <file>asset/font/Roboto Condensed Regular.ttf</file>
+        <file>asset/font/Menlo-Regular-1.ttf</file>
+        <file>asset/font/SourceCodePro-Black-1.ttf</file>
+        <file>asset/font/SourceCodePro-BlackIt-2.ttf</file>
+        <file>asset/font/SourceCodePro-Bold-3.ttf</file>
+        <file>asset/font/SourceCodePro-BoldIt-4.ttf</file>
+        <file>asset/font/SourceCodePro-ExtraLight-5.ttf</file>
+        <file>asset/font/SourceCodePro-ExtraLightIt-6.ttf</file>
+        <file>asset/font/SourceCodePro-It-7.ttf</file>
+        <file>asset/font/SourceCodePro-Light-8.ttf</file>
+        <file>asset/font/SourceCodePro-LightIt-9.ttf</file>
+        <file>asset/font/SourceCodePro-Medium-10.ttf</file>
+        <file>asset/font/SourceCodePro-MediumIt-11.ttf</file>
+        <file>asset/font/SourceCodePro-Regular-12.ttf</file>
+        <file>asset/font/SourceCodePro-Semibold-13.ttf</file>
+        <file>asset/font/SourceCodePro-SemiboldIt-14.ttf</file>
+        <file>splash@2x.png</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_35_Thin_35_Thin.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_45_Light_45_Light.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_55_Regular_55_Regular.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_55_Regular_85_Bold.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_65_Medium_65_Medium.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_75_SemiBold_75_SemiBold.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_95_ExtraBold_95_ExtraBold.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_105_Heavy_105_Heavy.ttf</file>
+        <file>asset/font/Alibaba_PuHuiTi_2.0_115_Black_115_Black.ttf</file>
+        <file>language/imol_cn.json</file>
+        <file>language/imol_ru.json</file>
+    </qresource>
+</RCC>
