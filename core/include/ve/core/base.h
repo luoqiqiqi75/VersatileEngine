@@ -103,8 +103,8 @@ std::string VE_API _t_demangle(const char* type_name);
 template<typename T> struct Meta
 {
     typedef T TypeT;
-    static const char* typeInfoName() { return typeid(T).name(); }
-    static std::string typeName() { return _t_demangle(typeid(T).name()); }
+    inline static const char* typeInfoName() { return typeid(T).name(); }
+    inline static std::string typeName() { return _t_demangle(typeid(T).name()); }
 };
 
 template<typename Func1, typename Func2, typename Type>

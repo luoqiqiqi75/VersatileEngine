@@ -38,17 +38,18 @@ if(NOT DEFINED BUILD_SHARED_LIBS)
     set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared library")
 endif()
 
-# qt
 #set(CMAKE_SHARED_LIBRARY_PREFIX "")
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
+
+# todo
+if (LOG_MIN_FILE_LEVEL)
+    add_definitions("-DLOG_MIN_FILE_LEVEL=${LOG_MIN_FILE_LEVEL}")
+endif ()
 
 # core
 option(BUILD_CORE "Build ${VE_NAME} Qt based Core library" ON)
 if (BUILD_CORE)
-    ve_add_qt5_lib(${CMAKE_CURRENT_SOURCE_DIR} core)
+    ve_add_library(core VE_CORE_LIBRARY VE_CORE_LIBRARY_INCLUDE)
 endif()
 
 # ui
@@ -61,6 +62,12 @@ endif()
 #        message(WARNING "Qt is not found")
 #    endif()
 #endif()
+
+# service
+option(BUILD_SERVICE "Build ${VE_NAME} services" ON)
+if (BUILD_SERVICE)
+    ve_add_library(service VE_SERVICE_LIBRARY VE_SERVICE_LIBRARY_INCLUDE)
+endif()
 
 # main
 option(BUILD_MAIN "Build ${VE_NAME} Qt based Main program" ON)

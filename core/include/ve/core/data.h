@@ -37,6 +37,13 @@ template<typename... Ts> inline Data* Func(const QString& path, const QString& s
 
 namespace ve {
 
+namespace flags {
+
+inline bool get(int flags, int f) { return (flags & f) == f; }
+inline int set(int& flags, int f, bool on_off) { return flags = on_off ? flags | f : flags & ~f; }
+
+}
+
 using Data = imol::ModuleObject;
 using DataListener = imol::ModuleObject;
 
@@ -44,6 +51,10 @@ namespace data {
 
 using Manager = imol::ModuleManager;
 VE_API Manager& manager();
+
+template<typename T> inline T path(const T& t) { return t; }
+template<typename T, typename T1, typename... Ts> inline T path(const T& t, const T1& t1, const Ts&... ts)
+{ if (t1 == "") return path(t, ts...); else return t + VE_DATA_PATH_SEPARATOR + path(t1, ts...); }
 
 VE_API Data* create(QObject* context, const QString& path);
 PRIVATE_VE_DATA_DECALRE_MULTIPLE_SUB_PATH_WITH_CONTEXT(create)
@@ -58,6 +69,11 @@ PRIVATE_VE_DATA_DECALRE_MULTIPLE_SUB_PATH(listenerAt)
 
 }
 
-Data* d(const QString& path);
+VE_API Data* d(Data* root, const std::string& path);
+VE_API Data* d(const std::string& path);
+VE_API Data* d(const char* path);
+VE_API Data* d(Data* root, const QString& path);
+VE_API Data* d(const QString& path);
+VE_API Data* d(Data* root, const char* path);
 
 }

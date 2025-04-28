@@ -24,6 +24,7 @@ QWidget{font: 9pt &quot;Calibri&quot;;}</string>
       <string notr="true">QTextBrowser{
 background-color:#1e1e1e;
 color:white;
+border:none;
 }</string>
      </property>
      <property name="frameShape">
@@ -64,6 +65,7 @@ padding-top:1px;
         <string notr="true">QTextEdit{
 background-color:#1e1e1e;
 color:white;
+border:none;
 }</string>
        </property>
        <property name="frameShape">

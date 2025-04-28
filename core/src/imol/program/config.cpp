@@ -14,7 +14,7 @@ struct ConfigData
 Config::Config(QObject *parent) : QObject{parent},
     d(new ConfigData)
 {
-    d->mobj = m().regist(this, "imol.cfg");
+    d->mobj = m().regist(this, "ve.config");
 }
 
 Config::~Config()

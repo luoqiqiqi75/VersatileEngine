@@ -18,10 +18,18 @@ macro(ve_find_resources VE_IN_DIR VE_OUT_UI_FILES VE_OUT_QRC_FILES VE_OUT_TS_FIL
     file(GLOB_RECURSE ${VE_OUT_TS_FILES} ${VE_IN_DIR}/language/*.ts)
 endmacro()
 
-macro(ve_add_qt5_lib VE_IN_DIR VE_IN_LIB_NAME) # VE_IN_SHARED VE_IN_QT_COMPONENTS
-    if(EXISTS "${VE_IN_DIR}/${VE_IN_LIB_NAME}/CMakeLists.txt")
-        add_subdirectory(${VE_IN_LIB_NAME})
+macro(ve_add_library VE_IN_RELATIVE_DIR VE_OUT_LIB_NAME VE_OUT_LIB_INCLUDE)
+    set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${VE_IN_RELATIVE_DIR})
+    string(REPLACE "/" "" LIB_NAME ${VE_NAMESPACE}${VE_IN_RELATIVE_DIR})
+    if (WIN32)
+        set(${VE_OUT_LIB_NAME} lib${LIB_NAME})
+    else ()
+        set(${VE_OUT_LIB_NAME} ${LIB_NAME})
+    endif ()
+    set(${VE_OUT_LIB_INCLUDE} ${LIB_DIR}/include)
+    if(EXISTS "${LIB_DIR}/CMakeLists.txt")
+        add_subdirectory(${LIB_DIR})
     else()
-        
+        # todo
     endif()
 endmacro()

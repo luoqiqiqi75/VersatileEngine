@@ -11,55 +11,58 @@ VE_REGISTER_VERSION("ve.core", 1)
 #include <QPixmap>
 #include <QIcon>
 #include <QApplication>
-
-#include "global_object.h"
+#include <QElapsedTimer>
 
 #include "imol/program/server.h"
 #ifdef WIN32
-#include "util/StackWalker/BaseException.h"
+#include "StackWalker/BaseException.h"
 #endif
+
+#include "ve/core/module.h"
+
+#include "internal.h"
 
 namespace ve {
 
 QObject* global()
 {
-    static GlobalObject g;
+    static QObject g;
     return &g;
 }
 
 namespace version {
 
-int calc_sum(Data* key_d)
-{
-    int v = number(key_d->fullName(manager().keyMobj()));
-    foreach (auto sub_key_d, key_d->cmobjs()) {
-        v += calc_sum(sub_key_d);
-    }
-    return v;
-}
+//int calc_sum(Data* key_d)
+//{
+//    int v = number(key_d->fullName(manager().keyMobj()));
+//    foreach (auto sub_key_d, key_d->cmobjs()) {
+//        v += calc_sum(sub_key_d);
+//    }
+//    return v;
+//}
 
-Manager& manager() { static Manager m; return m; }
+Manager& manager() { static Manager m("ve::version"); return m; }
 
-int number(const QString& key, bool sum)
-{
-    return sum ? calc_sum(manager().keyMobj()->r(key)) : manager().create(key);
-}
+//int number(const QString& key, bool sum)
+//{
+//    return sum ? calc_sum(manager().keyMobj()->r(key)) : manager().create(key);
+//}
 
-QString releaseString(const QString &key)
-{
-    int baseline = manager().create(QString("@0_%1").arg(key));
-    int major = manager().create(QString("@1_%1").arg(key));
-    int minor = manager().create(QString("@2_%1").arg(key));
-    QStringList ver_str_list;
-    for (int i = 3; i < 10; i++) {
-        QString sub_ver_key = QString("@%1_%2").arg(i).arg(key);
-        if (!manager().keyMobj(sub_ver_key)->isEmptyMobj()) ver_str_list.append(QString::number(manager().create(sub_ver_key)));
-    }
+//QString releaseString(const QString &key)
+//{
+//    int baseline = manager().create(QString("@0_%1").arg(key));
+//    int major = manager().create(QString("@1_%1").arg(key));
+//    int minor = manager().create(QString("@2_%1").arg(key));
+//    QStringList ver_str_list;
+//    for (int i = 3; i < 10; i++) {
+//        QString sub_ver_key = QString("@%1_%2").arg(i).arg(key);
+//        if (!manager().keyMobj(sub_ver_key)->isEmptyMobj()) ver_str_list.append(QString::number(manager().create(sub_ver_key)));
+//    }
 
-    QString ver_str = QString("v%1.%2.%3").arg(major).arg(minor).arg(number(key, true) - baseline);
-    if (ver_str_list.size() > 0) ver_str.append(".").append(ver_str_list.join("."));
-    return ver_str;
-}
+//    QString ver_str = QString("v%1.%2.%3").arg(major).arg(minor).arg(number(key, true) - baseline);
+//    if (ver_str_list.size() > 0) ver_str.append(".").append(ver_str_list.join("."));
+//    return ver_str;
+//}
 
 }
 
@@ -72,7 +75,7 @@ void setup(const QString &cfg_path)
 #endif
 
     Config c;
-    auto c_d = data::at("imol.cfg");
+    auto c_d = data::at("ve.config");
 
     if (cfg_path.endsWith("ini")) {
         c.loadIni(cfg_path);
@@ -81,7 +84,7 @@ void setup(const QString &cfg_path)
     }
 
     c_d->set(global(), cfg_path);
-    GlobalObject::connect(c_d, &ve::Data::changed, global(), [=] {
+    QObject::connect(c_d, &ve::Data::changed, global(), [=] {
         Config tmp_c;
         tmp_c.saveIni(c_d->getString());
     });
@@ -117,15 +120,15 @@ void setup(const QString &cfg_path)
 #if defined(Q_OS_WIN)
         QString env_key = "PATH";
         QString env_separator = ";";
-#elif defined(Q_OS_LINUX)
+#else
         QString env_key = "LD_LIBRARY_PATH";
         QString env_separator = ":";
 #endif
         QString full_env_path = qgetenv(env_key.toStdString().c_str());
-        QString app_dir = QCoreApplication::applicationDirPath();
+        QString current_dir = QDir().absolutePath();
         foreach (auto path_d, env_path_d->cmobjs()) {
             QString env_path = path_d->getString();
-            if (env_path.startsWith(".")) env_path.replace(0, 1, app_dir);
+            if (env_path.startsWith(".")) env_path.replace(0, 1, current_dir);
             env_path.replace("/", QDir::separator());
             full_env_path.append(env_separator + env_path);
         }
@@ -135,7 +138,7 @@ void setup(const QString &cfg_path)
 
 void init()
 {
-    auto c_d = data::at("imol.cfg");
+    auto c_d = data::at("ve.config");
 
     // splash screen
     if (c_d->r("splash.enable")->getBool()) {
@@ -172,7 +175,7 @@ void init()
 
         auto cs_d = c_d->c("splash");
         cs_d->set(global(), true);
-        GlobalObject::connect(cs_d, &ve::Data::changed, splash_screen, [=] {
+        QObject::connect(cs_d, &ve::Data::changed, splash_screen, [=] {
             splash_screen->finish(QApplication::activeWindow());
             splash_screen->deleteLater();
         });
@@ -190,11 +193,72 @@ void init()
         server->start(c_d->r("server.port")->getInt(5059));
         QApplication::processEvents();
     }
+
+    bool verbose = c_d->r("verbose.init")->getBool();
+
+    // load plugins
+    int module_index = 0;
+    g_modules.resize(globalModuleFactory().size());
+    g_module_names.resize(g_modules.size());
+    for (const auto& module_f : globalModuleFactory()) {
+        g_module_names[module_index] = module_f.first;
+        if (verbose) ILOG << "Load module " << QString::fromStdString(module_f.first);
+        Module* m = nullptr;
+        try {
+            m = module_f.second();
+        } catch (std::exception& e) {
+            ELOG << "Load failed: " << e.what();
+        }
+        g_modules[module_index] = m;
+        module_index++;
+        if (verbose && m) ILOG << "Module loaded successfully";
+    }
+
+    for (int i = 0; i < module_index; i++) {
+        Module* m = g_modules[i];
+        if (!m) continue;
+        if (verbose) ILOG << "Module " << QString::fromStdString(m->name()) << " init";
+        m->exeState<Module::INIT>();
+        if (verbose) ILOG << "Done";
+    }
+
+    for (int i = 0; i < module_index; i++) {
+        Module* m = g_modules[i];
+        if (!m) continue;
+        if (verbose) ILOG << "Module " << QString::fromStdString(m->name()) << " get ready";
+        m->exeState<Module::READY>();
+        if (verbose) ILOG << "Done";
+    }
+
+    if (verbose) ILOG << "---------- ve init completed ----------";
 }
 
 void deinit()
 {
+    bool verbose = d("ve.config")->r("verbose.deinit")->getBool();
 
+    for (int i = 0; i < g_modules.sizeAsInt(); i++) {
+        Module* m = g_modules[i];
+        if (!m) continue;
+        if (verbose) ILOG << "Module " << QString::fromStdString(m->name()) << " deinit";
+        m->exeState<Module::DEINIT>();
+        if (verbose) ILOG << "Done";
+    }
+
+    for (int i = 0; i < g_modules.sizeAsInt(); i++) {
+        Module* m = g_modules[i];
+        if (!m) continue;
+        if (verbose) ILOG << "Destroy module " << QString::fromStdString(m->name()) << " (" << QString::fromStdString(g_module_names[i]) << ")";
+        delete m;
+        if (verbose) ILOG << "Done";
+    }
+
+    if (ve::terminal::widget()->isActiveWindow()) {
+        ve::terminal::widget()->setParent(nullptr);
+        ve::terminal::widget()->close();
+    }
+
+    if (verbose) ILOG << "---------- ve deinit completed ----------";
 }
 
 }

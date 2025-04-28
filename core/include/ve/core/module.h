@@ -34,10 +34,8 @@ enum ModuleSignal : int
     MODULE_STATE_CHANGED            = 0xffe1
 };
 
-class Module : public Object
+class VE_API Module : public Object
 {
-    VE_DECLARE_PRIVATE
-
 public:
     enum State : int {
         NONE    = 0x0f00 | 0x00,
@@ -50,6 +48,7 @@ public:
     Module();
     ~Module();
 
+public:
     State state() const;
 
     template<State s> void exeState();
@@ -58,6 +57,9 @@ protected:
     virtual void init();
     virtual void ready();
     virtual void deinit();
+
+private:
+    VE_DECLARE_PRIVATE
 };
 
 template<class T>
@@ -84,13 +86,13 @@ protected:
 };
 
 using ModuleFactory = Factory<Module*()>;
-ModuleFactory& globalModuleFactory();
+VE_API ModuleFactory& globalModuleFactory();
 
 template<class C>
 inline basic::enable_if_void<std::is_base_of<Module, C>::value> registerModule(const std::string& key)
 {
     globalModuleFactory().insertOne(key, [=] () -> Module* {
-        data::at("_p.global_module_key")->set(nullptr, QString::fromStdString(key));
+        data::create(nullptr, "ve.module.global_module_key")->set(nullptr, QString::fromStdString(key));
         return new C();
     });
 }
@@ -99,13 +101,21 @@ template<class C>
 inline void registerTemplateModule(const std::string& key)
 {
     globalModuleFactory().insertOne(key, [=] () -> Module* {
-        data::at("_p.global_module_key")->set(nullptr, QString::fromStdString(key));
+        data::create(nullptr, "ve.module.global_module_key")->set(nullptr, QString::fromStdString(key));
         return new TemplateModule<C>();
     });
 }
 
+namespace module {
+
+VE_API Module* instance(const std::string& key);
+template<typename T> inline basic::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::string& key)
+{ return static_cast<T*>(instance(key)); }
+
 }
 
-std::ostream& operator<< (std::ostream& os, ve::Module::State s);
+}
+
+VE_API std::ostream& operator<< (std::ostream& os, ve::Module::State s);
 
 #define VE_REGISTER_MODULE(Key, Class) VE_AUTO_RUN(ve::registerModule<Class>(#Key);)

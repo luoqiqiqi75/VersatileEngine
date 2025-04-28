@@ -209,7 +209,7 @@ void ModuleObject::activate(QObject *context, ModuleObject *changed_mobj, Activa
     if (!mobj->isEmptyMobj() && mobj->isWatching()) mobj->activate(context, changed_mobj, type);
 }
 
-QVariant ModuleObject::get(const QVariant &default_var) const
+const QVariant& ModuleObject::get(const QVariant &default_var) const
 {
     return m_var.isNull() ? default_var : m_var;
 }
@@ -1045,7 +1045,7 @@ EmptyModuleObject::EmptyModuleObject(const QString &name, ModuleObject *parent_m
 
 bool EmptyModuleObject::isEmptyMobj() const { return true; }
 
-QVariant EmptyModuleObject::get(const QVariant &) const { return QVariant(); }
+const QVariant& EmptyModuleObject::get(const QVariant &) const { static QVariant v; return v; }
 
 ModuleObject * EmptyModuleObject::set(QObject *, const QVariant &) { return this; }
 ModuleObject * EmptyModuleObject::set(QObject *, const QString &, const QVariant &, bool) { return this; }

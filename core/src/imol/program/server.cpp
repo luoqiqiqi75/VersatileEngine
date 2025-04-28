@@ -18,7 +18,7 @@ void Server::start(int port)
     if (m_server->listen(QHostAddress::Any, port)) {
         connect(m_server, &QTcpServer::newConnection, this, &Server::registNewClient);
     } else {
-        ELOG << "<imol.server> server starts failed at: " << port;
+        ELOG << "<ve.server> server starts failed at: " << port;
     }
 }
 
@@ -32,7 +32,7 @@ void Server::registNewClient()
     QTcpSocket *socket = m_server->nextPendingConnection();
     QString socket_name = QString("socket%1").arg(m_client_count++);
 
-    ISLOG << "<imol.server> client" << socket->localAddress() << socket->localPort() << "connected as:" << socket_name;
+    ISLOG << "<ve.server> client" << socket->localAddress() << socket->localPort() << "connected as:" << socket_name;
 
     net().regist(socket_name, imol::NetworkHandle::NETWORK_TCP, socket);
     net(socket_name)->handle()->setPackageType(imol::NetworkHandle::NETWORK_PACKAGE_RAW);
@@ -48,7 +48,7 @@ void Server::handleCommand(const QByteArray &bytes)
     QString socket_name = m_net_name_hash.value(sender(), "");
 
     if (socket_name.isEmpty()) {
-        ELOG << "<imol.server> no socket for: " << sender();
+        ELOG << "<ve.server> no socket for: " << sender();
         return;
     }
 

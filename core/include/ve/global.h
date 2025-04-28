@@ -55,6 +55,7 @@
 #define PRIVATE_VE_DEF_COMBINE_IMPL(X,Y) X##Y
 
 #define VE_DECLARE_PRIVATE class Private; Private *_p;
+#define VE_DECLARE_SHARED_PRIVATE class Private; std::shared_ptr<Private> _p;
 
 #define PRIVATE_VE_AUTO_RUN_NAME(_PREFIX, _SUFFIX) PRIVATE_VE_AUTO_RUN_NAME_I(_PREFIX, _SUFFIX)
 #define PRIVATE_VE_AUTO_RUN_NAME_I(_PREFIX, _SUFFIX) _PREFIX##_SUFFIX
@@ -67,8 +68,8 @@
 #define NULL 0
 #endif
 
-#define VE_MEMBER_0(ClassMember) std::bind(ClassMember, this)
-#define VE_MEMBER_1(ClassMember) std::bind(ClassMember, this, std::placeholders::_1)
-#define VE_MEMBER_2(ClassMember) std::bind(ClassMember, this, std::placeholders::_1, std::placeholders::_2)
-#define VE_MEMBER_3(ClassMember) std::bind(ClassMember, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)
+#define VE_MEMBER_0(ClassMember) [this] { ClassMember(); }
+#define VE_MEMBER_1(ClassMember) [this] (auto&& PH1) { ClassMember(std::forward<decltype(PH1)>(PH1)); }
+#define VE_MEMBER_2(ClassMember) [this] (auto&& PH1, auto&& PH2) { ClassMember(std::forward<decltype(PH1)>(PH1), std::forward<decltype(PH2)>(PH2)); }
+#define VE_MEMBER_3(ClassMember) [this] (auto&& PH1, auto&& PH2, auto&& PH3) { ClassMember(std::forward<decltype(PH1)>(PH1), std::forward<decltype(PH2)>(PH2), std::forward<decltype(PH3)>(PH3)); }
 

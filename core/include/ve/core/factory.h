@@ -24,18 +24,10 @@
 
 #include "base.h"
 
-#include "imol/core/creatormanager.h"
-
 namespace ve {
 
-//template<class Signature>
-//using FunctorFactory = Dict<std::function<Signature>>;
-//
-//template<typename T>
-//using Creator = FunctorFactory<T()>;
-
 template<class Signature>
-class Factory : public Object, public HashMap<std::string, std::function<Signature>>
+class Factory : public Object, public Dict<std::function<Signature>>
 {
 public:
     typedef basic::FInfo<std::function<Signature>> FInfoT;
@@ -52,5 +44,8 @@ public:
     template<typename T, typename... Params>
     T execAs(const std::string& key, Params&&... params) { return static_cast<T>(exec(key, std::forward<Params>(params)...)); }
 };
+
+template<typename T>
+using Creator = Factory<T()>;
 
 }

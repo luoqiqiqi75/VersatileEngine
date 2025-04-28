@@ -16,8 +16,8 @@ using namespace imol;
 TranslationManager::TranslationManager(QObject *parent) : QObject(parent),
     m_qt_translator(nullptr)
 {
-    QString cfg_language = m("imol.cfg.common.language")->getString("en");
-    installQMTranslator(QString(":/imol/language/qt_%1.qm").arg(cfg_language == "cn" ? "zh_CN" : cfg_language));
+    QString cfg_language = m("ve.config.common.language")->getString("en");
+//    installQMTranslator(QString(":/imol/language/qt_%1.qm").arg(cfg_language == "cn" ? "zh_CN" : cfg_language));
     foreach (auto fi, QDir("./i18n").entryInfoList(QStringList() << QString("*_%1.qm").arg(cfg_language), QDir::Files | QDir::NoDotAndDotDot)) {
         bool success = installQMTranslator(fi.absoluteFilePath());
         ILOG << "<translator> install " << cfg_language << " language qm " << fi.baseName() << (success ? " succeed" : " failed");

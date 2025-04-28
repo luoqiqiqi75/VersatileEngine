@@ -5,6 +5,7 @@
 #include "core/networkmanager.h"
 #include "core/translationmanager.h"
 
+#include <QFontDatabase>
 #include <QKeyEvent>
 #include <QTimer>
 #include <QJsonDocument>
@@ -24,88 +25,89 @@
 
 using namespace imol;
 
-class VersionCommand : public imol::BaseCommand
-{
-public:
-    explicit VersionCommand(QObject *parent = nullptr) : imol::BaseCommand("version", false, parent) {}
+//class VersionCommand : public imol::BaseCommand
+//{
+//public:
+//    explicit VersionCommand(QObject *parent = nullptr) : imol::BaseCommand("version", false, parent) {}
 
-    QString usage() const override { return DTR("version <path> [-s]"); }
-    QString instruction() const override { return DTR("Show registered version"); }
+//    QString usage() const override { return DTR("version <path> [-s]"); }
+//    QString instruction() const override { return DTR("Show registered version"); }
 
-protected:
-    void complete(imol::ModuleObject *mobj, const QString &text) override;
-    void hint(imol::ModuleObject *mobj, const QString &text) override;
-    void run(imol::ModuleObject *mobj, const QString &param) override;
-};
+//protected:
+//    void complete(imol::ModuleObject *mobj, const QString &text) override;
+//    void hint(imol::ModuleObject *mobj, const QString &text) override;
+//    void run(imol::ModuleObject *mobj, const QString &param) override;
+//};
 
-void VersionCommand::complete(imol::ModuleObject *, const QString &text)
-{
-    if (text.endsWith(IMOL_MODULE_NAME_SEPARATOR)) return;
-    QString last = text.section(IMOL_MODULE_NAME_SEPARATOR, 0, -2);
-    QString half = text.section(IMOL_MODULE_NAME_SEPARATOR, -1);
-    if (half.length() == 0) return;
-    if (last.isEmpty()) {
-        foreach (imol::ModuleObject *mobj, ve::version::manager().keyMobj()->cmobjs()) {
-            if (mobj->name().startsWith(half)) {
-                emit input(mobj->name().right(mobj->name().length() - half.length()));
-                break;
-            }
-        }
-        return;
-    }
-    auto tar = ve::version::manager().keyMobj(last);
-    if (tar->isEmptyMobj()) return;
-    foreach (imol::ModuleObject *mobj, tar->cmobjs()) {
-        if (mobj->name().startsWith(half)) {
-            emit input(mobj->name().right(mobj->name().length() - half.length()));
-            break;
-        }
-    }
-}
+//void VersionCommand::complete(imol::ModuleObject *, const QString &text)
+//{
+//    if (text.endsWith(IMOL_MODULE_NAME_SEPARATOR)) return;
+//    QString last = text.section(IMOL_MODULE_NAME_SEPARATOR, 0, -2);
+//    QString half = text.section(IMOL_MODULE_NAME_SEPARATOR, -1);
+//    if (half.length() == 0) return;
+//    if (last.isEmpty()) {
+//        foreach (imol::ModuleObject *mobj, ve::version::manager().keyMobj()->cmobjs()) {
+//            if (mobj->name().startsWith(half)) {
+//                emit input(mobj->name().right(mobj->name().length() - half.length()));
+//                break;
+//            }
+//        }
+//        return;
+//    }
+//    auto tar = ve::version::manager().keyMobj(last);
+//    if (tar->isEmptyMobj()) return;
+//    foreach (imol::ModuleObject *mobj, tar->cmobjs()) {
+//        if (mobj->name().startsWith(half)) {
+//            emit input(mobj->name().right(mobj->name().length() - half.length()));
+//            break;
+//        }
+//    }
+//}
 
-void VersionCommand::hint(imol::ModuleObject *, const QString &text)
-{
-    //    if (!text.endsWith(IMOL_MODULE_NAME_SEPARATOR)) return;
-    QString last = text.section(IMOL_MODULE_NAME_SEPARATOR, 0, -2);
-    QString half = text.section(IMOL_MODULE_NAME_SEPARATOR, -1);
-    QStringList keys;
-    if (last.isEmpty()) {
-        foreach (const QString &key, ve::version::manager().keyMobj()->cmobjNames()) {
-            if (key.startsWith(half)) keys.append(key);
-        }
-    } else {
-        auto tar = ve::version::manager().keyMobj(last);
-        if (tar->isEmptyMobj()) return;
-        foreach (const QString &key, tar->cmobjNames()) {
-            if (key.startsWith(half)) keys.append(key);
-        }
-    }
-    if (!keys.isEmpty()) emit output(keys.join("\t") + '\n');
-}
+//void VersionCommand::hint(imol::ModuleObject *, const QString &text)
+//{
+//    QString last = text.section(IMOL_MODULE_NAME_SEPARATOR, 0, -2);
+//    QString half = text.section(IMOL_MODULE_NAME_SEPARATOR, -1);
+//    QStringList keys;
+//    if (last.isEmpty()) {
+//        foreach (const QString &key, ve::version::manager().keyMobj()->cmobjNames()) {
+//            if (key.startsWith(half)) keys.append(key);
+//        }
+//    } else {
+//        auto tar = ve::version::manager().keyMobj(last);
+//        if (tar->isEmptyMobj()) return;
+//        foreach (const QString &key, tar->cmobjNames()) {
+//            if (key.startsWith(half)) keys.append(key);
+//        }
+//    }
+//    if (!keys.isEmpty()) emit output(keys.join("\t") + '\n');
+//}
 
-void VersionCommand::run(imol::ModuleObject *, const QString &param)
-{
-    if (param.contains("-s")) {
-        QString rpath = param;
-        rpath.replace(" -s", "");
-        rpath = rpath.trimmed();
-        emit output(DTR("version: %1").arg(ve::version::number(rpath, true)));
-    } else if (param.contains("-r")) {
-        QString rpath = param;
-        rpath.replace(" -r", "");
-        rpath = rpath.trimmed();
-        emit output(DTR("version: %1").arg(ve::version::releaseString(rpath)));
-    } else {
-        emit output(DTR("version: %1").arg(ve::version::number(param, false)));
-    }
-}
+//void VersionCommand::run(imol::ModuleObject *, const QString &param)
+//{
+//    if (param.contains("-s")) {
+//        QString rpath = param;
+//        rpath.replace(" -s", "");
+//        rpath = rpath.trimmed();
+//        emit output(DTR("version: %1").arg(ve::version::number(rpath, true)));
+//    } else if (param.contains("-r")) {
+//        QString rpath = param;
+//        rpath.replace(" -r", "");
+//        rpath = rpath.trimmed();
+//        emit output(DTR("version: %1").arg(ve::version::releaseString(rpath)));
+//    } else {
+//        emit output(DTR("version: %1").arg(ve::version::number(param, false)));
+//    }
+//}
+
+QString g_mono_font_family = "Cascadia Code";
 
 Highlighter::Highlighter(const QStringList &cmds, bool enable_path, QTextDocument *parent): QSyntaxHighlighter(parent),
     m_enable_path(enable_path)
 {
     m_logo_format.setForeground(QColor(88, 88, 88));
     m_logo_format.setBackground(QColor(16, 16, 16));
-    m_logo_format.setFontFamily("Source Code Pro");
+    m_logo_format.setFontFamily(g_mono_font_family); // Source Code Pro
     m_logo_format.setFontWeight(QFont::ExtraBold);
     m_logo_format.setFontPointSize(5);
     m_logo_format.setFontLetterSpacing(100);
@@ -155,7 +157,7 @@ void Highlighter::highlightBlock(const QString &text)
     }
 
     //topic line
-    if (text.startsWith(DTR("Imol Terminal"))) {
+    if (text.startsWith(DTR("VersatileEngine Terminal"))) {
         setFormat(0, text.length(), m_topic_format);
         return;
     }
@@ -378,7 +380,20 @@ Terminal::Terminal(QWidget *parent) :
 
     setAttribute(Qt::WA_StyledBackground);
 
+    QFontDatabase database;
+    auto font_families = database.families();
+    if (!font_families.contains(g_mono_font_family)) {
+        for (const auto& ff : font_families) {
+            if (ff.contains("Mono", Qt::CaseInsensitive)) {
+                g_mono_font_family = ff;
+                break;
+            }
+        }
+    }
+
     ui->setupUi(this);
+
+    setWindowTitle(DTR("VE Terminal - %1").arg(qApp->applicationName()));
 
     ui->textBrowser->document()->setMaximumBlockCount(1024);
     ui->textEdit->document()->setMaximumBlockCount(256);
@@ -417,7 +432,7 @@ Terminal::Terminal(QWidget *parent) :
     m_exec_hash.insert("reorder", &Terminal::execReorder);
     m_exec_hash.insert("su", &Terminal::execSu);
     m_exec_hash.insert("process", &Terminal::execProcess);
-    command().regist(new VersionCommand(this));
+//    command().regist(new VersionCommand(this));
 
     Highlighter *input_highlighter = new Highlighter(m_exec_hash.keys(), false, ui->textEdit->document());
     Highlighter *output_highlighter = new Highlighter(m_exec_hash.keys(), true, ui->textBrowser->document());
@@ -446,20 +461,19 @@ Terminal::Terminal(QWidget *parent) :
 
     //initialization
     QStringList logo;
-    logo.append(R"(                                                                             )");
-    logo.append(R"( ___      ___               ___                               ___            )");
-    logo.append(R"(|   |    |   \             /   |         __.-----.__         |   |           )");
-    logo.append(R"(|   |    |    \           /    |       _/           \_       |   |           )");
-    logo.append(R"(|   |    |     \         /     |     /                \_     |   |           )");
-    logo.append(R"(|   |    |      \       /      |    |      _.-=-._      |    |   |           )");
-    logo.append(R"(|   |    |   .   \     /   .   |    |     /       \     |    |   |           )");
-    logo.append(R"(|   |    |   |\   \   /   /|   |    |    (    *    )    |    |   |           )");
-    logo.append(R"(|   |    |   | \   \ /   / |   |    |     \       /     |    |   |           )");
-    logo.append(R"(|   |    |   |  \   v   /  |   |    `_     `-._.-'     .'    |   |           )");
-    logo.append(R"(|   |    |   |   \     /   |   |      \_             _/      |   `----------.)");
-    logo.append(R"(|   |    |   |    `---'    |   |        \__       __/        |              |)");
-    logo.append(R"(`---'    `---'             `---'           `-----'           `--------------')");
-    logo.append(R"(                                                                             )");
+    logo.append(R"(  .                 .                       )");
+    logo.append(R"( / \               / \                      )");
+    logo.append(R"( \  \             /  /-----------.          )");
+    logo.append(R"(  \  \           /  /  o----------'         )");
+    logo.append(R"(   \  \         /  / \  \                   )");
+    logo.append(R"(    \  \       /  /   \  \                  )");
+    logo.append(R"(     .  o     o  .     .  \_______.-.       )");
+    logo.append(R"(      \  \   /  /       \  ,-------`-'      )");
+    logo.append(R"(       \  \ /  /         \  \               )");
+    logo.append(R"(        \  v  /           \  \              )");
+    logo.append(R"(         \   /             \  `----------.  )");
+    logo.append(R"(          `-'               `-------------' )");
+    logo.append(R"(                                            )");
 
     ui->textBrowser->append("");
     for (const QString &logo_line : logo) {
@@ -467,7 +481,8 @@ Terminal::Terminal(QWidget *parent) :
     }
     ui->textBrowser->append("");
 
-    ui->textBrowser->append(DTR("IMOL Termial %1 (License created at %2)").arg(ve::version::releaseString("imol"), m("imol.lic._date")->getString()));
+//    ui->textBrowser->append(DTR("VE Termial %1 (License created at %2)").arg(2024).arg(m("ve.lic._date")->getString()));
+    ui->textBrowser->append(DTR("VersatileEngine Terminal %1").arg(2024));
     ui->textBrowser->append(DTR("Type \"help [-d]\" for more information"));
     ui->textBrowser->append("");
 
@@ -477,7 +492,7 @@ Terminal::Terminal(QWidget *parent) :
     finishCommand(init_cmd);
 
     // external control
-    imol::ModuleObject *terminal_mobj = m().regist(this, "imol.terminal");
+    imol::ModuleObject *terminal_mobj = m().regist(this, "ve.terminal");
     connect(terminal_mobj->append(this, "show"), &imol::ModuleObject::changed, this, [this] (const QVariant &var) {
         if (var.toBool()) {
             show();
@@ -823,7 +838,7 @@ void Terminal::execHello(const QString &param)
 
     if (isVisible()) {
         ui->textBrowser->document()->clear();
-        out(DTR("Imol Terminal") + " " + ve::version::releaseString("imol"));
+        out(DTR("VersatileEngine Terminal") + " 2024"); // todo
     } else {
         show();
     }

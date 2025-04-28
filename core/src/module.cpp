@@ -1,6 +1,8 @@
 #include "ve/core/module.h"
 #include "ve/core/data.h"
 
+#include "internal.h"
+
 #define STATE_IMPL(S, F) \
 trigger(MODULE_STATE_ABOUT_TO_CHANGE); \
 F(); _p->s = S;                        \
@@ -16,7 +18,7 @@ public:
 public:
 };
 
-Module::Module() : Object("ve::m_" + data::at("_p.global_module_key")->getString().toStdString()), _p(new Private) {}
+Module::Module() : Object("ve::module_" + data::at("ve.module.global_module_key")->getString().toStdString()), _p(new Private) {}
 Module::~Module() noexcept { delete _p; }
 
 Module::State Module::state() const { return _p->s; }
@@ -35,11 +37,24 @@ ModuleFactory& globalModuleFactory()
     return i;
 }
 
+namespace module {
+
+Module* instance(const std::string &name)
+{
+    for (int i = 0; i < g_module_names.sizeAsInt(); i++) {
+        if (g_module_names[i] == name) return g_modules.value(i, nullptr);
+    }
+    return nullptr;
+}
+
+}
+
 }
 
 std::ostream& operator<< (std::ostream& os, ve::Module::State s)
 {
     switch (s) {
+        case ve::Module::NONE: os << "NONE"; break;
         case ve::Module::INIT: os << "INIT"; break;
         case ve::Module::READY: os << "READY"; break;
         case ve::Module::DEINIT: os << "DEINIT"; break;

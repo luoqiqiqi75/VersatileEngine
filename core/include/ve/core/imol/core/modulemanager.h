@@ -161,7 +161,7 @@ public:
 
     void activate(QObject *context, ModuleObject *changed_mobj, ActivateType type);
 
-    virtual QVariant get(const QVariant &default_var = QVariant()) const;
+    virtual const QVariant& get(const QVariant &default_var = QVariant()) const;
 
     bool getBool(bool default_bool = false) const;
     int getInt(int default_int = 0) const;
@@ -315,7 +315,7 @@ public:
 
     bool isEmptyMobj() const override;
 
-    QVariant get(const QVariant &default_var = QVariant()) const override;
+    const QVariant& get(const QVariant &default_var = QVariant()) const override;
 
     ModuleObject * set(QObject *context, const QVariant &var) override;
     ModuleObject * set(QObject *context, const QString &rpath, const QVariant &var, bool intelligent = true) override;

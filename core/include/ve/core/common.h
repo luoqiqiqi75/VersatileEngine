@@ -36,10 +36,10 @@ namespace ve {
 VE_API QObject* global();
 
 namespace version {
-typedef imol::CreatorManager<int, int(void)> Manager;
+typedef Factory<int(void)> Manager;
 VE_API Manager& manager();
-VE_API int number(const QString &key, bool sum = false);
-VE_API QString releaseString(const QString &key);
+//VE_API int number(const QString &key, bool sum = false);
+//VE_API QString releaseString(const QString &key);
 }
 
 namespace entry {
@@ -50,7 +50,7 @@ VE_API void deinit();
 
 }
 
-#define VE_REGISTER_VERSION(KEY, VER) VE_AUTO_RUN(ve::version::manager().regist(KEY, [] (void) -> int { return VER; }))
+#define VE_REGISTER_VERSION(KEY, VER) VE_AUTO_RUN(ve::version::manager().insertOne(KEY, [] (void) -> int { return VER; }))
 
 #define VE_REGISTER_RELEASE_VERSION(KEY, MAJOR, MINOR, BASELINE) VE_AUTO_RUN( \
 ve::version::manager().regist(QString("@0_%1").arg(KEY), [] (void) -> int { return BASELINE; }); \
