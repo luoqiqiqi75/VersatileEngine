@@ -87,9 +87,8 @@ bool Values::equals(const Values& other) const
     return true;
 }
 
-class Object::Private
+struct Object::Private
 {
-public:
     std::string name;
     Object* parent = nullptr;
     HashMap<int, HashMap<Object*, List<ActionT>>> connections;

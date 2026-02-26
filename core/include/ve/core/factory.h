@@ -30,7 +30,8 @@ template<class Signature>
 class Factory : public Object, public Dict<std::function<Signature>>
 {
 public:
-    typedef basic::FInfo<std::function<Signature>> FInfoT;
+    typedef std::function<Signature> FunctionT;
+    typedef basic::FInfo<FunctionT> FInfoT;
     typedef typename FInfoT::RetT RetT;
 
 public:
@@ -45,7 +46,7 @@ public:
     T execAs(const std::string& key, Params&&... params) { return static_cast<T>(exec(key, std::forward<Params>(params)...)); }
 };
 
-template<typename T>
-using Creator = Factory<T()>;
+template<typename T, typename... Ts>
+T& instance(Ts&&... ts) { static T t(std::forward<Ts>(ts)...); return t; }
 
 }

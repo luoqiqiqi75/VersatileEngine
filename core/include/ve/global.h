@@ -54,8 +54,9 @@
 #define VE_DEF_COMBINE(X,Y) PRIVATE_VE_DEF_CONNECT_IMPL(X,Y)
 #define PRIVATE_VE_DEF_COMBINE_IMPL(X,Y) X##Y
 
-#define VE_DECLARE_PRIVATE class Private; Private *_p;
-#define VE_DECLARE_SHARED_PRIVATE class Private; std::shared_ptr<Private> _p;
+#define VE_DECLARE_PRIVATE struct Private; Private *_p;
+#define VE_DECLARE_SHARED_PRIVATE struct Private; std::shared_ptr<Private> _p;
+#define VE_DECLARE_UNIQUE_PRIVATE struct Private; std::unique_ptr<Private> _p;
 
 #define PRIVATE_VE_AUTO_RUN_NAME(_PREFIX, _SUFFIX) PRIVATE_VE_AUTO_RUN_NAME_I(_PREFIX, _SUFFIX)
 #define PRIVATE_VE_AUTO_RUN_NAME_I(_PREFIX, _SUFFIX) _PREFIX##_SUFFIX

@@ -10,12 +10,9 @@ trigger(MODULE_STATE_CHANGED)
 
 namespace ve {
 
-class Module::Private
+struct Module::Private
 {
-public:
     State s = NONE;
-
-public:
 };
 
 Module::Module() : Object("ve::module_" + data::at("ve.module.global_module_key")->getString().toStdString()), _p(new Private) {}

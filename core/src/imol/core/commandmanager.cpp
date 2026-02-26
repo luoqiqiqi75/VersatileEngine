@@ -1,6 +1,6 @@
 ﻿#include "core/commandmanager.h"
 
-using namespace imol;
+namespace imol {
 
 BaseCommand::BaseCommand(const QString &key, bool is_root, QObject *parent) : QObject(parent),
     m_key(key),
@@ -107,4 +107,6 @@ BaseCommand * CommandManager::get(const QString &key)
 CommandManager & command()
 {
     return CommandManager::instance();
+}
+
 }

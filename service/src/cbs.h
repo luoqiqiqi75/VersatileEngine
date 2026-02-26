@@ -81,6 +81,7 @@ private:
 
 private:
     Data* _d = nullptr;
+    asio2::iopool _iopool;
     asio2::tcp_server _server;
     HashMap<std::size_t, QByteArray> _cache_map;
 };

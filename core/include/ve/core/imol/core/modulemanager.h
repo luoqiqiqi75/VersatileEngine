@@ -59,7 +59,7 @@ public:
     };
 
 public:
-    explicit ModuleObject(const QString &name, ModuleObject *pmobj = nullptr);
+    explicit ModuleObject(const QString &name = "", ModuleObject *pmobj = nullptr);
     virtual ~ModuleObject();
 
     //!
@@ -67,6 +67,7 @@ public:
     //!
 
     virtual bool isEmptyMobj() const;
+    bool isNull() const { return isEmptyMobj(); }
 
     //! \property name is the basic property for ModuleObject
     Q_PROPERTY(QString m_name READ name CONSTANT)
@@ -101,6 +102,8 @@ public:
     ModuleObject * pmobj(int level) const;
     ModuleObject * p(int level = 0) const; // shortcut
 
+    ModuleObject * parentData(int level = 0) const { return pmobj(level); }
+
     //!
     //! ---- brother module object (\short bmobj) ----
     //!
@@ -112,7 +115,14 @@ public:
     ModuleObject * b(int next = 1) const; // shortcut
     ModuleObject * b(const QString &rname, bool is_strict = false) const;
 
+    ModuleObject * prev() const { return prevBmobj(); }
+    ModuleObject * next() const { return nextBmobj(); }
+    ModuleObject * brotherData(int next) const { return b(next); }
+    ModuleObject * brotherData(const QString &rname, bool is_strict = false) const { return b(rname, is_strict); }
+
     int indexInPmobj() const;
+
+    int indexInParentData() const { return indexInPmobj(); }
 
     //! check whether name indicates an index
     bool isRelative() const;
@@ -130,8 +140,14 @@ public:
     ModuleObject * cmobj(int index) const;
     ModuleObject * c(int index) const; // shortcut
 
+    ModuleObject * childData(const QString &rname, bool is_strict = false) const { return c(rname, is_strict); }
+    ModuleObject * childData(int index) const { return c(index); }
+
     bool hasCmobj(const QString &rname = "", bool is_strict = false) const;
     bool hasCmobj(ModuleObject *mobj) const;
+
+    bool hasChildData(const QString &rname = "", bool is_strict = false) const { return hasCmobj(rname, is_strict); }
+    bool hasChildData(ModuleObject* child_d) const { return hasCmobj(child_d); }
 
     ModuleObject * first() const;
     ModuleObject * last() const;
@@ -139,8 +155,13 @@ public:
     int cmobjCount() const;
     int size() const;
 
+    int childrenDataCount() const { return cmobjCount(); }
+
     QStringList cmobjNames(bool is_strict = false) const;
     QList<ModuleObject *> cmobjs(bool is_ordered = false) const; // is_ordered is obsolete
+
+    QStringList childrenDataNames(bool is_strict = false) const { return cmobjNames(is_strict); }
+    QList<ModuleObject *> childrenData() const { return cmobjs(); }
 
     //!
     //! ---- relative module object (rmobj) ----
@@ -149,11 +170,16 @@ public:
     ModuleObject * rmobj(const QString &rpath) const;
     ModuleObject * r(const QString &rpath) const; // shortcut
 
+    ModuleObject * relativeData(const QString &rpath) const { return rmobj(rpath); }
+
     bool hasRmobj(const QString &rpath) const;
     bool isRmobjOf(ModuleObject *mobj) const;
 
+    bool hasRelativeData(const QString &rpath) const { return hasRmobj(rpath); }
+    bool isRelativeOf(ModuleObject* ancestor_d) const { return isRmobjOf(ancestor_d); }
+
     //! fullName is the rpath from given mobj, \default nullptr stands for global root mobj
-    QString fullName(ModuleObject *relative_mobj = nullptr) const;
+    QString fullName(ModuleObject *ancestor_d = nullptr) const;
 
     //!
     //! ---- data control ----
@@ -172,6 +198,9 @@ public:
 
     virtual ModuleObject * set(QObject *context, const QVariant &var);
     virtual ModuleObject * set(QObject *context, const QString &rpath, const QVariant &var, bool intelligent = true);
+
+    ModuleObject * set(const QVariant &var) { return set(this, var); }
+    ModuleObject * set(const QString &rpath, const QVariant &var) { return set(this, rpath, var); }
 
     void setList(QObject *context, const QVariantList &vars, bool intelligent = true);
     void setList(QObject *context, const QString &rpath, const QVariantList &vars, bool intelligent = true);
@@ -355,6 +384,9 @@ public:
 
     ModuleObject * rootMobj() const;
     ModuleObject * emptyMobj() const;
+
+    ModuleObject * rootData() const { return rootMobj(); }
+    ModuleObject * nullData() const { return emptyMobj(); }
 
     void reserve(int max_size);
     ModuleObject * create(const QString &name, ModuleObject *pmobj = nullptr);

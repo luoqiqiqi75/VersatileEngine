@@ -1,6 +1,7 @@
 ﻿#include "server.h"
 
 #include "core/networkmanager.h"
+#include "core/logmanager.h"
 
 #include <QTcpServer>
 #include <QTcpSocket>

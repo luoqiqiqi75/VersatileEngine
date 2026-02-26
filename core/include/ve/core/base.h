@@ -263,7 +263,7 @@ using Ints = Vector<int>;
 using Doubles = Vector<double>;
 using Strings = Vector<std::string>;
 
-class Values : public Doubles
+class VE_API Values : public Doubles
 {
     PRIVATE_INHERIT_CONSTRUCTOR_IMPL(Doubles, Values, Doubles)
 

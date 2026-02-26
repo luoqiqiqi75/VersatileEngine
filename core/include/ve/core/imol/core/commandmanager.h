@@ -67,9 +67,13 @@ signals:
 private:
     QHash<QString, BaseCommand *> m_cmds;
 };
+
+CORESHARED_EXPORT CommandManager & command();
 }
 
-//output function
-CORESHARED_EXPORT imol::CommandManager & command();
+namespace ve {
+using TerminalCommand = imol::BaseCommand;
+using imol::command;
+}
 
 #endif // IMOL_COMMANDMANAGER_H

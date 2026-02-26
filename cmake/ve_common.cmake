@@ -1,6 +1,6 @@
 macro(ve_target_link_qt_components VE_IN_TARGET VE_IN_QT_COMPONENTS)
     foreach(QT_COMPONENT ${VE_IN_QT_COMPONENTS})
-        target_link_libraries(${VE_IN_TARGET} PRIVATE Qt::${QT_COMPONENT})
+        target_link_libraries(${VE_IN_TARGET} PRIVATE Qt${QT_VERSION_MAJOR}::${QT_COMPONENT})
     endforeach()
 endmacro()
 

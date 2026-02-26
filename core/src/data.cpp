@@ -50,4 +50,3 @@ Data* d(const char* path) { return d(QString(path)); }
 Data* d(Data* root, const char* path) { return d(root, QString(path)); }
 
 }
-

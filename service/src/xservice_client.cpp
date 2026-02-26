@@ -2,6 +2,7 @@
 
 #include "ve/core/imol/core/networkmanager.h"
 #include "ve/core/imol/core/commandmanager.h"
+#include "ve/core/imol/core/logmanager.h"
 
 #include <QEventLoop>
 #include <QCoreApplication>
@@ -18,9 +19,8 @@
 
 #define DEFAULT_TIMEOUT 800
 
-VE_REGISTER_VERSION("ve.xservice", 12)
-
 VE_REGISTER_MODULE(ve.xervice, XService)
+VE_REGISTER_VERSION(ve.xservice, 12)
 
 constexpr const char *XSERVICE_ID_ALL        = "@all";
 constexpr const char *XSERVICE_ID_HANDSHAKE  = "@handshake";
@@ -124,7 +124,7 @@ public:
 /**
  * @brief The XServiceData struct
  */
-class XService::Private
+struct XService::Private
 {
     XService *ref;
 
@@ -149,7 +149,7 @@ public:
 
 public:
     Private(XService *ref) : ref(ref)/*, handler(new MobjHandler)*/, nobj(nullptr), timeout(DEFAULT_TIMEOUT), index(0l),
-        is_connected_n(nullptr), pn(nullptr), pdn(nullptr), pcn(nullptr), debug_node(m().emptyMobj()) {}
+        is_connected_n(nullptr), pn(nullptr), pdn(nullptr), pcn(nullptr), debug_node(m().nullData()) {}
     ~Private() { /*delete handler;*/ }
 
     QString genId(const QString &cmd) { return QString("#%1%2").arg(cmd).arg(index++); }
@@ -429,11 +429,11 @@ void XServiceCommand::run(ix::Node *n, const QString &param)
             param_node->importFromJson(this, QJsonDocument::fromJson(data_str.toUtf8()).array());
         } else {
             QVariant var = data_str;
-            if (var.canConvert(QVariant::Bool)) {
+            if (var.canConvert<bool>()) {
                 param_node->set(this, var.toBool());
-            } else if (var.canConvert(QVariant::Int)) {
+            } else if (var.canConvert<int>()) {
                 param_node->set(this, var.toInt());
-            } else if (var.canConvert(QVariant::Double)) {
+            } else if (var.canConvert<double>()) {
                 param_node->set(this, var.toDouble());
             }
         }
