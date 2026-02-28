@@ -6,7 +6,7 @@
 
 namespace ve::service {
 
-class XServiceServer::Private
+struct XServiceServer::Private
 {
 public:
     Data* d;

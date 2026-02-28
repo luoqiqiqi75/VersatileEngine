@@ -69,11 +69,11 @@ public:
     void appendMsgHandle(const QString &handle_name);
     void removeMsgHandle(const QString &handle_name);
 
-    void appendLog(const QString &text);
-
     bool analyseCommand(const QString &cmd_text);
 
 public slots:
+    void appendLog(const QString &text);
+
     void out(const QString &text);
     void error(const QString &text);
     void msg(const QString &text);
@@ -94,13 +94,14 @@ private slots:
     void execUnknown(const QString &param);
     void execHello(const QString &param);
     void execHelp(const QString &param);
-    void execM(const QString &param);
+    void execD(const QString &param);
     void execC(const QString &param);
     void execR(const QString &param);
     void execP(const QString &param);
     void execNames(const QString &param);
     void execGet(const QString &param);
     void execSet(const QString &param);
+    void execTrigger(const QString &param);
     void execInsert(const QString &param);
     void execRemove(const QString &param);
     void execImport(const QString &param);

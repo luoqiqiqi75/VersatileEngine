@@ -1,6 +1,6 @@
 file(GLOB_RECURSE LIB_SOURCES src/*.h src/*.hpp src/*.c src/*.cpp include/*.h include/*.hpp)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Network) # temp
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Network) # temp
 
 add_subdirectory(3rdparty/asio2)
 set(ASIO_INCLUDE_DIRS
@@ -26,7 +26,8 @@ target_include_directories(${VE_SERVICE_LIBRARY} PUBLIC
         ${ASIO_INCLUDE_DIRS}
 )
 
-target_link_libraries(${VE_SERVICE_LIBRARY} PUBLIC
+target_link_libraries(${VE_SERVICE_LIBRARY} PRIVATE
         ${VE_CORE_LIBRARY}
-        Qt5::Core Qt5::Network # temp
+        Qt${QT_VERSION_MAJOR}::Core
+        Qt${QT_VERSION_MAJOR}::Network # temp
 )

@@ -1,4 +1,6 @@
 #include "command_service.h"
+
+#include "ve/core/imol/core/logmanager.h"
 #include "ve/service/command_server.h"
 
 #include <QThread>

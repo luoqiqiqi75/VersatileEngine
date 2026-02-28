@@ -20,6 +20,8 @@
 #include <QPushButton>
 #include <QThread>
 #include <QProcess>
+#include <QRandomGenerator>
+#include <QFile>
 
 #define DTR(Str) translator().dtr("imol", Str)
 
@@ -172,19 +174,19 @@ void Highlighter::highlightBlock(const QString &text)
 
     //log
     if (text.startsWith("[I|")) {
-        setFormat(0, text.count(), Qt::darkCyan);
+        setFormat(0, text.length(), Qt::darkCyan);
         return;
     } else if (text.startsWith("[W|")) {
-        setFormat(0, text.count(), Qt::darkYellow);
+        setFormat(0, text.length(), Qt::darkYellow);
         return;
     } else if (text.startsWith("[E|")) {
-        setFormat(0, text.count(), Qt::darkRed);
+        setFormat(0, text.length(), Qt::darkRed);
         return;
     } else if (text.startsWith("[S|")) {
-        setFormat(0, text.count(), Qt::darkMagenta);
+        setFormat(0, text.length(), Qt::darkMagenta);
         return;
     } else if (text.startsWith("[d|")) {
-        setFormat(0, text.count(), Qt::darkGreen);
+        setFormat(0, text.length(), Qt::darkGreen);
         return;
     } else if ((text.startsWith("{") || text.startsWith("["))) {
         setCurrentBlockState(2);
@@ -225,8 +227,12 @@ void Highlighter::highlightBlock(const QString &text)
 
     //keyword
     if (currentBlockState() == 1/* && previousBlockState() < 0*/) {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+        QStringView text_ref = text.mid(offset);
+#else
         QStringRef text_ref(&text, offset, text.length() - offset);
-        for (const auto &rule : qAsConst(m_rules)) {
+#endif
+        for (const auto &rule : std::as_const(m_rules)) {
             QRegularExpressionMatchIterator matchIterator = rule.pattern.globalMatch(text_ref);
             if (matchIterator.hasNext()) {
                 QRegularExpressionMatch match = matchIterator.next();
@@ -376,7 +382,6 @@ Terminal::Terminal(QWidget *parent) :
     m_handle_name("")
 {
     qRegisterMetaType<QTextCursor>("QTextCursor");
-    qsrand(QDateTime::currentMSecsSinceEpoch());
 
     setAttribute(Qt::WA_StyledBackground);
 
@@ -408,7 +413,7 @@ Terminal::Terminal(QWidget *parent) :
     //internal commands
     m_exec_hash.insert("hello", &Terminal::execHello);
     m_exec_hash.insert("help", &Terminal::execHelp);
-    m_exec_hash.insert("m", &Terminal::execM);
+    m_exec_hash.insert("d", &Terminal::execD);
     m_exec_hash.insert("c", &Terminal::execC);
     m_exec_hash.insert("r", &Terminal::execR);
     m_exec_hash.insert("cd", &Terminal::execR);
@@ -419,6 +424,8 @@ Terminal::Terminal(QWidget *parent) :
     m_exec_hash.insert("get", &Terminal::execGet);
     m_exec_hash.insert("s", &Terminal::execSet);
     m_exec_hash.insert("set", &Terminal::execSet);
+    m_exec_hash.insert("t", &Terminal::execTrigger);
+    m_exec_hash.insert("trigger", &Terminal::execTrigger);
     m_exec_hash.insert("insert", &Terminal::execInsert);
     m_exec_hash.insert("remove", &Terminal::execRemove);
     m_exec_hash.insert("import", &Terminal::execImport);
@@ -565,7 +572,7 @@ void Terminal::removeMsgHandle(const QString &handle_name)
 
 void Terminal::appendLog(const QString &text)
 {
-    msg(text.mid(5, text.length() - 9));
+    msg(text);
 }
 
 bool Terminal::analyseCommand(const QString &cmd_text)
@@ -681,8 +688,8 @@ bool Terminal::eventFilter(QObject *watched, QEvent *event)
                         break;
                     }
                 }
-            } else if (cmd == "r" || cmd == "m" || cmd == "cd") {
-                imol::ModuleObject *mobj = (cmd == "m" ? m().rootMobj() : curMobj());
+            } else if (cmd == "r" || cmd == "d" || cmd == "cd") {
+                imol::ModuleObject *mobj = (cmd == "d" ? m().rootMobj() : curMobj());
                 QString temp_name = text.section(" ", 1, 1);
                 QString half_name = temp_name.section(IMOL_MODULE_NAME_SEPARATOR, -1, -1);
                 QString left_name = temp_name.section(IMOL_MODULE_NAME_SEPARATOR, 0, -2);
@@ -829,7 +836,7 @@ void Terminal::execHello(const QString &param)
 {
     //check param
     if (param == "engineer") {
-        ui->textBrowser->append(slogans.at(qrand() % slogans.size()));
+        ui->textBrowser->append(slogans.at(QRandomGenerator::global()->generate() % slogans.size()));
         return;
     } if (!param.isEmpty()) {
         unknownOption(param);
@@ -860,36 +867,38 @@ void Terminal::execHelp(const QString &param)
         return;
     }
 
-    out(DTR("usage of termial:\n"));
+    out(DTR("usage of terminal:\n"));
     out(strResize(DTR("hello")));
-    out(strResize(DTR("m [<full_name>]")) +
-        (has_details ? DTR("Enter module manager") : ""));
+    out(strResize(DTR("d [<full_name>]")) +
+        (has_details ? DTR("Enter data manager") : ""));
     out(strResize(DTR("c <name> | -i=<index>")) +
-        (has_details ? DTR("Visit cmobj of current mobj with given name or index") : ""));
+        (has_details ? DTR("Visit child node of current node with given name or index") : ""));
     out(strResize(DTR("r | cd <relative_name>")) +
-        (has_details ? DTR("Visit rmobj of current mobj with relativ path") : ""));
+        (has_details ? DTR("Visit relative node of current node with relative path") : ""));
     out(strResize(DTR("p [<level>]")) +
-        (has_details ? DTR("Visit pmobj of current mobj with level") : ""));
+        (has_details ? DTR("Visit parent node of current node with level") : ""));
     out(strResize(DTR("names | ls")) +
-        (has_details ? DTR("Display cmobj names of current mobj") : ""));
+        (has_details ? DTR("Display children names of current node") : ""));
     out(strResize(DTR("g | get")) +
-        (has_details ? DTR("Get value of current mobj") : ""));
+        (has_details ? DTR("Get value of current node") : ""));
     out(strResize(DTR("s | set [-null | -bool= | -int= | -double=]<value>")) +
-        (has_details ? DTR("Set value of current mobj or its rmobj") : ""));
+        (has_details ? DTR("Set value of current node or its relative noode") : ""));
+    out(strResize(DTR("t | trigger")) +
+        (has_details ? DTR("Trigger current node") : ""));
     out(strResize(DTR("cp <full_name> [-nai] [-ar]")) +
         (has_details ? DTR("Copy from given full name") : ""));
     out(strResize(DTR("clear [-nad] [-ov]")) +
         (has_details ? DTR("Clear current item") : ""));
     out(strResize(DTR("insert <name>")) +
-        (has_details ? DTR("Insert a mobj with given name") : ""));
+        (has_details ? DTR("Insert a node with given name") : ""));
     out(strResize(DTR("remove <name>")) +
-        (has_details ? DTR("Remove the mobj with given name") : ""));
+        (has_details ? DTR("Remove the node with given name") : ""));
     out(strResize(DTR("reorder -from=<index> -to=<index> | -names=<name1,name2,...>")) +
         (has_details ? DTR("Reorder item from index to another index, or with given names") : ""));
     out(strResize(DTR("import <JSON | XML | BIN> <-d=<text> | -p=<path>>")) +
         (has_details ? DTR("Import data string with specific type") : ""));
     out(strResize(DTR("export <JSON | XML | BIN> [-c] [-p=<path>]")) +
-        (has_details ? DTR("Export current mobj with specific type, option -c is compact") : ""));
+        (has_details ? DTR("Export current node with specific type, option -c is compact") : ""));
     out(strResize(DTR("wait <msec>")) +
         (has_details ? DTR("Wait for a period and cache future commands") : ""));
     out(strResize(DTR("sh [-v] <path>")) +
@@ -910,12 +919,12 @@ void Terminal::execHelp(const QString &param)
     }
 }
 
-void Terminal::execM(const QString &param)
+void Terminal::execD(const QString &param)
 {
     if (param.isEmpty()) {
         m_cur_path = "";
     } else if (m(param)->isEmptyMobj()) {
-        error(DTR("module not exists"));
+        error(DTR("data not exists"));
         return;
     } else {
         m_cur_path = m(param)->fullName();
@@ -927,7 +936,11 @@ void Terminal::execM(const QString &param)
 void Terminal::execC(const QString &param)
 {
     if (param.startsWith("-i=")) {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+        int index = param.right(param.length() - 3).toInt();
+#else
         int index = param.rightRef(param.length() - 3).toInt();
+#endif
         if (curMobj()->cmobj(index)->isEmptyMobj()) {
             error(DTR("cmobj not exists"));
         } else {
@@ -1024,6 +1037,11 @@ void Terminal::execSet(const QString &param)
     out(DTR("new\ttype: [%1], value: [%2]").arg(new_var.typeName(), new_var.toString()));
 
     curMobj()->set(this, new_var);
+}
+
+void Terminal::execTrigger(const QString &param)
+{
+    curMobj()->trigger();
 }
 
 void Terminal::execInsert(const QString &param)

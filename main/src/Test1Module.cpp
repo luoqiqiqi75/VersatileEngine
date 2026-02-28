@@ -8,7 +8,7 @@
 
 #include <ve/service/compact_binary_service.h>
 
-VE_REGISTER_MODULE(test1, Test1Module)
+// VE_REGISTER_MODULE(test1, Test1Module)
 
 using namespace std::chrono;
 

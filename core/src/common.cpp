@@ -1,8 +1,8 @@
 ﻿#include "ve/core/common.h"
 
-#include <QCoreApplication>
+#include <QThread>
 
-VE_REGISTER_VERSION("ve.core", 1)
+VE_REGISTER_VERSION(ve.core, 3)
 
 #include "imol/program/config.h"
 
@@ -12,11 +12,14 @@ VE_REGISTER_VERSION("ve.core", 1)
 #include <QIcon>
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QMouseEvent>
+#include <QKeyEvent>
+#include <QAbstractButton>
+#include <QTimer>
 
 #include "imol/program/server.h"
-#ifdef WIN32
-#include "StackWalker/BaseException.h"
-#endif
+#include "ve/core/imol/core/logmanager.h"
+#include "rescue.h"
 
 #include "ve/core/module.h"
 
@@ -32,21 +35,26 @@ QObject* global()
 
 namespace version {
 
-//int calc_sum(Data* key_d)
-//{
-//    int v = number(key_d->fullName(manager().keyMobj()));
-//    foreach (auto sub_key_d, key_d->cmobjs()) {
-//        v += calc_sum(sub_key_d);
-//    }
-//    return v;
-//}
+Manager& manager() { static Manager m("ve::version_manager"); return m; }
 
-Manager& manager() { static Manager m("ve::version"); return m; }
-
-//int number(const QString& key, bool sum)
-//{
-//    return sum ? calc_sum(manager().keyMobj()->r(key)) : manager().create(key);
-//}
+int number(const QString& key, bool sum)
+{
+    int n = 0;
+    if (sum) {
+        for (const auto [k, v] : manager()) {
+            if (QString::fromStdString(k).startsWith(key) && v) {
+                n += v();
+            }
+        }
+    } else {
+        if (auto f = manager().value(key.toStdString(), nullptr)) {
+            n = f();
+        } else {
+            n = -1;
+        }
+    }
+    return n;
+}
 
 //QString releaseString(const QString &key)
 //{
@@ -66,57 +74,104 @@ Manager& manager() { static Manager m("ve::version"); return m; }
 
 }
 
+namespace qwidget {
+F& factory() { static F f("ve::qwidget_factory"); return f; }
+}
+
 namespace entry {
 
-void setup(const QString &cfg_path)
+class QtOperationRecorder : public QObject
 {
-#ifdef WIN32
-    SET_DEFAULT_HANDLER();
-#endif
+public:
+    QtOperationRecorder(QObject* parent) : QObject(parent) {}
 
-    Config c;
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        static bool event_lock = false;
+        auto lock_f = [] {
+            if (event_lock) return false;
+            event_lock = true;
+            QTimer::singleShot(0, [] { event_lock = false; });
+            return true;
+        };
+        auto log_obj_f = [] (auto debug, QObject* ptr) {
+            do {
+                debug << " -> " << ptr;
+                ptr = ptr->parent();
+            } while (ptr);
+        };
+        switch (e->type()) {
+            case QEvent::MouseButtonPress:
+            case QEvent::MouseButtonDblClick:
+                if (qobject_cast<QWidget*>(o) && lock_f()) {
+                    if (auto ab = qobject_cast<QAbstractButton*>(o)) {
+                        if (ab->text().isEmpty()) {
+                            qInfo() << "<rescue.record> [BTN]" << dynamic_cast<QMouseEvent *>(e) << o;
+                        } else {
+                            qInfo().nospace() << "<rescue.record> [BTN " << ab->text() << "] " << dynamic_cast<QMouseEvent *>(e) << " " << o;
+                        }
+                    } else {
+                        qInfo() << "<rescue.record>" << dynamic_cast<QMouseEvent *>(e) << o;
+                    }
+                }
+                break;
+            case QEvent::KeyPress: {
+                if (qobject_cast<QWidget*>(o) && lock_f()) {
+                    qInfo() << "<rescue.record>" << dynamic_cast<QKeyEvent*>(e) << o;
+                }
+            }
+                break;
+            default: break;
+        }
+        return false;
+    }
+};
+
+void setup() {
+    setupRescue(ve::d("ve.rescue")); // todo
+    QObject::connect(ve::d("ve.rescue.record"), &ve::Data::changed, [] (const QVariant &v) {
+        static QtOperationRecorder r(nullptr);
+        if (v.toBool()) {
+            qApp->installEventFilter(&r);
+        } else {
+            qApp->removeEventFilter(&r);
+        }
+    });
+
     auto c_d = data::at("ve.config");
 
-    if (cfg_path.endsWith("ini")) {
-        c.loadIni(cfg_path);
-    } else if (cfg_path.endsWith("json")) {
-        c_d->importFromJson(global(), imol::m().readFromJson(cfg_path));
-    }
-
-    c_d->set(global(), cfg_path);
     QObject::connect(c_d, &ve::Data::changed, global(), [=] {
         Config tmp_c;
         tmp_c.saveIni(c_d->getString());
     });
 
-    // scaling
-    double scale_factor = c_d->r("env.qt_scale_factor")->getDouble();
-    if (scale_factor > 0) {
-        qputenv("QT_SCALE_FACTOR", c_d->r("env.qt_scale_factor")->getString().toStdString().c_str());
-    }
-    if (scale_factor > 1.001) {
-        QFile conf("qt.conf");
-        if (conf.open(QIODevice::WriteOnly)) {
-            conf.write("[Platforms]\nWindowsArguments=fontengine=freetype");
-            conf.close();
-        }
-    } else {
-        QFile conf("qt.conf");
-        if (conf.exists()) {
-            conf.setPermissions(QFile::WriteUser);
-            conf.remove();
-        }
-    }
+    // env
+    for (const QString& env_key : c_d->c("env")->childrenDataNames()) {
+        QString env_value = c_d->c("env")->c(env_key)->getString();
+        qputenv(env_key.toStdString().c_str(), env_value.toStdString().c_str());
 
-    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts, c_d->r("attr.share_opengl_contexts")->getBool(true));
-    bool attr_eanble_scaling = c_d->r("attr.enable_high_dpi_scaling")->getBool(false);
-    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling, attr_eanble_scaling);
-    QCoreApplication::setAttribute(Qt::AA_DisableHighDpiScaling, !attr_eanble_scaling);
-    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, c_d->r("attr.use_high_dpi_pixmaps")->getBool(false));
+        // if (env_key.compare("QT_SCALE_FACTOR", Qt::CaseInsensitive) == 0) { // legacy scaling
+        //     double scale_factor = env_value.toDouble();
+        //     if (scale_factor > 1.001) {
+        //         QFile conf("qt.conf");
+        //         if (conf.open(QIODevice::WriteOnly)) {
+        //             conf.write("[Platforms]\nWindowsArguments=fontengine=freetype");
+        //             conf.close();
+        //         }
+        //     } else {
+        //         QFile conf("qt.conf");
+        //         if (conf.exists()) {
+        //             conf.setPermissions(QFile::WriteUser);
+        //             conf.remove();
+        //         }
+        //     }
+        // }
+    }
 
     // path
-    auto env_path_d = c_d->r("env.path");
-    if (env_path_d->hasCmobj()) {
+    auto path_root_d = c_d->r("path");
+    if (path_root_d->hasCmobj()) {
 #if defined(Q_OS_WIN)
         QString env_key = "PATH";
         QString env_separator = ";";
@@ -126,7 +181,7 @@ void setup(const QString &cfg_path)
 #endif
         QString full_env_path = qgetenv(env_key.toStdString().c_str());
         QString current_dir = QDir().absolutePath();
-        foreach (auto path_d, env_path_d->cmobjs()) {
+        for (auto path_d : path_root_d->childrenData()) {
             QString env_path = path_d->getString();
             if (env_path.startsWith(".")) env_path.replace(0, 1, current_dir);
             env_path.replace("/", QDir::separator());
@@ -134,6 +189,87 @@ void setup(const QString &cfg_path)
         }
         qputenv(env_key.toStdString().c_str(), full_env_path.toLocal8Bit());
     }
+
+    // attr
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts, c_d->r("attr.ShareOpenGLContexts")->getBool(true));
+    QCoreApplication::setAttribute(Qt::AA_Use96Dpi, c_d->r("attr.Use96Dpi")->getBool(QCoreApplication::testAttribute(Qt::AA_Use96Dpi)));
+
+    // log
+#ifdef Q_OS_ANDROID
+    static QtMessageHandler default_handler = nullptr;
+    default_handler = qInstallMessageHandler([] (QtMsgType type, const QMessageLogContext& context, const QString& msg) {
+        switch (type) {
+             case QtDebugMsg: imol::FLog(LOG_LEVEL_STR_DEBUG, "", LOG_FILE_NAME_PREFIX, LOG_FILE_NAME_SUFFIX) << msg; break;
+             case QtInfoMsg: imol::FLog(LOG_LEVEL_STR_INFO, "", LOG_FILE_NAME_PREFIX, LOG_FILE_NAME_SUFFIX) << msg; break;
+             case QtWarningMsg: imol::FLog(LOG_LEVEL_STR_WARNING, "", LOG_FILE_NAME_PREFIX, LOG_FILE_NAME_SUFFIX) << msg; break;
+             case QtCriticalMsg: imol::FLog(LOG_LEVEL_STR_ERROR, "", LOG_FILE_NAME_PREFIX, LOG_FILE_NAME_SUFFIX) << msg; break;
+             case QtFatalMsg: imol::FLog(LOG_LEVEL_STR_SUDO, "", LOG_FILE_NAME_PREFIX, LOG_FILE_NAME_SUFFIX) << msg; break;
+        }
+        if (default_handler) default_handler(type, context, msg);
+    });
+#else
+    qInstallMessageHandler([] (QtMsgType type, const QMessageLogContext&, const QString& msg) {
+        if constexpr (false) {
+            switch (type) {
+                case QtDebugMsg: veLogD << msg.toLocal8Bit().constData(); break;
+                case QtInfoMsg: veLogI << msg.toStdString(); break;
+                case QtWarningMsg: veLogW << msg.toStdString(); break;
+                case QtCriticalMsg: veLogE << msg.toStdString(); break;
+                case QtFatalMsg: veLogS << msg.toStdString(); break;
+            }
+        } else {
+            QString thread_info = QThread::currentThread() == qApp->thread() ? "M" : QString::number(reinterpret_cast<unsigned long long>(QThread::currentThreadId()) & 0xffffffff, 16);
+            switch (type) {
+                case QtDebugMsg: veLogD << thread_info.toStdString() << ") " << msg.toLocal8Bit().constData(); break;
+                case QtInfoMsg: veLogI << thread_info.toStdString() << ") " << msg.toStdString(); break;
+                case QtWarningMsg: veLogW << thread_info.toStdString() << ") " << msg.toStdString(); break;
+                case QtCriticalMsg: veLogE << thread_info.toStdString() << ") " << msg.toStdString(); break;
+                case QtFatalMsg: veLogS << thread_info.toStdString() << ") " << msg.toStdString(); break;
+            }
+        }
+    });
+#endif
+    QObject::connect(d("ve.log.debug"), &ve::Data::changed, [] (const QVariant &var) { qDebug() << var.toString(); });
+    QObject::connect(d("ve.log.info"), &ve::Data::changed,  [] (const QVariant &var) { qInfo() << var.toString(); });
+    QObject::connect(d("ve.log.warning"), &ve::Data::changed,  [] (const QVariant &var) { qWarning() << var.toString(); });
+    QObject::connect(d("ve.log.error"), &ve::Data::changed,  [] (const QVariant &var) { qCritical() << var.toString(); });
+
+    QObject::connect(ve::d("ve.log.export"), &ve::Data::changed, [] {
+        auto files_d = ve::d("ve.log.export.files");
+        files_d->clear(nullptr);
+        QDir ld("log");
+        for (auto fi : ld.entryInfoList(QDir::Files)) {
+            QFile f(fi.absoluteFilePath());
+            if (f.open(QIODevice::ReadOnly)) {
+                files_d->append(nullptr, fi.baseName())->set(QString::fromUtf8(f.readAll()));
+                f.close();
+            }
+        }
+    });
+}
+
+void setup(Data *config_d)
+{
+    auto c_d = d("ve.config");
+    if (config_d != c_d) c_d->copyFrom(global(), config_d); // todo
+    setup();
+}
+
+void setup(const QString& config_path, const QString& format)
+{
+    Config c;
+    auto c_d = d("ve.config");
+    c_d->set(global(), config_path);
+    if (format.compare("ini", Qt::CaseInsensitive) == 0) {
+        c.loadIni(config_path);
+    } else if (format.compare("json", Qt::CaseInsensitive) == 0) {
+        c_d->importFromJson(global(), ve::data::Manager::readFromJson(config_path));
+    } else if (format.compare("xml", Qt::CaseInsensitive) == 0) {
+        ve::data::Manager::readFromXmlFile(global(), c_d, config_path);
+    } else if (format.compare("bin", Qt::CaseInsensitive) == 0) {
+        c_d->importFromBin(global(), ve::data::Manager::readFromBin(config_path));
+    }
+    setup();
 }
 
 void init()
@@ -141,14 +277,16 @@ void init()
     auto c_d = data::at("ve.config");
 
     // splash screen
-    if (c_d->r("splash.enable")->getBool()) {
+    if (c_d->r("entry.splash.enable")->getBool()) {
+        auto splash_d = c_d->r("entry.splash");
+
         QSplashScreen *splash_screen = nullptr;
 #define DEFAULT_SPLASH_PIXMAP ":/imol/splash.png"
 #define DEFAULT_SPLASH_PIXMAP_HIGH_DPI ":/imol/splash@2x.png"
 
         QIcon splash_icon;
         QSize splash_size;
-        QString splash_path = c_d->r("splash.pixmap")->getString();
+        QString splash_path = splash_d->r("pixmap")->getString();
         if (splash_path.isEmpty()) {
             QPixmap p(DEFAULT_SPLASH_PIXMAP);
             splash_icon.addPixmap(p);
@@ -160,41 +298,40 @@ void init()
             splash_icon.addPixmap(p);
             splash_size = p.size();
         }
-        if (c_d->hasRmobj("splash.size")) {
-            splash_size.setWidth(c_d->r("splash.size.w")->getInt());
-            splash_size.setHeight(c_d->r("splash.size.h")->getInt());
+        if (splash_d->hasRmobj("size")) {
+            splash_size.setWidth(splash_d->r("size.w")->getInt());
+            splash_size.setHeight(splash_d->r("size.h")->getInt());
         }
         splash_screen = new QSplashScreen(splash_icon.pixmap(splash_size));
 
         //start imol with splash
-        splash_screen->setFont(QFont(c_d->r("splash.font_family")->getString("Microsoft YaHei UI"),
-                                     c_d->r("splash.font_size")->getInt(-1),
-                                     c_d->r("splash.font_weight")->getInt(-1),
-                                     c_d->r("splash.font_italic")->getBool(false)));
+        splash_screen->setFont(QFont(splash_d->r("font_family")->getString("Microsoft YaHei UI"),
+                                     splash_d->r("font_size")->getInt(-1),
+                                     splash_d->r("font_weight")->getInt(-1),
+                                     splash_d->r("font_italic")->getBool(false)));
         if (!splash_screen->pixmap().isNull()) splash_screen->show();
 
-        auto cs_d = c_d->c("splash");
-        cs_d->set(global(), true);
-        QObject::connect(cs_d, &ve::Data::changed, splash_screen, [=] {
+        splash_d->set(global(), true);
+        QObject::connect(splash_d, &ve::Data::changed, splash_screen, [=] {
             splash_screen->finish(QApplication::activeWindow());
             splash_screen->deleteLater();
         });
     }
 
     // terminal
-    if (c_d->r("terminal.enable")->getBool()) {
+    if (c_d->r("entry.terminal.enable")->getBool()) {
         terminal::widget()->resize(800, 600);
         terminal::widget()->show();
     }
 
     // start server
-    if (c_d->r("server.enable")->getBool(true)) {
+    if (c_d->r("entry.server.enable")->getBool(true)) {
         auto server = new Server(global());
-        server->start(c_d->r("server.port")->getInt(5059));
+        server->start(c_d->r("entry.server.port")->getInt(5059));
         QApplication::processEvents();
     }
 
-    bool verbose = c_d->r("verbose.init")->getBool();
+    bool verbose = c_d->r("entry.verbose")->getBool();
 
     // load plugins
     int module_index = 0;
@@ -202,55 +339,57 @@ void init()
     g_module_names.resize(g_modules.size());
     for (const auto& module_f : globalModuleFactory()) {
         g_module_names[module_index] = module_f.first;
-        if (verbose) ILOG << "Load module " << QString::fromStdString(module_f.first);
+        if (verbose) qInfo() << "Load module " << QString::fromStdString(module_f.first);
         Module* m = nullptr;
         try {
             m = module_f.second();
         } catch (std::exception& e) {
-            ELOG << "Load failed: " << e.what();
+            qCritical() << "Load failed: " << e.what();
         }
         g_modules[module_index] = m;
         module_index++;
-        if (verbose && m) ILOG << "Module loaded successfully";
+        if (verbose && m) qInfo() << "Module loaded successfully";
+
+        ve::d("ve.module." + module_f.first)->set(global(), QVariant::fromValue(m)); // global module access
     }
 
     for (int i = 0; i < module_index; i++) {
         Module* m = g_modules[i];
         if (!m) continue;
-        if (verbose) ILOG << "Module " << QString::fromStdString(m->name()) << " init";
+        if (verbose) qInfo() << "Module " << QString::fromStdString(m->name()) << " init";
         m->exeState<Module::INIT>();
-        if (verbose) ILOG << "Done";
+        if (verbose) qInfo() << "Done";
     }
 
     for (int i = 0; i < module_index; i++) {
         Module* m = g_modules[i];
         if (!m) continue;
-        if (verbose) ILOG << "Module " << QString::fromStdString(m->name()) << " get ready";
+        if (verbose) qInfo() << "Module " << QString::fromStdString(m->name()) << " get ready";
         m->exeState<Module::READY>();
-        if (verbose) ILOG << "Done";
+        if (verbose) qInfo() << "Done";
     }
 
-    if (verbose) ILOG << "---------- ve init completed ----------";
+    if (verbose) qInfo() << "---------- ve init completed ----------";
 }
 
 void deinit()
 {
-    bool verbose = d("ve.config")->r("verbose.deinit")->getBool();
+    bool verbose = d("ve.config")->r("entry.verbose")->getBool();
 
     for (int i = 0; i < g_modules.sizeAsInt(); i++) {
         Module* m = g_modules[i];
         if (!m) continue;
-        if (verbose) ILOG << "Module " << QString::fromStdString(m->name()) << " deinit";
+        if (verbose) qInfo() << "Module " << QString::fromStdString(m->name()) << " deinit";
         m->exeState<Module::DEINIT>();
-        if (verbose) ILOG << "Done";
+        if (verbose) qInfo() << "Done";
     }
 
     for (int i = 0; i < g_modules.sizeAsInt(); i++) {
         Module* m = g_modules[i];
         if (!m) continue;
-        if (verbose) ILOG << "Destroy module " << QString::fromStdString(m->name()) << " (" << QString::fromStdString(g_module_names[i]) << ")";
+        if (verbose) qInfo() << "Destroy module " << QString::fromStdString(m->name()) << " (" << QString::fromStdString(g_module_names[i]) << ")";
         delete m;
-        if (verbose) ILOG << "Done";
+        if (verbose) qInfo() << "Done";
     }
 
     if (ve::terminal::widget()->isActiveWindow()) {
@@ -258,7 +397,18 @@ void deinit()
         ve::terminal::widget()->close();
     }
 
-    if (verbose) ILOG << "---------- ve deinit completed ----------";
+    if (verbose) qInfo() << "---------- ve deinit completed ----------";
+}
+
+}
+
+namespace data {
+
+bool wait(ve::Data* trigger_d, int timeout, bool block_input) {
+    QEventLoop el;
+    QObject::connect(trigger_d, &ve::Data::changed, &el, &QEventLoop::quit, Qt::DirectConnection);
+    QTimer::singleShot(timeout, &el, [&] { el.exit(-1); });
+    return el.exec(block_input ? QEventLoop::ExcludeUserInputEvents : QEventLoop::AllEvents) >= 0;
 }
 
 }

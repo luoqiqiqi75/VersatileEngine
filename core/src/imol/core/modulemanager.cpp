@@ -6,7 +6,6 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QMutex>
-#include <QTextCodec>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 #include <QUuid>
@@ -65,7 +64,11 @@ int ModuleObject::indexOfRname(const QString &rname)
     if (isStrictName(rname)) return -1;
 
     bool is_int = false;
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    int index = rname.mid(1).toInt(&is_int);
+#else
     int index = rname.midRef(1).toInt(&is_int);
+#endif
     return is_int ? index : -1;
 }
 
@@ -75,21 +78,21 @@ QString ModuleObject::generateId(ModuleObject *mobj)
     if (!mobj->hasCmobj(id, true)) return id;
 
     int n = 0;
-    while (mobj->hasCmobj(QString("%1_%2").arg(id).arg(++n)));
+    while (mobj->hasCmobj(QString("%1_%2").arg(id).arg(++n))) {}
 
     return QString("%1_%2").arg(id).arg(n);
 }
 
 ModuleObject * ModuleObject::pmobj() const
-{ auto mobj = m_pmobj; return mobj ? mobj : m().emptyMobj(); }
+{ auto mobj = m_pmobj; return mobj ? mobj : m().nullData(); }
 ModuleObject * ModuleObject::pmobj(int level) const
-{ return m_pmobj ? (level > 0 ? m_pmobj->pmobj(level - 1) : m_pmobj) : m().emptyMobj(); }
+{ return m_pmobj ? (level > 0 ? m_pmobj->pmobj(level - 1) : m_pmobj) : m().nullData(); }
 ModuleObject * ModuleObject::p(int level) const { return pmobj(level); }
 
 ModuleObject * ModuleObject::prevBmobj() const
-{ auto mobj = m_prev_bmobj; return mobj ? mobj : m().emptyMobj(); }
+{ auto mobj = m_prev_bmobj; return mobj ? mobj : m().nullData(); }
 ModuleObject * ModuleObject::nextBmobj() const
-{ auto mobj = m_next_bmobj; return mobj ? mobj : m().emptyMobj(); }
+{ auto mobj = m_next_bmobj; return mobj ? mobj : m().nullData(); }
 ModuleObject * ModuleObject::bmobj(int next) const
 {
     ModuleObject *mobj = const_cast<ModuleObject*>(this);
@@ -118,15 +121,15 @@ QString ModuleObject::rname() const { return isStrictName(m_name) ? m_name : mIn
 
 ModuleObject * ModuleObject::cmobj(const QString &rname, bool is_strict) const
 {
-    if (is_strict) return m_cmobjs.value(rname, m().emptyMobj());
+    if (is_strict) return m_cmobjs.value(rname, m().nullData());
     int index = indexOfRname(rname);
-    return index >= 0 ? cmobj(index) : m_cmobjs.value(rname, m().emptyMobj());
+    return index >= 0 ? cmobj(index) : m_cmobjs.value(rname, m().nullData());
 }
 ModuleObject * ModuleObject::c(const QString &rname, bool is_strict) const { return cmobj(rname, is_strict); }
 ModuleObject * ModuleObject::cmobj(int index) const
 {
     int s = m_cmobjs.size();
-    if (index >= s || index < 0) return m().emptyMobj();
+    if (index >= s || index < 0) return m().nullData();
     return (index > s / 2) ? last()->bmobj(index + 1 - s) : first()->bmobj(index);
 }
 ModuleObject * ModuleObject::c(int index) const { return cmobj(index); }
@@ -142,9 +145,9 @@ bool ModuleObject::hasCmobj(ModuleObject *mobj) const
 { return m_cmobjs.contains(mobj->name()); }
 
 ModuleObject * ModuleObject::first() const
-{ auto mobj = m_first_cmobj; return mobj ? mobj : m().emptyMobj(); }
+{ auto mobj = m_first_cmobj; return mobj ? mobj : m().nullData(); }
 ModuleObject * ModuleObject::last() const
-{ auto mobj = m_last_cmobj; return mobj ? mobj : m().emptyMobj(); }
+{ auto mobj = m_last_cmobj; return mobj ? mobj : m().nullData(); }
 
 int ModuleObject::cmobjCount() const { return m_cmobjs.size(); }
 int ModuleObject::size() const { return m_cmobjs.size(); }
@@ -181,7 +184,7 @@ ModuleObject * ModuleObject::rmobj(const QString &rpath) const
 {
     ModuleObject *tar_mobj = const_cast<ModuleObject *>(this);
     foreach (const QString &name, rpath.split(IMOL_MODULE_NAME_SEPARATOR)) {
-        if ((tar_mobj = tar_mobj->cmobj(name))->isEmptyMobj()) return m().emptyMobj();
+        if ((tar_mobj = tar_mobj->cmobj(name))->isEmptyMobj()) return m().nullData();
     }
     return tar_mobj;
 }
@@ -385,7 +388,7 @@ ModuleObject * ModuleObject::append(QObject *context, const QString &name)
     ModuleObject *mobj = m().create(name.isEmpty() ? generateId(this) : name, this);
     if (!insert(context, mobj)) {
         delete mobj;
-        return m().emptyMobj();
+        return m().nullData();
     }
     return mobj;
 }
@@ -818,7 +821,7 @@ void ModuleObject::importFromXml(QObject *context, QXmlStreamReader &xml_reader,
             }
 
             //set current value quietly
-            if (xml_reader.name() == "m") {
+            if (xml_reader.name() == QString("m")) {
                 if (auto_replace) {
                     quiet(true);
                     set(context, value_var);
@@ -830,15 +833,19 @@ void ModuleObject::importFromXml(QObject *context, QXmlStreamReader &xml_reader,
             //set cmobj name
             QString cmobj_name;
 
-            if (xml_reader.name() == "c") {
+            if (xml_reader.name() == QString("c")) {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+                QStringView name_ref = attrs.value("name");
+#else
                 QStringRef name_ref = attrs.value("name");
+#endif
                 if (name_ref.isNull() || name_ref.isEmpty()) {
                     WLOG << "<m><" << context << "> no name specified in xml: ("<< xml_reader.lineNumber() << ", " << xml_reader.columnNumber() << ")";
                     xml_reader.skipCurrentElement();
                     continue;
                 }
                 cmobj_name = QString().append(name_ref);
-            } else if (xml_reader.name() == "l") {
+            } else if (xml_reader.name() == QString("l")) {
                 cmobj_name = mIndex(index_hash.value(tar_mobj, 0));
             } else {
                 cmobj_name = QString().append(xml_reader.name());
@@ -954,7 +961,11 @@ void ModuleObject::importFromBin(QObject *context, const QByteArray &bytes, bool
         if (type_id != QMetaType::type(type_name.toStdString().c_str())) {
             WLOG << "<m> import invalid variant: " << fullName() << " with type \"" << type_name << "\" and id = " << type_id;
         } else {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+            var = QVariant(static_cast<QMetaType>(type_id), QMetaType::create(type_id, var_data.data()));
+#else
             var = QVariant(type_id, QMetaType::create(type_id, var_data.data()));
+#endif
         }
 
     }
@@ -1209,16 +1220,17 @@ bool ModuleManager::exportToJson(QObject *context, const QString &full_name, con
 
 QString ModuleManager::convertToUtf8(const QByteArray &content)
 {
-    QTextCodec::ConverterState state;
-    QTextCodec *codec = QTextCodec::codecForName("UTF-8");
-    QString text = codec->toUnicode(content.constData(), content.size(), &state);
-    if (state.invalidChars > 0) {
-        text = QTextCodec::codecForName("GBK")->toUnicode(content);
-    } else {
-        text = content;
-    }
-
-    return text;
+    // QTextCodec::ConverterState state;
+    // QTextCodec *codec = QTextCodec::codecForName("UTF-8");
+    // QString text = codec->toUnicode(content.constData(), content.size(), &state);
+    // if (state.invalidChars > 0) {
+    //     text = QTextCodec::codecForName("GBK")->toUnicode(content);
+    // } else {
+    //     text = content;
+    // }
+    //
+    // return text;
+    return content;
 }
 
 QVariant ModuleManager::readFromJsonAsVariant(const QString &json_path)

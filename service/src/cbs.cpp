@@ -1,8 +1,11 @@
 #include "cbs.h"
+
+#include "ve/core/imol/core/logmanager.h"
 #include "ve/service/compact_binary_service.h"
 
 #include <QElapsedTimer>
 #include <QDataStream>
+#include <QThread>
 
 #include "ve/core/imol/core/commandmanager.h"
 
@@ -88,7 +91,7 @@ template<typename S> void c_send_pkg(S& session, FlagT flag, const std::string& 
     QDataStream ds(&pkg, QIODevice::WriteOnly);
     ds << flag << QString::fromStdString(path);
 //    ILOG << "@@ client send pkg len: " << pkg.size() << ", data: " << pkg.toHex(' ');
-    session.send(pkg.data(), pkg.size());
+    session.async_send(pkg.data(), pkg.size());
 }
 template<typename S, typename T> void c_send_pkg_content(S& session, FlagT flag, const std::string& path, const T& content)
 {
@@ -98,11 +101,11 @@ template<typename S, typename T> void c_send_pkg_content(S& session, FlagT flag,
     ds << flag << len32 << QString::fromStdString(path) << content;
     int offset = 0;
     fix_pkg_offset(flag, pkg, ds, offset);
-//    ILOG << "@@ client send pkg len: " << pkg.size() << ", offs: " << offset << ", data: " << pkg.left(10).toHex(' ') << " ... " << pkg.right(10).toHex(' ');
-    session.send(pkg.data() + offset, pkg.size() - offset); // should async?
+    // ILOG << "@@ client send pkg len: " << pkg.size() << ", offs: " << offset << ", data: " << pkg.left(10).toHex(' ') << " ... " << pkg.right(10).toHex(' ');
+    session.async_send(pkg.data() + offset, pkg.size() - offset); // should async?
 }
 
-template<bool HasID> void send_pkg(SessionPtr& session_ptr, FlagT f, IdT id)
+template<bool HasID> void s_send_pkg(SessionPtr& session_ptr, FlagT f, IdT id)
 {
     QByteArray pkg;
     QDataStream ds(&pkg, QIODevice::WriteOnly);
@@ -111,7 +114,7 @@ template<bool HasID> void send_pkg(SessionPtr& session_ptr, FlagT f, IdT id)
 //    ILOG << "** server send pkg len: " << pkg.size() << ", data: " << pkg.toHex(' ');
     session_ptr->send(pkg.data(), pkg.size());
 }
-template<bool HasID, typename T> void send_pkg_content(asio2::tcp_session* session, FlagT f, IdT id, const T& content)
+template<bool HasID, typename T> void s_send_pkg_content(asio2::tcp_session* session, FlagT f, IdT id, const T& content)
 {
     QByteArray pkg;
     QDataStream ds(&pkg, QIODevice::WriteOnly);
@@ -128,8 +131,12 @@ template<bool HasID, typename T> void send_pkg_content(asio2::tcp_session* sessi
 
 }
 
-CBSServer::CBSServer(ve::Data *d) : _d(d)
+CBSServer::CBSServer(ve::Data *d) : _d(d),
+    _iopool(4), // todo
+    _server(_iopool)
 {
+    _iopool.start();
+
     _server.bind_recv(VE_MEMBER_2(onSessionRecv))
     .bind_connect(VE_MEMBER_1(onClientConnected))
     .bind_disconnect(VE_MEMBER_1(onClientDisconnected));
@@ -183,7 +190,7 @@ server_recv:
     bool need_more_data = internal::pkg_len_ctrl(ds, f_all, cache.size(), d(client_d, "progress"));
     if (need_more_data) return;
 
-//    SLOG << SERVER_TAG << "** server recv len:" << cache.size() << ", data: " << cache.left(10).toHex(' ') << " ... " << cache.right(10).toHex(' ');
+    // SLOG << SERVER_TAG << "** server recv len:" << cache.size() << ", data: " << cache.left(10).toHex(' ') << " ... " << cache.right(10).toHex(' ');
 
     QString path;
     ds >> path;
@@ -191,7 +198,7 @@ server_recv:
     auto target_d = data::at(path);
     if (!target_d || target_d->isEmptyMobj()) {
         ELOG << SERVER_TAG << "session [" << key.c_str() << "] invalid target path: \"" << path << "\"";
-        internal::send_pkg<false>(session_ptr, m_error, 0);
+        internal::s_send_pkg<false>(session_ptr, m_error, 0);
         cache.clear(); // abandon
         return;
     }
@@ -207,9 +214,9 @@ server_recv:
         if (f_command == c_echo) {
             ILOG << SERVER_TAG << "session [" << key.c_str() << "] echo " << path << recursive_tag;
             if (is_recursive) {
-                internal::send_pkg_content<false>(session_ptr.get(), m_response | f_low, 0, qCompress(target_d->exportToBin(), 1));
+                internal::s_send_pkg_content<false>(session_ptr.get(), m_response | f_low, 0, qCompress(target_d->exportToBin(), 1));
             } else {
-                internal::send_pkg_content<false>(session_ptr.get(), m_response | f_low, 0, target_d->get());
+                internal::s_send_pkg_content<false>(session_ptr.get(), m_response | f_low, 0, target_d->get());
             }
         } else if (f_command == c_pub) {
             if (is_recursive) {
@@ -220,8 +227,8 @@ server_recv:
                 if (internal::transaction_need_more_ctrl(need_more_data, ds, var)) target_d->set(client_d, var);
             }
             if (!need_more_data) {
-                ILOG << SERVER_TAG << "session [" << key.c_str() << "] publish " << path << recursive_tag;
-                internal::send_pkg<false>(session_ptr, m_response | f_low, 0);
+                // ILOG << SERVER_TAG << "session [" << key.c_str() << "] publish " << path << recursive_tag;
+                internal::s_send_pkg<false>(session_ptr, m_response | f_low, 0);
             }
         } else if (f_command == c_sub) {
             ILOG << SERVER_TAG << "session [" << key.c_str() << "] subscribe " << path << recursive_tag;
@@ -232,22 +239,22 @@ server_recv:
 
             if (is_recursive) {
                 async_connect_f(&ve::Data::changed, [=, session = session_ptr.get()] {
-//                    ILOG << "** server async post " << target_d->fullName() << " id " << id << " <recursive>";
-                    internal::send_pkg_content<true>(session, m_notify | f_low, id, qCompress(target_d->exportToBin(), 1));
+                    // ILOG << "** server async post " << target_d->fullName() << " id " << id << " <recursive>";
+                    internal::s_send_pkg_content<true>(session, m_notify | f_low, id, qCompress(target_d->exportToBin(), 1));
                 });
             } else {
                 async_connect_f(&ve::Data::changed, [=, session = session_ptr.get()] {
-//                    ILOG << "** server async post " << target_d->fullName() << " id " << id << " <single>";
-                    internal::send_pkg_content<true>(session, m_notify | f_low, id, target_d->get());
+                    // ILOG << "** server async post " << target_d->fullName() << " id " << id << " <single>";
+                    internal::s_send_pkg_content<true>(session, m_notify | f_low, id, target_d->get());
                 });
             }
             client_d->set(target_d, "id", static_cast<IdT>(id + 1));
 
-            internal::send_pkg<true>(session_ptr, m_response | f_low, id);
+            internal::s_send_pkg<true>(session_ptr, m_response | f_low, id);
         } else if (f_command == c_cancel) {
             ILOG << SERVER_TAG << "session [" << key.c_str() << "] unsubscribe " << path;
             target_d->disconnect(client_d); // cannot disconnect single signal
-            internal::send_pkg<false>(session_ptr, m_response | c_cancel, 0);
+            internal::s_send_pkg<false>(session_ptr, m_response | c_cancel, 0);
         }
     }
 
@@ -330,14 +337,20 @@ template<bool R> void CBSClient::execPublish(const std::string &remote_path, Dat
 {
     _mutex.lock();
     std::lock_guard<std::mutex> lc(_cm);
+    // static unsigned long long cnt = 0;
+    // SLOG << cnt << " +++ !!!! thread:" << QThread::currentThread();
     if constexpr (R) {
         internal::c_send_pkg_content(_client, m_request | c_pub | o_recursive, remote_path, qCompress(local_data->exportToBin(), 1));
     } else {
         internal::c_send_pkg_content(_client, m_request | c_pub, remote_path, local_data->get());
     }
+    // auto t0 = std::chrono::high_resolution_clock::now();
     if (_cva.wait_for(_cm, std::chrono::milliseconds(1000)) == std::cv_status::timeout) {
         ELOG << CLIENT_TAG << "publish timeout";
     }
+    // auto t1 = std::chrono::high_resolution_clock::now();
+    // SLOG << cnt << " --- !!!! " << ((t1 - t0).count() / 1000) << "us";
+    // cnt++;
     _mutex.unlock();
 }
 
@@ -449,7 +462,11 @@ client_recv:
         return;
     }
 
-    if (f_msg != m_notify) _cva.notify_one(); // sync frame finished
+    if (f_msg != m_notify) {
+        std::lock_guard<std::mutex> lc(_cm);
+        _cva.notify_one(); // sync frame finished
+        // SLOG << CLIENT_TAG << "!!!!!!notify " << f_msg << ", thread: " << QThread::currentThread();
+    }
 
     if (internal::cache_contains_more_ctrl(need_more_data, ds, _cache)) goto client_recv;
 }

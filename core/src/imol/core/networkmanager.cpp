@@ -352,7 +352,11 @@ NetworkHandle::NetworkHandle(NetworkType net_type, QAbstractSocket *socket, cons
 
     //process native signals
     connect(m_socket, &QAbstractSocket::readyRead, this, &NetworkHandle::onReceive);
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    connect(m_socket, &QAbstractSocket::errorOccurred, this,
+#else
     connect(m_socket, static_cast<void (QAbstractSocket::*)(QAbstractSocket::SocketError)>(&QAbstractSocket::error), this,
+#endif
             [this] (QAbstractSocket::SocketError socket_error) {
         const QMetaObject &enum_obj = QAbstractSocket::staticMetaObject;
         QMetaEnum me_cmd_type = enum_obj.enumerator(enum_obj.indexOfEnumerator("SocketError"));
