@@ -44,7 +44,7 @@ namespace imol {
 //! \brief The relative name (\short rname) gives two way of naming a mobj, absolute name or \def ID_START plus its index
 //! \brief The relative path (\short rpath) describes a search path of mobj tree branch, combinds all rnames with \def NAME_SEPARATOR
 //!
-//! \author LuoQi
+//! \author Thilo
 //!
 class CORESHARED_EXPORT ModuleObject : public QObject
 {

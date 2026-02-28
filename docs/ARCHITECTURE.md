@@ -55,7 +55,7 @@ VE 的数据核心起源于 **imol**（`imol::ModuleObject`），最初基于 Qt
 │  │   └── echo / publish / subscribe (single | recursive)    │
 │  └── CommandServer       TCP 文本命令服务                    │
 │                                                             │
-│  (mxhelper 中，不在 ve 仓库内)                               │
+│  (MozHMI 中，不在 ve 仓库内)                                 │
 │  ├── WebSocket Server    JSON 协议（JS/QML 前端通信）        │
 │  └── QuickNode           QML 桥接层（VEData/veNode）         │
 │                                                             │
@@ -229,8 +229,8 @@ ve::Object (纯C++)              imol::ModuleObject (Qt)
 
 ### 3.3 各端适配散落在项目外
 
-- **QML 适配**（QuickNode）在 mxhelper 中，不在 ve 仓库
-- **JS 适配**（veservice.js + WebSocket Server）在 mxhelper 中
+- **QML 适配**（QuickNode）在 MozHMI 中，不在 ve 仓库
+- **JS 适配**（veservice.js + WebSocket Server）在 MozHMI 中
 - **纯 C++ 适配**（模板 Data<T>）未纳入，且"不如 QVariant 好使"
 
 每到新项目就需要"略微改动以适配"——说明适配层的抽象不够。
@@ -466,13 +466,13 @@ private:
 };
 
 // QuickNode (QML 用) 从 QNode 继承，注册为 QML 类型
-// 这层代码从 mxhelper 移入 ve-qt
+// 这层代码从 MozHMI 移入 ve-qt
 
 } // namespace ve::qt
 ```
 
 **好处**：
-- mxhelper 中的 QuickNode 直接移入 ve 仓库，不再散落
+- MozHMI 中的 QuickNode 直接移入 ve 仓库，不再散落
 - ve::Node 和 QObject 信号自动桥接，不需要手写 connect
 - QVariant ↔ Value 转换只在这一层发生
 
@@ -614,7 +614,7 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 ### Phase 0：整理（当前可做）
 
 - [x] 总结现有架构（本文档）
-- [ ] 将 mxhelper 中的 WebSocket Server、QuickNode、veservice.js 代码梳理，明确哪些应该移入 ve
+- [ ] 将 MozHMI 中的 WebSocket Server、QuickNode、veservice.js 代码梳理，明确哪些应该移入 ve
 - [ ] 确定 ve::Value 的类型集合（是否需要扩展 Bytes 之外的类型）
 
 ### Phase 1：Core 层去 Qt 依赖
@@ -629,7 +629,7 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 ### Phase 2：适配层
 
 - [ ] **ve-qt**：实现 QNode 桥接、QVariant ↔ Value 转换
-- [ ] **ve-qt**：将 QuickNode 从 mxhelper 移入，基于 QNode 重构
+- [ ] **ve-qt**：将 QuickNode 从 MozHMI 移入，基于 QNode 重构
 - [ ] **ve-js**：实现 VeNode（JS 树代理），与 veservice.js 协议对接
 - [ ] **ve-js**：提供 React hooks（useVeValue, useVeChildren）
 - [ ] CBS/WebSocket/Command Server 保持基本不变，协议层稳定
@@ -669,4 +669,4 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 *文档版本: 1.0.0*
 *更新日期: 2026-02-26*
-*作者: LuoQi (ve 作者) + AI 辅助整理*
+*Author: Thilo*
