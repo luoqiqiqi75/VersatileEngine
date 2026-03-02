@@ -39,7 +39,11 @@ endforeach()
 
 # --- Build options ---
 if(NOT DEFINED BUILD_SHARED_LIBS)
-    set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries")
+    if(IOS)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
+    else()
+        set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries")
+    endif()
 endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)

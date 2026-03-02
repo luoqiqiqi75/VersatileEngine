@@ -19,7 +19,10 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QThread>
+#if defined(Q_OS_IOS) || defined(Q_OS_ANDROID)
+#else
 #include <QProcess>
+#endif
 #include <QRandomGenerator>
 #include <QFile>
 
@@ -1319,6 +1322,9 @@ void Terminal::execProcess(const QString &param)
         return;
     }
 
+#if defined(Q_OS_IOS) || defined(Q_OS_ANDROID)
+    out(DTR("process execution is not supported"));
+#else
     if (!is_wait) {
         out(DTR("process %1 starts %2").arg(program, QProcess(this).startDetached(program, params) ? "succeed" : "failed"));
     } else {
@@ -1333,4 +1339,5 @@ void Terminal::execProcess(const QString &param)
         QByteArray std_err = process.readAllStandardError();
         if (!std_err.isEmpty()) error(QString::fromLocal8Bit(std_err));
     }
+#endif
 }
