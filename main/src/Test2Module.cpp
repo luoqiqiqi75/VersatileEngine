@@ -34,11 +34,11 @@ void testRecv()
     static int cnt = 0;
     QObject::connect(status_d, &ve::Data::changed, [&] (const QVariant& var) {
         if (var.toBool()) {
-            ISLOG << "start to recv";
+            veLogIs << "start to recv";
             cnt = 0;
             et.start();
         } else {
-            ISLOG << "[recv fin] elapsed: " << et.elapsed() << ", cnt: " << cnt << ", rate = " << (cnt * 1000.0 / et.elapsed());
+            veLogIs << "[recv fin] elapsed: " << et.elapsed() << ", cnt: " << cnt << ", rate = " << (cnt * 1000.0 / et.elapsed());
         }
     });
     QObject::connect(data_d, &ve::Data::changed, [&] {
@@ -62,7 +62,7 @@ void testSend()
 
     send_d->set(nullptr, QVariant::fromValue(ba));
 
-    ILOG << "start send, size = " << ba.size() / 1024.0 << "kb" << ", delay = " << timeout / 1000.0 << "s";
+    veLogI << "start send, size = " << ba.size() / 1024.0 << "kb" << ", delay = " << timeout / 1000.0 << "s";
     send_cnt = 0;
     ve::client::cbs::publish("test.status", true);
 
@@ -72,7 +72,7 @@ void testSend()
         ve::client::cbs::publish("test.data", send_d);
         send_cnt++;
     }
-    ISLOG << "send fin  cnt:" << send_cnt << "time passed " << et.elapsed() << ", tps: " << (1.0 * send_cnt * ba.size() / 1024 / 1024 * 1000 / et.elapsed());
+    veLogIs << "send fin  cnt:" << send_cnt << "time passed " << et.elapsed() << ", tps: " << (1.0 * send_cnt * ba.size() / 1024 / 1024 * 1000 / et.elapsed());
 
     ve::client::cbs::publish("test.status", QVariant(false));
 

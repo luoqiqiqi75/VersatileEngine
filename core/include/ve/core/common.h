@@ -10,8 +10,6 @@
 
 #include "ve/global.h"
 
-#include <QJsonValue>
-
 #include "data.h"
 #include "log.h"
 #include "factory.h"

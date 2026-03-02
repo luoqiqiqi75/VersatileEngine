@@ -1,0 +1,29 @@
+# =============================================================================
+# _local.cmake — 本地开发配置（不提交到 Git）
+# =============================================================================
+# 复制本文件为 _local.cmake，根据你的机器环境修改：
+#   cp cmake/_local.cmake.example cmake/_local.cmake
+#
+# 此文件在 .gitignore 中，任何 cmake/_*.cmake 都不会被提交。
+# =============================================================================
+
+# --- Qt 安装路径 ---
+# 不同机器 Qt 路径不同，在这里设置后就不用每次 -DCMAKE_PREFIX_PATH=...
+# set(CMAKE_PREFIX_PATH "C:/Qt/6.10.0/msvc2022_64" CACHE PATH "" FORCE)
+# set(CMAKE_PREFIX_PATH "C:/Qt/5.15.2/msvc2019_64" CACHE PATH "" FORCE)
+
+# --- 构建类型 ---
+# if(NOT CMAKE_BUILD_TYPE)
+#     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "" FORCE)
+# endif()
+
+# --- 模块开关 ---
+# set(BUILD_CORE    ON  CACHE BOOL "" FORCE)
+# set(BUILD_SERVICE ON  CACHE BOOL "" FORCE)
+# set(BUILD_MAIN    OFF CACHE BOOL "" FORCE)
+
+# --- 日志级别 ---
+# set(LOG_MIN_FILE_LEVEL 2)   # 0=Debug, 1=Info, 2=Warning, 3=Error, 4=Critical
+
+# --- 共享/静态库 ---
+# set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)

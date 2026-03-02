@@ -16,6 +16,7 @@ VE_REGISTER_VERSION(ve.core, 3)
 #include <QKeyEvent>
 #include <QAbstractButton>
 #include <QTimer>
+#include <QJsonValue>
 
 #include "imol/program/server.h"
 #include "ve/core/imol/core/logmanager.h"
