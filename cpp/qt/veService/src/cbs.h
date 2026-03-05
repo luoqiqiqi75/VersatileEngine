@@ -69,7 +69,7 @@ private:
     Data* _d = nullptr;
     asio2::iopool _iopool;
     asio2::tcp_server _server;
-    HashMap<std::size_t, QByteArray> _cache_map;
+    UnorderedHashMap<std::size_t, QByteArray> _cache_map;
 };
 
 class CBSClient
@@ -98,7 +98,7 @@ private:
     asio2::tcp_client _client;
     std::mutex _mutex, _cm;
     std::condition_variable_any _cva;
-    HashMap<IdT, std::pair<std::string, Data*>> _map;
+    UnorderedHashMap<IdT, std::pair<std::string, Data*>> _map;
     List<std::pair<std::string, Data*>> _pending;
     QByteArray _cache;
 };

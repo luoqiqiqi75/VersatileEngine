@@ -16,9 +16,9 @@ template<class Signature>
 class Factory : public Object, public Dict<std::function<Signature>>
 {
 public:
-    typedef std::function<Signature> FunctionT;
-    typedef basic::FInfo<FunctionT> FInfoT;
-    typedef typename FInfoT::RetT RetT;
+    using FunctionT = std::function<Signature>;
+    using FInfoT    = basic::FInfo<FunctionT>;
+    using RetT      = typename FInfoT::RetT;
 
 public:
     explicit Factory(const std::string& name) : Object(name) {}

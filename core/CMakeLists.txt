@@ -28,6 +28,7 @@ if(WIN32)
 else()
     set(VE_CORE_LIBRARY ve)
 endif()
+set(VE_CORE_LIBRARY ${VE_CORE_LIBRARY} PARENT_SCOPE)
 
 add_library(${VE_CORE_LIBRARY} SHARED
     ${_CORE_ALL}

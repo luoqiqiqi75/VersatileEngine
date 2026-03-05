@@ -144,11 +144,11 @@ DataWriter* Ros2FastDDSServer::messageWriter(const std::string& name) const
     return nullptr;
 }
 
-ve::HashMap<int, Ros2FastDDSServer*>* g_ros2_fastdss_server_map = nullptr;
+ve::UnorderedHashMap<int, Ros2FastDDSServer*>* g_ros2_fastdss_server_map = nullptr;
 
 Ros2FastDDSServer* globalRos2FastDDSServer(int domain_id)
 {
-    static ve::HashMap<int, Ros2FastDDSServer*> i;
+    static ve::UnorderedHashMap<int, Ros2FastDDSServer*> i;
     if (auto s = i.value(domain_id)) return s;
 
     g_ros2_fastdss_server_map = &i;

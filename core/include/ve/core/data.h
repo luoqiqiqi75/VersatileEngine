@@ -46,8 +46,8 @@ public:
     std::uint8_t control() const;
     std::uint8_t control(short c);
 
-    template<DataFlags F> inline bool flag() const { return control() | F; }
-    template<DataFlags F> inline void setFlag(bool b) { control(b ? control() | F : control() & ~F); }
+    template<DataFlags F> bool flag() const { return control() | F; }
+    template<DataFlags F> void setFlag(bool b) { control(b ? control() | F : control() & ~F); }
 
     virtual std::string dataType() const = 0;
 
@@ -69,7 +69,7 @@ template<typename T, class = void>
 struct DataTypeHelper
 { using DataT = AnyData<basic::_t_remove_rc<T>>; };
 template<typename T>
-struct DataTypeHelper<T, basic::enable_if_void<std::is_convertible<T, std::string>::value>>
+struct DataTypeHelper<T, std::enable_if_t<std::is_convertible_v<T, std::string>>>
 { using DataT = AnyData<std::string>; };
 
 template<typename T>
@@ -77,27 +77,27 @@ using TypedData = typename DataTypeHelper<T>::DataT;
 
 template<typename T, class = void> struct DataSerializeHelper
 { enum { IsValid = false }; using IsCommonT = bool; };
-template<typename T> struct DataSerializeHelper<T, basic::enable_if_void<std::is_same<T, AbstractDataPointer>::value || std::is_convertible<T, AbstractData*>::value>>
+template<typename T> struct DataSerializeHelper<T, std::enable_if_t<std::is_same_v<T, AbstractDataPointer> || std::is_convertible_v<T, AbstractData*>>>
 { enum { IsValid = true }; using IsDataPointerT = bool; };
-template<typename T> struct DataSerializeHelper<T, basic::enable_if_void<std::is_convertible<T, std::string>::value>>
+template<typename T> struct DataSerializeHelper<T, std::enable_if_t<std::is_convertible_v<T, std::string>>>
 { enum { IsValid = true }; using IsStringT = bool; using IsCommonT = bool; };
-template<typename T> struct DataSerializeHelper<T, basic::enable_if_void<T::ListLike::value>>
+template<typename T> struct DataSerializeHelper<T, std::enable_if_t<T::ListLike::value>>
 { enum { IsValid = true }; using IsListT = bool; using IsContainerT = bool; };
-template<typename T> struct DataSerializeHelper<T, basic::enable_if_void<T::DictLike::value>>
+template<typename T> struct DataSerializeHelper<T, std::enable_if_t<T::DictLike::value>>
 { enum { IsValid = true }; using IsDictT = bool; using IsContainerT = bool; };
 
 namespace serialize {
 
 // --- string serialization ---
 
-template<typename T> inline basic::enable_if_t<!DataSerializeHelper<T>::IsValid && !basic::is_inputable<T>::value, bool> fromString(const std::string&, T&)
+template<typename T> inline std::enable_if_t<!DataSerializeHelper<T>::IsValid && !basic::is_inputable<T>::value, bool> fromString(const std::string&, T&)
 { return false; }
-template<typename T> inline basic::enable_if_t<!DataSerializeHelper<T>::IsValid && basic::is_inputable<T>::value, bool> fromString(const std::string& from, T& value)
+template<typename T> inline std::enable_if_t<!DataSerializeHelper<T>::IsValid && basic::is_inputable<T>::value, bool> fromString(const std::string& from, T& value)
 { std::istringstream iss(from); iss >> value; return true; }
 
-template<typename T> inline basic::enable_if_t<!DataSerializeHelper<T>::IsValid && !basic::is_outputable<T>::value, bool> toString(const T&, std::string&)
+template<typename T> inline std::enable_if_t<!DataSerializeHelper<T>::IsValid && !basic::is_outputable<T>::value, bool> toString(const T&, std::string&)
 { return false; }
-template<typename T> inline basic::enable_if_t<!DataSerializeHelper<T>::IsValid && basic::is_outputable<T>::value, bool> toString(const T& value, std::string& to)
+template<typename T> inline std::enable_if_t<!DataSerializeHelper<T>::IsValid && basic::is_outputable<T>::value, bool> toString(const T& value, std::string& to)
 { std::ostringstream oss; oss << value; to = oss.str(); return true; }
 
 template<typename T> inline typename DataSerializeHelper<T>::IsStringT fromString(const std::string& from, T& value) { value = from; return true; }
@@ -138,13 +138,14 @@ template<typename T> inline typename DataSerializeHelper<T>::IsDictT fromString(
 { return false; }
 template<typename T> inline typename DataSerializeHelper<T>::IsDictT toString(const T& value, std::string& to)
 {
+    using Access = typename T::KVAccessT;
     std::ostringstream oss;
     oss << "{";
     std::size_t cnt = 0;
     std::string s;
     for (const auto& kv : value) {
-        if (!toString(kv.second, s)) {}
-        oss << kv.first << ": " << s;
+        if (!toString(Access::value(kv), s)) {}
+        oss << Access::key(kv) << ": " << s;
         if (++cnt < value.size()) oss << ", ";
     }
     oss << "}";
@@ -154,20 +155,20 @@ template<typename T> inline typename DataSerializeHelper<T>::IsDictT toString(co
 
 // --- yaml serialization ---
 
-PRIVATE_DECLARE_T_FUNC_CHECKER(is_yaml_decodable, bool, decltype(YAML::convert<T>::decode(YAML::Node(), basic::_t_static_var_helper<T>::var)));
-PRIVATE_DECLARE_T_FUNC_CHECKER(is_yaml_encodable, YAML::Node, decltype(YAML::convert<T>::encode(basic::_t_static_var_helper<T>::var)));
+VE_DECLARE_T_FUNC_CHECKER(is_yaml_decodable, bool, decltype(YAML::convert<T>::decode(YAML::Node(), basic::_t_static_var_helper<T>::var)));
+VE_DECLARE_T_FUNC_CHECKER(is_yaml_encodable, YAML::Node, decltype(YAML::convert<T>::encode(basic::_t_static_var_helper<T>::var)));
 
-template<typename T> inline basic::enable_if_t<!is_yaml_decodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> fromYaml(const YAML::Node& from, T& value)
+template<typename T> inline std::enable_if_t<!is_yaml_decodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> fromYaml(const YAML::Node& from, T& value)
 { return false; }
-template<typename T> inline basic::enable_if_t<!is_yaml_encodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> toYaml(const T& value, YAML::Node& to)
+template<typename T> inline std::enable_if_t<!is_yaml_encodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> toYaml(const T& value, YAML::Node& to)
 { return false; }
 
-template<typename T> inline basic::enable_if_t<is_yaml_decodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> fromYaml(const YAML::Node& from, T& value)
+template<typename T> inline std::enable_if_t<is_yaml_decodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> fromYaml(const YAML::Node& from, T& value)
 {
     try { return YAML::convert<T>::decode(from, value); }
     catch (const std::exception&) { return false; }
 }
-template<typename T> inline basic::enable_if_t<is_yaml_encodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> toYaml(const T& value, YAML::Node& to)
+template<typename T> inline std::enable_if_t<is_yaml_encodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> toYaml(const T& value, YAML::Node& to)
 {
     try { to = YAML::convert<T>::encode(value); }
     catch (const std::exception&) { return false; }
@@ -193,18 +194,20 @@ template<typename T> inline typename DataSerializeHelper<T>::IsListT toYaml(cons
 
 template<typename T> inline typename DataSerializeHelper<T>::IsDictT fromYaml(const YAML::Node& from, T& value)
 {
+    using Access = typename T::KVAccessT;
     for (auto& kv : value) {
-        try { fromYaml(from[kv.first], kv.second); }
+        try { fromYaml(from[Access::key(kv)], Access::value(kv)); }
         catch (const std::exception&) { continue; }
     }
     return true;
 }
 template<typename T> inline typename DataSerializeHelper<T>::IsDictT toYaml(const T& value, YAML::Node& to)
 {
+    using Access = typename T::KVAccessT;
     for (const auto& kv : value) {
-        if (kv.first.size() > 0 && kv.first[0] == '_') continue;
-        auto n = to[kv.first];
-        toYaml(kv.second, n);
+        if (Access::key(kv).size() > 0 && Access::key(kv)[0] == '_') continue;
+        auto n = to[Access::key(kv)];
+        toYaml(Access::value(kv), n);
     }
     return true;
 }
@@ -213,7 +216,7 @@ template<typename T> inline typename DataSerializeHelper<T>::IsDictT toYaml(cons
 
 ///
 
-#define PRIVATE_DATA_UPDATE(...) \
+#define VE_DATA_UPDATE(...) \
     listener()->trigger(DATA_ABOUT_TO_CHANGE); \
     if (!flag<CHANGEABLE>()) return false; \
     __VA_ARGS__; \
@@ -238,7 +241,7 @@ public:
 
     template<typename VRef>
     bool update(VRef&& v)
-    { PRIVATE_DATA_UPDATE(set(std::forward<VRef>(v))); }
+    { VE_DATA_UPDATE(set(std::forward<VRef>(v))); }
     bool updateIfDifferent(const V& v)
     { return basic::equals(this->get(), v) ? false : update(v); }
 
@@ -248,12 +251,12 @@ public:
     std::string dataType() const override { return basic::Meta<V>::typeName(); }
 
     bool fromString(const std::string& s) override
-    { PRIVATE_DATA_UPDATE(if (!serialize::fromString(s, ref())) return false); }
+    { VE_DATA_UPDATE(if (!serialize::fromString(s, ref())) return false); }
     std::string toString() const override
     { std::string s; return serialize::toString(this->get(), s) ? s : "@invalid"; }
 
     bool fromYaml(const YAML::Node& n) override
-    { PRIVATE_DATA_UPDATE(if (!serialize::fromYaml(n, ref())) return false); }
+    { VE_DATA_UPDATE(if (!serialize::fromYaml(n, ref())) return false); }
     YAML::Node toYaml() const override
     { YAML::Node n; return serialize::toYaml(this->get(), n) ? n : YAML::Node(); }
 
@@ -266,7 +269,7 @@ class AnyData<void> : public AbstractData
 {
 public:
     bool update()
-    { PRIVATE_DATA_UPDATE(); }
+    { VE_DATA_UPDATE(); }
 
     std::string dataType() const override { return basic::Meta<void>::typeName(); }
 
@@ -301,10 +304,10 @@ public:
     std::size_t mapIndex(const std::string& key, std::size_t index) { return index_mapping_[key] = index; }
 
     const CacheT& cache() const { return *cache_; }
-    basic::enable_if_t<!RO, CacheT&> cache() { return *cache_; }
+    std::enable_if_t<!RO, CacheT&> cache() { return *cache_; }
 
     const T& operator[] (const std::string& key) const { return cache_->operator[](index_mapping_.value(key)); }
-    basic::enable_if_t<!RO, T&> operator[] (const std::string& key) { return cache_->operator[](index_mapping_.value(key)); }
+    std::enable_if_t<!RO, T&> operator[] (const std::string& key) { return cache_->operator[](index_mapping_.value(key)); }
 
 private:
     CacheT* cache_;
@@ -318,8 +321,8 @@ struct PrivateDataContainerBase
     template<typename T> inline static Ptr<ValueT<T>> newDataPointer() { return Ptr<ValueT<T>>(new ValueT<T>()); }
     template<typename T> inline static Ptr<ValueT<T>> newDataPointer(T&& t) { return Ptr<ValueT<T>>(new ValueT<T>(std::forward<T>(t))); }
 
-    inline const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
-    inline DerivedT* dPtr() { return static_cast<DerivedT*>(this); }
+    const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
+    DerivedT* dPtr() { return static_cast<DerivedT*>(this); }
 
     AbstractData* rawDataAt(const KeyT& k) const { return dPtr()->value(k).get(); }
     template<typename T> ValueT<T>* dataAt(const KeyT& k) const { return dynamic_cast<ValueT<T>*>(rawDataAt(k)); }
@@ -339,7 +342,7 @@ public:
     template<typename T> void appendRaw(T&& t) { append(newDataPointer(std::forward<T>(t))); }
     template<typename T, typename... Ts> void appendRaw(T&& t, Ts&&... ts) { appendRaw(std::forward<T>(t)); appendRaw(std::forward<Ts>(ts)...); }
     template<typename T> void appendEmpty() { append(newDataPointer<T>()); }
-    template<typename T, typename... Ts> basic::enable_if_void<(sizeof...(Ts) > 0)> appendEmpty() { appendEmpty<T>(); appendEmpty<Ts...>(); }
+    template<typename T, typename... Ts> std::enable_if_t<(sizeof...(Ts) > 0)> appendEmpty() { appendEmpty<T>(); appendEmpty<Ts...>(); }
 
     template<typename... Ts> static DataList fromRaw(Ts&&... values)
     { DataList l; l.reserve(sizeof...(Ts)); l.appendRaw(std::forward<Ts>(values)...); return l; }
@@ -355,7 +358,7 @@ public:
 class VE_API DataDict : public Dict<AbstractDataPointer>, public PrivateDataContainerBase<DataDict, std::string>
 {
 public:
-    using Dict<AbstractDataPointer>::HashMap;
+    using Dict<AbstractDataPointer>::Dict;
 
     template<typename T> DataDict& insertRaw(const std::string& key, T&& t) { this->operator [](key) = newDataPointer(std::forward<T>(t)); return *this; }
     template<typename... Ts> static DataDict fromRaw(const Strings& keys, Ts... values) { return DataDict(keys, DataList::fromRaw(values...)); }
@@ -387,7 +390,7 @@ public:
     AbstractData* find(const std::string& key, std::string& rest) const;
 
     template<typename DataT>
-    inline auto insertNew(const std::string& key, DataT* new_data, bool* ok = nullptr, bool auto_delete = true)
+    auto insertNew(const std::string& key, DataT* new_data, bool* ok = nullptr, bool auto_delete = true)
     {
         if (auto d = find(key)) {
             if (ok) *ok = false;
@@ -424,13 +427,13 @@ VE_API TypedData<void>* createVoid(const std::string& key, bool* ok = nullptr);
 VE_API TypedData<void>* createTrigger(const std::string& key, const Object::ActionT& action, bool trigger_now = false);
 VE_API TypedData<void>* createTrigger(const std::string& key, Object* observer, const Object::ActionT& action, bool trigger_now = false);
 
-#define PRIVATE_D_FUNC_IMPL(Type, ...) auto ptr = d<Type>(key); if (!ptr) return false; __VA_ARGS__; return true
+#define VE_D_FUNC_IMPL(Type, ...) auto ptr = d<Type>(key); if (!ptr) return false; __VA_ARGS__; return true
 
-template<typename T> inline bool get(const std::string& key, T& value) { PRIVATE_D_FUNC_IMPL(T, value = ptr->get()); }
+template<typename T> inline bool get(const std::string& key, T& value) { VE_D_FUNC_IMPL(T, value = ptr->get()); }
 template<typename T> inline T get(const std::string& key) { return d<T>(key)->get(); }
-template<typename T> inline bool set(const std::string& key, const T& value) { PRIVATE_D_FUNC_IMPL(T, ptr->set(value)); }
-template<typename T> inline bool update(const std::string& key, const T& value) { PRIVATE_D_FUNC_IMPL(T, ptr->update(value)); }
-inline bool trigger(const std::string& key) { PRIVATE_D_FUNC_IMPL(void, ptr->update()); }
+template<typename T> inline bool set(const std::string& key, const T& value) { VE_D_FUNC_IMPL(T, ptr->set(value)); }
+template<typename T> inline bool update(const std::string& key, const T& value) { VE_D_FUNC_IMPL(T, ptr->update(value)); }
+inline bool trigger(const std::string& key) { VE_D_FUNC_IMPL(void, ptr->update()); }
 
 } // namespace data
 

@@ -37,7 +37,7 @@ private:
 private:
     Data* _d = nullptr;
     asio2::tcp_server _server;
-    HashMap<std::size_t, Data*> _context_map;
+    UnorderedHashMap<std::size_t, Data*> _context_map;
 };
 
 class CommandServerModule : public Module

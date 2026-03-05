@@ -62,7 +62,7 @@ public:
     using StateF = std::function<void()>;
 
 protected:
-    HashMap<State, StateF> f_;
+    UnorderedHashMap<State, StateF> f_;
 
 protected:
     void init() override { if (auto f = f_.value(INIT, NULL)) f(); }
@@ -74,7 +74,7 @@ using ModuleFactory = Factory<Module*()>;
 VE_API ModuleFactory& globalModuleFactory();
 
 template<class C>
-inline basic::enable_if_void<std::is_base_of<Module, C>::value> registerModule(const std::string& key)
+inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(const std::string& key)
 {
     globalModuleFactory().insertOne(key, [=] () -> Module* {
         data::create("_p.global_module_key", std::string(key))->set(key);
@@ -85,7 +85,7 @@ inline basic::enable_if_void<std::is_base_of<Module, C>::value> registerModule(c
 namespace module {
 
 inline Module* instance(const std::string& key) { return globalModuleFactory().instance(key); }
-template<typename T> inline basic::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::string& key)
+template<typename T> inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::string& key)
 { return static_cast<T*>(instance(key)); }
 
 }

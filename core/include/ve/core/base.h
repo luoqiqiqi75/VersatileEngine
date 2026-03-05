@@ -10,12 +10,17 @@
 #include "ve/global.h"
 #include "ve/core/impl/ordered_hashmap.h"
 
-#define PRIVATE_DECLARE_T_CHECKER(Checker, ...) \
+// --- Type-trait generator macros -------------------------------------------
+// VE_DECLARE_T_CHECKER(Name, ...)   → generates is-valid trait via SFINAE
+// VE_DECLARE_T_FUNC_CHECKER(Name, Ret, ...)  → generates function-existence trait
+// VE_INHERIT_CONSTRUCTOR(CTOR, Class, Base)   → inherits + adds converting ctors
+
+#define VE_DECLARE_T_CHECKER(Checker, ...) \
 template<typename T, typename dummy = void> struct Checker : std::false_type {}; \
 template<typename T> struct Checker<T, __VA_ARGS__> : std::true_type {}
 
-#define PRIVATE_DECLARE_T_FUNC_CHECKER(Checker, Ret, ...) \
-PRIVATE_DECLARE_T_CHECKER(Checker, typename std::enable_if<std::is_same<__VA_ARGS__, Ret>::value, void>::type)
+#define VE_DECLARE_T_FUNC_CHECKER(Checker, Ret, ...) \
+VE_DECLARE_T_CHECKER(Checker, std::enable_if_t<std::is_same_v<__VA_ARGS__, Ret>, void>)
 
 constexpr const char* VE_UNDEFINED_OBJECT_NAME = "@undefined";
 
@@ -23,30 +28,42 @@ namespace ve {
 
 namespace basic {
 
-template<bool b, typename T> using enable_if_t = typename std::enable_if<b, T>::type;
-template<bool b> using enable_if_void = typename std::enable_if<b, void>::type;
-template<bool b, typename T> using disable_if_t = typename std::enable_if<!b, T>::type;
+// --- Removed (C++17 standard equivalents) ---
+//   enable_if_t<b,T>  → std::enable_if_t<b,T>
+//   enable_if_void<b>  → std::enable_if_t<b>       (void is default)
+//   disable_if_t<b,T>  → std::enable_if_t<!b,T>
+//   _void_t<...>       → std::void_t<...>
+//   _t_index_sequence   → std::index_sequence
+//   _t_build_index_sequence → std::make_index_sequence
 
-template<class ...> using _void_t = void;
+// --- Type comparability detection ---
+
 template<typename L, typename R, class = void> struct is_comparable : std::false_type {};
-template<typename L, typename R> using _t_comparability = decltype(std::declval<L>() == std::declval<R>());
-template<typename L, typename R> struct is_comparable<L,R,_void_t<_t_comparability<L,R>>> : std::true_type {};
+template<typename L, typename R>
+struct is_comparable<L, R, std::void_t<decltype(std::declval<L>() == std::declval<R>())>> : std::true_type {};
 
-template<typename T> inline static typename std::enable_if<is_comparable<T,T>::value, bool>::type equals(const T& t1, const T& t2) { return t1 == t2; }
-template<typename T> inline static typename std::enable_if<!is_comparable<T,T>::value, bool>::type equals(const T& t1, const T& t2) { return false; }
+template<typename T>
+static bool equals(const T& t1, const T& t2) {
+    if constexpr (is_comparable<T, T>::value) return t1 == t2;
+    else return false;
+}
 
-template<typename...> struct _t_list { typedef void FirstT; };
-template<typename T0, typename... T> struct _t_list<T0, T...> { typedef T0 FirstT; typedef _t_list<T...> RestT; };
-template<typename T0, typename T1, typename... T> struct _t_list<T0, T1, T...> { typedef T0 FirstT; typedef T1 SecondT; typedef _t_list<T...> RestT; };
+// --- Type list (for FInfo arg introspection) ---
 
-template<size_t... Is> struct _t_index_sequence {};
-template<size_t N, size_t... Is> struct _t_build_index_sequence : _t_build_index_sequence<N - 1, N - 1, Is...> {};
-template<size_t... Is> struct _t_build_index_sequence<0, Is...> : _t_index_sequence<Is...> {};
+template<typename...> struct _t_list { using FirstT = void; };
+template<typename T0, typename... T> struct _t_list<T0, T...> { using FirstT = T0; using RestT = _t_list<T...>; };
+template<typename T0, typename T1, typename... T> struct _t_list<T0, T1, T...> { using FirstT = T0; using SecondT = T1; using RestT = _t_list<T...>; };
 
-template<typename T> struct _t_static_var_helper { static T var; };
+// --- Static var helper (for is_inputable / YAML trait detection) ---
 
-PRIVATE_DECLARE_T_FUNC_CHECKER(is_outputable, std::ostream, std::remove_reference_t<decltype(std::cout << std::declval<T>())>);
-PRIVATE_DECLARE_T_FUNC_CHECKER(is_inputable, std::istream, std::remove_reference_t<decltype(std::cin >> _t_static_var_helper<T>::var)>);
+template<typename T> struct _t_static_var_helper { static inline T var; };
+
+// --- Stream I/O detection traits ---
+
+VE_DECLARE_T_FUNC_CHECKER(is_outputable, std::ostream, std::remove_reference_t<decltype(std::cout << std::declval<T>())>);
+VE_DECLARE_T_FUNC_CHECKER(is_inputable, std::istream, std::remove_reference_t<decltype(std::cin >> _t_static_var_helper<T>::var)>);
+
+// --- Function introspection (FInfo) ---
 
 template<typename T> static decltype(&T::operator()) _t_functional(int);
 template<typename T> static void _t_functional(short);
@@ -56,63 +73,71 @@ template<> struct FInfo<void> { enum { IsFunction = false }; };
 
 template<typename Ret, typename... Args> struct FInfo<Ret (*) (Args...)>
 {
-    typedef Ret RetT;
-    typedef _t_list<Args...> ArgsT;
-    typedef Ret (*FptrT) (Args...);
-    typedef Ret (*FuncT) (Args...);
-    typedef std::function<Ret(Args...)> FunctionT;
+    using RetT      = Ret;
+    using ArgsT     = _t_list<Args...>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = Ret (*)(Args...);
+    using FunctionT = std::function<Ret(Args...)>;
     enum { IsFunction = true, IsMember = false, ArgCnt = sizeof...(Args) };
 };
 template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...)>
 {
-    typedef Ret RetT;
-    typedef Class ClassT;
-    typedef _t_list<Args...> ArgsT;
-    typedef Ret (*FptrT) (Args...);
-    typedef Ret (Class::*FuncT) (Args...);
-    typedef std::function<Ret(Args...)> FunctionT;
+    using RetT      = Ret;
+    using ClassT    = Class;
+    using ArgsT     = _t_list<Args...>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = Ret (Class::*)(Args...);
+    using FunctionT = std::function<Ret(Args...)>;
     enum { IsFunction = true, IsMember = true, ArgCnt = sizeof...(Args) };
 };
 template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...) const>
 {
-    typedef Ret RetT;
-    typedef Class ClassT;
-    typedef _t_list<Args...> ArgsT;
-    typedef Ret (*FptrT) (Args...);
-    typedef Ret (Class::*FuncT) (Args...) const;
-    typedef std::function<Ret(Args...)> FunctionT;
+    using RetT      = Ret;
+    using ClassT    = Class;
+    using ArgsT     = _t_list<Args...>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = Ret (Class::*)(Args...) const;
+    using FunctionT = std::function<Ret(Args...)>;
     enum { IsFunction = true, IsMember = true, ArgCnt = sizeof...(Args) };
 };
 
-template<typename T> using _t_remove_rc = typename std::remove_const<typename std::remove_reference<T>::type>::type;
+// --- Type utilities ---
 
-std::string VE_API _t_demangle(const char* type_name);
+template<typename T> using _t_remove_rc = std::remove_const_t<std::remove_reference_t<T>>;
+
+VE_API std::string _t_demangle(const char* type_name);
+
 template<typename T> struct Meta
 {
-    typedef T TypeT;
+    using TypeT = T;
     inline static const char* typeInfoName() { return typeid(T).name(); }
     inline static std::string typeName() { return _t_demangle(typeid(T).name()); }
 };
 
-template<typename Func1, typename Func2, typename Type>
-using FIfSame = typename std::enable_if<std::is_same<typename FInfo<Func1>::FptrT, typename FInfo<Func2>::FptrT>::value, Type>::type;
-template<typename Func1, typename Func2, typename Type>
-using FIfConvertible = typename std::enable_if<std::is_convertible<Func1, Func2>::value
-                                               && std::is_convertible<typename FInfo<Func1>::RetT, typename FInfo<Func2>::RetT>::value, Type>::type;
+// --- SFINAE helpers for function signature matching ---
 
-}
+template<typename Func1, typename Func2, typename Type>
+using FIfSame = std::enable_if_t<std::is_same_v<typename FInfo<Func1>::FptrT, typename FInfo<Func2>::FptrT>, Type>;
+
+template<typename Func1, typename Func2, typename Type>
+using FIfConvertible = std::enable_if_t<
+    std::is_convertible_v<Func1, Func2> && std::is_convertible_v<typename FInfo<Func1>::RetT, typename FInfo<Func2>::RetT>, Type>;
+
+} // namespace basic
 
 // pointer
 template<typename T> using Pointer = std::shared_ptr<T>;
 
-// container utils
-#define PRIVATE_INHERIT_CONSTRUCTOR_IMPL(CONSTRUCTOR, CLASS, ...) \
+// --- Container mixin: inherits constructors + adds converting ctors ---
+#define VE_INHERIT_CONSTRUCTOR(CONSTRUCTOR, CLASS, ...) \
 public: \
 using __VA_ARGS__::CONSTRUCTOR; \
 using BaseT = __VA_ARGS__; \
 CLASS() : BaseT() {} \
 CLASS(const BaseT& other) noexcept : BaseT(other) {} \
 CLASS(BaseT&& other) noexcept : BaseT(std::move(other)) {}
+
+// --- Sequential container CRTP mixin ---
 
 template<typename DerivedT, typename ValueT>
 class PrivateTContainerBase
@@ -121,8 +146,8 @@ public:
     using ListLike = std::true_type;
 
 protected:
-    inline const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
-    inline DerivedT* dPtr() { return static_cast<DerivedT*>(this); }
+    const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
+    DerivedT* dPtr() { return static_cast<DerivedT*>(this); }
 
 public:
     int sizeAsInt() const { return static_cast<int>(dPtr()->size()); }
@@ -152,17 +177,17 @@ public:
 
 template<typename T, std::size_t N> class Array : public std::array<T, N>, public PrivateTContainerBase<Array<T, N>, T>
 {
-    PRIVATE_INHERIT_CONSTRUCTOR_IMPL(array, Array, std::array<T, N>)
+    VE_INHERIT_CONSTRUCTOR(array, Array, std::array<T, N>)
 };
 
 template<typename T> class Vector : public std::vector<T>, public PrivateTContainerBase<Vector<T>, T>
 {
-    PRIVATE_INHERIT_CONSTRUCTOR_IMPL(vector, Vector, std::vector<T>)
+    VE_INHERIT_CONSTRUCTOR(vector, Vector, std::vector<T>)
 };
 
 template<typename T> class List : public std::list<T>, public PrivateTContainerBase<List<T>, T>
 {
-    PRIVATE_INHERIT_CONSTRUCTOR_IMPL(list, List, std::list<T>)
+    VE_INHERIT_CONSTRUCTOR(list, List, std::list<T>)
 
 public:
     const T& operator[](int i) const
@@ -179,17 +204,34 @@ public:
     }
 };
 
-template<typename DerivedT, typename KeyT, typename ValueT>
+// --- KV accessor policies ---
+
+struct StdPairKVAccess {
+    template<typename KV> static const auto& key(const KV& kv) { return kv.first; }
+    template<typename KV> static auto& value(KV& kv) { return kv.second; }
+    template<typename KV> static const auto& value(const KV& kv) { return kv.second; }
+};
+
+struct ImplKVAccess {
+    template<typename KV> static const auto& key(const KV& kv) { return kv.key; }
+    template<typename KV> static auto& value(KV& kv) { return kv.value; }
+    template<typename KV> static const auto& value(const KV& kv) { return kv.value; }
+};
+
+// --- KV container CRTP mixin ---
+
+template<typename DerivedT, typename KeyT, typename ValueT, typename KVAccessor = StdPairKVAccess>
 class PrivateKVContainerBase
 {
 public:
     using MapLike = std::true_type;
-    using DictLike = std::integral_constant<bool, std::is_base_of<std::string, KeyT>::value>;
+    using DictLike = std::integral_constant<bool, std::is_same_v<KeyT, std::string>>;
+    using KVAccessT = KVAccessor;
 
 protected:
-    inline const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
-    inline DerivedT* dPtr() { return static_cast<DerivedT*>(this); }
-    inline void fromKVVectors(const Vector<KeyT>& keys, const Vector<ValueT>& values)
+    const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
+    DerivedT* dPtr() { return static_cast<DerivedT*>(this); }
+    void fromKVVectors(const Vector<KeyT>& keys, const Vector<ValueT>& values)
     {
         for (size_t i = 0; i < std::min(keys.size(), values.size()); ++i) {
             dPtr()->operator[](keys[i]) = values[i];
@@ -203,26 +245,26 @@ public:
     {
         Vector<KeyT> vec;
         vec.reserve(dPtr()->size());
-        for (const auto& kv : *dPtr()) vec.push_back(kv.first);
+        for (const auto& kv : *dPtr()) vec.push_back(KVAccessor::key(kv));
         return vec;
     }
     Vector<ValueT> values() const
     {
         Vector<ValueT> vec;
         vec.reserve(dPtr()->size());
-        for (const auto& kv : *dPtr()) vec.push_back(kv.second);
+        for (const auto& kv : *dPtr()) vec.push_back(KVAccessor::value(kv));
         return vec;
     }
 
     ValueT value(const KeyT& key) const
     {
         const auto it = dPtr()->find(key);
-        return it == dPtr()->end() ? ValueT() : it->second;
+        return it == dPtr()->end() ? ValueT() : KVAccessor::value(*it);
     }
     const ValueT& value(const KeyT& key, const ValueT& default_value) const
     {
         const auto it = dPtr()->find(key);
-        return it == dPtr()->end() ? default_value : it->second;
+        return it == dPtr()->end() ? default_value : KVAccessor::value(*it);
     }
 
     DerivedT& insertOne(const KeyT& key, const ValueT& value) { auto d = dPtr(); d->operator[](key) = value; return *d; }
@@ -232,32 +274,30 @@ public:
 template<typename K, typename V>
 class Map : public std::map<K, V>, public PrivateKVContainerBase<Map<K, V>, K, V>
 {
-    PRIVATE_INHERIT_CONSTRUCTOR_IMPL(map, Map, std::map<K, V>)
+    VE_INHERIT_CONSTRUCTOR(map, Map, std::map<K, V>)
     Map(const Vector<K>& keys, const Vector<V>& values) { this->fromKVVectors(keys, values); }
 };
 
 template<typename K, typename V>
-class HashMap : public std::unordered_map<K, V>, public PrivateKVContainerBase<HashMap<K, V>, K, V>
+class UnorderedHashMap : public std::unordered_map<K, V>, public PrivateKVContainerBase<UnorderedHashMap<K, V>, K, V>
 {
-    PRIVATE_INHERIT_CONSTRUCTOR_IMPL(unordered_map, HashMap, std::unordered_map<K, V>)
-    HashMap(const Vector<K>& keys, const Vector<V>& values) { this->fromKVVectors(keys, values); }
+    VE_INHERIT_CONSTRUCTOR(unordered_map, UnorderedHashMap, std::unordered_map<K, V>)
+    UnorderedHashMap(const Vector<K>& keys, const Vector<V>& values) { this->fromKVVectors(keys, values); }
 };
 
 template<typename V>
-using Dict = HashMap<std::string, V>;
+using Hash = UnorderedHashMap<std::string, V>;
 
-// ordered hash map — insertion-ordered, Robin Hood hashing
+// --- Ordered hash map (insertion-ordered, Robin Hood hashing) ---
 // Adapted from Godot Engine's HashMap (see ve/core/impl/ for license).
-// Provides the same extended interface as HashMap/Map + insertion-order iteration.
 // Iteration yields impl::KeyValue<K,V> with .key / .value members.
 template<typename K, typename V,
          typename Hasher     = impl::HashMapHasherDefault,
          typename Comparator = impl::HashMapComparatorDefault<K>>
 class OrderedHashMap
+    : public PrivateKVContainerBase<OrderedHashMap<K, V, Hasher, Comparator>, K, V, ImplKVAccess>
 {
 public:
-    using MapLike  = std::true_type;
-    using DictLike = std::integral_constant<bool, std::is_same<K, std::string>::value>;
     using ImplMap  = impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>;
 
     // --- constructors ---
@@ -271,9 +311,7 @@ public:
 
     // --- size / query ---
     uint32_t size() const { return _m.size(); }
-    int sizeAsInt() const { return static_cast<int>(_m.size()); }
     bool is_empty() const { return _m.is_empty(); }
-    bool has(const K& key) const { return _m.has(key); }
 
     // --- access ---
     V& operator[](const K& key) { return _m[key]; }
@@ -282,36 +320,6 @@ public:
     const V& get(const K& key) const { return _m.get(key); }
     V* getptr(const K& key) { return _m.getptr(key); }
     const V* getptr(const K& key) const { return _m.getptr(key); }
-
-    // --- ve KV container interface (aligned with HashMap/Map) ---
-    V value(const K& key) const
-    {
-        const V* ptr = _m.getptr(key);
-        return ptr ? *ptr : V();
-    }
-    const V& value(const K& key, const V& default_value) const
-    {
-        const V* ptr = _m.getptr(key);
-        return ptr ? *ptr : default_value;
-    }
-
-    Vector<K> keys() const
-    {
-        Vector<K> vec;
-        vec.reserve(size());
-        for (const auto& kv : _m) vec.push_back(kv.key);
-        return vec;
-    }
-    Vector<V> values() const
-    {
-        Vector<V> vec;
-        vec.reserve(size());
-        for (const auto& kv : _m) vec.push_back(kv.value);
-        return vec;
-    }
-
-    OrderedHashMap& insertOne(const K& key, const V& value) { _m[key] = value; return *this; }
-    OrderedHashMap& insertOne(const K& key, V&& value) { _m[key] = std::move(value); return *this; }
 
     // --- mutation ---
     bool erase(const K& key) { return _m.erase(key); }
@@ -337,7 +345,7 @@ private:
 };
 
 template<typename V>
-using OrderedDict = OrderedHashMap<std::string, V>;
+using Dict = OrderedHashMap<std::string, V>;
 
 using Ints = Vector<int>;
 using Doubles = Vector<double>;
@@ -345,7 +353,7 @@ using Strings = Vector<std::string>;
 
 class VE_API Values : public Doubles
 {
-    PRIVATE_INHERIT_CONSTRUCTOR_IMPL(Doubles, Values, Doubles)
+    VE_INHERIT_CONSTRUCTOR(Doubles, Values, Doubles)
 
 public:
     enum Unit : int {
@@ -416,21 +424,21 @@ private:
 /**
 * @brief Manager Class is a convenient object container
 */
-class Manager : public Object, public HashMap<std::string, Object*>
+class VE_API Manager : public Object, public UnorderedHashMap<std::string, Object*>
 {
 public:
     explicit Manager(const std::string& name);
     virtual ~Manager();
 
     Object* add(Object* obj, bool delete_if_failed = false);
-    template<typename SubObj> basic::enable_if_t<std::is_base_of<Object, SubObj>::value, SubObj*> add(SubObj* obj, bool delete_if_failed = false)
+    template<typename SubObj> std::enable_if_t<std::is_base_of_v<Object, SubObj>, SubObj*> add(SubObj* obj, bool delete_if_failed = false)
     { return add(static_cast<Object *>(obj), delete_if_failed) ? obj : nullptr; }
 
     bool remove(Object* obj, bool auto_delete = true);
     bool remove(const std::string& name, bool auto_delete = true);
 
     Object* get(const std::string& key) const;
-    template<class SubObj> basic::enable_if_t<std::is_base_of<Object, SubObj>::value, SubObj*> get(const std::string& key) const
+    template<class SubObj> std::enable_if_t<std::is_base_of_v<Object, SubObj>, SubObj*> get(const std::string& key) const
     { return static_cast<SubObj*>(get(key)); }
 
     void fixObjectLinks();

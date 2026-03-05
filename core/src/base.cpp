@@ -91,7 +91,7 @@ struct Object::Private
 {
     std::string name;
     Object* parent = nullptr;
-    HashMap<int, HashMap<Object*, List<ActionT>>> connections;
+    UnorderedHashMap<int, UnorderedHashMap<Object*, List<ActionT>>> connections;
 };
 
 Object::Object(const std::string& name) : _p(new Private)

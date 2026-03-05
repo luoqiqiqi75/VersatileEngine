@@ -29,6 +29,8 @@
 
 #pragma once
 
+#include "ve/global.h"
+
 #include <cstdint>
 #include <cmath>
 #include <string>
@@ -88,8 +90,8 @@ VE_FORCE_INLINE uint64_t hash_djb2_one_64(uint64_t p_in, uint64_t p_prev = 5381)
     return ((p_prev << 5) + p_prev) ^ p_in;
 }
 
-uint32_t hash_djb2_one_float(double p_in, uint32_t p_prev = 5381);
-uint64_t hash_djb2_one_float_64(double p_in, uint64_t p_prev = 5381);
+VE_API uint32_t hash_djb2_one_float(double p_in, uint32_t p_prev = 5381);
+VE_API uint64_t hash_djb2_one_float_64(double p_in, uint64_t p_prev = 5381);
 
 // ---- Thomas Wang's 64→32 hash ----------------------------------------------
 
@@ -133,8 +135,8 @@ VE_FORCE_INLINE uint32_t hash_murmur3_one_64(uint64_t p_in, uint32_t p_seed = VE
     return hash_murmur3_one_32(p_in >> 32, p_seed);
 }
 
-uint32_t hash_murmur3_one_float(float p_in, uint32_t p_seed = VE_HASH_MURMUR3_SEED);
-uint32_t hash_murmur3_one_double(double p_in, uint32_t p_seed = VE_HASH_MURMUR3_SEED);
+VE_API uint32_t hash_murmur3_one_float(float p_in, uint32_t p_seed = VE_HASH_MURMUR3_SEED);
+VE_API uint32_t hash_murmur3_one_double(double p_in, uint32_t p_seed = VE_HASH_MURMUR3_SEED);
 
 VE_FORCE_INLINE uint32_t hash_rotl32(uint32_t x, int8_t r) {
     return (x << r) | (x >> (32 - r));
@@ -149,7 +151,7 @@ VE_FORCE_INLINE uint32_t hash_fmix32(uint32_t h) {
     return h;
 }
 
-uint32_t hash_murmur3_buffer(const void *key, int length, uint32_t seed = VE_HASH_MURMUR3_SEED);
+VE_API uint32_t hash_murmur3_buffer(const void *key, int length, uint32_t seed = VE_HASH_MURMUR3_SEED);
 
 // ---- Hash table size primes (for open-addressing) ---------------------------
 
