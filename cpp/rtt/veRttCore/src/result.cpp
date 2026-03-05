@@ -11,17 +11,17 @@ std::string Result::toString() const
     return s;
 }
 
-SimpleJson Result::toJson() const
+Json Result::toJson() const
 {
-    if (m_content.isNull()) {
-        return SimpleJson(toString());
+    if (m_content.is_null()) {
+        // No attached data — return a simple string representation.
+        return Json(toString());
     }
-    SimpleJson value;
-    value.setObject();
+    Json value = Json::object();
     if (m_code < 0) {
-        value.set("error", SimpleJson(toString()));
+        value["error"] = toString();
     }
-    value.set("data", m_content);
+    value["data"] = m_content;
     return value;
 }
 

@@ -1,92 +1,78 @@
 #pragma once
+// ---------------------------------------------------------------------------
+// JsonRef — immutable path-navigating wrapper over nlohmann::json
+//
+// Replaces the original SimpleJson + JsonRef pair.
+// The underlying storage is now nlohmann::json; JsonRef adds:
+//   - dot-separated path navigation  (get("a.b.c"))
+//   - safe typed accessors with ok-flag (toInt, toDouble, ...)
+//   - toValues() for numeric arrays
+// ---------------------------------------------------------------------------
 
 #include <ve/rtt/container.h>
+#include <nlohmann/json.hpp>
 
 #include <string>
 #include <memory>
-#include <sstream>
 
 namespace imol {
 
-class SimpleJson {
-public:
-    enum Type { Null, Bool, Int, Double, String, Array, Object };
+/// Convenience alias used throughout the rtt module.
+using Json = nlohmann::json;
 
-    SimpleJson() : m_type(Null) {}
-    SimpleJson(bool v) : m_type(Bool), m_bool(v) {}
-    SimpleJson(int v) : m_type(Int), m_int(v) {}
-    SimpleJson(int64_t v) : m_type(Int), m_int(v) {}
-    SimpleJson(double v) : m_type(Double), m_double(v) {}
-    SimpleJson(const std::string& v) : m_type(String), m_string(v) {}
-    SimpleJson(const char* v) : m_type(String), m_string(v) {}
-
-    Type type() const { return m_type; }
-    bool isNull() const { return m_type == Null; }
-    bool isObject() const { return m_type == Object; }
-    bool isArray() const { return m_type == Array; }
-
-    void setArray() { m_type = Array; }
-    void push(const SimpleJson& v) { m_array.push_back(v); }
-    size_t arraySize() const { return m_array.size(); }
-    const SimpleJson& arrayAt(size_t i) const;
-
-    void setObject() { m_type = Object; }
-    void set(const std::string& key, const SimpleJson& v) { m_type = Object; m_object[key] = v; }
-    bool hasKey(const std::string& key) const;
-    const SimpleJson& objectAt(const std::string& key) const;
-    std::vector<std::string> objectKeys() const;
-
-    bool asBool(bool def = false) const { return m_type == Bool ? m_bool : def; }
-    int64_t asInt(int64_t def = 0) const { return m_type == Int ? m_int : (m_type == Double ? (int64_t)m_double : def); }
-    double asDouble(double def = 0.0) const { return m_type == Double ? m_double : (m_type == Int ? (double)m_int : def); }
-    std::string asString(const std::string& def = "") const { return m_type == String ? m_string : def; }
-
-    bool empty() const;
-
-private:
-    Type m_type;
-    bool m_bool = false;
-    int64_t m_int = 0;
-    double m_double = 0.0;
-    std::string m_string;
-    std::vector<SimpleJson> m_array;
-    std::map<std::string, SimpleJson> m_object;
-};
-
+// =========================================================================
+// JsonRef
+// =========================================================================
 class JsonRef {
 public:
-    explicit JsonRef(const SimpleJson& value)
+    /// Wrap an existing (externally-owned) Json value.
+    explicit JsonRef(const Json& value)
         : m_ptr(&value), m_holder(nullptr) {}
 
-    explicit JsonRef(SimpleJson&& value)
-        : m_holder(std::make_shared<SimpleJson>(std::move(value)))
+    /// Take ownership of an rvalue Json.
+    explicit JsonRef(Json&& value)
+        : m_holder(std::make_shared<Json>(std::move(value)))
         , m_ptr(m_holder.get()) {}
 
-    explicit operator bool() const { return m_ptr && !m_ptr->isNull(); }
+    /// True if the wrapped value is not null.
+    explicit operator bool() const { return m_ptr && !m_ptr->is_null(); }
 
-    const SimpleJson& value() const { return *m_ptr; }
+    /// Access the underlying Json.
+    const Json& value() const { return *m_ptr; }
 
+    // ----- element access ------------------------------------------------
     JsonRef at(int index) const;
     JsonRef at(const std::string& key) const;
+
+    /// Dot-separated path navigation: get("a.b.c")
+    /// Also supports "#N" segments for array indexing: get("arr.#0.x")
     JsonRef get(const std::string& path) const;
 
     JsonRef operator[](int index) const { return at(index); }
     JsonRef operator[](const std::string& key) const { return at(key); }
 
-    bool toBool(bool def = false, bool* ok = nullptr) const;
-    int toInt(int def = 0, bool* ok = nullptr) const;
-    double toDouble(double def = 0.0, bool* ok = nullptr) const;
-    std::string toString(const std::string& def = "", bool* ok = nullptr) const;
+    // ----- typed accessors -----------------------------------------------
+    bool        toBool  (bool def = false,              bool* ok = nullptr) const;
+    int         toInt   (int def = 0,                   bool* ok = nullptr) const;
+    int64_t     toInt64 (int64_t def = 0,               bool* ok = nullptr) const;
+    double      toDouble(double def = 0.0,              bool* ok = nullptr) const;
+    std::string toString(const std::string& def = "",   bool* ok = nullptr) const;
+
+    /// Convert a JSON array of numbers to an imol::Values vector.
     Values toValues() const;
 
+    /// Shorthand: jr(0) → double, jr("key") → double
     double operator()(int index) const { return at(index).toDouble(); }
     double operator()(const std::string& key) const { return get(key).toDouble(); }
 
+    /// Return all keys of the underlying JSON object (empty if not object).
     std::vector<std::string> objectKeys() const;
 
 private:
-    const SimpleJson* m_ptr;
-    std::shared_ptr<SimpleJson> m_holder;
+    const Json* m_ptr;
+    std::shared_ptr<Json> m_holder;
+
+    static const Json s_null;  ///< shared sentinel for missing values
 };
 
 } // namespace imol

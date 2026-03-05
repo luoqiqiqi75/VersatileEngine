@@ -36,7 +36,7 @@ endif()
 # --- Create the single library target ---
 add_library(${VE_RTT_LIBRARY} STATIC)
 
-target_compile_features(${VE_RTT_LIBRARY} PUBLIC cxx_std_14)
+target_compile_features(${VE_RTT_LIBRARY} PUBLIC cxx_std_17)
 
 # Link libve — provides ve/global.h etc. transitively
 if(WIN32)
@@ -44,6 +44,9 @@ if(WIN32)
 else()
     target_link_libraries(${VE_RTT_LIBRARY} PUBLIC ve)
 endif()
+
+# nlohmann/json — used by JsonRef / Result / XService
+target_link_libraries(${VE_RTT_LIBRARY} PUBLIC ve_dep_json)
 
 # --- Conditional compile definitions ---
 if(_VE_RTT_HAS_OROCOS)

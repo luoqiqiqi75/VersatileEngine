@@ -40,12 +40,20 @@ VE 的数据核心起源于 **imol**（`imol::ModuleObject`），最初基于 Qt
 │                         ve 项目结构                          │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  core/                                                      │
-│  ├── ve::Object          纯 C++ 对象基类（parent, signal）   │
+│  core/ (libve — 纯 C++17，零 Qt 依赖)                        │
+│  ├── ve::Object          对象基类（parent, int signal/slot） │
 │  ├── ve::Manager         对象容器（HashMap<name, Object*>）  │
+│  ├── ve::AnyData<T>      类型安全响应式数据（bind, YAML）    │
+│  ├── ve::DataManager     路径注册表（data::create/get/at）   │
 │  ├── ve::Module          模块生命周期（NONE→INIT→READY→DEINIT）│
 │  ├── ve::Factory<Sig>    工厂模式（Dict<name, function>）    │
-│  ├── ve::Data            = imol::ModuleObject（Qt 数据节点） │
+│  ├── ve::OrderedHashMap  Robin Hood + 插入顺序（Godot 移植） │
+│  ├── ve::log             日志系统（spdlog 后端）             │
+│  ├── ve::impl::hash_*    哈希函数族（DJB2, MurmurHash3）    │
+│  └── ve::Node            数据树节点（placeholder, Phase 1）  │
+│                                                             │
+│  cpp/qt/ (libveqt — Qt 适配层)                               │
+│  ├── imol::ModuleObject  Qt 数据树（别名 ve::Data）          │
 │  ├── ve::d("path")       全局路径访问器（自动创建节点）       │
 │  ├── VE_D("path")        静态缓存访问器（高性能）            │
 │  └── imol::*             原始实现（状态机、命令、日志等）     │
@@ -613,12 +621,16 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 > 详细分阶段计划见 [plan/README.md](internal/plan/README.md)
 
-### Phase 0：基础设施 ✅ 大部分完成
+### Phase 0：基础设施 ✅ 已完成
 
 - [x] 总结现有架构（本文档）
 - [x] CMake 现代化重构
-- [x] deps 组织（spdlog、asio2）
-- [ ] log.cpp 去 Qt 依赖
+- [x] deps 组织（spdlog、asio2、yaml-cpp、pugixml、nlohmann/json）
+- [x] base.h C++17 现代化（去 C++11 polyfill，使用 std::enable_if_t/void_t/if constexpr）
+- [x] hashfuncs.h / ordered_hashmap.h 从 Godot 移植
+- [x] AnyData<T> / DataManager / DataList / DataDict 数据层
+- [x] 单元测试框架 + 140 个测试用例全部通过（core/test/，自定义 ve_test.h）
+- [ ] log.cpp 去 Qt 依赖（QDir/QStandardPaths → std::filesystem）
 
 ### Phase 0.5：历史代码整合（新增）
 
@@ -676,6 +688,6 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 ---
 
-*文档版本: 1.1.0*
-*更新日期: 2026-03-04*
+*文档版本: 1.2.0*
+*更新日期: 2026-03-05*
 *Author: Thilo*

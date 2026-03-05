@@ -1,6 +1,6 @@
 # cpp/rtt — libvertt
 
-xcore IMOL 框架移植，纯 C++14，无 Qt 依赖。构建产出单一静态库 `libvertt`。
+xcore IMOL 框架移植，纯 C++17，无 Qt 依赖。构建产出单一静态库 `libvertt`。
 
 ## 目录结构
 
@@ -15,7 +15,7 @@ cpp/rtt/
 │   │   ├── container.h     # Vector/List/Map/HashMap/Dict/Values
 │   │   ├── object.h        # Object(signal/slot) + Manager + Creator
 │   │   ├── data_object.h   # TDataObject<T>, JsonInterface
-│   │   ├── json_ref.h      # SimpleJson + JsonRef 导航器
+│   │   ├── json_ref.h      # Json (nlohmann) + JsonRef 路径导航器
 │   │   ├── global_data.h   # 全局数据注册 + IMOL_DEC_G_DATA 宏
 │   │   ├── result.h        # Result 统一返回类型
 │   │   ├── procedure.h     # Procedure 函数包装器

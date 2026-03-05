@@ -14,63 +14,49 @@ void SdkService::setServer(ServerNetObject* server)
 
 int SdkService::handleMessage(const std::string& addr, const std::string& msg)
 {
-    // Parse JSON message
-    // NOTE: Using SimpleJson for now — in a real build you would integrate
-    // rapidjson/nlohmann here. This is a structural placeholder.
-    (void)msg;
-
-    // Expected format:
-    // { "id": "...", "g": { key: null, ... }, "s": { key: value, ... }, "c": { key: args, ... } }
-    //
-    // The actual JSON parsing would produce a SimpleJson tree.
-    // For the 1:1 port we show the structure; full parsing requires a JSON library.
-
-    SimpleJson root;
-    // TODO: parse msg into root
+    // Parse incoming JSON — discard on parse error.
+    Json root = Json::parse(msg, nullptr, false);
+    if (root.is_discarded()) return -1;
 
     JsonRef jr(root);
 
-    SimpleJson response;
-    response.setObject();
+    Json response = Json::object();
 
-    // g: read data
-    if (auto g = jr.at("g")) {
-        SimpleJson g_result;
-        g_result.setObject();
-        for (const auto& data_key : g.objectKeys()) {
-            g_result.set(data_key, gCmd(data_key));
+    // ---- g: read data ---------------------------------------------------
+    if (root.contains("g") && root["g"].is_object()) {
+        Json g_result = Json::object();
+        for (auto& [data_key, _] : root["g"].items()) {
+            g_result[data_key] = gCmd(data_key);
         }
-        response.set("g", g_result);
+        response["g"] = g_result;
     }
 
-    // s: write data
-    if (auto s = jr.at("s")) {
-        SimpleJson s_result;
-        s_result.setObject();
-        for (const auto& data_key : s.objectKeys()) {
-            s_result.set(data_key, sCmd(data_key, s[data_key].value()));
+    // ---- s: write data --------------------------------------------------
+    if (root.contains("s") && root["s"].is_object()) {
+        Json s_result = Json::object();
+        for (auto& [data_key, val] : root["s"].items()) {
+            s_result[data_key] = sCmd(data_key, val);
         }
-        response.set("s", s_result);
+        response["s"] = s_result;
     }
 
-    // c: execute commands
-    if (auto c = jr.at("c")) {
-        SimpleJson c_result;
-        c_result.setObject();
+    // ---- c: execute commands --------------------------------------------
+    if (root.contains("c") && root["c"].is_object()) {
+        Json c_result = Json::object();
         auto request_id = jr["id"].toString();
-        for (const auto& cmd_key : c.objectKeys()) {
-            SimpleJson cmd_result;
-            bool sync = cCmd(addr, request_id, cmd_key, c[cmd_key].value(), cmd_result);
+        for (auto& [cmd_key, input] : root["c"].items()) {
+            Json cmd_result;
+            bool sync = cCmd(addr, request_id, cmd_key, input, cmd_result);
             if (sync) {
-                c_result.set(cmd_key, cmd_result);
+                c_result[cmd_key] = cmd_result;
             }
             // async commands: result delivered via notify()
         }
-        response.set("c", c_result);
+        response["c"] = c_result;
     }
 
-    // TODO: serialize response to JSON string and send
-    // send(addr, serialize(response));
+    // Send response
+    send(addr, response.dump());
     return 0;
 }
 
@@ -80,47 +66,48 @@ void SdkService::send(const std::string& addr, const std::string& content) const
 }
 
 void SdkService::notify(const std::string& addr, const std::string& request_id,
-                         const std::string& cmd_key, const SimpleJson& result) const
+                         const std::string& cmd_key, const Json& result) const
 {
-    SimpleJson msg;
-    msg.setObject();
-    if (!request_id.empty()) msg.set("id", SimpleJson(request_id));
+    Json msg = Json::object();
+    if (!request_id.empty()) msg["id"] = request_id;
 
-    SimpleJson c;
-    c.setObject();
-    c.set(cmd_key, result);
-    msg.set("c", c);
+    Json c = Json::object();
+    c[cmd_key] = result;
+    msg["c"] = c;
 
-    // TODO: serialize msg and send
-    // send(addr, serialize(msg));
+    send(addr, msg.dump());
 }
 
-SimpleJson SdkService::gCmd(const std::string& data_key) const
+Json SdkService::gCmd(const std::string& data_key) const
 {
     auto* ji = data::ji(data_key);
     if (!ji) {
         return Result(ERR_G_NO_KEY, "no data key: " + data_key).toJson();
     }
-    // TODO: call ji->serializeToJsonString() and parse to SimpleJson
-    SimpleJson placeholder;
-    placeholder.set("value", SimpleJson(ji->serializeToJsonString()));
-    return placeholder;
+    // Serialize the data object → JSON string → parse back to Json object.
+    std::string json_str = ji->serializeToJsonString();
+    Json parsed = Json::parse(json_str, nullptr, false);
+    if (parsed.is_discarded()) {
+        // Fallback: wrap the raw string.
+        return Json({{"value", json_str}});
+    }
+    return parsed;
 }
 
-SimpleJson SdkService::sCmd(const std::string& data_key, const SimpleJson& input) const
+Json SdkService::sCmd(const std::string& data_key, const Json& input) const
 {
     auto* ji = data::ji(data_key);
     if (!ji) {
         return Result(ERR_S_DEFAULT, "no data key: " + data_key).toJson();
     }
-    // TODO: serialize input to string and call ji->deserializeFromJsonString()
-    bool ok = ji->deserializeFromJsonString(input.asString());
+    // Dump the input Json to a string and feed it to the data object.
+    bool ok = ji->deserializeFromJsonString(input.dump());
     return Result(ok, ERR_S_DEFAULT).toJson();
 }
 
 bool SdkService::cCmd(const std::string& addr, const std::string& request_id,
-                       const std::string& cmd_key, const SimpleJson& input,
-                       SimpleJson& out_result)
+                       const std::string& cmd_key, const Json& input,
+                       Json& out_result)
 {
     // 1. Copy command template
     CommandObject* cobj = command::copy(cmd_key);
@@ -130,11 +117,10 @@ bool SdkService::cCmd(const std::string& addr, const std::string& request_id,
     }
 
     // 2. Save session for async reply
-    SimpleJson session;
-    session.setObject();
-    session.set("addr", SimpleJson(addr));
-    session.set("id", SimpleJson(request_id));
-    session.set("cmd", SimpleJson(cmd_key));
+    Json session = Json::object();
+    session["addr"] = addr;
+    session["id"]   = request_id;
+    session["cmd"]  = cmd_key;
     cobj->setData("_session", session);
 
     // 3. Async result handler

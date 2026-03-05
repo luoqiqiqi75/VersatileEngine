@@ -29,19 +29,22 @@ public:
     Result& setCode(int code) { m_code = code; return *this; }
     Result& setText(const std::string& text) { m_text = text; return *this; }
 
-    const SimpleJson& content() const { return m_content; }
-    Result& setContent(const SimpleJson& content) { m_content = content; return *this; }
-    Result& setContent(const std::string& json_str) { m_content = SimpleJson(json_str); return *this; }
+    const Json& content() const { return m_content; }
+    Result& setContent(const Json& content) { m_content = content; return *this; }
+    Result& setContent(const std::string& json_str) {
+        m_content = Json::parse(json_str, nullptr, false);
+        return *this;
+    }
 
     std::string toString() const;
-    SimpleJson toJson() const;
+    Json toJson() const;
 
     operator bool() const { return isSuccess(); }
 
 private:
     int m_code;
     std::string m_text;
-    SimpleJson m_content;
+    Json m_content;   // nlohmann::json — defaults to null
 };
 
 } // namespace imol

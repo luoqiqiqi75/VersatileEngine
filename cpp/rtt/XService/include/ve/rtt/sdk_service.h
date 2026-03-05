@@ -19,27 +19,27 @@ public:
 
     CipRegistry& cips() { return m_cips; }
 
-    // Main message handler — returns error code (0 = ok)
+    /// Main message handler — parses JSON, dispatches g/s/c, returns error code.
     int handleMessage(const std::string& addr, const std::string& msg);
 
-    // Send response to specific client
+    /// Send a raw string to a specific client.
     void send(const std::string& addr, const std::string& content) const;
 
-    // Notify async result (push to client)
+    /// Notify async result (push to client).
     void notify(const std::string& addr, const std::string& request_id,
-                const std::string& cmd_key, const SimpleJson& result) const;
+                const std::string& cmd_key, const Json& result) const;
 
 private:
     // g(et) — read data objects
-    SimpleJson gCmd(const std::string& data_key) const;
+    Json gCmd(const std::string& data_key) const;
 
     // s(et) — write data objects
-    SimpleJson sCmd(const std::string& data_key, const SimpleJson& input) const;
+    Json sCmd(const std::string& data_key, const Json& input) const;
 
-    // c(ommand) — execute command, returns true if sync (result available), false if async
+    // c(ommand) — execute command; returns true if sync, false if async
     bool cCmd(const std::string& addr, const std::string& request_id,
-              const std::string& cmd_key, const SimpleJson& input,
-              SimpleJson& out_result);
+              const std::string& cmd_key, const Json& input,
+              Json& out_result);
 
     ServerNetObject* m_server = nullptr;
     CipRegistry m_cips;
