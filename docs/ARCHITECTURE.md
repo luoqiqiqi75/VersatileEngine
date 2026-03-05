@@ -194,7 +194,7 @@ ve::Data（ModuleObject）直接继承 QObject，导致：
 |--------|------|-----------|
 | QObject | 信号槽、parent/child、生命周期 | ✅ 可用自定义 signal + raw ptr |
 | QVariant | 万能值存储 | ⚠️ 替代品较弱（std::any, nlohmann::json, 模板） |
-| QHash | 子节点存储 | ✅ std::unordered_map |
+| QHash | 子节点存储 | ✅ ve::OrderedMap（有序哈希表，保留插入顺序） |
 | QMutex | 线程安全 | ✅ std::mutex |
 | QString | 字符串 | ✅ std::string |
 | QJsonValue/QXmlStream/QDataStream | 序列化 | ✅ nlohmann::json / pugixml / 自定义 |
@@ -297,7 +297,7 @@ public:
     Value(std::string&& v);
     Value(const std::vector<uint8_t>& v); // 二进制
     Value(std::vector<Value>&& v);        // 数组
-    Value(std::unordered_map<std::string, Value>&& v); // 对象
+    Value(OrderedMap<std::string, Value>&& v); // 对象（有序，保留插入顺序）
 
     Type type() const;
     bool isNull() const;
@@ -323,7 +323,7 @@ private:
         std::string,                             // String
         std::vector<uint8_t>,                    // Bytes
         std::vector<Value>,                      // Array
-        std::unordered_map<std::string, Value>   // Object
+        OrderedMap<std::string, Value>           // Object（有序哈希表）
     > _data;
 };
 
@@ -611,40 +611,49 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 ## 8. 实施路线
 
-### Phase 0：整理（当前可做）
+> 详细分阶段计划见 [plan/README.md](internal/plan/README.md)
+
+### Phase 0：基础设施 ✅ 大部分完成
 
 - [x] 总结现有架构（本文档）
-- [ ] 将 MozHMI 中的 WebSocket Server、QuickNode、veservice.js 代码梳理，明确哪些应该移入 ve
-- [ ] 确定 ve::Value 的类型集合（是否需要扩展 Bytes 之外的类型）
+- [x] CMake 现代化重构
+- [x] deps 组织（spdlog、asio2）
+- [ ] log.cpp 去 Qt 依赖
 
-### Phase 1：Core 层去 Qt 依赖
+### Phase 0.5：历史代码整合（新增）
 
+> 详见 [phase0.5-consolidation.md](internal/plan/phase0.5-consolidation.md)
+
+将散落在各历史项目中的优秀实现搬运回 VE 仓库，形成完整的适配层矩阵：
+- hemera → `cpp/ros1/`, `cpp/ros2/`（AnyData、DataDict、ROS 桥接、FastDDS）
+- xcore → `cpp/rtt/`（CommandObject、LoopObject、NetObject）
+- Bezier → `cpp/vtk/`（BezierModel DAG 管线、BezierType 桥接）
+- mxhelper → `cpp/qt/` 增强（QuickNode、gRPC Channel）
+
+### Phase 1：ve::Value + ve::Node
+
+- [ ] 实现 `ve::OrderedMap`（有序哈希表，Phase 1 前置依赖）
 - [ ] 实现 `ve::Value`（纯 C++17，替代 QVariant 在核心层的角色）
 - [ ] 实现 `ve::Node`（从 ModuleObject 提炼，保留完整的树操作和信号语义）
-- [ ] 实现核心层的序列化（Value ↔ JSON string，可选 Binary）
 - [ ] 保留 `ve::d("path")` 全局访问器
-- [ ] 保留 `ve::Module` 不变（它已经主要依赖 `ve::Object`）
 - [ ] 单元测试覆盖核心层
 
-### Phase 2：适配层
+### Phase 2：Signal 模板 & JSON 序列化
 
-- [ ] **ve-qt**：实现 QNode 桥接、QVariant ↔ Value 转换
-- [ ] **ve-qt**：将 QuickNode 从 MozHMI 移入，基于 QNode 重构
-- [ ] **ve-js**：实现 VeNode（JS 树代理），与 veservice.js 协议对接
-- [ ] **ve-js**：提供 React hooks（useVeValue, useVeChildren）
-- [ ] CBS/WebSocket/Command Server 保持基本不变，协议层稳定
+- [ ] `ve::Signal<Args...>` 通用信号模板
+- [ ] JSON 序列化（nlohmann/json，Value ↔ JSON，Node ↔ JSON）
 
-### Phase 3：Mesh 扩展
+### Phase 3：Terminal
 
-- [ ] Node.link() 引用机制
-- [ ] 跨节点信号传播
-- [ ] Computed Node（可选）
+- [ ] 纯 C++ REPL（数据树导航命令集）
+- [ ] TCP Server（基于 asio，远程调试）
 
-### Phase 4：JS 端实战验证
+### Phase 4-7：生态（按需推进）
 
-- [ ] 在 moz_hmi 项目中用 VeNode 替换现有 Zustand stores
-- [ ] 消除 App.jsx 中的手动 subscribe 代码
-- [ ] 验证性能（大量实时关节数据流）
+- Phase 4：Qt 适配层（QNode 桥接、QVariant ↔ Value、QuickNode 移入）
+- Phase 5：服务层迁移（CBS/WebSocket 对接 ve::Node）
+- Phase 6：JS/Web 适配 & 命令系统
+- Phase 7：迁移与清理（imol → 外部历史模块）
 
 ---
 
@@ -667,6 +676,6 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 ---
 
-*文档版本: 1.0.0*
-*更新日期: 2026-02-26*
+*文档版本: 1.1.0*
+*更新日期: 2026-03-04*
 *Author: Thilo*

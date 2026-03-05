@@ -8,6 +8,7 @@
 #pragma once
 
 #include "ve/global.h"
+#include "ve/core/impl/ordered_hashmap.h"
 
 #define PRIVATE_DECLARE_T_CHECKER(Checker, ...) \
 template<typename T, typename dummy = void> struct Checker : std::false_type {}; \
@@ -138,7 +139,7 @@ public:
     template<typename F> DerivedT& every(F&& f) { auto d = dPtr(); std::for_each(d->begin(), d->end(), std::forward<F>(f)); return *d; }
     template<typename F> const DerivedT& every(F&& f) const { const auto d = dPtr(); std::for_each(d->cbegin(), d->cend(), std::forward<F>(f)); return *d; }
 
-    std::string tostring(const std::string& sep = "") const
+    std::string toString(const std::string& sep = "") const
     {
         int s = sizeAsInt() - 1;
         if (s < 0) return "";
@@ -244,6 +245,99 @@ class HashMap : public std::unordered_map<K, V>, public PrivateKVContainerBase<H
 
 template<typename V>
 using Dict = HashMap<std::string, V>;
+
+// ordered hash map — insertion-ordered, Robin Hood hashing
+// Adapted from Godot Engine's HashMap (see ve/core/impl/ for license).
+// Provides the same extended interface as HashMap/Map + insertion-order iteration.
+// Iteration yields impl::KeyValue<K,V> with .key / .value members.
+template<typename K, typename V,
+         typename Hasher     = impl::HashMapHasherDefault,
+         typename Comparator = impl::HashMapComparatorDefault<K>>
+class OrderedHashMap
+{
+public:
+    using MapLike  = std::true_type;
+    using DictLike = std::integral_constant<bool, std::is_same<K, std::string>::value>;
+    using ImplMap  = impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>;
+
+    // --- constructors ---
+    OrderedHashMap() = default;
+    explicit OrderedHashMap(uint32_t capacity) : _m(capacity) {}
+    OrderedHashMap(std::initializer_list<impl::KeyValue<K, V>> init) : _m(init) {}
+    OrderedHashMap(const OrderedHashMap& o) : _m(static_cast<const ImplMap&>(o._m)) {}
+    OrderedHashMap(OrderedHashMap&&) = default;
+    OrderedHashMap& operator=(const OrderedHashMap& o) { _m = o._m; return *this; }
+    OrderedHashMap& operator=(OrderedHashMap&&) = default;
+
+    // --- size / query ---
+    uint32_t size() const { return _m.size(); }
+    int sizeAsInt() const { return static_cast<int>(_m.size()); }
+    bool is_empty() const { return _m.is_empty(); }
+    bool has(const K& key) const { return _m.has(key); }
+
+    // --- access ---
+    V& operator[](const K& key) { return _m[key]; }
+    const V& operator[](const K& key) const { return _m[key]; }
+    V& get(const K& key) { return _m.get(key); }
+    const V& get(const K& key) const { return _m.get(key); }
+    V* getptr(const K& key) { return _m.getptr(key); }
+    const V* getptr(const K& key) const { return _m.getptr(key); }
+
+    // --- ve KV container interface (aligned with HashMap/Map) ---
+    V value(const K& key) const
+    {
+        const V* ptr = _m.getptr(key);
+        return ptr ? *ptr : V();
+    }
+    const V& value(const K& key, const V& default_value) const
+    {
+        const V* ptr = _m.getptr(key);
+        return ptr ? *ptr : default_value;
+    }
+
+    Vector<K> keys() const
+    {
+        Vector<K> vec;
+        vec.reserve(size());
+        for (const auto& kv : _m) vec.push_back(kv.key);
+        return vec;
+    }
+    Vector<V> values() const
+    {
+        Vector<V> vec;
+        vec.reserve(size());
+        for (const auto& kv : _m) vec.push_back(kv.value);
+        return vec;
+    }
+
+    OrderedHashMap& insertOne(const K& key, const V& value) { _m[key] = value; return *this; }
+    OrderedHashMap& insertOne(const K& key, V&& value) { _m[key] = std::move(value); return *this; }
+
+    // --- mutation ---
+    bool erase(const K& key) { return _m.erase(key); }
+    void clear() { _m.clear(); }
+    void reserve(uint32_t cap) { _m.reserve(cap); }
+
+    // --- iterators (insertion-order) ---
+    using Iterator      = typename ImplMap::Iterator;
+    using ConstIterator = typename ImplMap::ConstIterator;
+
+    Iterator begin() { return _m.begin(); }
+    Iterator end()   { return _m.end(); }
+    Iterator last()  { return _m.last(); }
+    Iterator find(const K& key) { return _m.find(key); }
+
+    ConstIterator begin() const { return _m.begin(); }
+    ConstIterator end()   const { return _m.end(); }
+    ConstIterator last()  const { return _m.last(); }
+    ConstIterator find(const K& key) const { return _m.find(key); }
+
+private:
+    ImplMap _m;
+};
+
+template<typename V>
+using OrderedDict = OrderedHashMap<std::string, V>;
 
 using Ints = Vector<int>;
 using Doubles = Vector<double>;

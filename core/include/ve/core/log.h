@@ -39,19 +39,19 @@ enum class LogLevel
     Sudo
 };
 
-template<LogSink S, LogLevel L> VE_API void LogOnSink(const std::string_view& sv);
+template<LogSink S, LogLevel L> VE_API void logOnSink(const std::string_view& sv);
 
-template<LogLevel L> inline void Log(const std::string_view& sv)
+template<LogLevel L> inline void logDispatch(const std::string_view& sv)
 {
 #ifdef VE_LOG_ENABLE_CONSOLE
-    LogOnSink<LogSink::Console, L>(sv);
+    logOnSink<LogSink::Console, L>(sv);
 #endif
 #ifdef VE_LOG_ENABLE_FILE
-    LogOnSink<LogSink::File, L>(sv);
+    logOnSink<LogSink::File, L>(sv);
 #endif
 }
 
-template<typename T> inline std::ostream& OStream(std::ostream& os, T&& t) { os << std::forward<T>(t); return os; }
+template<typename T> inline std::ostream& streamPut(std::ostream& os, T&& t) { os << std::forward<T>(t); return os; }
 
 template<LogLevel L, bool Spacing> struct LogStream;
 
@@ -68,29 +68,29 @@ template<LogLevel L> struct LogStream<L, false>
 {
     std::ostringstream oss;
 
-    template<typename T> inline LogStream& operator<< (T&& t) { OStream(oss, std::forward<T>(t)); return *this; }
+    template<typename T> inline LogStream& operator<< (T&& t) { streamPut(oss, std::forward<T>(t)); return *this; }
     LogStream& operator<< (std::ostream& (*f)(std::ostream&)) { f(oss); return *this; }
 
-    template<typename T> void operator() (T&& t) { OStream(oss, std::forward<T>(t)); }
-    template<typename T, typename... Ts> void operator() (T t, Ts&&... ts) { OStream(oss, std::forward<T>(t)); this->operator()(std::forward<Ts>(ts)...); }
+    template<typename T> void operator() (T&& t) { streamPut(oss, std::forward<T>(t)); }
+    template<typename T, typename... Ts> void operator() (T t, Ts&&... ts) { streamPut(oss, std::forward<T>(t)); this->operator()(std::forward<Ts>(ts)...); }
 
-    ~LogStream() { Log<L>(oss.str()); }
+    ~LogStream() { logDispatch<L>(oss.str()); }
 };
 
 template<LogLevel L> struct LogStream<L, true>
 {
     std::ostringstream oss;
 
-    template<typename T> LogStream& operator<< (T&& t) { OStream(oss, std::forward<T>(t)) << ' '; return *this; }
+    template<typename T> LogStream& operator<< (T&& t) { streamPut(oss, std::forward<T>(t)) << ' '; return *this; }
     LogStream& operator<< (std::ostream& (*f)(std::ostream&)) { f(oss); return *this; }
 
-    template<typename T> void operator() (T&& t) { OStream(oss, std::forward<T>(t)); }
-    template<typename T, typename... Ts> void operator() (T t, Ts&&... ts) { OStream(oss, std::forward<T>(t)) << ' '; this->operator()(std::forward<Ts>(ts)...); }
+    template<typename T> void operator() (T&& t) { streamPut(oss, std::forward<T>(t)); }
+    template<typename T, typename... Ts> void operator() (T t, Ts&&... ts) { streamPut(oss, std::forward<T>(t)) << ' '; this->operator()(std::forward<Ts>(ts)...); }
 
     ~LogStream()
     {
         auto str = oss.str();
-        if (!str.empty()) Log<L>(std::string_view(str.c_str(), str.find_last_not_of(' ') + 1));
+        if (!str.empty()) logDispatch<L>(std::string_view(str.c_str(), str.find_last_not_of(' ') + 1));
     }
 };
 
@@ -117,23 +117,25 @@ template<LogLevel L> struct LogStream<L, true>
 #define veLog veLogI
 
 namespace ve::log {
-template<typename... Ts> inline void I(Ts... ts) { veLogI(std::forward<Ts>(ts)...); };
-template<typename... Ts> inline void Is(Ts... ts) { veLogIs(std::forward<Ts>(ts)...); };
-template<typename... Ts> inline void W(Ts... ts) { veLogW(std::forward<Ts>(ts)...); };
-template<typename... Ts> inline void Ws(Ts... ts) { veLogWs(std::forward<Ts>(ts)...); };
-template<typename... Ts> inline void E(Ts... ts) { veLogE(std::forward<Ts>(ts)...); };
-template<typename... Ts> inline void Es(Ts... ts) { veLogEs(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void i(Ts... ts) { veLogI(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void is(Ts... ts) { veLogIs(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void w(Ts... ts) { veLogW(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void ws(Ts... ts) { veLogWs(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void e(Ts... ts) { veLogE(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void es(Ts... ts) { veLogEs(std::forward<Ts>(ts)...); };
 
-template<typename... Ts> inline void D(Ts... ts) { BLogD(std::forward<Ts>(ts)...); };
-template<typename... Ts> inline void Ds(Ts... ts) { BLogDs(std::forward<Ts>(ts)...); };
-namespace internal { template<int> inline auto gen_cnt() { static std::atomic_uint64_t cnt = 0; return cnt++; } }
-template<int I = 0, typename... Ts> inline void Cnt(Ts... ts) { BLogDs(internal::gen_cnt<I>(), std::forward<Ts>(ts)...); };
-template<int N = 40, char C = '-'> inline void Line() { static std::string str(N, C); veLogD(str); }
-template<int N = 10> inline void Blank() { Line<N, '\n'>(); }
+template<typename... Ts> inline void d(Ts... ts) { veLogD(std::forward<Ts>(ts)...); };
+template<typename... Ts> inline void ds(Ts... ts) { veLogDs(std::forward<Ts>(ts)...); };
+namespace internal { template<int> inline auto genCnt() { static std::atomic_uint64_t cnt = 0; return cnt++; } }
+template<int I = 0, typename... Ts> inline void cnt(Ts... ts) { veLogDs(internal::genCnt<I>(), std::forward<Ts>(ts)...); };
+template<int N = 40, char C = '-'> inline void line() { static std::string str(N, C); veLogD(str); }
+template<int N = 10> inline void blank() { line<N, '\n'>(); }
+
+// configure — call before first log to take effect
+VE_API void setAppName(const std::string& name);
 
 // advance usage
-template<ve::LogSink S> VE_API const char* GlobalLoggerName();
-template<ve::LogSink S> VE_API void Enable();
-template<ve::LogSink S> VE_API void Disable();
+template<ve::LogSink S> VE_API const char* globalLoggerName();
+template<ve::LogSink S> VE_API void enable();
+template<ve::LogSink S> VE_API void disable();
 }
-

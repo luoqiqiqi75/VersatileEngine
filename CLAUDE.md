@@ -14,41 +14,41 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 
 # Build all
 cmake --build build --config Release
-
-# Build specific targets
-cmake --build build --target VE_CORE_LIBRARY
-cmake --build build --target VE_SERVICE_LIBRARY
 ```
 
-CMake options: `BUILD_CORE=ON`, `BUILD_SERVICE=ON` (both default ON). `BUILD_MAIN` exists but is commented out.
+CMake options (in `cpp/qt/CMakeLists.txt`): `VE_BUILD_IMOL`, `VE_BUILD_TERMINAL`, `VE_BUILD_QT_BASE`, `VE_BUILD_SERVICE`, `VE_BUILD_QML`, `VE_BUILD_EXAMPLE`.
 
-Dependencies: Qt5/Qt6 (Core, Network, Widgets), spdlog, asio2 (bundled in `service/3rdparty/`), rapidjson (bundled inside asio2).
+Dependencies: Qt5/Qt6 (Core, Network, Widgets; Qml optional for veQml), spdlog, asio2 (bundled in `deps/asio2/`), rapidjson (bundled inside asio2's `3rd/cereal/external/`).
 
 No test suite exists in the current codebase.
 
 ## Architecture
 
-### Three Layers
+### Directory Structure
 
-**Core** (`core/`) — Qt-dependent shared library. The reactive data tree built on QObject/QVariant.
-- `ve::Data` (alias for `imol::ModuleObject`) — Tree node with name, value, parent/children, and Qt signals (`changed`, `activated`, `added`, `removed`).
-- `ve::d("path.to.node")` — Global path accessor. `VE_D(path)` is the static-cached macro variant.
-- `ve::Module` — Lifecycle: `NONE → INIT → READY → DEINIT`. Register with `VE_REGISTER_MODULE(Name, Class)`.
-- `ve::Object` / `ve::Manager` — Base object system with parent/child relationships and HashMap container.
-- `ve::Factory<Sig>` — Generic factory pattern for dynamic object creation.
+- **`deps/`** — Bundled header-only dependencies (asio2, spdlog, asio, cereal, fmt). CMake targets defined in `cmake/ve_deps.cmake`.
+- **`core/`** — Pure C++ headers and sources (no Qt). Built as `libve`.
+  - `ve::Object` / `ve::Manager` — Base object system with parent/child relationships.
+  - `ve::Factory<Sig>` — Generic factory pattern.
+  - `ve::log` — Logging interface.
+  - `core/platform/` — Platform crash handling (`win/`, `linux/`, `unsupported/`).
+- **`cpp/qt/`** — All Qt-dependent modules, managed by `cpp/qt/CMakeLists.txt`:
+  - **`imol/`** — Legacy data tree library (`imol::ModuleObject`). Own DLL export: `CORE_LIBRARY` / `CORESHARED_EXPORT`.
+  - **`veTerminal/`** — Terminal widget + TCP server. Own DLL export: `VE_TERMINAL_LIBRARY` / `VE_TERMINAL_API`.
+  - **`veQtBase/`** — Qt core utilities (`ve::Data`, `ve::entry`, `ve::Module`). DLL export: `VE_LIBRARY` / `VE_API`.
+  - **`veService/`** — IPC layer (CBS binary protocol, XService). Uses asio2.
+  - **`veQml/`** — QML bridge (`QuickNode`, `QuickRootNode`). Own DLL export: `VE_QML_LIBRARY` / `VE_QML_API`.
+  - **`veExample/`** — Test executable.
 
-**Service** (`service/`) — IPC layer using asio2 for networking.
-- CBS (Compact Binary Service) — C++↔C++ TCP binary protocol with `echo`, `publish`, `subscribe`, `unsubscribe` operations on `single` or `recursive` data structures.
-- CommandServer — TCP text command interface.
+### CMake Layout
 
-**Platform** (`core/platform/`) — Crash handling per OS.
-- `win/rescue.cpp` — SEH + StackWalk64 + DbgHelp
-- `linux/rescue.cpp` — Signal handlers + backtrace + dladdr + cxa_demangle
-- `unsupported/rescue.h` — Fallback stub
+- **Root `CMakeLists.txt`** — Project setup, deps only (no Qt). Delegates to `cpp/qt/`.
+- **`cpp/qt/CMakeLists.txt`** — Finds Qt, sets `AUTOMOC/AUTORCC/AUTOUIC`, manages module options and build order.
+- Each module specifies its own Qt component requirements (e.g., `Core;Network` for imol, `Core;Widgets;Network` for veTerminal).
 
 ### Data Navigation API
 
-Tree nodes use short method names: `p(level)` parent, `c(name|index)` child, `b(offset)` sibling, `r("a.b.c")` relative path, `fullName()` full path.
+Tree nodes use short method names: `p(level)` parent, `c(name|index)` child, `b(offset)` sibling, `r("a.b.c")` relative path, `fullName()` full path. Global accessor: `ve::d("path.to.node")`, macro: `VE_D(path)`.
 
 ### Serialization
 
@@ -56,8 +56,9 @@ Tree nodes use short method names: `p(level)` parent, `c(name|index)` child, `b(
 
 ## Code Conventions
 
-- Public headers live in `{component}/include/ve/{component}/`. Implementation in `{component}/src/`.
-- The `imol` namespace contains the original implementation layer; `ve` namespace provides the modern API surface wrapping it.
-- CMake macros in `cmake/ve_common.cmake`: `ve_add_library()`, `ve_find_sources()`, `ve_find_resources()`, `ve_target_link_qt_components()`.
+- Pure C++ headers in `core/include/ve/core/`. Qt adapter headers in `cpp/qt/{module}/include/`. Implementation in `{module}/src/`.
+- The `imol` namespace is the legacy implementation layer; `ve` namespace wraps it as the modern API surface.
+- CMake utilities in `cmake/ve_common.cmake`: `ve_qt_module_vars()`, `ve_target_link_qt_components()`, `ve_find_sources()`.
 - Platform-specific code is isolated under `core/platform/{win,linux,unsupported}/`.
-- The architecture doc (`docs/ARCHITECTURE.md`, written in Chinese) describes a planned refactoring to decouple from Qt by introducing pure C++17 `ve::Value` and `ve::Node` types.
+- Internal planning docs in `docs/internal/plan/`. Historical analysis in `docs/internal/history/`.
+- Local CMake overrides via `cmake/_*.cmake` files (gitignored).

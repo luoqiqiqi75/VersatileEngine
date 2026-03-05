@@ -1,27 +1,30 @@
 // ----------------------------------------------------------------------------
-// module.h
+// module.h — Module lifecycle: init → ready → deinit
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
+//
+// Origin: hemera_core/module (2023) — ported to ve:: namespace.
+// ----------------------------------------------------------------------------
 
 #pragma once
 
-#include "base.h"
 #include "data.h"
 #include "factory.h"
 
 namespace ve {
 
-enum ModuleSignal : int
-{
+enum ModuleSignal : int {
     MODULE_STATE_ABOUT_TO_CHANGE    = 0xffe0,
     MODULE_STATE_CHANGED            = 0xffe1
 };
 
 class VE_API Module : public Object
 {
+    VE_DECLARE_PRIVATE
+
 public:
     enum State : int {
         NONE    = 0x0f00 | 0x00,
@@ -34,7 +37,6 @@ public:
     Module();
     ~Module();
 
-public:
     State state() const;
 
     template<State s> void exeState();
@@ -43,9 +45,6 @@ protected:
     virtual void init();
     virtual void ready();
     virtual void deinit();
-
-private:
-    VE_DECLARE_PRIVATE
 };
 
 template<class T>
@@ -63,12 +62,12 @@ public:
     using StateF = std::function<void()>;
 
 protected:
-    HashMap<State, StateF> _f;
+    HashMap<State, StateF> f_;
 
 protected:
-    void init() override { if (auto f = _f.value(INIT, NULL)) f(); }
-    void ready() override { if (auto f = _f.value(READY, NULL)) f(); }
-    void deinit() override { if (auto f = _f.value(DEINIT, NULL)) f(); }
+    void init() override { if (auto f = f_.value(INIT, NULL)) f(); }
+    void ready() override { if (auto f = f_.value(READY, NULL)) f(); }
+    void deinit() override { if (auto f = f_.value(DEINIT, NULL)) f(); }
 };
 
 using ModuleFactory = Factory<Module*()>;
@@ -78,23 +77,14 @@ template<class C>
 inline basic::enable_if_void<std::is_base_of<Module, C>::value> registerModule(const std::string& key)
 {
     globalModuleFactory().insertOne(key, [=] () -> Module* {
-        data::create(nullptr, "ve.module.global_module_key")->set(nullptr, QString::fromStdString(key));
+        data::create("_p.global_module_key", std::string(key))->set(key);
         return new C();
-    });
-}
-
-template<class C>
-inline void registerTemplateModule(const std::string& key)
-{
-    globalModuleFactory().insertOne(key, [=] () -> Module* {
-        data::create(nullptr, "ve.module.global_module_key")->set(nullptr, QString::fromStdString(key));
-        return new TemplateModule<C>();
     });
 }
 
 namespace module {
 
-VE_API Module* instance(const std::string& key);
+inline Module* instance(const std::string& key) { return globalModuleFactory().instance(key); }
 template<typename T> inline basic::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::string& key)
 { return static_cast<T*>(instance(key)); }
 

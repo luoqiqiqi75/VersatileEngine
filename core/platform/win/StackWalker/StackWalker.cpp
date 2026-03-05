@@ -3,9 +3,6 @@
 #include <atlconv.h>
 #include <dbghelp.h>
 
-#include <veCommon>
-#include "ve/core/imol/core/logmanager.h"
-
 #pragma comment(lib, "version.lib")
 #pragma comment( lib, "dbghelp.lib" )
 
@@ -353,7 +350,6 @@ void CStackWalker::OutputString(LPCTSTR lpszFormat, ...)
 	va_end(args);
 
     OutputDebugString(szBuf);
-    SLOG << QString::fromUtf16((ushort *)szBuf);
 }
 
 void CStackWalker::GetModuleInformation(LPMODULE_INFO pmi)

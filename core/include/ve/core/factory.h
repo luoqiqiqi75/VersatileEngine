@@ -30,9 +30,18 @@ public:
 
     template<typename T, typename... Params>
     T execAs(const std::string& key, Params&&... params) { return static_cast<T>(exec(key, std::forward<Params>(params)...)); }
-};
 
-template<typename T, typename... Ts>
-T& instance(Ts&&... ts) { static T t(std::forward<Ts>(ts)...); return t; }
+    template<typename... Params>
+    RetT produce(const std::string& key, Params&&... params) {
+        RetT ret = exec(key, std::forward<Params>(params)...);
+        _cache[key] = ret;
+        return ret;
+    }
+
+    RetT instance(const std::string& key) { return _cache.value(key, NULL); }
+
+private:
+    Dict<RetT> _cache;
+};
 
 }

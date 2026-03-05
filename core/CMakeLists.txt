@@ -1,58 +1,53 @@
-# --- Qt MOC/UIC/RCC ---
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
+# =============================================================================
+# core/CMakeLists.txt — pure C++ base library -> libve
+#
+# Provides: ve/global.h (VE_API), ve/core/base.h (Object, Manager),
+#           ve/core/data.h (AnyData, YAML), ve/core/log.h,
+#           ve/core/factory.h, platform/ (rescue, StackWalker)
+# =============================================================================
 
-# --- Gather sources ---
-file(GLOB_RECURSE LIB_INCLUDE_FILES ${VE_CORE_LIBRARY_INCLUDE}/*.h)
-ve_find_sources(${CMAKE_CURRENT_SOURCE_DIR} LIB_SOURCES)
-ve_find_resources(${CMAKE_CURRENT_SOURCE_DIR} UI_FILES QRC_FILES TS_FILES)
+message(STATUS "")
+message(STATUS "[libve]  pure C++ core")
+
+ve_collect(${CMAKE_CURRENT_SOURCE_DIR} _CORE)
 
 # --- Platform-specific sources ---
-set(LIB_PLATFORM_INCLUDE_DIR)
 if(WIN32)
-    set(LIB_PLATFORM_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/win)
+    set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/win)
 elseif(UNIX AND NOT APPLE AND NOT ANDROID)
-    set(LIB_PLATFORM_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/linux)
+    set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/linux)
 else()
-    set(LIB_PLATFORM_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/unsupported)
+    set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/unsupported)
 endif()
 
-file(GLOB_RECURSE LIB_PLATFORM_SOURCES
-    ${LIB_PLATFORM_INCLUDE_DIR}/*.h
-    ${LIB_PLATFORM_INCLUDE_DIR}/*.cpp
-)
+file(GLOB_RECURSE _PLAT_SOURCES ${_PLAT_DIR}/*.h ${_PLAT_DIR}/*.cpp)
 
 # --- Library target ---
-add_library(${VE_CORE_LIBRARY}
-    ${LIB_INCLUDE_FILES}
-    ${LIB_SOURCES}
-    ${LIB_PLATFORM_SOURCES}
-    ${UI_FILES} ${QRC_FILES} ${TS_FILES}
-)
-
-target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE
-    VE_LIBRARY
-    CORE_LIBRARY
-)
-
-target_include_directories(${VE_CORE_LIBRARY} PRIVATE
-    ${VE_CORE_LIBRARY_INCLUDE}
-    ${LIB_PLATFORM_INCLUDE_DIR}
-)
-
-# Qt
-ve_target_link_qt_components(${VE_CORE_LIBRARY} "${VE_QT_COMPONENTS}")
-
-# temporary: imol internal headers
-target_include_directories(${VE_CORE_LIBRARY} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/ve/core/imol/
-)
-
-# --- 3rdparty: spdlog ---
-target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_3rdparty_spdlog)
-
-# --- Platform-specific libraries ---
-if(UNIX AND NOT APPLE AND NOT ANDROID)
-    target_link_libraries(${VE_CORE_LIBRARY} PRIVATE dl)
+if(WIN32)
+    set(VE_CORE_LIBRARY libve)
+else()
+    set(VE_CORE_LIBRARY ve)
 endif()
+
+add_library(${VE_CORE_LIBRARY} SHARED
+    ${_CORE_ALL}
+    ${_PLAT_SOURCES}
+)
+
+target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE VE_LIBRARY)
+
+# PUBLIC includes — consumers get ve/global.h, ve/core/base.h, etc.
+target_include_directories(${VE_CORE_LIBRARY} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# PRIVATE includes — platform internals
+target_include_directories(${VE_CORE_LIBRARY} PRIVATE
+    ${_PLAT_DIR}
+)
+
+# --- deps ---
+target_link_libraries(${VE_CORE_LIBRARY} PUBLIC  ve_dep_yaml)
+target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
+
+message(STATUS "")

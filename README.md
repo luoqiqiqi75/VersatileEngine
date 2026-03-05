@@ -16,9 +16,9 @@
 
 ---
 
-> **⚠️ Project Status: Active Development**
+> **⚠️ Project Status: Active Refactoring**
 >
-> VersatileEngine has evolved over 10 years across multiple commercial projects. Due to this long history, many planned designs (e.g., decoupling from Qt, pure C++17 `ve::Value`/`ve::Node` core, plugin architecture) have not yet been implemented. The API and architecture may undergo significant changes in upcoming releases. Use in production with caution and expect breaking changes.
+> VersatileEngine has evolved over 10 years across multiple commercial projects. The codebase is currently being refactored: the core layer (`core/`) is transitioning from a Qt-dependent implementation to a pure C++17 foundation (`ve::Value`, `ve::Node`), while the existing Qt-based API is preserved as the adapter layer (`cpp/qt/`). The API and architecture may undergo significant changes in upcoming releases. Use in production with caution and expect breaking changes.
 
 ---
 
@@ -53,16 +53,15 @@ VE has been battle-tested in commercial projects across multiple domains:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Adapter Layer                                                │
-│    ve-qt (Qt/QML bridge)  │  ve-js (WebSocket/JS)  │  ve-pure │
+│  Adapter Layer                                    cpp/ js/ py/│
+│    cpp/qt/ (Qt/QML)  │  js/ (WebSocket/JS)  │  cpp/ros/ (ROS)│
 ├──────────────────────────────────────────────────────────────┤
 │  Service Layer                                    service/    │
 │    CBS Binary IPC  │  WebSocket JSON  │  Command Server       │
 ├──────────────────────────────────────────────────────────────┤
 │  Core Layer                                         core/     │
-│    ve::Data (tree node)      │  ve::Module (lifecycle)        │
 │    ve::Object (base class)   │  ve::Factory (factory pattern) │
-│    ve::d("path") (accessor)  │  Logging / Terminal / Rescue   │
+│    ve::Node (planned)        │  Logging / Terminal / Rescue   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -105,9 +104,8 @@ ve::d("robot")
 - **Compiler**: C++17 capable (MSVC 2019+, GCC 7+, Clang 5+)
 - **CMake**: 3.15 or later
 - **Qt**: 5.12+ or 6.x (Core, Network, Widgets modules)
-- **spdlog**: logging library (system-installed or via package manager)
 
-> Note: asio2 and rapidjson are bundled in `service/3rdparty/` and do not need separate installation.
+> Note: All third-party dependencies (asio2, asio, spdlog, cereal, fmt) are bundled in `deps/asio2/` and do not need separate installation.
 
 ### Building
 
@@ -131,6 +129,7 @@ cmake --build build --target VE_SERVICE_LIBRARY
 |--------|---------|-------------|
 | `BUILD_CORE` | `ON` | Build core library (ve::Data, ve::Module, etc.) |
 | `BUILD_SERVICE` | `ON` | Build service library (CBS, Command Server, etc.) |
+| `BUILD_MAIN` | `ON` | Build main example program |
 | `BUILD_SHARED_LIBS` | `ON` | Build shared libraries (OFF for static) |
 | `LOG_MIN_FILE_LEVEL` | unset | Minimum file logging level |
 
@@ -151,6 +150,8 @@ target_link_libraries(your_target PRIVATE VE_CORE_LIBRARY VE_SERVICE_LIBRARY)
 ```
 
 ## Usage Examples
+
+> The following examples use the **Qt adapter layer** API (`cpp/qt/`), which provides `ve::Data`, `ve::d()`, `ve::Module` and Qt signal/slot integration. The core layer is being refactored toward a pure C++17 API (`ve::Node`, `ve::Value`).
 
 ### Data Tree Operations
 
@@ -221,31 +222,36 @@ int main(int argc, char *argv[]) {
 
 ```
 VersatileEngine/
-├── core/                       # Core library
+├── core/                       # Core library (C++17, currently Qt-dependent)
 │   ├── include/ve/             # Public headers
-│   │   ├── global.h            # Global macro definitions
-│   │   ├── core/               # Core API
-│   │   │   ├── data.h          # ve::Data - data tree node
-│   │   │   ├── module.h        # ve::Module - module lifecycle
-│   │   │   ├── base.h          # ve::Object - base class
-│   │   │   ├── common.h        # ve::d() global accessor
-│   │   │   ├── factory.h       # ve::Factory - factory pattern
-│   │   │   ├── log.h           # ve::log - logging system
-│   │   │   └── terminal.h      # ve::terminal - built-in debugger
-│   │   ├── veCommon            # Convenience include
-│   │   ├── veData              # Data layer include
-│   │   └── veModule            # Module layer include
-│   ├── src/                    # Implementation
-│   └── platform/               # Platform-specific code
-│       ├── win/                # Windows crash handling (SEH + StackWalk64)
-│       ├── linux/              # Linux crash handling (signal + backtrace)
+│   │   ├── global.h            # Global macros & export symbols (pure C++)
+│   │   └── core/               # Core API headers
+│   │       ├── base.h          # ve::Object / ve::Manager - base class & container
+│   │       ├── factory.h       # ve::Factory - generic factory pattern
+│   │       ├── log.h           # ve::log - spdlog-based logging system
+│   │       └── node.h          # ve::Node - (planned) pure C++ data tree node
+│   ├── src/                    # Implementation (includes imol legacy layer)
+│   └── platform/               # Platform-specific crash handling
+│       ├── win/                # Windows (SEH + StackWalk64)
+│       ├── linux/              # Linux (signal + backtrace)
 │       └── unsupported/        # Fallback stub
-├── service/                    # Service library
-│   ├── include/ve/             # Service layer public headers
-│   ├── src/                    # CBS, Command Server, XService implementation
-│   └── 3rdparty/               # Third-party dependencies
-│       └── asio2/              # asio2 networking library (includes rapidjson)
-├── main/                       # Example application
+├── service/                    # Service library (IPC layer)
+│   └── CMakeLists.txt
+├── cpp/                        # Language adapter implementations
+│   ├── qt/                     # Qt adapter layer
+│   │   ├── core/               # ve::Data, ve::Module, ve::d() (Qt/QObject-based)
+│   │   │   └── include/ve/     # Headers: data.h, module.h, common.h, terminal.h
+│   │   ├── service/            # CBS, CommandServer, XService (asio2-based)
+│   │   │   └── include/ve/     # Headers: compact_binary_service.h, command_server.h
+│   │   └── main/               # Qt example application
+│   ├── ros1/                   # ROS1 adapter (planned)
+│   ├── ros2/                   # ROS2 adapter (planned)
+│   └── vtk/                    # VTK adapter (planned)
+├── js/                         # JavaScript/TypeScript adapter (planned)
+├── py/                         # Python adapter (planned)
+├── deps/                       # Bundled third-party dependencies
+│   └── asio2/                  # asio2 2.9 (includes asio, spdlog, cereal, fmt)
+├── main/                       # Main example application
 ├── cmake/                      # CMake utility scripts
 ├── docs/                       # Documentation
 │   └── ARCHITECTURE.md         # Architecture overview & evolution plan

@@ -58,27 +58,132 @@ cmake --build build --config Debug
 
 ## Code Conventions
 
+> Style follows **Qt conventions** — camelCase methods, Allman braces, Qt-compatible naming.
+
 ### Naming
 
-- **Namespaces**: `ve` (public API), `imol` (internal implementation layer)
-- **Classes**: PascalCase — `ModuleObject`, `Factory`
-- **Methods**: camelCase — `fullName()`, `childCount()`
-- **Member variables**: `m_` prefix (e.g. `m_name`, `m_var`) or `_p` (Private pointer)
-- **Macros**: `VE_` prefix (e.g. `VE_API`, `VE_REGISTER_MODULE`)
+| 元素 | 规则 | 示例 |
+|---|---|---|
+| **Namespaces** | 全小写，短名 | `ve`, `ve::basic`, `imol` |
+| **Classes / Structs** | PascalCase | `Module`, `DataManager`, `NetObject` |
+| **Methods / Functions** | camelCase | `fullName()`, `childCount()`, `setParent()` |
+| **Member variables** | `m_` 前缀（普通成员）或 `_p`（Pimpl 指针） | `m_name`, `m_running`, `_p` |
+| **Local variables** | camelCase 或 snake_case 均可 | `newVal`, `thread_count` |
+| **Template params** | 单大写字母或 PascalCase | `T`, `RetT`, `DerivedT` |
+| **Enums** | 类型名 PascalCase，值 UPPER_SNAKE | `enum State { NONE, INIT, READY }` |
+| **Macros** | `VE_` 前缀 + UPPER_SNAKE | `VE_API`, `VE_REGISTER_MODULE` |
+| **Constants** | camelCase 或 UPPER_SNAKE 均可 | `constexpr double eps = 0.000001;` |
+| **Typedefs / using** | PascalCase，`T` 后缀 | `using FunctionT = ...;`, `using ActionT = ...;` |
+
+### Brace Style — Allman (Qt style)
+
+**Class / struct 声明**：`{` 换行
+
+```cpp
+class VE_API Module : public Object
+{
+    VE_DECLARE_PRIVATE
+
+public:
+    Module();
+    ~Module();
+
+    State state() const;
+};
+```
+
+**函数定义**（.cpp 文件）：`{` 换行
+
+```cpp
+Module::State Module::state() const
+{
+    return _p->s;
+}
+```
+
+**短内联函数**（一行可完成）：允许同行
+
+```cpp
+bool isNull() const { return !_p; }
+State state() const { return _p->s; }
+```
+
+**控制语句**（if / for / while / switch）：`{` **不换行**（跟随 Qt 惯例）
+
+```cpp
+if (!_p->connections.has(signal)) {
+    return;
+}
+
+for (auto& kv : hashmap) {
+    kv.second();
+}
+
+switch (s) {
+    case INIT: os << "INIT"; break;
+    case READY: os << "READY"; break;
+}
+```
+
+**Lambda**：`{` 不换行
+
+```cpp
+observer->connect(OBJECT_DELETED, this, [=] {
+    disconnect(observer);
+});
+```
+
+**Namespace**：`{` 不换行，闭合处标注名称
+
+```cpp
+namespace ve {
+
+// ...
+
+} // namespace ve
+```
 
 ### File Organization
 
-- Public headers go in `{component}/include/ve/{component}/`
-- Implementation files go in `{component}/src/`
-- Platform-specific code is isolated under `core/platform/{win,linux,unsupported}/`
+- Public headers: `{component}/include/ve/{component}/`
+- Implementation: `{component}/src/`
+- Platform-specific: `core/platform/{win,linux,unsupported}/`
+- Qt adapter headers: `cpp/qt/{module}/include/`
+
+### Header Files
+
+```cpp
+// ----------------------------------------------------------------------------
+// filename.h — Brief description
+// ----------------------------------------------------------------------------
+// Copyright (c) 2023-present Thilo and VersatileEngine contributors.
+// Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+// See LICENSE file in the project root for full license information.
+// ----------------------------------------------------------------------------
+
+#pragma once
+
+#include "dependency.h"
+
+namespace ve {
+
+class MyClass
+{
+    // ...
+};
+
+} // namespace ve
+```
 
 ### Coding Style
 
-- C++17 standard
-- Prefer smart pointers for memory management
-- Use `VE_DECLARE_PRIVATE` / `VE_DECLARE_UNIQUE_PRIVATE` for Pimpl encapsulation
+- **C++17** standard
+- Prefer **Pimpl** encapsulation：`VE_DECLARE_PRIVATE` / `VE_DECLARE_UNIQUE_PRIVATE`
 - Use `#pragma once` for header guards
-- Include copyright header in source files
+- Include copyright header in all source files
+- Prefer smart pointers for ownership；raw pointers for non-owning references
+- Avoid `using namespace` in headers
+- Use `const` and `override` wherever applicable
 
 ### Commit Message Format
 
