@@ -58,24 +58,49 @@ cmake --build build --config Debug
 
 ## Code Conventions
 
-> Style follows **Qt conventions** — camelCase methods, Allman braces, Qt-compatible naming.
+> **短**。符合规范的前提下，一行能写完的绝不两行。
 
 ### Naming
 
 | 元素 | 规则 | 示例 |
 |---|---|---|
-| **Namespaces** | 全小写，短名 | `ve`, `ve::basic`, `imol` |
-| **Classes / Structs** | PascalCase | `Module`, `DataManager`, `NetObject` |
-| **Methods / Functions** | camelCase | `fullName()`, `childCount()`, `setParent()` |
-| **Member variables** | `m_` 前缀（普通成员）或 `_p`（Pimpl 指针） | `m_name`, `m_running`, `_p` |
-| **Local variables** | camelCase 或 snake_case 均可 | `newVal`, `thread_count` |
+| **Namespaces** | 全小写，短名 | `ve`, `ve::impl`, `ve::basic` |
+| **Classes / Structs** | PascalCase | `Node`, `SchemaField`, `SmallVector` |
+| **Methods / Functions** | camelCase | `childCount()`, `setShadow()`, `isValidName()` |
+| **Public parameters** | 全称 camelCase | `auto_delete`, `auto_fill` |
+| **Private members** | 简短 | `_p`, `cnt`, `mtx`, `ch` |
+| **Impl local variables** | 缩写 | `v`, `r`, `gs`, `nm`, `sv`, `seg` |
 | **Template params** | 单大写字母或 PascalCase | `T`, `RetT`, `DerivedT` |
 | **Enums** | 类型名 PascalCase，值 UPPER_SNAKE | `enum State { NONE, INIT, READY }` |
-| **Macros** | `VE_` 前缀 + UPPER_SNAKE | `VE_API`, `VE_REGISTER_MODULE` |
-| **Constants** | camelCase 或 UPPER_SNAKE 均可 | `constexpr double eps = 0.000001;` |
-| **Typedefs / using** | PascalCase，`T` 后缀 | `using FunctionT = ...;`, `using ActionT = ...;` |
+| **Macros** | `VE_` 前缀 + UPPER_SNAKE | `VE_API`, `VE_DECLARE_PRIVATE` |
+| **Type aliases** | PascalCase | `Dict<V>`, `Strings`, `Ints` |
 
-### Brace Style — Allman (Qt style)
+公共接口名称必须**清晰自解释**，不需要注释就能看懂。
+内部实现变量**越短越好**，不推荐 Java 风格长名字。
+
+### Formatting
+
+- 缩进：4 空格，无 tab
+- 行宽：不强制限制，合理即可
+- 单行函数：getter/setter 等 trivial 函数写在一行
+- 循环体只有一行时不加花括号
+
+```cpp
+// good — 单行 trivial 函数
+Node* Node::parent() const { return _p->parent; }
+Node* Node::prev() const { return sibling(-1); }
+Node* Node::append(Node* c) { return c ? append(c->name(), c) : nullptr; }
+
+// good — 短 early return
+if (!child) return false;
+for (char c : name) if (c == '#' || c == '/') return false;
+
+// good — 单行循环体
+for (auto& kv : _p->ch)
+    for (auto* n : kv.value) out.push_back(n);
+```
+
+### Brace Style
 
 **Class / struct 声明**：`{` 换行
 
@@ -83,40 +108,20 @@ cmake --build build --config Debug
 class VE_API Module : public Object
 {
     VE_DECLARE_PRIVATE
-
 public:
     Module();
     ~Module();
-
     State state() const;
 };
 ```
 
-**函数定义**（.cpp 文件）：`{` 换行
+**函数定义**（.cpp）：`{` 换行（多行函数体），单行允许同行
 
-```cpp
-Module::State Module::state() const
-{
-    return _p->s;
-}
-```
-
-**短内联函数**（一行可完成）：允许同行
-
-```cpp
-bool isNull() const { return !_p; }
-State state() const { return _p->s; }
-```
-
-**控制语句**（if / for / while / switch）：`{` **不换行**（跟随 Qt 惯例）
+**控制语句**（if / for / while / switch）：`{` **不换行**
 
 ```cpp
 if (!_p->connections.has(signal)) {
     return;
-}
-
-for (auto& kv : hashmap) {
-    kv.second();
 }
 
 switch (s) {
@@ -125,22 +130,32 @@ switch (s) {
 }
 ```
 
-**Lambda**：`{` 不换行
+**Lambda / Namespace**：`{` 不换行
 
 ```cpp
-observer->connect(OBJECT_DELETED, this, [=] {
-    disconnect(observer);
-});
+observer->connect(OBJECT_DELETED, this, [=] { disconnect(observer); });
+
+namespace ve {
+// ...
+} // namespace ve
 ```
 
-**Namespace**：`{` 不换行，闭合处标注名称
+### Comments
+
+- **少写**。好的命名 > 注释
+- 文件头：`// file.h — brief description`
+- 段落分隔：`// --- section ---` 或 `// ====` 分隔线
+- 行内注释：只在不明显处简短标注
+- 禁止：注释掉的代码
 
 ```cpp
-namespace ve {
+// good
+Dict<SmallVector<Node*, 1>> ch;   // name → [Node*]
 
-// ...
-
-} // namespace ve
+// bad — 注释比代码还长
+// This method returns the parent node of the current node.
+// If there is no parent, it returns nullptr.
+Node* Node::parent() const { return _p->parent; }
 ```
 
 ### File Organization
@@ -150,37 +165,74 @@ namespace ve {
 - Platform-specific: `core/platform/{win,linux,unsupported}/`
 - Qt adapter headers: `cpp/qt/{module}/include/`
 
-### Header Files
+### Header Files (.h)
+
+- `#pragma once`
+- 最少 include，能前置声明就前置声明
+- 公共 API 按功能分组，用 `// --- group ---` 标注
+- 声明对齐：返回类型左对齐
+- 不在头文件里写实现（模板和 inline 除外）
 
 ```cpp
-// ----------------------------------------------------------------------------
-// filename.h — Brief description
-// ----------------------------------------------------------------------------
-// Copyright (c) 2023-present Thilo and VersatileEngine contributors.
-// Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
-// See LICENSE file in the project root for full license information.
-// ----------------------------------------------------------------------------
-
-#pragma once
-
-#include "dependency.h"
-
-namespace ve {
-
-class MyClass
-{
-    // ...
-};
-
-} // namespace ve
+// --- child (by name, no # no /) ---
+Node*         child(const std::string& name) const;
+Node*         child(const std::string& name, int index) const;
+int           childCount() const;
+Vector<Node*> children() const;
 ```
+
+### Implementation Files (.cpp)
+
+- 用 `// ====` 分隔线标注大段落（与 .h 的 API 分组对应）
+- 内部 helper 用 `static` 函数，`_` 前缀
+- Private 结构体成员用缩写
+
+```cpp
+struct Node::Private
+{
+    std::string name;
+    Node* parent = nullptr;
+    Dict<SmallVector<Node*, 1>> ch;   // children
+    int cnt = 0;                      // total child count
+    mutable std::recursive_mutex mtx;
+};
+```
+
+### Containers
+
+| 用途 | 容器 |
+|---|---|
+| 通用数组 | `Vector<T>` |
+| 少量元素 (SBO) | `SmallVector<T, N>` |
+| 有序键值 | `Dict<V>` / `OrderedHashMap<K,V>` |
+| 无序键值 | `Hash<V>` / `UnorderedHashMap<K,V>` |
+| 固定大小 | `Array<T, N>` |
+
+### Type Casting
+
+- C-style cast 用于简单数值转换：`(int)v->size()`
+- `static_cast` 用于指针/类层次转换
+- 禁止 `reinterpret_cast`（除非绝对必要）
+- 禁止 `const_cast`（除非 API 边界需要）
+
+### Thread Safety
+
+- Private 中持有 `mutable std::recursive_mutex mtx`
+- 方法内 `using Lock = std::lock_guard<std::recursive_mutex>; Lock lk(_p->mtx);`
+- 锁粒度尽量小
+
+### PIMPL
+
+| 宏 | 语义 | 说明 |
+|---|---|---|
+| `VE_DECLARE_UNIQUE_PRIVATE` | 值语义 | 不可复制，推荐新代码使用 |
+| `VE_DECLARE_SHARED_PRIVATE` | 共享语义 | 引用计数 |
+| `VE_DECLARE_PRIVATE` | 原始指针 | 遗留，避免新代码使用 |
 
 ### Coding Style
 
 - **C++17** standard
-- Prefer **Pimpl** encapsulation：`VE_DECLARE_PRIVATE` / `VE_DECLARE_UNIQUE_PRIVATE`
 - Use `#pragma once` for header guards
-- Include copyright header in all source files
 - Prefer smart pointers for ownership；raw pointers for non-owning references
 - Avoid `using namespace` in headers
 - Use `const` and `override` wherever applicable

@@ -9,6 +9,7 @@
 
 #include "ve/global.h"
 #include "ve/core/impl/ordered_hashmap.h"
+#include "ve/core/impl/small_vector.h"
 
 // --- Type-trait generator macros -------------------------------------------
 // VE_DECLARE_T_CHECKER(Name, ...)   → generates is-valid trait via SFINAE
@@ -204,6 +205,26 @@ public:
     }
 };
 
+// --- SmallVector: inline SBO vector (default N = 1) -------------------------
+// Same API as Vector, but stores up to N elements on the stack.
+// Ideal for the common case where a container holds very few items
+// (e.g. 1 child pointer per name group in Node's children map).
+
+template<typename T, uint32_t N = 1>
+class SmallVector : public impl::SmallVectorImpl<T, N>,
+                    public PrivateTContainerBase<SmallVector<T, N>, T>
+{
+public:
+    using ImplT = impl::SmallVectorImpl<T, N>;
+
+    // --- inherit all constructors from impl ---
+    using ImplT::SmallVectorImpl;
+
+    SmallVector() : ImplT() {}
+    SmallVector(const ImplT& other) : ImplT(other) {}
+    SmallVector(ImplT&& other) noexcept : ImplT(std::move(other)) {}
+};
+
 // --- KV accessor policies ---
 
 struct StdPairKVAccess {
@@ -295,53 +316,14 @@ template<typename K, typename V,
          typename Hasher     = impl::HashMapHasherDefault,
          typename Comparator = impl::HashMapComparatorDefault<K>>
 class OrderedHashMap
-    : public PrivateKVContainerBase<OrderedHashMap<K, V, Hasher, Comparator>, K, V, ImplKVAccess>
+    : public impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>, public PrivateKVContainerBase<OrderedHashMap<K, V, Hasher, Comparator>, K, V, ImplKVAccess>
 {
+    using ImplBase = impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>;
 public:
-    using ImplMap  = impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>;
+    VE_INHERIT_CONSTRUCTOR(InsertionOrderedHashMap, OrderedHashMap, ImplBase)
+    OrderedHashMap(const Vector<K>& keys, const Vector<V>& values) { this->fromKVVectors(keys, values); }
 
-    // --- constructors ---
-    OrderedHashMap() = default;
-    explicit OrderedHashMap(uint32_t capacity) : _m(capacity) {}
-    OrderedHashMap(std::initializer_list<impl::KeyValue<K, V>> init) : _m(init) {}
-    OrderedHashMap(const OrderedHashMap& o) : _m(static_cast<const ImplMap&>(o._m)) {}
-    OrderedHashMap(OrderedHashMap&&) = default;
-    OrderedHashMap& operator=(const OrderedHashMap& o) { _m = o._m; return *this; }
-    OrderedHashMap& operator=(OrderedHashMap&&) = default;
-
-    // --- size / query ---
-    uint32_t size() const { return _m.size(); }
-    bool is_empty() const { return _m.is_empty(); }
-
-    // --- access ---
-    V& operator[](const K& key) { return _m[key]; }
-    const V& operator[](const K& key) const { return _m[key]; }
-    V& get(const K& key) { return _m.get(key); }
-    const V& get(const K& key) const { return _m.get(key); }
-    V* getptr(const K& key) { return _m.getptr(key); }
-    const V* getptr(const K& key) const { return _m.getptr(key); }
-
-    // --- mutation ---
-    bool erase(const K& key) { return _m.erase(key); }
-    void clear() { _m.clear(); }
-    void reserve(uint32_t cap) { _m.reserve(cap); }
-
-    // --- iterators (insertion-order) ---
-    using Iterator      = typename ImplMap::Iterator;
-    using ConstIterator = typename ImplMap::ConstIterator;
-
-    Iterator begin() { return _m.begin(); }
-    Iterator end()   { return _m.end(); }
-    Iterator last()  { return _m.last(); }
-    Iterator find(const K& key) { return _m.find(key); }
-
-    ConstIterator begin() const { return _m.begin(); }
-    ConstIterator end()   const { return _m.end(); }
-    ConstIterator last()  const { return _m.last(); }
-    ConstIterator find(const K& key) const { return _m.find(key); }
-
-private:
-    ImplMap _m;
+    using ImplBase::has;
 };
 
 template<typename V>
