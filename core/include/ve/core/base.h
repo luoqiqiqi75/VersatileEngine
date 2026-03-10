@@ -154,7 +154,7 @@ public:
     int sizeAsInt() const { return static_cast<int>(dPtr()->size()); }
     bool has(int index) const { return index >= 0 && index < sizeAsInt(); }
     ValueT value(int index) const { return has(index) ? dPtr()->operator[](index) : ValueT(); }
-    const ValueT& value(int index, const ValueT& default_value) const { return has(index) ? dPtr()->operator[](index) : default_value; }
+    ValueT value(int index, const ValueT& default_value) const { return has(index) ? dPtr()->operator[](index) : default_value; }
 
     DerivedT& insertOne(int index, const ValueT& value) { auto d = dPtr(); d->insert(d->begin() + index, value); return *d; }
     DerivedT& insertOne(int index, ValueT&& value) { auto d = dPtr(); d->insert(d->begin() + index, std::move(value)); return *d; }
@@ -282,7 +282,7 @@ public:
         const auto it = dPtr()->find(key);
         return it == dPtr()->end() ? ValueT() : KVAccessor::value(*it);
     }
-    const ValueT& value(const KeyT& key, const ValueT& default_value) const
+    ValueT value(const KeyT& key, const ValueT& default_value) const
     {
         const auto it = dPtr()->find(key);
         return it == dPtr()->end() ? default_value : KVAccessor::value(*it);

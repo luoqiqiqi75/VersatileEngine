@@ -41,6 +41,12 @@ enum class LogLevel
 
 template<LogSink S, LogLevel L> VE_API void logOnSink(const std::string_view& sv);
 
+// Runtime minimum active log level across all enabled sinks.
+// Returns the lowest LogLevel (as int) that any sink will accept.
+// Cost: one relaxed atomic load (~1ns). Used by LogStream to skip
+// oss.str() heap allocation when the message would be dropped anyway.
+VE_API int logMinActiveLevel();
+
 template<LogLevel L> inline void logDispatch(const std::string_view& sv)
 {
 #ifdef VE_LOG_ENABLE_CONSOLE
@@ -51,6 +57,8 @@ template<LogLevel L> inline void logDispatch(const std::string_view& sv)
 #endif
 }
 
+// Any type with operator<<(std::ostream&, T) works here — STL types, Eigen
+// matrices, Qt types, user-defined types, etc. No special adaptation needed.
 template<typename T> inline std::ostream& streamPut(std::ostream& os, T&& t) { os << std::forward<T>(t); return os; }
 
 template<LogLevel L, bool Spacing> struct LogStream;
@@ -74,7 +82,12 @@ template<LogLevel L> struct LogStream<L, false>
     template<typename T> void operator() (T&& t) { streamPut(oss, std::forward<T>(t)); }
     template<typename T, typename... Ts> void operator() (T t, Ts&&... ts) { streamPut(oss, std::forward<T>(t)); this->operator()(std::forward<Ts>(ts)...); }
 
-    ~LogStream() { logDispatch<L>(oss.str()); }
+    ~LogStream()
+    {
+        // Skip oss.str() heap allocation when no sink needs this level.
+        if (static_cast<int>(L) >= logMinActiveLevel())
+            logDispatch<L>(oss.str());
+    }
 };
 
 template<LogLevel L> struct LogStream<L, true>
@@ -89,8 +102,10 @@ template<LogLevel L> struct LogStream<L, true>
 
     ~LogStream()
     {
-        auto str = oss.str();
-        if (!str.empty()) logDispatch<L>(std::string_view(str.c_str(), str.find_last_not_of(' ') + 1));
+        if (static_cast<int>(L) >= logMinActiveLevel()) {
+            auto str = oss.str();
+            if (!str.empty()) logDispatch<L>(std::string_view(str.c_str(), str.find_last_not_of(' ') + 1));
+        }
     }
 };
 
@@ -131,10 +146,27 @@ template<int I = 0, typename... Ts> inline void cnt(Ts... ts) { veLogDs(internal
 template<int N = 40, char C = '-'> inline void line() { static std::string str(N, C); veLogD(str); }
 template<int N = 10> inline void blank() { line<N, '\n'>(); }
 
-// configure — call before first log to take effect
+// --- configure (call before first log to take effect) ---
 VE_API void setAppName(const std::string& name);
+VE_API void setLogDir(const std::string& dir);      // override platform default
 
-// advance usage
+// --- runtime log level ---
+VE_API void setLevel(LogLevel level);                       // set both sinks at once
+template<ve::LogSink S> VE_API void setLevel(LogLevel level);
+
+// --- format pattern (spdlog pattern syntax) ---
+// e.g. "%H:%M:%S.%e %^[%L] %v%$"  (console with color)
+//      "%L[%Y/%m/%d %H:%M:%S.%e] %v" (file)
+template<ve::LogSink S> VE_API void setPattern(const std::string& pattern);
+
+// --- flush control ---
+VE_API void setFlushInterval(int seconds);
+VE_API void flush();
+
+// --- query ---
+VE_API std::string getLogFilePath();
+
+// --- advanced ---
 template<ve::LogSink S> VE_API const char* globalLoggerName();
 template<ve::LogSink S> VE_API void enable();
 template<ve::LogSink S> VE_API void disable();
