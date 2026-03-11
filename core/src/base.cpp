@@ -90,35 +90,29 @@ bool Values::equals(const Values& other) const
 struct Object::Private
 {
     std::string name;
-    Object* parent = nullptr;
+    mutable MutexT mtx;
     UnorderedHashMap<int, UnorderedHashMap<Object*, List<ActionT>>> connections;
 };
 
-Object::Object(const std::string& name) : _p(new Private)
-{
-    _p->name = name.empty() ? VE_UNDEFINED_OBJECT_NAME : name;
-}
+Object::Object(const std::string& name) : _p(std::make_unique<Private>()) { _p->name = name; }
 
 Object::~Object()
 {
     trigger(OBJECT_DELETED);
-
-    if (auto mgr = dynamic_cast<Manager*>(parent())) mgr->remove(this, false);
-    delete _p;
 }
 
-Object* Object::parent() const { return _p->parent; }
-void Object::setParent(Object *obj) { _p->parent = obj; }
-
-std::string Object::name() const { return _p->name; }
+const std::string& Object::name() const { return _p->name; }
+std::recursive_mutex& Object::mutex() const { return _p->mtx; }
 
 bool Object::hasConnection(int signal, Object* observer)
 {
+    LockT lk(_p->mtx);
     return _p->connections.has(signal) && _p->connections[signal].has(observer);
 }
 
 void Object::connect(int signal, Object* observer, const ActionT& action)
 {
+    LockT lk(_p->mtx);
     if (!_p->connections.has(signal)) {
         _p->connections[signal] = {{observer, {action}}};
     } else if (!_p->connections[signal].has(observer)) {
@@ -134,29 +128,23 @@ void Object::connect(int signal, Object* observer, const ActionT& action)
 
 void Object::disconnect(int signal, Object* observer)
 {
+    LockT lk(_p->mtx);
     if (_p->connections.has(signal)) _p->connections[signal].erase(observer);
 }
 
-void Object::disconnect(Object *observer)
+void Object::disconnect(Object* observer)
 {
-    for (auto& kv : _p->connections) {
-        kv.second.erase(observer);
-    }
+    LockT lk(_p->mtx);
+    for (auto& kv : _p->connections) kv.second.erase(observer);
 }
 
 void Object::trigger(int signal)
 {
+    LockT lk(_p->mtx);
     if (!_p->connections.has(signal)) return;
-    auto hashmap = _p->connections[signal]; // copy needed
-    for (auto& kv : hashmap) {
-        if (auto obj = kv.first) {
-            // todo performance control
-            (void)obj;
-        }
-        for (auto& it : kv.second) {
-            it();
-        }
-    }
+    auto copy = _p->connections[signal]; // copy before unlock-free iteration
+    for (auto& kv : copy)
+        for (auto& fn : kv.second) fn();
 }
 
 Manager::Manager(const std::string &name) : Object(name)
@@ -165,11 +153,7 @@ Manager::Manager(const std::string &name) : Object(name)
 
 Manager::~Manager()
 {
-    for (auto& kv : *this) {
-        Object* obj = kv.second;
-        obj->setParent(nullptr);
-        delete obj;
-    }
+    for (auto& kv : *this) delete kv.second;
 }
 
 Object* Manager::add(Object* obj, bool delete_if_failed)
@@ -179,7 +163,6 @@ Object* Manager::add(Object* obj, bool delete_if_failed)
         if (delete_if_failed) delete obj;
         return nullptr;
     }
-    obj->setParent(this);
     (*this)[obj->name()] = obj;
     return obj;
 }
@@ -197,7 +180,6 @@ bool Manager::remove(Object *obj, bool auto_delete)
         }
     }
     if (find) {
-        obj->setParent(nullptr);
         if (auto_delete) delete obj;
     }
     return false;
@@ -215,14 +197,6 @@ Object* Manager::get(const std::string &key) const
 {
     auto it = find(key);
     return it == end() ? nullptr : it->second;
-}
-
-void Manager::fixObjectLinks()
-{
-    for (auto& kv : *this) {
-        kv.second->_p->name = kv.first;
-        kv.second->setParent(this);
-    }
 }
 
 }

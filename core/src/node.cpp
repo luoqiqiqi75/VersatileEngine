@@ -2,6 +2,8 @@
 #include "ve/core/node.h"
 #include <string_view>
 
+#include "ve/core/log.h"
+
 namespace ve {
 
 // ============================================================================
@@ -12,9 +14,7 @@ void Schema::build(Node* node) const
 {
     if (!node) return;
     for (auto& f : fields) {
-        auto* c = new Node();
-        node->append(f.name, c);
-        if (f.sub) f.sub->build(c);
+        if (f.sub) f.sub->build(node->append(f.name));
     }
 }
 
@@ -24,27 +24,22 @@ void Schema::build(Node* node) const
 
 struct Node::Private
 {
-    std::string name;
     Node* parent  = nullptr;
     Node* shadow  = nullptr;
-    Dict<SmallVector<Node*, 1>> ch;   // children: name → [Node*]
+    Dict<SmallVector<Node*, 1>> children;   // children: name → [Node*]
     int cnt = 0;                      // total child count
-    mutable std::recursive_mutex mtx;
 
-    explicit Private(const std::string& n) : name(n) { ch[""]; }
+    Private() { children[""]; }
 };
-
-using Lock = std::lock_guard<std::recursive_mutex>;
 
 // ============================================================================
 // Node — construction / static
 // ============================================================================
 
-Node::Node(const std::string& name) : _p(std::make_unique<Private>(name)) {}
-
+Node::Node(const std::string& name) : Object(name), _p(std::make_unique<Private>()) {}
 Node::~Node()
 {
-    for (auto& kv : _p->ch)
+    for (auto& kv : _p->children)
         for (auto* c : kv.value)
             if (c) { c->_p->parent = nullptr; delete c; }
 }
@@ -58,51 +53,16 @@ bool Node::isValidName(const std::string& name)
 }
 
 // ============================================================================
-// Node — identity
-// ============================================================================
-
-const std::string& Node::name() const  { return _p->name; }
-std::recursive_mutex& Node::mutex() const { return _p->mtx; }
-
-// ============================================================================
 // Node — tree navigation
 // ============================================================================
 
 Node* Node::parent() const { return _p->parent; }
-
-Node* Node::parent(int level) const
+Node* Node::parent(const int level) const
 {
     auto* n = _p->parent;
-    for (int i = 0; i < level && n; ++i) n = n->_p->parent;
+    for (int i = 0; i < level && n; ++i, n = n->_p->parent) {}
     return n;
 }
-
-Node* Node::sibling(int offset) const
-{
-    if (!_p->parent) return nullptr;
-    int i = _p->parent->indexOf(this);
-    return i < 0 ? nullptr : _p->parent->childAt(i + offset);
-}
-
-Node* Node::prev() const { return sibling(-1); }
-Node* Node::next() const { return sibling(1); }
-
-Node* Node::first() const
-{
-    Lock lk(_p->mtx);
-    for (auto& kv : _p->ch) if (!kv.value.empty()) return kv.value[0];
-    return nullptr;
-}
-
-Node* Node::last() const
-{
-    Lock lk(_p->mtx);
-    Node* r = nullptr;
-    for (auto& kv : _p->ch) if (!kv.value.empty()) r = kv.value[kv.value.size() - 1];
-    return r;
-}
-
-int Node::indexInParent() const { return _p->parent ? _p->parent->indexOf(this) : -1; }
 
 bool Node::isAncestorOf(const Node* node) const
 {
@@ -113,222 +73,313 @@ bool Node::isAncestorOf(const Node* node) const
 }
 
 // ============================================================================
-// Node — child by name
+// Node — child
 // ============================================================================
-
-Node* Node::child(const std::string& name) const
-{
-    Lock lk(_p->mtx);
-    auto* v = _p->ch.getptr(name);
-    if (v && !v->empty()) return (*v)[0];
-    return _p->shadow ? _p->shadow->child(name) : nullptr;
-}
 
 Node* Node::child(const std::string& name, int index) const
 {
-    Lock lk(_p->mtx);
-    auto* v = _p->ch.getptr(name);
-    if (v && index >= 0 && index < (int)v->size()) return (*v)[(uint32_t)index];
+    LockT lk(mutex());
+    if (auto* v = _p->children.getptr(name)) return v->value(index, nullptr);
     return _p->shadow ? _p->shadow->child(name, index) : nullptr;
 }
 
-Node* Node::childAt(int index) const
+Node* Node::child(int global_index) const
 {
-    Lock lk(_p->mtx);
-    if (index < 0) return nullptr;
-    int r = index;
-    for (auto& kv : _p->ch) {
-        int s = (int)kv.value.size();
-        if (r < s) return kv.value[(uint32_t)r];
-        r -= s;
+    LockT lk(mutex());
+    if (global_index < 0) return nullptr;
+    for (auto& kv : _p->children) {
+        int s = kv.value.sizeAsInt();
+        if (global_index < s) return kv.value[(uint32_t)global_index];
+        global_index -= s;
     }
-    return _p->shadow ? _p->shadow->childAt(index) : nullptr;
+    return _p->shadow ? _p->shadow->child(global_index) : nullptr;
 }
 
-int Node::childCount() const { return _p->cnt; }
-
-int Node::childCount(const std::string& name) const
+bool Node::has(const std::string& name, int index) const
 {
-    Lock lk(_p->mtx);
-    auto* v = _p->ch.getptr(name);
-    return v ? (int)v->size() : 0;
+    LockT lk(mutex());
+    if (const auto* v = _p->children.getptr(name); v && !v->empty()) return v->sizeAsInt() > index && index >= 0;
+    return _p->shadow ? _p->shadow->has(name, index) : false;
 }
 
-bool Node::hasChild(const std::string& name) const
+bool Node::has(int global_index) const
 {
-    Lock lk(_p->mtx);
-    auto* v = _p->ch.getptr(name);
-    if (v && !v->empty()) return true;
-    return _p->shadow ? _p->shadow->hasChild(name) : false;
+    LockT lk(mutex());
+    if (global_index >= 0 && global_index < _p->cnt) return true;
+    return _p->shadow ? _p->shadow->has(global_index) : false;
 }
 
-int Node::indexOf(const Node* child) const
-{
-    if (!child) return -1;
-    Lock lk(_p->mtx);
-    int idx = 0;
-    for (auto& kv : _p->ch)
-        for (uint32_t i = 0; i < kv.value.size(); ++i, ++idx)
-            if (kv.value[i] == child) return idx;
-    return -1;
-}
-
-Strings Node::childNames() const
-{
-    Lock lk(_p->mtx);
-    Strings out;
-    for (auto& kv : _p->ch) if (!kv.key.empty()) out.push_back(kv.key);
-    return out;
-}
-
-Vector<Node*> Node::children() const
-{
-    Lock lk(_p->mtx);
-    Vector<Node*> out;
-    out.reserve((size_t)_p->cnt);
-    for (auto& kv : _p->ch) for (auto* n : kv.value) out.push_back(n);
-    return out;
-}
-
-Vector<Node*> Node::children(const std::string& name) const
-{
-    Lock lk(_p->mtx);
-    Vector<Node*> out;
-    auto* v = _p->ch.getptr(name);
-    if (v) { out.reserve(v->size()); for (auto* n : *v) out.push_back(n); }
-    return out;
-}
-
-// ============================================================================
-// Node — child management
-// ============================================================================
-
-// detach child from its current parent (no delete)
-static void _detach(Node* child, Node* new_parent)
-{
-    auto* p = child->parent();
-    if (p && p != new_parent) p->remove(child, false);
-}
-
-bool Node::insert(const std::string& name, Node* child)
-{
-    if (!child || !isValidName(name)) return false;
-    Lock lk(_p->mtx);
-    _detach(child, this);
-    child->_p->name = name;
-    child->_p->parent = this;
-    _p->ch[name].push_back(child);
-    ++_p->cnt;
-    return true;
-}
-
-bool Node::insert(const std::string& name, int index, Node* child)
-{
-    if (!child || !isValidName(name) || index < 0) return false;
-    Lock lk(_p->mtx);
-    auto* ex = _p->ch.getptr(name);
-    int gs = ex ? (int)ex->size() : 0;
-    if (index > gs) return false;
-    _detach(child, this);
-    child->_p->name = name;
-    child->_p->parent = this;
-    auto& v = _p->ch[name];
-    v.insert(v.begin() + index, child);
-    ++_p->cnt;
-    return true;
-}
-
-bool Node::insertAt(int index, Node* child, bool auto_fill)
-{
-    if (!child || index < 0) return false;
-    Lock lk(_p->mtx);
-    auto& anon = _p->ch[""];
-    int as = (int)anon.size();
-    if (index > as) {
-        if (!auto_fill) return false;
-        for (int i = as; i < index; ++i) {
-            auto* f = new Node();
-            f->_p->parent = this;
-            anon.push_back(f);
-            ++_p->cnt;
-        }
-    }
-    _detach(child, this);
-    child->_p->name = "";
-    child->_p->parent = this;
-    anon.insert(anon.begin() + index, child);
-    ++_p->cnt;
-    return true;
-}
-
-Node* Node::append(const std::string& name, Node* child) { return insert(name, child) ? child : nullptr; }
-Node* Node::append(Node* child) { return child ? append(child->name(), child) : nullptr; }
-
-bool Node::remove(Node* child, bool auto_delete)
+bool Node::has(const Node* child) const
 {
     if (!child) return false;
-    Lock lk(_p->mtx);
-    for (auto it = _p->ch.begin(); it != _p->ch.end(); ++it) {
-        auto& v = it->value;
-        for (uint32_t i = 0; i < v.size(); ++i) {
-            if (v[i] != child) continue;
-            v.erase(i);
-            --_p->cnt;
-            child->_p->parent = nullptr;
-            if (v.empty() && !it->key.empty()) _p->ch.erase(it->key);
-            if (auto_delete) delete child;
-            return true;
+    LockT lk(mutex());
+    if (const auto* v = _p->children.getptr(child->name())) {
+        for (const auto* n : *v) {
+            if (n == child) return true;
         }
     }
     return false;
 }
 
-bool Node::remove(const std::string& name, int index, bool auto_delete)
+int Node::count() const { return _p->cnt; }
+
+int Node::count(const std::string& name) const
 {
-    Lock lk(_p->mtx);
-    auto* v = _p->ch.getptr(name);
-    if (!v || index < 0 || index >= (int)v->size()) return false;
-    auto* c = (*v)[(uint32_t)index];
-    v->erase((uint32_t)index);
-    --_p->cnt;
-    c->_p->parent = nullptr;
-    if (v->empty() && !name.empty()) _p->ch.erase(name);
-    if (auto_delete) delete c;
+    LockT lk(mutex());
+    const auto* v = _p->children.getptr(name);
+    return v ? (int)v->size() : 0;
+}
+
+Vector<Node*> Node::children() const
+{
+    LockT lk(mutex());
+    Vector<Node*> out;
+    out.reserve((size_t)_p->cnt);
+    for (auto& kv : _p->children) for (auto* n : kv.value) out.push_back(n);
+    return out;
+}
+
+Vector<Node*> Node::children(const std::string& name) const
+{
+    LockT lk(mutex());
+    Vector<Node*> out;
+    auto* v = _p->children.getptr(name);
+    if (v) { out.reserve(v->size()); for (auto* n : *v) out.push_back(n); }
+    return out;
+}
+
+Strings Node::childNames() const
+{
+    LockT lk(mutex());
+    Strings out;
+    for (auto& kv : _p->children) if (!kv.key.empty()) out.push_back(kv.key);
+    return out;
+}
+
+Node* Node::first() const
+{
+    LockT lk(mutex());
+    for (auto& kv : _p->children) if (!kv.value.empty()) return kv.value[0];
+    return nullptr;
+}
+
+Node* Node::last() const
+{
+    LockT lk(mutex());
+    Node* r = nullptr;
+    for (auto& kv : _p->children) if (!kv.value.empty()) r = kv.value[kv.value.size() - 1];
+    return r;
+}
+
+template<bool IsGlobal> int Node::indexOf(const Node* child) const
+{
+    if (!child || child->parent() != this) return -1;
+    LockT lk(mutex());
+    auto* v = _p->children.getptr(child->name());
+    if (!v) return -1;
+    if constexpr (IsGlobal) {
+        int gi = 0;
+        for (auto& kv : _p->children) {
+            if (&kv.value != v) { gi += kv.value.sizeAsInt(); continue; }
+            for (uint32_t i = 0; i < kv.value.size(); ++i)
+                if (kv.value[i] == child) return gi + (int)i;
+            return -1;
+        }
+    } else {
+        for (uint32_t i = 0; i < v->size(); ++i)
+            if (v->at(i) == child) return (int)i;
+    }
+    return -1;
+}
+
+template VE_API int Node::indexOf<true>(const Node*) const;
+template VE_API int Node::indexOf<false>(const Node*) const;
+
+template<bool IsGlobal> Node* Node::sibling(int offset) const
+{
+    auto* p = _p->parent;
+    if (!p) return nullptr;
+    LockT lk(p->mutex());
+
+    // locate this node in its name group via Dict iterator
+    auto it = p->_p->children.find(name());
+    if (it == p->_p->children.end()) return nullptr;
+    auto& grp = it->value;
+    int li = -1;
+    for (uint32_t i = 0; i < grp.size(); ++i)
+        if (grp[i] == this) { li = (int)i; break; }
+    if (li < 0) return nullptr;
+
+    // fast: within same name group
+    int t = li + offset;
+    if (t >= 0 && t < (int)grp.size()) return grp[(uint32_t)t];
+    if constexpr (!IsGlobal) return nullptr;
+
+    // cross-group: walk adjacent Dict entries (no global indexOf)
+    if (t >= (int)grp.size()) {
+        int rem = t - (int)grp.size();
+        auto fwd = it; ++fwd;
+        while (fwd != p->_p->children.end()) {
+            int gs = (int)fwd->value.size();
+            if (rem < gs) return fwd->value[(uint32_t)rem];
+            rem -= gs;
+            ++fwd;
+        }
+    } else { // t < 0
+        int rem = t; // negative
+        auto bwd = it; --bwd;
+        while (bwd) {
+            int gs = (int)bwd->value.size();
+            rem += gs;
+            if (rem >= 0) return bwd->value[(uint32_t)rem];
+            --bwd;
+        }
+    }
+    return nullptr;
+}
+
+template VE_API Node* Node::sibling<true>(int) const;
+template VE_API Node* Node::sibling<false>(int) const;
+
+// ============================================================================
+// Node — child management
+// ============================================================================
+
+bool Node::insert(Node* child)
+{
+    if (!child) {
+        veLogE << "<ve.node> insert null child to " << path();
+        return false;
+    }
+    if (!isValidName(child->name())) {
+        veLogE << "<ve.node> insert invalid child " << child->name() << " to " << path();
+        return false;
+    }
+    if (child->parent()) {
+        veLogW << "<ve.node> insert child with parent " << child->path() << " to " << path();
+        child->parent()->take(child);
+    }
+    LockT lk(mutex());
+    child->_p->parent = this;
+    _p->children[child->name()].push_back(child);
+    ++_p->cnt;
+    trigger(NODE_CHILD_ADDED);
     return true;
 }
 
-void Node::clearChildren(bool auto_delete)
+bool Node::insert(Node* child, int index, bool auto_fill)
 {
-    Lock lk(_p->mtx);
-    for (auto& kv : _p->ch)
+    if (!child || index < 0) {
+        veLogE << "<ve.node> insert null child (index " << index << ") to " << path();
+        return false;
+    }
+    if (!isValidName(child->name())) {
+        veLogE << "<ve.node> insert invalid child " << child->name() << " to " << path();
+        return false;
+    }
+    if (child->parent()) {
+        veLogW << "<ve.node> insert child with parent " << child->path() << " to " << path();
+        child->parent()->take(child);
+    }
+    LockT lk(mutex());
+    auto& grp = _p->children[child->name()];
+    int gs = (int)grp.size();
+    if (index > gs) {
+        if (auto_fill) {
+            for (int i = gs; i < index; ++i) {
+                auto* f = new Node(child->name());
+                f->_p->parent = this;
+                grp.push_back(f);
+                ++_p->cnt;
+            }
+        } else { // invalid index just append
+            index = gs;
+        }
+    }
+    child->_p->parent = this;
+    grp.insert(grp.begin() + index, child);
+    ++_p->cnt;
+    trigger(NODE_CHILD_ADDED);
+    return true;
+}
+
+Node* Node::append(const std::string& name)
+{
+    Node* n = new Node(name);
+    if (insert(n)) return n;
+    delete n;
+    return nullptr;
+}
+Node* Node::append(const std::string& name, int index, bool auto_fill)
+{
+    Node* n = new Node(name);
+    if (insert(n, index, auto_fill)) return n;
+    delete n;
+    return nullptr;
+}
+Node* Node::append(int index, bool auto_fill)
+{
+    return append("", index, auto_fill);
+}
+
+Node* Node::take(Node* child)
+{
+    if (!child) return nullptr;
+    LockT lk(mutex());
+    auto* v = _p->children.getptr(child->name());
+    if (!v) return nullptr;
+    for (uint32_t i = 0; i < v->size(); ++i) {
+        if (v->at(i) != child) continue;
+        v->erase(i);
+        --_p->cnt;
+        child->_p->parent = nullptr;
+        if (v->empty() && !child->name().empty()) _p->children.erase(child->name());
+        trigger(NODE_CHILD_REMOVED);
+        return child;
+    }
+    return nullptr;
+}
+Node* Node::take(const std::string& name, int index) { return take(child(name, index)); }
+
+bool Node::remove(Node* child)
+{
+    if (auto n = take(child)) {
+        delete n;
+        return true;
+    }
+    return false;
+}
+
+bool Node::remove(const std::string& name, int index)
+{
+    if (auto n = take(name, index)) {
+        delete n;
+        return true;
+    }
+    return false;
+}
+bool Node::remove(const std::string& name)
+{
+    bool removed = false;
+    while (auto* n = take(name)) { delete n; removed = true; }
+    return removed;
+}
+
+void Node::clear(bool auto_delete)
+{
+    LockT lk(mutex());
+    for (auto& kv : _p->children)
         for (auto* c : kv.value)
             if (c) { c->_p->parent = nullptr; if (auto_delete) delete c; }
-    _p->ch.clear();
-    _p->ch[""];
+    _p->children.clear();
+    _p->children[""];
     _p->cnt = 0;
+    trigger(NODE_CHILD_REMOVED);
 }
 
 // ============================================================================
-// Node — path
+// Node — key helpers
 // ============================================================================
-
-// build key for a node: "name", "name#N", or "#N"
-static std::string _key(const Node* node)
-{
-    auto& nm = node->name();
-    auto* p  = node->parent();
-
-    if (nm.empty()) {
-        int i = p ? p->indexOf(node) : -1;
-        return i >= 0 ? "#" + std::to_string(i) : "";
-    }
-    if (p && p->childCount(nm) > 1) {
-        auto sibs = p->children(nm);
-        for (int i = 0; i < sibs.sizeAsInt(); ++i)
-            if (sibs[i] == node) return nm + "#" + std::to_string(i);
-    }
-    return nm;
-}
 
 // parse key: "name#N" → (name,N), "#N" → global, "name" → (name,0)
 static bool _parse(std::string_view seg, std::string& name, int& idx, bool& global)
@@ -355,6 +406,111 @@ static bool _parse(std::string_view seg, std::string& name, int& idx, bool& glob
     return true;
 }
 
+// ============================================================================
+// Node — key
+// ============================================================================
+
+std::string Node::keyOf(const Node* child) const
+{
+    int i = indexOf<false>(child);
+    if (i < 0) return "";
+    auto& nm = child->name();
+    if (nm.empty()) return "#" + std::to_string(indexOf<true>(child));
+    if (count(nm) <= 1) return nm;
+    return nm + "#" + std::to_string(i);
+}
+
+Node* Node::childAt(const std::string& key) const
+{
+    std::string nm; int idx; bool gl;
+    if (!_parse(key, nm, idx, gl)) return nullptr;
+    return gl ? child(idx) : child(nm, idx);
+}
+
+// ============================================================================
+// Node — container interface
+// ============================================================================
+
+using MapElem = impl::HashMapElement<std::string, SmallVector<Node*, 1>>;
+
+static const MapElem* _skip_fwd(const MapElem* e)
+{
+    while (e && e->data.value.empty()) e = e->next;
+    return e;
+}
+
+static const MapElem* _skip_bwd(const MapElem* e)
+{
+    while (e && e->data.value.empty()) e = e->prev;
+    return e;
+}
+
+// --- forward ---
+
+Node* Node::ChildIterator::operator*() const
+{
+    auto* e = static_cast<const MapElem*>(_e);
+    return e ? e->data.value[_i] : nullptr;
+}
+
+Node::ChildIterator& Node::ChildIterator::operator++()
+{
+    if (!_e) return *this;
+    auto* e = static_cast<const MapElem*>(_e);
+    if (++_i >= e->data.value.size()) {
+        _e = _skip_fwd(e->next);
+        _i = 0;
+    }
+    return *this;
+}
+
+Node::ChildIterator Node::begin() const
+{
+    LockT lk(mutex());
+    return ChildIterator(_skip_fwd(_p->children.begin().element()), 0);
+}
+
+Node::ChildIterator Node::end() const { return ChildIterator(nullptr, 0); }
+
+// --- reverse ---
+
+Node* Node::ReverseChildIterator::operator*() const
+{
+    auto* e = static_cast<const MapElem*>(_e);
+    return e ? e->data.value[_i] : nullptr;
+}
+
+Node::ReverseChildIterator& Node::ReverseChildIterator::operator++()
+{
+    if (!_e) return *this;
+    if (_i > 0) { --_i; return *this; }
+    auto* e = _skip_bwd(static_cast<const MapElem*>(_e)->prev);
+    _e = e;
+    _i = e ? (uint32_t)(e->data.value.size() - 1) : 0;
+    return *this;
+}
+
+Node::ReverseChildIterator Node::rbegin() const
+{
+    LockT lk(mutex());
+    auto* e = _skip_bwd(_p->children.last().element());
+    uint32_t i = e ? (uint32_t)(e->data.value.size() - 1) : 0;
+    return ReverseChildIterator(e, i);
+}
+
+Node::ReverseChildIterator Node::rend() const { return ReverseChildIterator(nullptr, 0); }
+
+// ============================================================================
+// Node — shadow
+// ============================================================================
+
+Node* Node::shadow() const { return _p->shadow; }
+void  Node::setShadow(Node* s) { LockT lk(mutex()); _p->shadow = s; }
+
+// ============================================================================
+// Node — path
+// ============================================================================
+
 // walk path segments, calling step(name, idx, global) for each
 template<typename StepFn>
 static Node* _walk(std::string_view sv, const Node* start, StepFn step)
@@ -373,7 +529,6 @@ static Node* _walk(std::string_view sv, const Node* start, StepFn step)
     return const_cast<Node*>(cur);
 }
 
-// climb to root from any node
 static Node* _root(const Node* n) { auto* p = const_cast<Node*>(n); while (p->parent()) p = p->parent(); return p; }
 
 Node* Node::resolve(const std::string& path) const
@@ -383,7 +538,7 @@ Node* Node::resolve(const std::string& path) const
     Node* s = const_cast<Node*>(this);
     if (sv[0] == '/') { s = _root(this); sv.remove_prefix(1); if (sv.empty()) return s; }
     return _walk(sv, s, [](Node* cur, auto& nm, int idx, bool gl) -> Node* {
-        return gl ? cur->childAt(idx) : cur->child(nm, idx);
+        return gl ? cur->child(idx) : cur->child(nm, idx);
     });
 }
 
@@ -391,9 +546,9 @@ std::string Node::path(Node* ancestor) const
 {
     if (this == ancestor) return "";
     auto* p = _p->parent;
-    if (!p || p == ancestor) return _key(this);
+    auto seg = p ? p->keyOf(this) : name();
+    if (!p || p == ancestor) return seg;
     auto pp = p->path(ancestor);
-    auto seg = _key(this);
     return pp.empty() ? seg : pp + "/" + seg;
 }
 
@@ -402,11 +557,11 @@ Node* Node::ensure(const std::string& path)
     if (path.empty()) return this;
     std::string_view sv(path);
     Node* start = this;
-    if (sv[0] == '/') { start = const_cast<Node*>(_root(this)); sv.remove_prefix(1); if (sv.empty()) return start; }
+    if (sv[0] == '/') { start = _root(this); sv.remove_prefix(1); if (sv.empty()) return start; }
     return _walk(sv, start, [](Node* cur, auto& nm, int idx, bool gl) -> Node* {
         std::string key = gl ? "" : nm;
-        int have = cur->childCount(key);
-        for (int i = have; i <= idx; ++i) cur->insert(key, new Node());
+        int have = cur->count(key);
+        for (int i = have; i <= idx; ++i) cur->insert(new Node(key));
         return cur->child(key, idx);
     });
 }
@@ -414,15 +569,10 @@ Node* Node::ensure(const std::string& path)
 bool Node::erase(const std::string& path, bool auto_delete)
 {
     auto* t = resolve(path);
-    return (t && t->_p->parent) ? t->_p->parent->remove(t, auto_delete) : false;
+    if (!t || !t->_p->parent) return false;
+    if (auto_delete) return t->_p->parent->remove(t);
+    return t->_p->parent->take(t) != nullptr;
 }
-
-// ============================================================================
-// Node — shadow
-// ============================================================================
-
-Node* Node::shadow() const { return _p->shadow; }
-void  Node::setShadow(Node* s) { Lock lk(_p->mtx); _p->shadow = s; }
 
 // ============================================================================
 // Node — debug
@@ -430,16 +580,16 @@ void  Node::setShadow(Node* s) { Lock lk(_p->mtx); _p->shadow = s; }
 
 std::string Node::dump(int depth) const
 {
-    Lock lk(_p->mtx);
+    LockT lk(mutex());
     std::string indent(depth * 2, ' ');
-    std::string key = _key(this);
+    auto key = _p->parent ? _p->parent->keyOf(this) : name();
     if (key.empty()) key = "(anon)";
 
     std::string out = indent + key;
     if (_p->shadow) out += "  -> " + _p->shadow->name();
     out += "\n";
 
-    for (auto& kv : _p->ch)
+    for (auto& kv : _p->children)
         for (auto* c : kv.value)
             if (c) out += c->dump(depth + 1);
     return out;

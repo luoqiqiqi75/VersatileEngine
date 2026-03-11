@@ -355,11 +355,11 @@ void init()
     int module_index = 0;
 
     for (const auto& it : globalModuleFactory()) {
-        QString module_name = QString::fromStdString(it.first);
+        QString module_name = QString::fromStdString(it.key);
         if (verbose) qInfo() << "Load module " << module_name;
         Module* m = nullptr;
         try {
-            m = globalModuleFactory().produce(it.first);
+            m = globalModuleFactory().produce(it.key);
             g_modules.append(m);
             if (verbose) qInfo() << "Module loaded successfully";
         } catch (std::exception& e) {

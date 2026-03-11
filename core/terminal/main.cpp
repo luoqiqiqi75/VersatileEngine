@@ -57,15 +57,15 @@ static void cmd_ls(Node* node)
 {
     if (!node) { std::cout << "(null)\n"; return; }
     auto names = node->childNames();
-    int anon = node->childCount("");
+    int anon = node->count("");
 
     if (anon > 0) std::cout << "  (anon) x" << anon << "\n";
     for (auto& n : names) {
-        int cnt = node->childCount(n);
+        int cnt = node->count(n);
         if (cnt == 1) std::cout << "  " << n << "\n";
         else          std::cout << "  " << n << " x" << cnt << "\n";
     }
-    std::cout << "  (" << node->childCount() << " total)\n";
+    std::cout << "  (" << node->count() << " total)\n";
 }
 
 static void cmd_tree(Node* node)

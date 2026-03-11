@@ -27,12 +27,13 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # --- Sub-module options ---
-option(VE_BUILD_IMOL      "Build imol data tree"                   ON)
-option(VE_BUILD_TERMINAL  "Build veTerminal (widget + TCP server)" ON)
-option(VE_BUILD_QT_BASE   "Build veQtBase (ve::Data, ve::entry)"  ON)
-option(VE_BUILD_SERVICE   "Build veService (networking)"           ON)
-option(VE_BUILD_QML       "Build veQml (QML bridge)"               OFF)
-option(VE_BUILD_EXAMPLE   "Build veExample (test executable)"      ON)
+option(VE_BUILD_QT_IMOL      "Build imol data tree"                   ON)
+option(VE_BUILD_QT_TERMINAL  "Build veTerminal (widget + TCP server)" ON)
+option(VE_BUILD_QT_BASE      "Build veQtBase (ve::Data, ve::entry)"   ON)
+option(VE_BUILD_QT_SERVICE   "Build veService (networking)"           ON)
+option(VE_BUILD_QT_QML       "Build veQml (QML bridge)"               OFF)
+option(VE_BUILD_QT_EXAMPLE   "Build veExample (test executable)"      ON)
+option(VE_BUILD_QT_BENCH     "Build veBench (ModuleObject benchmark)" ON)
 
 # --- Output library name ---
 if(WIN32)
@@ -60,9 +61,14 @@ target_link_libraries(${VE_QT_LIBRARY} PUBLIC libve)
 # ==========================================================
 # Sub-modules
 # ==========================================================
-if(VE_BUILD_IMOL)
+if(VE_BUILD_QT_IMOL)
     add_subdirectory(imol)
     message(STATUS "  + imol")
+endif()
+
+if(VE_BUILD_QT_TERMINAL)
+    add_subdirectory(veTerminal)
+    message(STATUS "  + veTerminal")
 endif()
 
 if(VE_BUILD_QT_BASE)
@@ -70,17 +76,12 @@ if(VE_BUILD_QT_BASE)
     message(STATUS "  + veQtBase")
 endif()
 
-if(VE_BUILD_SERVICE)
+if(VE_BUILD_QT_SERVICE)
     add_subdirectory(veService)
     message(STATUS "  + veService")
 endif()
 
-if(VE_BUILD_TERMINAL)
-    add_subdirectory(veTerminal)
-    message(STATUS "  + veTerminal")
-endif()
-
-if(VE_BUILD_QML)
+if(VE_BUILD_QT_QML)
     find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS Qml)
     if(Qt${QT_VERSION_MAJOR}Qml_FOUND)
         ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC "Qml")
@@ -97,9 +98,15 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
 endif()
 
 # --- Example executable ---
-if(VE_BUILD_EXAMPLE)
+if(VE_BUILD_QT_EXAMPLE)
     add_subdirectory(veExample)
     message(STATUS "  + veExample (executable)")
+endif()
+
+# --- Benchmark executable ---
+if(VE_BUILD_QT_BENCH)
+    add_subdirectory(veBench)
+    message(STATUS "  + veBench (benchmark)")
 endif()
 
 message(STATUS "")

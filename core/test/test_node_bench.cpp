@@ -1,0 +1,475 @@
+// test_node_bench.cpp — stress tests, complex structures, benchmarks
+#include "ve_test.h"
+#include "ve/core/node.h"
+#include "ve/core/log.h"
+#include <chrono>
+
+using namespace ve;
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+static double elapsed_ms(std::chrono::steady_clock::time_point t0)
+{
+    auto t1 = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::milli>(t1 - t0).count();
+}
+
+#define BENCH_BEGIN auto _t0 = std::chrono::steady_clock::now()
+#define BENCH_END(label) veLogI << "[bench] " << (label) << ": " << elapsed_ms(_t0) << " ms"
+
+// ============================================================================
+// Stress tests
+// ============================================================================
+
+VE_TEST(node_stress_10k_anon) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i) root.append("");
+
+    VE_ASSERT_EQ(root.count(), 10000);
+    VE_ASSERT(root.child(0) != nullptr);
+    VE_ASSERT(root.child(5000) != nullptr);
+    VE_ASSERT(root.child(9999) != nullptr);
+    VE_ASSERT(root.child(10000) == nullptr);
+
+    auto* mid = root.child(5000);
+    root.remove(mid);
+    VE_ASSERT_EQ(root.count(), 9999);
+}
+
+VE_TEST(node_stress_10k_named) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i)
+        root.append("n" + std::to_string(i));
+
+    VE_ASSERT_EQ(root.count(), 10000);
+    VE_ASSERT(root.child("n0") != nullptr);
+    VE_ASSERT(root.child("n9999") != nullptr);
+    VE_ASSERT(root.child("n10000") == nullptr);
+
+    root.remove("n5000");
+    VE_ASSERT_EQ(root.count(), 9999);
+    VE_ASSERT(root.child("n5000") == nullptr);
+}
+
+VE_TEST(node_stress_reparent) {
+    Node p1("p1");
+    Node p2("p2");
+
+    for (int i = 0; i < 100; ++i)
+        p1.append("c" + std::to_string(i));
+
+    VE_ASSERT_EQ(p1.count(), 100);
+
+    while (p1.count() > 0) {
+        auto* c = p1.first();
+        p2.insert(c);
+    }
+
+    VE_ASSERT_EQ(p1.count(), 0);
+    VE_ASSERT_EQ(p2.count(), 100);
+
+    for (int i = 0; i < 100; ++i) {
+        auto* c = p2.child("c" + std::to_string(i));
+        VE_ASSERT(c != nullptr);
+        VE_ASSERT(c->parent() == &p2);
+    }
+}
+
+// ============================================================================
+// Complex structure tests
+// ============================================================================
+
+VE_TEST(node_complex_robot) {
+    Node robot("robot");
+
+    auto* base = robot.append("base_link");
+    auto* j1 = base->append("joint");
+    auto* l1 = j1->append("link");
+    auto* j2 = l1->append("joint");
+    auto* l2 = j2->append("link");
+
+    for (auto* link : {base, l1, l2}) {
+        link->append("visual");
+        link->append("collision");
+        link->append("inertial");
+    }
+    for (auto* joint : {j1, j2}) {
+        joint->append("axis");
+        joint->append("limit");
+        joint->append("dynamics");
+    }
+
+    veLogI << "=== Robot tree ===\n" << robot.dump();
+
+    VE_ASSERT_EQ(robot.count(), 1);
+    VE_ASSERT(robot.resolve("base_link/visual") != nullptr);
+    VE_ASSERT(robot.resolve("base_link/joint/link/joint/link/visual") != nullptr);
+
+    auto p = l2->path(&robot);
+    veLogI << "l2 path: " << p;
+    VE_ASSERT_EQ(robot.resolve(p), l2);
+}
+
+VE_TEST(node_complex_xml_list) {
+    Node config("config");
+
+    auto* settings = config.append("settings");
+    settings->append("theme");
+    settings->append("lang");
+
+    auto* items = config.append("items");
+    for (int i = 0; i < 20; ++i) {
+        auto* item = items->append("item");
+        item->append("id");
+        item->append("name");
+        item->append("value");
+    }
+
+    veLogI << "=== XML-like config ===\n" << config.dump();
+
+    VE_ASSERT_EQ(items->count("item"), 20);
+    VE_ASSERT_EQ(items->child("item", 5)->count(), 3);
+
+    auto* v10 = config.resolve("items/item#10/value");
+    VE_ASSERT(v10 != nullptr);
+    VE_ASSERT_EQ(v10->name(), "value");
+
+    auto* v25 = config.ensure("items/item#25/extra");
+    VE_ASSERT(v25 != nullptr);
+    VE_ASSERT_EQ(items->count("item"), 26);
+
+    veLogI << "item count after ensure: " << items->count("item");
+}
+
+VE_TEST(node_complex_deep_tree) {
+    Node root("root");
+    Node* cur = &root;
+    for (int i = 0; i < 100; ++i)
+        cur = cur->append("level");
+
+    VE_ASSERT_EQ(cur->name(), "level");
+    VE_ASSERT(cur->parent(99) == &root);
+    VE_ASSERT(cur->parent(100) == nullptr);
+
+    auto p = cur->path(&root);
+    VE_ASSERT_EQ(root.resolve(p), cur);
+    VE_ASSERT(root.isAncestorOf(cur));
+    VE_ASSERT(!cur->isAncestorOf(&root));
+
+    veLogI << "deep tree path length: " << p.size() << " chars";
+}
+
+VE_TEST(node_complex_shadow_mixed) {
+    Node proto("proto");
+    proto.append("camera");
+    proto.append("lidar");
+    proto.append("imu");
+
+    Node inst("inst");
+    inst.setShadow(&proto);
+    inst.append("camera");  // override
+    inst.append("gps");
+
+    for (int i = 0; i < 5; ++i) inst.append("");
+
+    veLogI << "=== Shadow mixed ===\n" << inst.dump();
+
+    VE_ASSERT(inst.child("camera") != nullptr);
+    VE_ASSERT(inst.child("camera") != proto.child("camera"));
+    VE_ASSERT(inst.child("lidar") == proto.child("lidar"));
+    VE_ASSERT(inst.child("imu") == proto.child("imu"));
+    VE_ASSERT(inst.child("gps") != nullptr);
+    VE_ASSERT_EQ(inst.count(""), 5);
+    VE_ASSERT(inst.child("nonexistent") == nullptr);
+}
+
+VE_TEST(node_complex_wide_tree) {
+    Node root("root");
+    for (int g = 0; g < 1000; ++g) {
+        std::string nm = "g" + std::to_string(g);
+        for (int c = 0; c < 3; ++c) root.append(nm);
+    }
+
+    VE_ASSERT_EQ(root.count(), 3000);
+    VE_ASSERT_EQ(root.count("g500"), 3);
+    VE_ASSERT(root.child("g999", 2) != nullptr);
+    VE_ASSERT(root.child("g999", 3) == nullptr);
+
+    auto* target = root.resolve("g500#1");
+    VE_ASSERT(target != nullptr);
+    VE_ASSERT_EQ(target->name(), "g500");
+
+    VE_ASSERT(root.erase("g500#1"));
+    VE_ASSERT_EQ(root.count("g500"), 2);
+    VE_ASSERT_EQ(root.count(), 2999);
+
+    veLogI << "wide tree: " << root.childNames().sizeAsInt() << " distinct names";
+}
+
+VE_TEST(node_complex_ensure_erase) {
+    Node root("root");
+
+    auto* leaf = root.ensure("a/b/c/d/e/f");
+    VE_ASSERT(leaf != nullptr);
+    VE_ASSERT_EQ(leaf->name(), "f");
+    VE_ASSERT_EQ(leaf->path(&root), "a/b/c/d/e/f");
+
+    VE_ASSERT(root.erase("a/b/c/d/e/f"));
+    VE_ASSERT(root.resolve("a/b/c/d/e/f") == nullptr);
+    VE_ASSERT(root.resolve("a/b/c/d/e") != nullptr);
+
+    auto* leaf2 = root.ensure("a/b/c/d/e/f");
+    VE_ASSERT(leaf2 != nullptr);
+    VE_ASSERT_EQ(root.resolve("a/b/c/d/e/f"), leaf2);
+
+    veLogI << "ensure/erase roundtrip OK";
+}
+
+// ============================================================================
+// Benchmarks
+// ============================================================================
+
+VE_TEST(node_bench_insert_100k_named) {
+    Node root("root");
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("n" + std::to_string(i));
+    BENCH_END("insert 100k named");
+
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_insert_100k_anon) {
+    Node root("root");
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("");
+    BENCH_END("insert 100k anon");
+
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_lookup_name) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i)
+        root.append("n" + std::to_string(i));
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep)
+        for (int i = 0; i < 10000; ++i)
+            (void)root.child("n" + std::to_string(i));
+    BENCH_END("lookup 10k names x10");
+}
+
+VE_TEST(node_bench_lookup_global) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 100; ++rep)
+        for (int i = 0; i < 10000; ++i)
+            (void)root.child(i);
+    BENCH_END("lookup 10k global x100");
+}
+
+VE_TEST(node_bench_resolve_path) {
+    Node root("root");
+    Node* cur = &root;
+    for (int i = 0; i < 10; ++i)
+        cur = cur->append("l" + std::to_string(i));
+
+    std::string p = cur->path(&root);  // "l0/l1/l2/.../l9"
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        (void)root.resolve(p);
+    BENCH_END("resolve 10-deep path x100k");
+
+    VE_ASSERT_EQ(root.resolve(p), cur);
+}
+
+VE_TEST(node_bench_indexOf_global) {
+    Node root("root");
+    Vector<Node*> nodes;
+    for (int i = 0; i < 1000; ++i)
+        nodes.push_back(root.append("n" + std::to_string(i)));
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 100; ++rep)
+        for (auto* n : nodes)
+            (void)root.indexOf(n);
+    BENCH_END("indexOf<global> 1k nodes x100");
+}
+
+VE_TEST(node_bench_indexOf_local) {
+    Node root("root");
+    Vector<Node*> nodes;
+    for (int i = 0; i < 1000; ++i)
+        nodes.push_back(root.append("item"));  // all same name
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 100; ++rep)
+        for (auto* n : nodes)
+            (void)root.indexOf<false>(n);
+    BENCH_END("indexOf<local> 1k same-name x100");
+}
+
+// --- Scenario: JSON dict (10k unique names) — traverse ---
+VE_TEST(node_bench_next_dict) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i)
+        root.append("k" + std::to_string(i));
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto* n = root.first(); n; n = n->next()) ++cnt;
+    BENCH_END("next() dict 10k unique");
+
+    VE_ASSERT_EQ(cnt, 10000);
+}
+
+VE_TEST(node_bench_iter_dict) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i)
+        root.append("k" + std::to_string(i));
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto* n : root) { (void)n; ++cnt; }
+    BENCH_END("iterator dict 10k unique");
+
+    VE_ASSERT_EQ(cnt, 10000);
+}
+
+VE_TEST(node_bench_riter_dict) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i)
+        root.append("k" + std::to_string(i));
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto it = root.rbegin(); it != root.rend(); ++it) { (void)*it; ++cnt; }
+    BENCH_END("reverse-iter dict 10k unique");
+
+    VE_ASSERT_EQ(cnt, 10000);
+}
+
+// --- Scenario: XML (100 groups x 10 items) — traverse ---
+VE_TEST(node_bench_next_xml) {
+    Node root("root");
+    for (int g = 0; g < 100; ++g)
+        for (int i = 0; i < 10; ++i)
+            root.append("tag" + std::to_string(g));
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto* n = root.first(); n; n = n->next()) ++cnt;
+    BENCH_END("next() xml 100x10");
+
+    VE_ASSERT_EQ(cnt, 1000);
+}
+
+VE_TEST(node_bench_iter_xml) {
+    Node root("root");
+    for (int g = 0; g < 100; ++g)
+        for (int i = 0; i < 10; ++i)
+            root.append("tag" + std::to_string(g));
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto* n : root) { (void)n; ++cnt; }
+    BENCH_END("iterator xml 100x10");
+
+    VE_ASSERT_EQ(cnt, 1000);
+}
+
+// --- Scenario: JSON list (10k anon) — traverse ---
+VE_TEST(node_bench_list_sequential) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep)
+        for (int i = 0; i < 10000; ++i)
+            (void)root.child(i);
+    BENCH_END("child(idx) list 10k x10");
+}
+
+VE_TEST(node_bench_iter_list) {
+    Node root("root");
+    for (int i = 0; i < 10000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto* n : root) { (void)n; ++cnt; }
+    BENCH_END("iterator list 10k anon");
+
+    VE_ASSERT_EQ(cnt, 10000);
+}
+
+VE_TEST(node_bench_ensure_deep) {
+    Node root("root");
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 1000; ++i) {
+        std::string p = "a/b/c/d/e/f" + std::to_string(i);
+        root.ensure(p);
+    }
+    BENCH_END("ensure 1k deep paths");
+
+    // a/b/c/d/e should exist, with 1000 different f* children
+    auto* e = root.resolve("a/b/c/d/e");
+    VE_ASSERT(e != nullptr);
+    VE_ASSERT_EQ(e->count(), 1000);
+}
+
+VE_TEST(node_bench_clear_100k) {
+    Node root("root");
+    for (int i = 0; i < 100000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    root.clear();
+    BENCH_END("clear 100k");
+
+    VE_ASSERT_EQ(root.count(), 0);
+}
+
+VE_TEST(node_bench_path_build) {
+    Node root("root");
+    Node* cur = &root;
+    for (int i = 0; i < 50; ++i)
+        cur = cur->append("level");
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 10000; ++i)
+        (void)cur->path(&root);
+    BENCH_END("path() 50-deep x10k");
+}
+
+VE_TEST(node_bench_keyOf) {
+    Node root("root");
+    Vector<Node*> nodes;
+    for (int i = 0; i < 100; ++i) {
+        nodes.push_back(root.append("item"));
+    }
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10000; ++rep)
+        for (auto* n : nodes)
+            (void)root.keyOf(n);
+    BENCH_END("keyOf 100 dups x10k");
+}
+
+VE_TEST(node_bench_childAt_key) {
+    Node root("root");
+    for (int i = 0; i < 100; ++i) root.append("item");
+
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10000; ++rep) {
+        for (int i = 0; i < 100; ++i)
+            (void)root.childAt("item#" + std::to_string(i));
+    }
+    BENCH_END("childAt(key) 100 dups x10k");
+}

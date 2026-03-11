@@ -375,20 +375,18 @@ private:
 */
 class VE_API Object
 {
-    VE_DECLARE_PRIVATE
-
 public:
     using SignalT = int;
     using ActionT = std::function<void()>;
 
+    using MutexT = std::recursive_mutex;
+    using LockT = std::lock_guard<MutexT>;
+
     explicit Object(const std::string& name = "");
-    virtual ~Object();
+    ~Object();
 
-public:
-    Object* parent() const;
-    void setParent(Object* obj);
-
-    virtual std::string name() const;
+    const std::string& name() const;
+    MutexT& mutex() const;
 
     enum Signal : SignalT { OBJECT_DELETED = 0xffff };
 
@@ -400,7 +398,7 @@ public:
     void trigger(SignalT signal);
 
 private:
-    friend class Manager;
+    VE_DECLARE_UNIQUE_PRIVATE
 };
 
 /**
@@ -422,8 +420,6 @@ public:
     Object* get(const std::string& key) const;
     template<class SubObj> std::enable_if_t<std::is_base_of_v<Object, SubObj>, SubObj*> get(const std::string& key) const
     { return static_cast<SubObj*>(get(key)); }
-
-    void fixObjectLinks();
 };
 
 }

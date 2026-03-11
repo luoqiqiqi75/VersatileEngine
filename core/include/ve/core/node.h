@@ -42,62 +42,121 @@ struct VE_API Schema
 // key   = name | name#N | #N
 // path  = key/key/...  (separator /)
 
-class VE_API Node
+class VE_API Node : public Object
 {
 public:
     explicit Node(const std::string& name = "");
     ~Node();
 
+    // --- signals ---
+    enum NodeSignal : SignalT {
+        NODE_CHILD_ADDED   = 0x0010,
+        NODE_CHILD_REMOVED = 0x0011,
+    };
+
     // --- static ---
     static Node* root();
     static bool  isValidName(const std::string& name);
 
-    // --- identity ---
-    const std::string&   name()  const;
-    std::recursive_mutex& mutex() const;
-
     // --- tree navigation ---
     Node* parent() const;
     Node* parent(int level) const;
-    Node* sibling(int offset) const;
-    Node* prev() const;
-    Node* next() const;
-    Node* first() const;
-    Node* last() const;
-    int   indexInParent() const;
+
     bool  isAncestorOf(const Node* node) const;
 
-    // --- child (by name, no # no /) ---
-    Node*         child(const std::string& name) const;
-    Node*         child(const std::string& name, int index) const;
-    Node*         childAt(int index) const;
-    int           childCount() const;
-    int           childCount(const std::string& name) const;
-    bool          hasChild(const std::string& name) const;
-    int           indexOf(const Node* child) const;
-    Strings       childNames() const;
+    // --- child ---
+    Node*         child(const std::string& name, int index = 0) const;
+    Node*         child(int global_index) const;
+
+    bool          has(const std::string& name, int index = 0) const;
+    bool          has(int global_index) const;
+    bool          has(const Node* child) const;
+
+    int           count() const;
+    int           count(const std::string& name) const;
+
     Vector<Node*> children() const;
     Vector<Node*> children(const std::string& name) const;
 
-    // --- child management (by name, no # no /) ---
-    bool  insert(const std::string& name, Node* child);
-    bool  insert(const std::string& name, int index, Node* child);
-    bool  insertAt(int index, Node* child, bool auto_fill = true);
-    Node* append(const std::string& name, Node* child);
-    Node* append(Node* child);
-    bool  remove(Node* child, bool auto_delete = true);
-    bool  remove(const std::string& name, int index = 0, bool auto_delete = true);
-    void  clearChildren(bool auto_delete = true);
+    Strings       childNames() const; // skip empty
 
-    // --- path (key = name | name#N | #N,  path = key/key/...) ---
+    // --- relation ---
+    Node*         first() const;
+    Node*         last() const;
+
+    template<bool IsGlobal = true> int indexOf(const Node* child) const;
+
+    template<bool IsGlobal = true> Node* sibling(int offset) const;
+
+    template<bool IsGlobal = true> VE_FORCE_INLINE Node* prev() const { return sibling<IsGlobal>(-1); }
+    template<bool IsGlobal = true> VE_FORCE_INLINE Node* next() const { return sibling<IsGlobal>(1); }
+
+    // --- child management (by name, no # no /) ---
+    bool  insert(Node* child);
+    bool  insert(Node* child, int index, bool auto_fill = true);
+    Node* append(const std::string& name = "");
+    Node* append(const std::string& name, int index, bool auto_fill = true);
+    Node* append(int index, bool auto_fill = true);
+
+    Node* take(Node* child);
+    Node* take(const std::string& name, int index = 0);
+    bool  remove(Node* child);
+    bool  remove(const std::string& name, int index);
+    bool  remove(const std::string& name);
+
+    void  clear(bool auto_delete = true);
+
+    // -- key (key = name | name#N | #N) ---
+    std::string keyOf(const Node* child) const;
+
+    Node*       childAt(const std::string& key) const;
+
+    // --- container interface ---
+    VE_FORCE_INLINE Node* operator[](int global_index) const { return child(global_index); }
+    VE_FORCE_INLINE Node* operator[](const std::string& key) const { return childAt(key); }
+
+    class VE_API ChildIterator {
+        const void* _e = nullptr;
+        uint32_t _i = 0;
+        friend class Node;
+        ChildIterator(const void* e, uint32_t i) : _e(e), _i(i) {}
+    public:
+        ChildIterator() = default;
+        Node*          operator*() const;
+        ChildIterator& operator++();
+        ChildIterator  operator++(int) { auto t = *this; ++(*this); return t; }
+        bool operator==(const ChildIterator& o) const { return _e == o._e && _i == o._i; }
+        bool operator!=(const ChildIterator& o) const { return !(*this == o); }
+    };
+
+    class VE_API ReverseChildIterator {
+        const void* _e = nullptr;
+        uint32_t _i = 0;
+        friend class Node;
+        ReverseChildIterator(const void* e, uint32_t i) : _e(e), _i(i) {}
+    public:
+        ReverseChildIterator() = default;
+        Node*                 operator*() const;
+        ReverseChildIterator& operator++();
+        ReverseChildIterator  operator++(int) { auto t = *this; ++(*this); return t; }
+        bool operator==(const ReverseChildIterator& o) const { return _e == o._e && _i == o._i; }
+        bool operator!=(const ReverseChildIterator& o) const { return !(*this == o); }
+    };
+
+    ChildIterator        begin()  const;
+    ChildIterator        end()    const;
+    ReverseChildIterator rbegin() const;
+    ReverseChildIterator rend()   const;
+
+    // --- shadow ---
+    Node* shadow() const;
+    void  setShadow(Node* shadow);
+
+    // --- path (path = key/key/...) ---
     Node*       resolve(const std::string& path) const;
     std::string path(Node* ancestor = nullptr) const;
     Node*       ensure(const std::string& path);
     bool        erase(const std::string& path, bool auto_delete = true);
-
-    // --- shadow (prototype chain) ---
-    Node* shadow() const;
-    void  setShadow(Node* shadow);
 
     // --- debug ---
     std::string dump(int depth = 0) const;

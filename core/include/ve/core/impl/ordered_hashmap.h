@@ -321,6 +321,7 @@ public:
         VE_FORCE_INLINE bool operator==(const ConstIterator &b) const { return E == b.E; }
         VE_FORCE_INLINE bool operator!=(const ConstIterator &b) const { return E != b.E; }
         VE_FORCE_INLINE explicit operator bool() const { return E != nullptr; }
+        VE_FORCE_INLINE const HashMapElement<TKey, TValue> *element() const { return E; }
         VE_FORCE_INLINE ConstIterator(const HashMapElement<TKey, TValue> *p_E) : E(p_E) {}
         VE_FORCE_INLINE ConstIterator() {}
         VE_FORCE_INLINE ConstIterator(const ConstIterator &p_it) : E(p_it.E) {}
@@ -337,6 +338,7 @@ public:
         VE_FORCE_INLINE bool operator==(const Iterator &b) const { return E == b.E; }
         VE_FORCE_INLINE bool operator!=(const Iterator &b) const { return E != b.E; }
         VE_FORCE_INLINE explicit operator bool() const { return E != nullptr; }
+        VE_FORCE_INLINE HashMapElement<TKey, TValue> *element() const { return E; }
         VE_FORCE_INLINE Iterator(HashMapElement<TKey, TValue> *p_E) : E(p_E) {}
         VE_FORCE_INLINE Iterator() {}
         VE_FORCE_INLINE Iterator(const Iterator &p_it) : E(p_it.E) {}

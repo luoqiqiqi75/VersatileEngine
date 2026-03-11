@@ -13,4 +13,8 @@ target_include_directories(ve_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(ve_test PRIVATE ${VE_CORE_LIBRARY})
 
+if(UNIX)
+    target_link_libraries(ve_test PRIVATE pthread dl)
+endif()
+
 message(STATUS "")

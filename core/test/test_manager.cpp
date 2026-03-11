@@ -12,7 +12,6 @@ VE_TEST(manager_add_get) {
     auto* obj = new Object("child");
     mgr.add(obj);
     VE_ASSERT_EQ(mgr.get("child"), obj);
-    VE_ASSERT_EQ(obj->parent(), &mgr);
 }
 
 VE_TEST(manager_add_nullptr) {
