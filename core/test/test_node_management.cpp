@@ -5,34 +5,50 @@
 using namespace ve;
 
 // ============================================================================
-// Name validation
+// Key validation
 // ============================================================================
 
-VE_TEST(node_valid_name) {
-    VE_ASSERT(Node::isValidName(""));
-    VE_ASSERT(Node::isValidName("hello"));
-    VE_ASSERT(Node::isValidName("item_2"));
-    VE_ASSERT(Node::isValidName("a.b"));
+VE_TEST(node_isKey) {
+    // valid keys: plain name
+    VE_ASSERT(Node::isKey("hello"));
+    VE_ASSERT(Node::isKey("item_2"));
+    VE_ASSERT(Node::isKey("a.b"));
 
-    VE_ASSERT(!Node::isValidName("#"));
-    VE_ASSERT(!Node::isValidName("#0"));
-    VE_ASSERT(!Node::isValidName("item#2"));
-    VE_ASSERT(!Node::isValidName("/"));
-    VE_ASSERT(!Node::isValidName("a/b"));
-    VE_ASSERT(!Node::isValidName("a#b/c"));
+    // valid keys: name#N
+    VE_ASSERT(Node::isKey("item#0"));
+    VE_ASSERT(Node::isKey("item#2"));
+    VE_ASSERT(Node::isKey("tag#100"));
+
+    // valid keys: #N (global index)
+    VE_ASSERT(Node::isKey("#0"));
+    VE_ASSERT(Node::isKey("#99"));
+
+    // invalid keys
+    VE_ASSERT(!Node::isKey(""));        // empty
+    VE_ASSERT(!Node::isKey("#"));       // no digits after #
+    VE_ASSERT(!Node::isKey("a#"));      // no digits after #
+    VE_ASSERT(!Node::isKey("#abc"));    // non-digit after #
+    VE_ASSERT(!Node::isKey("a#b"));     // non-digit after #
+    VE_ASSERT(!Node::isKey("/"));       // path separator
+    VE_ASSERT(!Node::isKey("a/b"));     // path separator
+    VE_ASSERT(!Node::isKey("a#1/b"));   // path separator
 }
 
-VE_TEST(node_insert_invalid_name_rejected) {
-    Node root("root");
-    auto* c1 = new Node("bad#name");
-    auto* c2 = new Node("bad/name");
+VE_TEST(node_keyIndex) {
+    // keys with explicit index
+    VE_ASSERT_EQ(Node::keyIndex("#0"), 0);
+    VE_ASSERT_EQ(Node::keyIndex("#5"), 5);
+    VE_ASSERT_EQ(Node::keyIndex("#99"), 99);
+    VE_ASSERT_EQ(Node::keyIndex("item#0"), 0);
+    VE_ASSERT_EQ(Node::keyIndex("item#3"), 3);
+    VE_ASSERT_EQ(Node::keyIndex("tag#100"), 100);
 
-    VE_ASSERT(!root.insert(c1));
-    VE_ASSERT(!root.insert(c2));
-    VE_ASSERT_EQ(root.count(), 0);
-
-    delete c1;
-    delete c2;
+    // keys without explicit index
+    VE_ASSERT_EQ(Node::keyIndex("hello"), -1);
+    VE_ASSERT_EQ(Node::keyIndex(""), -1);
+    VE_ASSERT_EQ(Node::keyIndex("#"), -1);
+    VE_ASSERT_EQ(Node::keyIndex("a#"), -1);
+    VE_ASSERT_EQ(Node::keyIndex("#abc"), -1);
 }
 
 VE_TEST(node_insert_null_rejected) {
@@ -156,11 +172,12 @@ VE_TEST(node_append_basic) {
     VE_ASSERT(x->parent() == &root);
 }
 
-VE_TEST(node_append_invalid_name) {
+VE_TEST(node_append_any_name) {
+    // insert no longer rejects names with # or / — validation is in key/path methods
     Node root("root");
-    VE_ASSERT(root.append("bad#name") == nullptr);
-    VE_ASSERT(root.append("bad/name") == nullptr);
-    VE_ASSERT_EQ(root.count(), 0);
+    VE_ASSERT(root.append("has#hash") != nullptr);
+    VE_ASSERT(root.append("has/slash") != nullptr);
+    VE_ASSERT_EQ(root.count(), 2);
 }
 
 VE_TEST(node_append_at_index) {

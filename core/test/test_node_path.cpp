@@ -41,10 +41,9 @@ VE_TEST(node_keyOf_anon_with_named) {
     Node* x  = root.append("x");
     Node* a1 = root.append("");
 
-    // "" group: [a0, a1], "x" group: [x]
-    // global: a0=0, a1=1, x=2
+    // true insertion order: a0=0, x=1, a1=2
     VE_ASSERT_EQ(root.keyOf(a0), "#0");
-    VE_ASSERT_EQ(root.keyOf(a1), "#1");
+    VE_ASSERT_EQ(root.keyOf(a1), "#2");
     VE_ASSERT_EQ(root.keyOf(x), "x");
 }
 

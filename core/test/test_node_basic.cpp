@@ -155,7 +155,7 @@ VE_TEST(node_child_global_named) {
     Node* b = root.append("b");
     Node* c = root.append("c");
 
-    // Dict order: "" (empty), "a", "b", "c"
+    // insertion order: a, b, c
     VE_ASSERT_EQ(root.child(0), a);
     VE_ASSERT_EQ(root.child(1), b);
     VE_ASSERT_EQ(root.child(2), c);
@@ -166,17 +166,23 @@ VE_TEST(node_child_global_mixed) {
     Node* a0 = root.append("");
     Node* a1 = root.append("");
     Node* x  = root.append("x");
-    Node* a2 = root.append("");   // goes to "" group (already first)
+    Node* a2 = root.append("");
     Node* y  = root.append("y");
 
     VE_ASSERT_EQ(root.count(), 5);
 
-    // Dict order: "" group [a0,a1,a2], "x" group [x], "y" group [y]
+    // true insertion order: a0, a1, x, a2, y
     VE_ASSERT_EQ(root.child(0), a0);
     VE_ASSERT_EQ(root.child(1), a1);
-    VE_ASSERT_EQ(root.child(2), a2);
-    VE_ASSERT_EQ(root.child(3), x);
+    VE_ASSERT_EQ(root.child(2), x);
+    VE_ASSERT_EQ(root.child(3), a2);
     VE_ASSERT_EQ(root.child(4), y);
+
+    // overlap access still works across interleaved names
+    VE_ASSERT_EQ(root.child("", 0), a0);
+    VE_ASSERT_EQ(root.child("", 1), a1);
+    VE_ASSERT_EQ(root.child("", 2), a2);
+    VE_ASSERT_EQ(root.child("x", 0), x);
 }
 
 // ============================================================================
@@ -287,12 +293,12 @@ VE_TEST(node_range_for_mixed) {
     Vector<Node*> got;
     for (auto* c : root) got.push_back(c);
 
-    // order: "" group [a0,a1,a2], "x" [x], "y" [y]
+    // true insertion order: a0, a1, x, a2, y
     VE_ASSERT_EQ(got.sizeAsInt(), 5);
     VE_ASSERT_EQ(got[0], a0);
     VE_ASSERT_EQ(got[1], a1);
-    VE_ASSERT_EQ(got[2], a2);
-    VE_ASSERT_EQ(got[3], x);
+    VE_ASSERT_EQ(got[2], x);
+    VE_ASSERT_EQ(got[3], a2);
     VE_ASSERT_EQ(got[4], y);
 }
 
@@ -365,16 +371,16 @@ VE_TEST(node_reverse_mixed) {
     auto* a2 = root.append();
     auto* y  = root.append("y");
 
-    // forward order: "" [a0,a1,a2], "x" [x], "y" [y]
-    // reverse:       y, x, a2, a1, a0
+    // forward insertion order: a0, a1, x, a2, y
+    // reverse:                 y, a2, x, a1, a0
     Vector<Node*> got;
     for (auto it = root.rbegin(); it != root.rend(); ++it)
         got.push_back(*it);
 
     VE_ASSERT_EQ(got.sizeAsInt(), 5);
     VE_ASSERT_EQ(got[0], y);
-    VE_ASSERT_EQ(got[1], x);
-    VE_ASSERT_EQ(got[2], a2);
+    VE_ASSERT_EQ(got[1], a2);
+    VE_ASSERT_EQ(got[2], x);
     VE_ASSERT_EQ(got[3], a1);
     VE_ASSERT_EQ(got[4], a0);
 }

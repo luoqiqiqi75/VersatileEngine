@@ -155,6 +155,8 @@ public:
     bool has(int index) const { return index >= 0 && index < sizeAsInt(); }
     ValueT value(int index) const { return has(index) ? dPtr()->operator[](index) : ValueT(); }
     ValueT value(int index, const ValueT& default_value) const { return has(index) ? dPtr()->operator[](index) : default_value; }
+    ValueT* ptr(int index) { return has(index) ? &dPtr()->operator[](index) : nullptr; }
+    const ValueT* ptr(int index) const { return has(index) ? &dPtr()->operator[](index) : nullptr; }
 
     DerivedT& insertOne(int index, const ValueT& value) { auto d = dPtr(); d->insert(d->begin() + index, value); return *d; }
     DerivedT& insertOne(int index, ValueT&& value) { auto d = dPtr(); d->insert(d->begin() + index, std::move(value)); return *d; }
@@ -286,6 +288,16 @@ public:
     {
         const auto it = dPtr()->find(key);
         return it == dPtr()->end() ? default_value : KVAccessor::value(*it);
+    }
+    ValueT* ptr(const KeyT& key)
+    {
+        auto it = dPtr()->find(key);
+        return it == dPtr()->end() ? nullptr : &KVAccessor::value(*it);
+    }
+    const ValueT* ptr(const KeyT& key) const
+    {
+        const auto it = dPtr()->find(key);
+        return it == dPtr()->end() ? nullptr : &KVAccessor::value(*it);
     }
 
     DerivedT& insertOne(const KeyT& key, const ValueT& value) { auto d = dPtr(); d->operator[](key) = value; return *d; }

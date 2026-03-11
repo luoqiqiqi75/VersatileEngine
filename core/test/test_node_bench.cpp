@@ -312,8 +312,8 @@ VE_TEST(node_bench_indexOf_local) {
     BENCH_BEGIN;
     for (int rep = 0; rep < 100; ++rep)
         for (auto* n : nodes)
-            (void)root.indexOf<false>(n);
-    BENCH_END("indexOf<local> 1k same-name x100");
+            (void)root.indexOf(n);
+    BENCH_END("indexOf 1k same-name x100");
 }
 
 // --- Scenario: JSON dict (10k unique names) — traverse ---

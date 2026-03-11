@@ -26,10 +26,23 @@ struct Node::Private
 {
     Node* parent  = nullptr;
     Node* shadow  = nullptr;
-    Dict<SmallVector<Node*, 1>> children;   // children: name → [Node*]
-    int cnt = 0;                      // total child count
 
-    Private() { children[""]; }
+    struct Children {
+        Hash<SmallVector<int>> indices;   // name → [global indices in nodes]
+        Vector<Node*>          nodes;     // all children, true insertion order
+
+        // shift every recorded index that is >= 'from' by 'delta'
+        void shift(int from, int delta)
+        {
+            for (auto& [_, ivec] : indices)
+                for (auto& idx : ivec)
+                    if (idx >= from) idx += delta;
+        }
+    };
+
+    Children* children = nullptr;
+
+    Children* ensure() { return children ? children : (children = new Children()); }
 };
 
 // ============================================================================
@@ -37,20 +50,9 @@ struct Node::Private
 // ============================================================================
 
 Node::Node(const std::string& name) : Object(name), _p(std::make_unique<Private>()) {}
-Node::~Node()
-{
-    for (auto& kv : _p->children)
-        for (auto* c : kv.value)
-            if (c) { c->_p->parent = nullptr; delete c; }
-}
+Node::~Node() { clear(); }
 
 Node* Node::root() { static Node r; return &r; }
-
-bool Node::isValidName(const std::string& name)
-{
-    for (char c : name) if (c == '#' || c == '/') return false;
-    return true;
-}
 
 // ============================================================================
 // Node — tree navigation
@@ -64,182 +66,104 @@ Node* Node::parent(const int level) const
     return n;
 }
 
-bool Node::isAncestorOf(const Node* node) const
+bool Node::isAncestorOf(const Node* descendant_node) const
 {
-    if (!node) return false;
-    for (auto* p = node->_p->parent; p; p = p->_p->parent)
+    if (!descendant_node) return false;
+    for (auto* p = descendant_node->_p->parent; p; p = p->_p->parent)
         if (p == this) return true;
     return false;
 }
 
 // ============================================================================
-// Node — child
+// Node — child access
 // ============================================================================
 
-Node* Node::child(const std::string& name, int index) const
+Node* Node::child(int index) const
 {
+    if (!_p->children) return nullptr;
     LockT lk(mutex());
-    if (auto* v = _p->children.getptr(name)) return v->value(index, nullptr);
-    return _p->shadow ? _p->shadow->child(name, index) : nullptr;
+    if (index < 0) index += _p->children->nodes.sizeAsInt();
+    if (index >= _p->children->nodes.sizeAsInt()) return nullptr;
+    return _p->children->nodes.at(index);
 }
 
-Node* Node::child(int global_index) const
+Node* Node::child(const std::string& name, int overlap) const
 {
+    if (!_p->children) return nullptr;
+    if (name.empty()) return child(overlap);
     LockT lk(mutex());
-    if (global_index < 0) return nullptr;
-    for (auto& kv : _p->children) {
-        int s = kv.value.sizeAsInt();
-        if (global_index < s) return kv.value[(uint32_t)global_index];
-        global_index -= s;
+    if (const auto* iv = _p->children->indices.ptr(name); iv) {
+        if (overlap >= 0 && static_cast<std::size_t>(overlap) < iv->size())
+            return _p->children->nodes.value((*iv)[static_cast<std::size_t>(overlap)], nullptr);
     }
-    return _p->shadow ? _p->shadow->child(global_index) : nullptr;
+    return nullptr;
 }
 
-bool Node::has(const std::string& name, int index) const
+int Node::indexOf(const Node* child_node) const
 {
+    if (!child_node || !_p->children) return -1;
     LockT lk(mutex());
-    if (const auto* v = _p->children.getptr(name); v && !v->empty()) return v->sizeAsInt() > index && index >= 0;
-    return _p->shadow ? _p->shadow->has(name, index) : false;
-}
-
-bool Node::has(int global_index) const
-{
-    LockT lk(mutex());
-    if (global_index >= 0 && global_index < _p->cnt) return true;
-    return _p->shadow ? _p->shadow->has(global_index) : false;
-}
-
-bool Node::has(const Node* child) const
-{
-    if (!child) return false;
-    LockT lk(mutex());
-    if (const auto* v = _p->children.getptr(child->name())) {
-        for (const auto* n : *v) {
-            if (n == child) return true;
+    if (child_node->name().empty()) { // global search, slow
+        for (int i = 0; i < _p->children->nodes.sizeAsInt(); ++i) {
+            if (_p->children->nodes.at(i) == child_node) return i;
+        }
+    } else { // search indicies
+        if (const auto* iv = _p->children->indices.ptr(child_node->name()); iv) {
+            for (const int i : *iv)
+                if (_p->children->nodes.value(i, nullptr) == child_node) return i;
         }
     }
-    return false;
+    return -1;
 }
 
-int Node::count() const { return _p->cnt; }
+int Node::count() const
+{
+    return _p->children ? _p->children->nodes.sizeAsInt() : 0;
+}
 
 int Node::count(const std::string& name) const
 {
-    LockT lk(mutex());
-    const auto* v = _p->children.getptr(name);
-    return v ? (int)v->size() : 0;
+    if (name.empty()) return count();
+    if (!_p->children) return 0;
+    if (const auto* iv = _p->children->indices.ptr(name)) return iv->sizeAsInt();
+    return 0;
 }
 
 Vector<Node*> Node::children() const
 {
+    if (!_p->children) return {};
     LockT lk(mutex());
-    Vector<Node*> out;
-    out.reserve((size_t)_p->cnt);
-    for (auto& kv : _p->children) for (auto* n : kv.value) out.push_back(n);
-    return out;
+    return _p->children->nodes;
 }
 
 Vector<Node*> Node::children(const std::string& name) const
 {
+    if (name.empty()) return children();
+    if (!_p->children) return {};
     LockT lk(mutex());
     Vector<Node*> out;
-    auto* v = _p->children.getptr(name);
-    if (v) { out.reserve(v->size()); for (auto* n : *v) out.push_back(n); }
+    if (const auto* iv = _p->children->indices.ptr(name); iv) {
+        for (const int i : *iv)
+            out.push_back(_p->children->nodes.value(i, nullptr));
+    }
     return out;
 }
 
 Strings Node::childNames() const
 {
+    if (!_p->children) return {};
     LockT lk(mutex());
     Strings out;
-    for (auto& kv : _p->children) if (!kv.key.empty()) out.push_back(kv.key);
+    Hash<char> seen;
+    for (const auto* n : _p->children->nodes) {
+        auto& nm = n->name();
+        if (!nm.empty() && !seen.count(nm)) {
+            seen[nm] = 0;
+            out.push_back(nm);
+        }
+    }
     return out;
 }
-
-Node* Node::first() const
-{
-    LockT lk(mutex());
-    for (auto& kv : _p->children) if (!kv.value.empty()) return kv.value[0];
-    return nullptr;
-}
-
-Node* Node::last() const
-{
-    LockT lk(mutex());
-    Node* r = nullptr;
-    for (auto& kv : _p->children) if (!kv.value.empty()) r = kv.value[kv.value.size() - 1];
-    return r;
-}
-
-template<bool IsGlobal> int Node::indexOf(const Node* child) const
-{
-    if (!child || child->parent() != this) return -1;
-    LockT lk(mutex());
-    auto* v = _p->children.getptr(child->name());
-    if (!v) return -1;
-    if constexpr (IsGlobal) {
-        int gi = 0;
-        for (auto& kv : _p->children) {
-            if (&kv.value != v) { gi += kv.value.sizeAsInt(); continue; }
-            for (uint32_t i = 0; i < kv.value.size(); ++i)
-                if (kv.value[i] == child) return gi + (int)i;
-            return -1;
-        }
-    } else {
-        for (uint32_t i = 0; i < v->size(); ++i)
-            if (v->at(i) == child) return (int)i;
-    }
-    return -1;
-}
-
-template VE_API int Node::indexOf<true>(const Node*) const;
-template VE_API int Node::indexOf<false>(const Node*) const;
-
-template<bool IsGlobal> Node* Node::sibling(int offset) const
-{
-    auto* p = _p->parent;
-    if (!p) return nullptr;
-    LockT lk(p->mutex());
-
-    // locate this node in its name group via Dict iterator
-    auto it = p->_p->children.find(name());
-    if (it == p->_p->children.end()) return nullptr;
-    auto& grp = it->value;
-    int li = -1;
-    for (uint32_t i = 0; i < grp.size(); ++i)
-        if (grp[i] == this) { li = (int)i; break; }
-    if (li < 0) return nullptr;
-
-    // fast: within same name group
-    int t = li + offset;
-    if (t >= 0 && t < (int)grp.size()) return grp[(uint32_t)t];
-    if constexpr (!IsGlobal) return nullptr;
-
-    // cross-group: walk adjacent Dict entries (no global indexOf)
-    if (t >= (int)grp.size()) {
-        int rem = t - (int)grp.size();
-        auto fwd = it; ++fwd;
-        while (fwd != p->_p->children.end()) {
-            int gs = (int)fwd->value.size();
-            if (rem < gs) return fwd->value[(uint32_t)rem];
-            rem -= gs;
-            ++fwd;
-        }
-    } else { // t < 0
-        int rem = t; // negative
-        auto bwd = it; --bwd;
-        while (bwd) {
-            int gs = (int)bwd->value.size();
-            rem += gs;
-            if (rem >= 0) return bwd->value[(uint32_t)rem];
-            --bwd;
-        }
-    }
-    return nullptr;
-}
-
-template VE_API Node* Node::sibling<true>(int) const;
-template VE_API Node* Node::sibling<false>(int) const;
 
 // ============================================================================
 // Node — child management
@@ -251,129 +175,109 @@ bool Node::insert(Node* child)
         veLogE << "<ve.node> insert null child to " << path();
         return false;
     }
-    if (!isValidName(child->name())) {
-        veLogE << "<ve.node> insert invalid child " << child->name() << " to " << path();
-        return false;
-    }
     if (child->parent()) {
         veLogW << "<ve.node> insert child with parent " << child->path() << " to " << path();
         child->parent()->take(child);
     }
     LockT lk(mutex());
+    auto* ch = _p->ensure();
+    if (!child->name().empty()) ch->indices[child->name()].push_back(ch->nodes.sizeAsInt());
+    ch->nodes.push_back(child);
     child->_p->parent = this;
-    _p->children[child->name()].push_back(child);
-    ++_p->cnt;
     trigger(NODE_CHILD_ADDED);
     return true;
 }
 
-bool Node::insert(Node* child, int index, bool auto_fill)
+bool Node::insert(Node* child, int index)
 {
-    if (!child || index < 0) {
+    if (!child || index < 0 || index >= count()) {
         veLogE << "<ve.node> insert null child (index " << index << ") to " << path();
         return false;
     }
-    if (!isValidName(child->name())) {
-        veLogE << "<ve.node> insert invalid child " << child->name() << " to " << path();
-        return false;
-    }
     if (child->parent()) {
         veLogW << "<ve.node> insert child with parent " << child->path() << " to " << path();
         child->parent()->take(child);
     }
     LockT lk(mutex());
-    auto& grp = _p->children[child->name()];
-    int gs = (int)grp.size();
-    if (index > gs) {
-        if (auto_fill) {
-            for (int i = gs; i < index; ++i) {
-                auto* f = new Node(child->name());
-                f->_p->parent = this;
-                grp.push_back(f);
-                ++_p->cnt;
-            }
-        } else { // invalid index just append
-            index = gs;
-        }
-    }
+    auto* ch = _p->ensure();
+    ch->shift(index, +1);
+    ch->nodes.insert(ch->nodes.begin() + index, child);
+    if (!child->name().empty()) ch->indices[child->name()].append(index);
     child->_p->parent = this;
-    grp.insert(grp.begin() + index, child);
-    ++_p->cnt;
     trigger(NODE_CHILD_ADDED);
     return true;
 }
 
-Node* Node::append(const std::string& name)
+Node* Node::append(const std::string& name, int overlap)
 {
-    Node* n = new Node(name);
-    if (insert(n)) return n;
-    delete n;
-    return nullptr;
-}
-Node* Node::append(const std::string& name, int index, bool auto_fill)
-{
-    Node* n = new Node(name);
-    if (insert(n, index, auto_fill)) return n;
-    delete n;
-    return nullptr;
-}
-Node* Node::append(int index, bool auto_fill)
-{
-    return append("", index, auto_fill);
+    if (overlap < 0) return nullptr;
+    Node* cn = new Node(name);
+    insert(cn);
+    for (int i = 0; i < overlap; ++i) {
+        cn = new Node(name);
+        insert(cn);
+    }
+    return cn;
 }
 
 Node* Node::take(Node* child)
 {
-    if (!child) return nullptr;
+    if (!child || !_p->children) return nullptr;
     LockT lk(mutex());
-    auto* v = _p->children.getptr(child->name());
-    if (!v) return nullptr;
-    for (uint32_t i = 0; i < v->size(); ++i) {
-        if (v->at(i) != child) continue;
-        v->erase(i);
-        --_p->cnt;
-        child->_p->parent = nullptr;
-        if (v->empty() && !child->name().empty()) _p->children.erase(child->name());
-        trigger(NODE_CHILD_REMOVED);
-        return child;
+
+    int pos = indexOf(child);   // recursive mutex — re-locks OK
+    if (pos < 0) return nullptr;
+
+    // remove pos from indices[name]
+    auto& nm = child->name();
+    auto it = _p->children->indices.find(nm);
+    if (it != _p->children->indices.end()) {
+        auto& ivec = it->second;
+        for (uint32_t j = 0; j < ivec.size(); ++j) {
+            if (ivec[j] == pos) { ivec.erase(j); break; }
+        }
+        if (ivec.empty()) _p->children->indices.erase(it);
     }
-    return nullptr;
+
+    // remove from flat vector
+    _p->children->nodes.erase(_p->children->nodes.begin() + pos);
+
+    // shift remaining indices > pos by -1
+    _p->children->shift(pos, -1);
+
+    child->_p->parent = nullptr;
+    trigger(NODE_CHILD_REMOVED);
+    return child;
 }
-Node* Node::take(const std::string& name, int index) { return take(child(name, index)); }
 
 bool Node::remove(Node* child)
 {
-    if (auto n = take(child)) {
-        delete n;
-        return true;
-    }
+    if (auto* n = take(child)) { delete n; return true; }
     return false;
 }
 
-bool Node::remove(const std::string& name, int index)
-{
-    if (auto n = take(name, index)) {
-        delete n;
-        return true;
-    }
-    return false;
-}
 bool Node::remove(const std::string& name)
 {
     bool removed = false;
-    while (auto* n = take(name)) { delete n; removed = true; }
+    if (name.empty()) {
+        remove(last());
+    } else {
+        while (auto* n = take(name, -1)) {
+            delete n;
+            removed = true;
+        }
+    }
     return removed;
 }
 
 void Node::clear(bool auto_delete)
 {
+    if (!_p->children) return;
     LockT lk(mutex());
-    for (auto& kv : _p->children)
-        for (auto* c : kv.value)
-            if (c) { c->_p->parent = nullptr; if (auto_delete) delete c; }
-    _p->children.clear();
-    _p->children[""];
-    _p->cnt = 0;
+    for (auto* c : _p->children->nodes)
+        if (c) { c->_p->parent = nullptr; if (auto_delete) delete c; }
+    delete _p->children;
+    _p->children = nullptr;
     trigger(NODE_CHILD_REMOVED);
 }
 
@@ -410,14 +314,54 @@ static bool _parse(std::string_view seg, std::string& name, int& idx, bool& glob
 // Node — key
 // ============================================================================
 
+bool Node::isKey(const std::string& key)
+{
+    if (key.empty()) return false;
+    if (key.find('/') != std::string::npos) return false;
+
+    auto pos = key.rfind('#');
+    if (pos == std::string::npos) return true;   // plain name
+
+    // must have digits after #
+    if (pos + 1 >= key.size()) return false;
+    for (std::size_t i = pos + 1; i < key.size(); ++i)
+        if (key[i] < '0' || key[i] > '9') return false;
+
+    return true;   // name#N  or  #N
+}
+
+int Node::keyIndex(const std::string& key)
+{
+    auto pos = key.rfind('#');
+    if (pos == std::string::npos || pos + 1 >= key.size()) return -1;
+
+    int val = 0;
+    for (std::size_t i = pos + 1; i < key.size(); ++i) {
+        if (key[i] < '0' || key[i] > '9') return -1;
+        val = val * 10 + (key[i] - '0');
+    }
+    return val;
+}
+
 std::string Node::keyOf(const Node* child) const
 {
-    int i = indexOf<false>(child);
-    if (i < 0) return "";
+    if (!child || !_p->children) return "";
+    LockT lk(mutex());
+
+    int gi = indexOf(child);
+    if (gi < 0) return "";
+
     auto& nm = child->name();
-    if (nm.empty()) return "#" + std::to_string(indexOf<true>(child));
-    if (count(nm) <= 1) return nm;
-    return nm + "#" + std::to_string(i);
+    if (nm.empty()) return "#" + std::to_string(gi);
+
+    auto* iv = _p->children->indices.ptr(nm);
+    if (!iv || iv->sizeAsInt() <= 1) return nm;
+
+    // find overlap index within the same-name group
+    for (uint32_t k = 0; k < iv->size(); ++k)
+        if ((*iv)[k] == gi) return nm + "#" + std::to_string(k);
+
+    return nm;
 }
 
 Node* Node::childAt(const std::string& key) const
@@ -428,77 +372,34 @@ Node* Node::childAt(const std::string& key) const
 }
 
 // ============================================================================
-// Node — container interface
+// Node — container interface (iterators)
 // ============================================================================
-
-using MapElem = impl::HashMapElement<std::string, SmallVector<Node*, 1>>;
-
-static const MapElem* _skip_fwd(const MapElem* e)
-{
-    while (e && e->data.value.empty()) e = e->next;
-    return e;
-}
-
-static const MapElem* _skip_bwd(const MapElem* e)
-{
-    while (e && e->data.value.empty()) e = e->prev;
-    return e;
-}
-
-// --- forward ---
-
-Node* Node::ChildIterator::operator*() const
-{
-    auto* e = static_cast<const MapElem*>(_e);
-    return e ? e->data.value[_i] : nullptr;
-}
-
-Node::ChildIterator& Node::ChildIterator::operator++()
-{
-    if (!_e) return *this;
-    auto* e = static_cast<const MapElem*>(_e);
-    if (++_i >= e->data.value.size()) {
-        _e = _skip_fwd(e->next);
-        _i = 0;
-    }
-    return *this;
-}
 
 Node::ChildIterator Node::begin() const
 {
-    LockT lk(mutex());
-    return ChildIterator(_skip_fwd(_p->children.begin().element()), 0);
+    if (!_p->children || _p->children->nodes.empty()) return ChildIterator(nullptr);
+    return ChildIterator(_p->children->nodes.data());
 }
 
-Node::ChildIterator Node::end() const { return ChildIterator(nullptr, 0); }
-
-// --- reverse ---
-
-Node* Node::ReverseChildIterator::operator*() const
+Node::ChildIterator Node::end() const
 {
-    auto* e = static_cast<const MapElem*>(_e);
-    return e ? e->data.value[_i] : nullptr;
-}
-
-Node::ReverseChildIterator& Node::ReverseChildIterator::operator++()
-{
-    if (!_e) return *this;
-    if (_i > 0) { --_i; return *this; }
-    auto* e = _skip_bwd(static_cast<const MapElem*>(_e)->prev);
-    _e = e;
-    _i = e ? (uint32_t)(e->data.value.size() - 1) : 0;
-    return *this;
+    if (!_p->children || _p->children->nodes.empty()) return ChildIterator(nullptr);
+    auto& v = _p->children->nodes;
+    return ChildIterator(v.data() + v.size());
 }
 
 Node::ReverseChildIterator Node::rbegin() const
 {
-    LockT lk(mutex());
-    auto* e = _skip_bwd(_p->children.last().element());
-    uint32_t i = e ? (uint32_t)(e->data.value.size() - 1) : 0;
-    return ReverseChildIterator(e, i);
+    if (!_p->children || _p->children->nodes.empty()) return ReverseChildIterator(nullptr);
+    auto& v = _p->children->nodes;
+    return ReverseChildIterator(v.data() + v.size());
 }
 
-Node::ReverseChildIterator Node::rend() const { return ReverseChildIterator(nullptr, 0); }
+Node::ReverseChildIterator Node::rend() const
+{
+    if (!_p->children || _p->children->nodes.empty()) return ReverseChildIterator(nullptr);
+    return ReverseChildIterator(_p->children->nodes.data());
+}
 
 // ============================================================================
 // Node — shadow
@@ -589,8 +490,8 @@ std::string Node::dump(int depth) const
     if (_p->shadow) out += "  -> " + _p->shadow->name();
     out += "\n";
 
-    for (auto& kv : _p->children)
-        for (auto* c : kv.value)
+    if (_p->children)
+        for (auto* c : _p->children->nodes)
             if (c) out += c->dump(depth + 1);
     return out;
 }

@@ -65,42 +65,32 @@ VE_TEST(node_indexOf_global) {
     VE_ASSERT_EQ(root.indexOf(nullptr), -1);
 }
 
-VE_TEST(node_indexOf_local) {
+VE_TEST(node_indexOf_same_name) {
     Node root("root");
-    root.append("");           // anon 0
-    root.append("");           // anon 1
-    Node* x0 = root.append("x");
-    Node* x1 = root.append("x");
-    Node* x2 = root.append("x");
+    root.append("");           // anon, index 0
+    root.append("");           // anon, index 1
+    Node* x0 = root.append("x");  // index 2
+    Node* x1 = root.append("x");  // index 3
+    Node* x2 = root.append("x");  // index 4
 
-    // local index within "x" group
-    VE_ASSERT_EQ(root.indexOf<false>(x0), 0);
-    VE_ASSERT_EQ(root.indexOf<false>(x1), 1);
-    VE_ASSERT_EQ(root.indexOf<false>(x2), 2);
-
-    // global index: "" group has 2, then "x" group
-    VE_ASSERT_EQ(root.indexOf<true>(x0), 2);
-    VE_ASSERT_EQ(root.indexOf<true>(x1), 3);
-    VE_ASSERT_EQ(root.indexOf<true>(x2), 4);
+    // indexOf returns global index (flat vector position)
+    VE_ASSERT_EQ(root.indexOf(x0), 2);
+    VE_ASSERT_EQ(root.indexOf(x1), 3);
+    VE_ASSERT_EQ(root.indexOf(x2), 4);
 }
 
 VE_TEST(node_indexOf_mixed) {
     Node root("root");
-    Node* a0 = root.append("");
-    Node* a1 = root.append("");
-    Node* n0 = root.append("n");
-    Node* a2 = root.append("");
+    Node* a0 = root.append("");   // index 0
+    Node* a1 = root.append("");   // index 1
+    Node* n0 = root.append("n");  // index 2
+    Node* a2 = root.append("");   // index 3
 
-    // "" group: [a0, a1, a2], "n" group: [n0]
-    VE_ASSERT_EQ(root.indexOf<false>(a0), 0);
-    VE_ASSERT_EQ(root.indexOf<false>(a1), 1);
-    VE_ASSERT_EQ(root.indexOf<false>(a2), 2);
-    VE_ASSERT_EQ(root.indexOf<false>(n0), 0);
-
-    VE_ASSERT_EQ(root.indexOf<true>(a0), 0);
-    VE_ASSERT_EQ(root.indexOf<true>(a1), 1);
-    VE_ASSERT_EQ(root.indexOf<true>(a2), 2);
-    VE_ASSERT_EQ(root.indexOf<true>(n0), 3);
+    // true insertion order: a0, a1, n0, a2
+    VE_ASSERT_EQ(root.indexOf(a0), 0);
+    VE_ASSERT_EQ(root.indexOf(a1), 1);
+    VE_ASSERT_EQ(root.indexOf(n0), 2);
+    VE_ASSERT_EQ(root.indexOf(a2), 3);
 }
 
 // ============================================================================
@@ -121,17 +111,18 @@ VE_TEST(node_sibling_global) {
     VE_ASSERT(c->sibling(1) == nullptr);
 }
 
-VE_TEST(node_sibling_local) {
+VE_TEST(node_sibling_same_name) {
     Node root("root");
     Node* x0 = root.append("x");
     Node* x1 = root.append("x");
     Node* x2 = root.append("x");
 
-    VE_ASSERT_EQ(x0->sibling<false>(1), x1);
-    VE_ASSERT_EQ(x1->sibling<false>(1), x2);
-    VE_ASSERT_EQ(x2->sibling<false>(-1), x1);
-    VE_ASSERT(x0->sibling<false>(-1) == nullptr);
-    VE_ASSERT(x2->sibling<false>(1) == nullptr);
+    // consecutive same-name nodes — sibling(1) is the next in flat vector
+    VE_ASSERT_EQ(x0->sibling(1), x1);
+    VE_ASSERT_EQ(x1->sibling(1), x2);
+    VE_ASSERT_EQ(x2->sibling(-1), x1);
+    VE_ASSERT(x0->sibling(-1) == nullptr);
+    VE_ASSERT(x2->sibling(1) == nullptr);
 }
 
 VE_TEST(node_sibling_cross_group) {
@@ -140,11 +131,11 @@ VE_TEST(node_sibling_cross_group) {
     Node* b = root.append("");
     Node* x = root.append("x");
 
-    // "" group: [a, b], "x" group: [x]
-    // global: a=0, b=1, x=2
-    VE_ASSERT_EQ(b->sibling<true>(1), x);   // cross group
-    VE_ASSERT_EQ(x->sibling<true>(-1), b);  // cross group
-    VE_ASSERT(b->sibling<false>(1) == nullptr); // within "" group, no more
+    // flat vector: [a, b, x] → global indices 0, 1, 2
+    VE_ASSERT_EQ(b->sibling(1), x);    // cross name
+    VE_ASSERT_EQ(x->sibling(-1), b);   // cross name
+    VE_ASSERT(a->sibling(-1) == nullptr);
+    VE_ASSERT(x->sibling(1) == nullptr);
 }
 
 // ============================================================================
@@ -165,16 +156,19 @@ VE_TEST(node_prev_next) {
     VE_ASSERT(c->next() == nullptr);
 }
 
-VE_TEST(node_prev_next_local) {
+VE_TEST(node_prev_next_mixed) {
     Node root("root");
-    root.append("");
-    Node* x0 = root.append("x");
-    Node* x1 = root.append("x");
+    Node* a0 = root.append("");    // index 0
+    Node* x0 = root.append("x");  // index 1
+    Node* x1 = root.append("x");  // index 2
 
-    VE_ASSERT(x0->prev<false>() == nullptr);
-    VE_ASSERT_EQ(x0->next<false>(), x1);
-    VE_ASSERT_EQ(x1->prev<false>(), x0);
-    VE_ASSERT(x1->next<false>() == nullptr);
+    // flat order: a0, x0, x1
+    VE_ASSERT(a0->prev() == nullptr);
+    VE_ASSERT_EQ(a0->next(), x0);
+    VE_ASSERT_EQ(x0->prev(), a0);
+    VE_ASSERT_EQ(x0->next(), x1);
+    VE_ASSERT_EQ(x1->prev(), x0);
+    VE_ASSERT(x1->next() == nullptr);
 }
 
 VE_TEST(node_sibling_no_parent) {

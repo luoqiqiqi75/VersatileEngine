@@ -48,9 +48,9 @@ VE_TEST(ohm_has_getptr) {
     m[42] = "hello";
     VE_ASSERT(m.has(42));
     VE_ASSERT(!m.has(99));
-    VE_ASSERT(m.getptr(42) != nullptr);
-    VE_ASSERT_EQ(*m.getptr(42), "hello");
-    VE_ASSERT(m.getptr(99) == nullptr);
+    VE_ASSERT(m.ptr(42) != nullptr);
+    VE_ASSERT_EQ(*m.ptr(42), "hello");
+    VE_ASSERT(m.ptr(99) == nullptr);
 }
 
 VE_TEST(ohm_stress_1000) {

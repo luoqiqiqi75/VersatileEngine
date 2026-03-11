@@ -35,8 +35,9 @@ struct VE_API Schema
 
 // --- Node ------------------------------------------------------------------
 //
-// children : Dict<SmallVector<Node*, 1>>  name → [Node*], insertion order
-// shadow   : Node*                        prototype-chain fallback
+// children : Vector<Node*>            flat array, true insertion order
+//            Hash<SmallVector<int>>   name → [indices into vector]
+// shadow   : Node*                    prototype-chain fallback
 //
 // name  = real child name (no # no /)
 // key   = name | name#N | #N
@@ -56,91 +57,96 @@ public:
 
     // --- static ---
     static Node* root();
-    static bool  isValidName(const std::string& name);
 
     // --- tree navigation ---
     Node* parent() const;
     Node* parent(int level) const;
 
-    bool  isAncestorOf(const Node* node) const;
+    bool isAncestorOf(const Node* descendant_node) const;
 
     // --- child ---
-    Node*         child(const std::string& name, int index = 0) const;
-    Node*         child(int global_index) const;
+    Node* child(int index) const;
+    Node* child(const std::string& name, int overlap = 0) const;
 
-    bool          has(const std::string& name, int index = 0) const;
-    bool          has(int global_index) const;
-    bool          has(const Node* child) const;
+    int indexOf(const Node* child_node) const;
 
-    int           count() const;
-    int           count(const std::string& name) const;
+    bool has(int index) const { return child(index) != nullptr; }
+    bool has(const std::string& name, int overlap = 0) const { return child(name, overlap) != nullptr; }
+    bool has(const Node* child_node) const { return indexOf(child_node) >= 0; }
+
+    int count() const;
+    int count(const std::string& name) const;
+
+    bool empty() const { return count() == 0; }
+    std::size_t size() const { return count(); }
 
     Vector<Node*> children() const;
     Vector<Node*> children(const std::string& name) const;
 
-    Strings       childNames() const; // skip empty
+    Strings childNames() const; // unique non-empty names, insertion order
 
-    // --- relation ---
-    Node*         first() const;
-    Node*         last() const;
+    Node* sibling(int offset) const { auto* p = parent(); return p ? p->child(p->indexOf(this) + offset) : nullptr; }
 
-    template<bool IsGlobal = true> int indexOf(const Node* child) const;
+    Node* first() const { return child(0); }
+    Node* last() const { return child(-1); }
 
-    template<bool IsGlobal = true> Node* sibling(int offset) const;
-
-    template<bool IsGlobal = true> VE_FORCE_INLINE Node* prev() const { return sibling<IsGlobal>(-1); }
-    template<bool IsGlobal = true> VE_FORCE_INLINE Node* next() const { return sibling<IsGlobal>(1); }
+    Node* prev() const { return sibling(-1); }
+    Node* next() const { return sibling(1); }
 
     // --- child management (by name, no # no /) ---
     bool  insert(Node* child);
-    bool  insert(Node* child, int index, bool auto_fill = true);
-    Node* append(const std::string& name = "");
-    Node* append(const std::string& name, int index, bool auto_fill = true);
-    Node* append(int index, bool auto_fill = true);
+    bool  insert(Node* child, int index);
+
+    Node* append(const std::string& name, int overlap = 0);
+    Node* append(int index = 0) { return append("", index); }
 
     Node* take(Node* child);
-    Node* take(const std::string& name, int index = 0);
+    Node* take(int index) { return take(child(index)); }
+    Node* take(const std::string& name, int overlap = 0) { return take(child(name, overlap)); }
+
     bool  remove(Node* child);
-    bool  remove(const std::string& name, int index);
+    bool  remove(int index) { return remove(child(index)); }
+    bool  remove(const std::string& name, int overlap) { return remove(child(name, overlap)); }
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
 
     // -- key (key = name | name#N | #N) ---
+    static bool isKey(const std::string& key);
+    static int keyIndex(const std::string& key);
+
     std::string keyOf(const Node* child) const;
 
-    Node*       childAt(const std::string& key) const;
+    Node* childAt(const std::string& key) const;
 
     // --- container interface ---
-    VE_FORCE_INLINE Node* operator[](int global_index) const { return child(global_index); }
-    VE_FORCE_INLINE Node* operator[](const std::string& key) const { return childAt(key); }
+    Node* operator[](int index) const { return child(index); }
+    Node* operator[](const std::string& key) const { return childAt(key); }
 
-    class VE_API ChildIterator {
-        const void* _e = nullptr;
-        uint32_t _i = 0;
+    class ChildIterator {
+        Node* const* _p = nullptr;
         friend class Node;
-        ChildIterator(const void* e, uint32_t i) : _e(e), _i(i) {}
+        ChildIterator(Node* const* p) : _p(p) {}
     public:
         ChildIterator() = default;
-        Node*          operator*() const;
-        ChildIterator& operator++();
-        ChildIterator  operator++(int) { auto t = *this; ++(*this); return t; }
-        bool operator==(const ChildIterator& o) const { return _e == o._e && _i == o._i; }
-        bool operator!=(const ChildIterator& o) const { return !(*this == o); }
+        Node*          operator*() const { return *_p; }
+        ChildIterator& operator++() { ++_p; return *this; }
+        ChildIterator  operator++(int) { auto t = *this; ++_p; return t; }
+        bool operator==(const ChildIterator& o) const { return _p == o._p; }
+        bool operator!=(const ChildIterator& o) const { return _p != o._p; }
     };
 
-    class VE_API ReverseChildIterator {
-        const void* _e = nullptr;
-        uint32_t _i = 0;
+    class ReverseChildIterator {
+        Node* const* _p = nullptr;
         friend class Node;
-        ReverseChildIterator(const void* e, uint32_t i) : _e(e), _i(i) {}
+        ReverseChildIterator(Node* const* p) : _p(p) {}
     public:
         ReverseChildIterator() = default;
-        Node*                 operator*() const;
-        ReverseChildIterator& operator++();
-        ReverseChildIterator  operator++(int) { auto t = *this; ++(*this); return t; }
-        bool operator==(const ReverseChildIterator& o) const { return _e == o._e && _i == o._i; }
-        bool operator!=(const ReverseChildIterator& o) const { return !(*this == o); }
+        Node*                 operator*() const { return *(_p - 1); }
+        ReverseChildIterator& operator++() { --_p; return *this; }
+        ReverseChildIterator  operator++(int) { auto t = *this; --_p; return t; }
+        bool operator==(const ReverseChildIterator& o) const { return _p == o._p; }
+        bool operator!=(const ReverseChildIterator& o) const { return _p != o._p; }
     };
 
     ChildIterator        begin()  const;

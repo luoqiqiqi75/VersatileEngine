@@ -261,16 +261,6 @@ public:
         return _elements[idx]->data.value;
     }
 
-    const TValue *getptr(const TKey &p_key) const {
-        uint32_t idx = 0;
-        return _lookup_idx(p_key, idx) ? &_elements[idx]->data.value : nullptr;
-    }
-
-    TValue *getptr(const TKey &p_key) {
-        uint32_t idx = 0;
-        return _lookup_idx(p_key, idx) ? &_elements[idx]->data.value : nullptr;
-    }
-
     VE_FORCE_INLINE bool has(const TKey &p_key) const {
         uint32_t _idx = 0;
         return _lookup_idx(p_key, _idx);
