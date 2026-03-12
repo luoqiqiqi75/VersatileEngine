@@ -46,7 +46,7 @@ else()
 endif()
 
 # nlohmann/json — used by JsonRef / Result / XService
-target_link_libraries(${VE_RTT_LIBRARY} PUBLIC ve_dep_json)
+target_link_libraries(${VE_RTT_LIBRARY} PUBLIC nlohmann_json::nlohmann_json)
 
 # --- Conditional compile definitions ---
 if(_VE_RTT_HAS_OROCOS)

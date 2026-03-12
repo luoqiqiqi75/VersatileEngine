@@ -67,7 +67,7 @@
 
 #include "ve/core/node.h"
 #include "ve/core/log.h"
-#include <nlohmann/json.hpp>
+#include <simdjson.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -75,8 +75,6 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
-
-using json = nlohmann::ordered_json;  // preserve key order
 
 using namespace ve;
 
@@ -131,55 +129,96 @@ static std::string nodeSummary(const Node* n)
 //
 // savejson: reverse — Node tree → JSON
 
-static void json_build(Node* parent, const json& j)
+static void json_build(Node* parent, simdjson::dom::element elem)
 {
-    if (j.is_object()) {
+    if (elem.is_object()) {
+        simdjson::dom::object obj = elem.get_object().value();
         // Phase 1: collect all children for this level
         Node::Nodes batch;
-        for (auto& [key, val] : j.items()) {
-            if (val.is_array()) {
-                for (auto& elem : val)
-                    batch.push_back(new Node(key));
+        for (auto field : obj) {
+            if (field.value.is_array()) {
+                simdjson::dom::array arr = field.value.get_array().value();
+                for (size_t i = 0; i < arr.size(); ++i)
+                    batch.push_back(new Node(std::string(field.key)));
             } else {
-                batch.push_back(new Node(key));
+                batch.push_back(new Node(std::string(field.key)));
             }
         }
         // Phase 2: single batch insert
         parent->insert(batch);
         // Phase 3: recurse into children that have sub-content
         int idx = 0;
-        for (auto& [key, val] : j.items()) {
-            if (val.is_array()) {
-                for (auto& elem : val) {
-                    if (elem.is_object() && !elem.empty())
-                        json_build(batch[idx], elem);
+        for (auto field : obj) {
+            if (field.value.is_array()) {
+                simdjson::dom::array arr = field.value.get_array().value();
+                for (auto sub : arr) {
+                    if (sub.is_object()) {
+                        simdjson::dom::object subobj = sub.get_object().value();
+                        if (subobj.size() > 0)
+                            json_build(batch[idx], sub);
+                    }
                     ++idx;
                 }
-            } else if (val.is_object() && !val.empty()) {
-                json_build(batch[idx], val);
+            } else if (field.value.is_object()) {
+                simdjson::dom::object subobj = field.value.get_object().value();
+                if (subobj.size() > 0)
+                    json_build(batch[idx], field.value);
                 ++idx;
             } else {
                 ++idx;
             }
         }
-    } else if (j.is_array()) {
+    } else if (elem.is_array()) {
+        simdjson::dom::array arr = elem.get_array().value();
         // Phase 1: collect all anonymous children
         Node::Nodes batch;
-        for (size_t i = 0; i < j.size(); ++i)
+        for (size_t i = 0; i < arr.size(); ++i)
             batch.push_back(new Node(""));
         // Phase 2: single batch insert
         parent->insert(batch);
         // Phase 3: recurse
-        for (size_t i = 0; i < j.size(); ++i) {
-            if (j[i].is_object() && !j[i].empty())
-                json_build(batch[i], j[i]);
+        int idx = 0;
+        for (auto sub : arr) {
+            if (sub.is_object()) {
+                simdjson::dom::object subobj = sub.get_object().value();
+                if (subobj.size() > 0)
+                    json_build(batch[idx], sub);
+            }
+            ++idx;
         }
     }
 }
 
-static json node_to_json(const Node* node)
+// ---- Simple JSON writer (simdjson is read-only) ----
+
+static std::string json_escape(const std::string& s)
 {
-    if (node->count() == 0) return nullptr;
+    std::string out;
+    out.reserve(s.size() + 2);
+    for (char c : s) {
+        switch (c) {
+            case '\"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;      break;
+        }
+    }
+    return out;
+}
+
+static void node_to_json_impl(const Node* node, std::string& out, int indent, int depth)
+{
+    std::string pad(depth * indent, ' ');
+    std::string pad1((depth + 1) * indent, ' ');
+
+    if (node->count() == 0) {
+        out += "null";
+        return;
+    }
 
     // check if all children are anonymous
     bool allAnon = true;
@@ -188,42 +227,75 @@ static json node_to_json(const Node* node)
     }
 
     if (allAnon) {
-        // → JSON array of children
-        json arr = json::array();
-        for (auto* c : *node) arr.push_back(node_to_json(c));
-        return arr;
+        // → JSON array
+        out += "[\n";
+        int total = node->count();
+        int i = 0;
+        for (auto* c : *node) {
+            out += pad1;
+            node_to_json_impl(c, out, indent, depth + 1);
+            if (++i < total) out += ",";
+            out += "\n";
+        }
+        out += pad + "]";
+        return;
     }
 
-    // → JSON object, group consecutive same-name children
-    json obj = json::object();
+    // → JSON object, group same-name children
+    out += "{\n";
     auto names = node->childNames();
 
-    // track which names have arrays (multiple children)
-    for (auto& nm : names) {
-        int cnt = node->count(nm);
-        if (cnt == 1) {
-            auto* ch = node->child(nm, 0);
-            obj[nm] = node_to_json(ch);
-        } else {
-            // multiple → array
-            json arr = json::array();
-            for (int i = 0; i < cnt; ++i)
-                arr.push_back(node_to_json(node->child(nm, i)));
-            obj[nm] = arr;
-        }
-    }
-
-    // also handle anonymous children mixed in
+    // count anonymous children
     int anonCnt = 0;
     for (auto* c : *node) if (c->name().empty()) ++anonCnt;
-    if (anonCnt > 0) {
-        json arr = json::array();
-        for (auto* c : *node)
-            if (c->name().empty()) arr.push_back(node_to_json(c));
-        obj[""] = arr;
+
+    int fieldIdx = 0;
+    int totalFields = (int)names.size() + (anonCnt > 0 ? 1 : 0);
+
+    for (auto& nm : names) {
+        int cnt = node->count(nm);
+        out += pad1 + "\"" + json_escape(nm) + "\": ";
+        if (cnt == 1) {
+            node_to_json_impl(node->child(nm, 0), out, indent, depth + 1);
+        } else {
+            out += "[\n";
+            std::string pad2((depth + 2) * indent, ' ');
+            for (int i = 0; i < cnt; ++i) {
+                out += pad2;
+                node_to_json_impl(node->child(nm, i), out, indent, depth + 2);
+                if (i + 1 < cnt) out += ",";
+                out += "\n";
+            }
+            out += pad1 + "]";
+        }
+        if (++fieldIdx < totalFields) out += ",";
+        out += "\n";
     }
 
-    return obj;
+    if (anonCnt > 0) {
+        out += pad1 + "\"\": [\n";
+        std::string pad2((depth + 2) * indent, ' ');
+        int i = 0;
+        for (auto* c : *node) {
+            if (c->name().empty()) {
+                out += pad2;
+                node_to_json_impl(c, out, indent, depth + 2);
+                if (++i < anonCnt) out += ",";
+                out += "\n";
+            }
+        }
+        out += pad1 + "]\n";
+    }
+
+    out += pad + "}";
+}
+
+static std::string node_to_json(const Node* node, int indent = 2)
+{
+    std::string out;
+    node_to_json_impl(node, out, indent, 0);
+    out += "\n";
+    return out;
 }
 
 // ============================================================================
@@ -768,15 +840,14 @@ int main()
 
         else if (cmd == "loadjson") {
             if (args.size() < 2) { std::cout << "usage: loadjson <file>\n"; continue; }
-            std::ifstream ifs(args[1]);
-            if (!ifs.is_open()) { std::cout << "cannot open: " << args[1] << "\n"; continue; }
             try {
-                json j = json::parse(ifs);
+                simdjson::dom::parser parser;
+                simdjson::dom::element doc = parser.load(args[1]);
                 int before = g_cur->count();
-                json_build(g_cur, j);
+                json_build(g_cur, doc);
                 int added = g_cur->count() - before;
                 std::cout << "loaded " << added << " children from " << args[1] << "\n";
-            } catch (const json::exception& e) {
+            } catch (const simdjson::simdjson_error& e) {
                 std::cout << "JSON error: " << e.what() << "\n";
             }
         }
@@ -788,10 +859,10 @@ int main()
                 target = g_cur->resolve(args[2]);
                 if (!target) { std::cout << "not found: " << args[2] << "\n"; continue; }
             }
-            json j = node_to_json(target);
+            std::string js = node_to_json(target);
             std::ofstream ofs(args[1]);
             if (!ofs.is_open()) { std::cout << "cannot write: " << args[1] << "\n"; continue; }
-            ofs << j.dump(2) << "\n";
+            ofs << js;
             std::cout << "saved to " << args[1] << "\n";
         }
 
@@ -800,20 +871,18 @@ int main()
             if (args.size() < 2) { std::cout << "usage: benchjson <file> [reps]\n"; continue; }
             int reps = (args.size() > 2 && isInt(args[2])) ? std::stoi(args[2]) : 10;
 
-            // Phase 1: file read + JSON parse (once)
-            std::ifstream ifs(args[1]);
-            if (!ifs.is_open()) { std::cout << "cannot open: " << args[1] << "\n"; continue; }
-            json j;
+            // Phase 1: file read + JSON parse (simdjson)
+            simdjson::dom::parser parser;
+            simdjson::dom::element doc;
             try {
                 auto t0 = std::chrono::steady_clock::now();
-                j = json::parse(ifs);
+                doc = parser.load(args[1]);
                 auto t1 = std::chrono::steady_clock::now();
                 double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-                std::cout << "[bench] JSON parse: " << ms << " ms\n";
-            } catch (const json::exception& e) {
+                std::cout << "[bench] simdjson parse: " << ms << " ms\n";
+            } catch (const simdjson::simdjson_error& e) {
                 std::cout << "JSON error: " << e.what() << "\n"; continue;
             }
-            ifs.close();
 
             // Phase 2: build tree N times (pure Node construction)
             {
@@ -821,7 +890,7 @@ int main()
                 auto t0 = std::chrono::steady_clock::now();
                 for (int r = 0; r < reps; ++r) {
                     Node tmp("bench_root");
-                    json_build(&tmp, j);
+                    json_build(&tmp, doc);
                     totalNodes = tmp.count();
                     // ~Node destructor handles cleanup
                 }
@@ -834,7 +903,7 @@ int main()
             // Phase 3: build once and count total nodes recursively
             {
                 Node tmp("bench_root");
-                json_build(&tmp, j);
+                json_build(&tmp, doc);
                 // count all nodes recursively
                 std::function<int(const Node*)> countAll = [&](const Node* n) -> int {
                     int c = 1;
@@ -852,8 +921,7 @@ int main()
                 target = g_cur->resolve(args[1]);
                 if (!target) { std::cout << "not found: " << args[1] << "\n"; continue; }
             }
-            json j = node_to_json(target);
-            std::cout << j.dump(2) << "\n";
+            std::cout << node_to_json(target);
         }
 
         // ========== Unknown ==========

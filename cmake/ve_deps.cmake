@@ -7,11 +7,11 @@
 #   ve_dep_asio    — standalone asio 1.29 (header-only)
 #   ve_dep_asio2   — asio2 2.9 (high-level networking, header-only)
 #
-# 外部依赖 (通过 ve_find_package 统一管理):
-#   ve_dep_yaml    — yaml-cpp (YAML parsing)
-#   ve_dep_pugixml — pugixml (XML parsing)
-#   ve_dep_json    — nlohmann/json (JSON parsing, header-only)
-#   ve_dep_simdjson — simdjson (high-perf JSON parsing)
+# 外部依赖 (通过 ve_find_package 统一管理, 消费方直接用原始 target):
+#   yaml-cpp::yaml-cpp       — yaml-cpp (YAML parsing)
+#   pugixml::pugixml         — pugixml (XML parsing)
+#   nlohmann_json::nlohmann_json — nlohmann/json (JSON parsing, header-only)
+#   simdjson::simdjson       — simdjson (high-perf JSON parsing)
 #
 # 外部依赖查找顺序: 本地路径 → find_package → FetchContent
 # 本地路径在 cmake/_local.cmake 中配置 (gitignored)
@@ -67,8 +67,6 @@ ve_find_package(yaml-cpp
         YAML_BUILD_SHARED_LIBS OFF
         YAML_CPP_INSTALL       OFF
 )
-add_library(ve_dep_yaml INTERFACE)
-target_link_libraries(ve_dep_yaml INTERFACE yaml-cpp::yaml-cpp)
 
 # --- pugixml ---
 ve_find_package(pugixml
@@ -77,8 +75,6 @@ ve_find_package(pugixml
     OPTIONS
         PUGIXML_INSTALL OFF
 )
-add_library(ve_dep_pugixml INTERFACE)
-target_link_libraries(ve_dep_pugixml INTERFACE pugixml::pugixml)
 
 # --- nlohmann/json ---
 ve_find_package(nlohmann_json
@@ -88,8 +84,6 @@ ve_find_package(nlohmann_json
         JSON_BuildTests OFF
         JSON_Install    OFF
 )
-add_library(ve_dep_json INTERFACE)
-target_link_libraries(ve_dep_json INTERFACE nlohmann_json::nlohmann_json)
 
 # --- simdjson ---
 ve_find_package(simdjson
@@ -98,8 +92,6 @@ ve_find_package(simdjson
     OPTIONS
         SIMDJSON_DEVELOPER_MODE OFF
 )
-add_library(ve_dep_simdjson INTERFACE)
-target_link_libraries(ve_dep_simdjson INTERFACE simdjson::simdjson)
 
 # =============================================================================
 # Summary
