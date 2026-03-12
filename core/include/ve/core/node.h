@@ -1,7 +1,7 @@
 // node.h — ve::Node + ve::Schema
 #pragma once
 
-#include "base.h"
+#include "factory.h"
 
 namespace ve {
 
@@ -46,6 +46,9 @@ struct VE_API Schema
 class VE_API Node : public Object
 {
 public:
+    using Nodes = Vector<Node*>;
+
+public:
     explicit Node(const std::string& name = "");
     ~Node();
 
@@ -80,12 +83,12 @@ public:
     bool empty() const { return count() == 0; }
     std::size_t size() const { return count(); }
 
-    Vector<Node*> children() const;
-    Vector<Node*> children(const std::string& name) const;
+    Nodes children() const;
+    Nodes children(const std::string& name) const;
 
     Strings childNames() const; // unique non-empty names, insertion order
 
-    Node* sibling(int offset) const { auto* p = parent(); return p ? p->child(p->indexOf(this) + offset) : nullptr; }
+    Node* sibling(int offset) const { auto* p = parent(); if (!p) return nullptr; int i = p->indexOf(this) + offset; return (i >= 0) ? p->child(i) : nullptr; }
 
     Node* first() const { return child(0); }
     Node* last() const { return child(-1); }
@@ -94,11 +97,12 @@ public:
     Node* next() const { return sibling(1); }
 
     // --- child management (by name, no # no /) ---
-    bool  insert(Node* child);
-    bool  insert(Node* child, int index);
+    // index: 0 = prepend, -1 = append, negative wraps via (index + count + 1)
+    bool  insert(Node* child, int index = -1);
+    bool  insert(const Nodes& children, int index = -1);
 
     Node* append(const std::string& name, int overlap = 0);
-    Node* append(int index = 0) { return append("", index); }
+    Node* append(int overlap = 0) { return append("", overlap); }
 
     Node* take(Node* child);
     Node* take(int index) { return take(child(index)); }
@@ -159,7 +163,7 @@ public:
     void  setShadow(Node* shadow);
 
     // --- path (path = key/key/...) ---
-    Node*       resolve(const std::string& path) const;
+    Node*       resolve(const std::string& path, bool use_shadow = true) const;
     std::string path(Node* ancestor = nullptr) const;
     Node*       ensure(const std::string& path);
     bool        erase(const std::string& path, bool auto_delete = true);
@@ -168,7 +172,7 @@ public:
     std::string dump(int depth = 0) const;
 
 private:
-    VE_DECLARE_UNIQUE_PRIVATE
+    VE_DECLARE_POOL_PRIVATE
 };
 
 } // namespace ve

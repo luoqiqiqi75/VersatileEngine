@@ -27,7 +27,7 @@ struct Node::Private
     Node* parent  = nullptr;
     Node* shadow  = nullptr;
 
-    struct Children {
+    struct Children : Pooled<Children> {
         Hash<SmallVector<int>> indices;   // name → [global indices in nodes]
         Vector<Node*>          nodes;     // all children, true insertion order
 
@@ -42,15 +42,26 @@ struct Node::Private
 
     Children* children = nullptr;
 
-    Children* ensure() { return children ? children : (children = new Children()); }
+    Children* ensureChildren()
+    {
+        return children ? children : (children = new Children());
+    }
+    void clearChildren(bool auto_delete)
+    {
+        if (!children) return;
+        for (const auto* cn : children->nodes)
+            if (cn) { cn->_p->parent = nullptr; if (auto_delete) delete cn; }
+        delete children;
+        children = nullptr;
+    }
 };
 
 // ============================================================================
 // Node — construction / static
 // ============================================================================
 
-Node::Node(const std::string& name) : Object(name), _p(std::make_unique<Private>()) {}
-Node::~Node() { clear(); }
+Node::Node(const std::string& name) : Object(name) {}
+Node::~Node() { _p->clearChildren(true); }
 
 Node* Node::root() { static Node r; return &r; }
 
@@ -83,7 +94,7 @@ Node* Node::child(int index) const
     if (!_p->children) return nullptr;
     LockT lk(mutex());
     if (index < 0) index += _p->children->nodes.sizeAsInt();
-    if (index >= _p->children->nodes.sizeAsInt()) return nullptr;
+    if (index < 0 || index >= _p->children->nodes.sizeAsInt()) return nullptr;
     return _p->children->nodes.at(index);
 }
 
@@ -169,7 +180,7 @@ Strings Node::childNames() const
 // Node — child management
 // ============================================================================
 
-bool Node::insert(Node* child)
+bool Node::insert(Node* child, int index)
 {
     if (!child) {
         veLogE << "<ve.node> insert null child to " << path();
@@ -180,30 +191,84 @@ bool Node::insert(Node* child)
         child->parent()->take(child);
     }
     LockT lk(mutex());
-    auto* ch = _p->ensure();
-    if (!child->name().empty()) ch->indices[child->name()].push_back(ch->nodes.sizeAsInt());
-    ch->nodes.push_back(child);
+    auto* ch = _p->ensureChildren();
+    int sz = ch->nodes.sizeAsInt();
+
+    // resolve negative index: -1 → append, -2 → before last, ...
+    if (index < 0) index += sz + 1;
+    if (index < 0 || index > sz) {
+        veLogE << "<ve.node> insert index " << index << " out of range [0," << sz << "] on " << path();
+        return false;
+    }
+
+    if (index == sz) {
+        // append — fast path, no shift needed
+        if (!child->name().empty()) ch->indices[child->name()].push_back(sz);
+        ch->nodes.push_back(child);
+    } else {
+        // insert at position — shift existing indices
+        ch->shift(index, +1);
+        ch->nodes.insert(ch->nodes.begin() + index, child);
+        if (!child->name().empty()) {
+            auto& iv = ch->indices[child->name()];
+            auto it = std::lower_bound(iv.begin(), iv.end(), index);
+            iv.insert(it, index);
+        }
+    }
     child->_p->parent = this;
     trigger(NODE_CHILD_ADDED);
     return true;
 }
 
-bool Node::insert(Node* child, int index)
+bool Node::insert(const Nodes& children, int index)
 {
-    if (!child || index < 0 || index >= count()) {
-        veLogE << "<ve.node> insert null child (index " << index << ") to " << path();
+    if (children.empty()) return true;
+
+    for (auto* c : children) {
+        if (!c) {
+            veLogE << "<ve.node> batch insert contains null child to " << path();
+            return false;
+        }
+    }
+
+    // detach from existing parents (before locking, take() will lock)
+    for (auto* c : children) {
+        if (c->parent()) {
+            veLogW << "<ve.node> batch insert child with parent " << c->path() << " to " << path();
+            c->parent()->take(c);
+        }
+    }
+
+    LockT lk(mutex());
+    auto* ch = _p->ensureChildren();
+    int sz    = ch->nodes.sizeAsInt();
+    int batch = static_cast<int>(children.size());
+
+    // resolve negative index
+    if (index < 0) index += sz + 1;
+    if (index < 0 || index > sz) {
+        veLogE << "<ve.node> batch insert index " << index << " out of range [0," << sz << "] on " << path();
         return false;
     }
-    if (child->parent()) {
-        veLogW << "<ve.node> insert child with parent " << child->path() << " to " << path();
-        child->parent()->take(child);
+
+    // shift existing indices >= pos by batch size (once!)
+    if (index < sz) ch->shift(index, +batch);
+
+    // bulk-insert into flat vector
+    ch->nodes.insert(ch->nodes.begin() + index, children.begin(), children.end());
+
+    // update indices + parent for each child in the batch
+    for (int i = 0; i < batch; ++i) {
+        auto* c  = children[i];
+        int   gi = index + i;
+        c->_p->parent = this;
+        if (!c->name().empty()) {
+            auto& iv = ch->indices[c->name()];
+            auto  it = std::lower_bound(iv.begin(), iv.end(), gi);
+            iv.insert(it, gi);
+        }
     }
-    LockT lk(mutex());
-    auto* ch = _p->ensure();
-    ch->shift(index, +1);
-    ch->nodes.insert(ch->nodes.begin() + index, child);
-    if (!child->name().empty()) ch->indices[child->name()].append(index);
-    child->_p->parent = this;
+
     trigger(NODE_CHILD_ADDED);
     return true;
 }
@@ -211,13 +276,18 @@ bool Node::insert(Node* child, int index)
 Node* Node::append(const std::string& name, int overlap)
 {
     if (overlap < 0) return nullptr;
-    Node* cn = new Node(name);
-    insert(cn);
-    for (int i = 0; i < overlap; ++i) {
-        cn = new Node(name);
-        insert(cn);
+    if (overlap == 0) {
+        auto* cn = new Node(name);
+        insert(cn);          // insert(child, -1) → append
+        return cn;
     }
-    return cn;
+    // batch: create 1 + overlap nodes, single batch insert
+    Nodes batch;
+    batch.reserve(1 + overlap);
+    for (int i = 0; i <= overlap; ++i)
+        batch.push_back(new Node(name));
+    insert(batch);            // batch insert at end (-1)
+    return batch.front();
 }
 
 Node* Node::take(Node* child)
@@ -258,14 +328,11 @@ bool Node::remove(Node* child)
 
 bool Node::remove(const std::string& name)
 {
+    if (name.empty()) return remove(last());
     bool removed = false;
-    if (name.empty()) {
-        remove(last());
-    } else {
-        while (auto* n = take(name, -1)) {
-            delete n;
-            removed = true;
-        }
+    while (const auto* n = take(name)) {
+        delete n;
+        removed = true;
     }
     return removed;
 }
@@ -274,10 +341,7 @@ void Node::clear(bool auto_delete)
 {
     if (!_p->children) return;
     LockT lk(mutex());
-    for (auto* c : _p->children->nodes)
-        if (c) { c->_p->parent = nullptr; if (auto_delete) delete c; }
-    delete _p->children;
-    _p->children = nullptr;
+    _p->clearChildren(auto_delete);
     trigger(NODE_CHILD_REMOVED);
 }
 
@@ -432,14 +496,18 @@ static Node* _walk(std::string_view sv, const Node* start, StepFn step)
 
 static Node* _root(const Node* n) { auto* p = const_cast<Node*>(n); while (p->parent()) p = p->parent(); return p; }
 
-Node* Node::resolve(const std::string& path) const
+Node* Node::resolve(const std::string& path, bool use_shadow) const
 {
     if (path.empty()) return const_cast<Node*>(this);
     std::string_view sv(path);
-    Node* s = const_cast<Node*>(this);
+    auto* s = const_cast<Node*>(this);
     if (sv[0] == '/') { s = _root(this); sv.remove_prefix(1); if (sv.empty()) return s; }
-    return _walk(sv, s, [](Node* cur, auto& nm, int idx, bool gl) -> Node* {
-        return gl ? cur->child(idx) : cur->child(nm, idx);
+    return _walk(sv, s, [use_shadow](Node* cur, auto& nm, int idx, bool gl) -> Node* {
+        auto* c = gl ? cur->child(idx) : cur->child(nm, idx);
+        if (use_shadow)
+            for (auto* sh = cur->shadow(); !c && sh; sh = sh->shadow())
+                c = gl ? sh->child(idx) : sh->child(nm, idx);
+        return c;
     });
 }
 
@@ -469,7 +537,7 @@ Node* Node::ensure(const std::string& path)
 
 bool Node::erase(const std::string& path, bool auto_delete)
 {
-    auto* t = resolve(path);
+    auto* t = resolve(path, false);   // no shadow — only erase local nodes
     if (!t || !t->_p->parent) return false;
     if (auto_delete) return t->_p->parent->remove(t);
     return t->_p->parent->take(t) != nullptr;

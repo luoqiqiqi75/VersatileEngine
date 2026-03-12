@@ -330,10 +330,15 @@ VE_TEST(node_shadow_fallback) {
     inst.append("local_z");
     inst.setShadow(&proto);
 
+    // child() does NOT use shadow — only path methods do
     VE_ASSERT(inst.child("local_z") != nullptr);
-    VE_ASSERT(inst.child("default_x") != nullptr);
-    VE_ASSERT(inst.child("default_y") != nullptr);
-    VE_ASSERT(inst.child("nope") == nullptr);
+    VE_ASSERT(inst.child("default_x") == nullptr);
+
+    // resolve() uses shadow fallback
+    VE_ASSERT(inst.resolve("local_z") != nullptr);
+    VE_ASSERT(inst.resolve("default_x") != nullptr);
+    VE_ASSERT(inst.resolve("default_y") != nullptr);
+    VE_ASSERT(inst.resolve("nope") == nullptr);
 }
 
 VE_TEST(node_shadow_chain) {
@@ -348,10 +353,16 @@ VE_TEST(node_shadow_chain) {
     leaf.append("from_leaf");
     leaf.setShadow(&mid);
 
+    // resolve walks shadow chain
+    VE_ASSERT(leaf.resolve("from_leaf") != nullptr);
+    VE_ASSERT(leaf.resolve("from_mid") != nullptr);
+    VE_ASSERT(leaf.resolve("from_base") != nullptr);
+    VE_ASSERT(leaf.resolve("nope") == nullptr);
+
+    // child() only sees local children
     VE_ASSERT(leaf.child("from_leaf") != nullptr);
-    VE_ASSERT(leaf.child("from_mid") != nullptr);
-    VE_ASSERT(leaf.child("from_base") != nullptr);
-    VE_ASSERT(leaf.child("nope") == nullptr);
+    VE_ASSERT(leaf.child("from_mid") == nullptr);
+    VE_ASSERT(leaf.child("from_base") == nullptr);
 }
 
 VE_TEST(node_shadow_has) {
@@ -361,8 +372,11 @@ VE_TEST(node_shadow_has) {
     Node inst("inst");
     inst.setShadow(&proto);
 
-    VE_ASSERT(inst.has("field"));
-    VE_ASSERT(!inst.has("other"));
+    // has() uses child() → no shadow
+    VE_ASSERT(!inst.has("field"));
+
+    // resolve for shadow access
+    VE_ASSERT(inst.resolve("field") != nullptr);
 }
 
 // ============================================================================

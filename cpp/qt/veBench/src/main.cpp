@@ -33,6 +33,11 @@
 #include <QCoreApplication>
 #include <QString>
 #include <QDebug>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonValue>
 #include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 #include <chrono>
@@ -271,6 +276,124 @@ static void bench_insert_100k_anon()
     BENCH_END("insert 100k anon (UUID gen)");
 
     ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+// Large scale: 500k named
+static void bench_insert_500k_named()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 500000; ++i)
+        root.append(&root, "n" + QString::number(i));
+    BENCH_END("insert 500k named");
+
+    ASSERT_EQ(root.cmobjCount(), 500000);
+}
+
+// Large scale: 500k anon
+static void bench_insert_500k_anon()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 500000; ++i)
+        root.append(&root, "");
+    BENCH_END("insert 500k anon (UUID gen)");
+
+    ASSERT_EQ(root.cmobjCount(), 500000);
+}
+
+// Large scale: 1M named
+static void bench_insert_1m_named()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 1000000; ++i)
+        root.append(&root, "n" + QString::number(i));
+    BENCH_END("insert 1M named");
+
+    ASSERT_EQ(root.cmobjCount(), 1000000);
+}
+
+// Large scale: 1M anon
+static void bench_insert_1m_anon()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 1000000; ++i)
+        root.append(&root, "");
+    BENCH_END("insert 1M anon (UUID gen)");
+
+    ASSERT_EQ(root.cmobjCount(), 1000000);
+}
+
+// Clear 500k
+static void bench_clear_500k()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+
+    for (int i = 0; i < 500000; ++i)
+        root.append(&root, "");
+
+    BENCH_BEGIN;
+    root.clear(&root);
+    BENCH_END("clear 500k");
+
+    ASSERT_EQ(root.cmobjCount(), 0);
+}
+
+// Clear 1M
+static void bench_clear_1m()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+
+    for (int i = 0; i < 1000000; ++i)
+        root.append(&root, "");
+
+    BENCH_BEGIN;
+    root.clear(&root);
+    BENCH_END("clear 1M");
+
+    ASSERT_EQ(root.cmobjCount(), 0);
+}
+
+// Iterator 100k
+static void bench_iter_100k()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "k" + QString::number(i));
+
+    BENCH_BEGIN;
+    int cnt = 0;
+    for (auto* n = root.first(); !n->isNull(); n = n->next()) ++cnt;
+    BENCH_END("next() 100k named");
+
+    ASSERT_EQ(cnt, 100000);
+}
+
+// Lifecycle: build+destroy 100k
+static void bench_lifecycle_100k()
+{
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep) {
+        ModuleObject root("root");
+        root.quiet(true);
+        for (int i = 0; i < 100000; ++i)
+            root.append(&root, "n" + QString::number(i));
+        root.clear(&root);
+    }
+    BENCH_END("lifecycle: build+clear 100k x10");
 }
 
 // Mirrors: node_bench_lookup_name
@@ -538,12 +661,84 @@ static void bench_xml_import()
 }
 
 // ============================================================================
+// JSON import benchmark (file path from argv[1] or default "d:/a.json")
+// ============================================================================
+
+static QString g_json_path;
+
+static int countAllMobj(ModuleObject* mobj)
+{
+    int c = 1;
+    for (auto* child : mobj->cmobjs(true))
+        c += countAllMobj(child);
+    return c;
+}
+
+static void bench_json_import_file()
+{
+    if (g_json_path.isEmpty()) {
+        qDebug() << "  (skipped, no JSON file specified)";
+        return;
+    }
+
+    // Phase 1: file read + Qt JSON parse (once)
+    QFile file(g_json_path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qDebug() << "  cannot open:" << g_json_path;
+        return;
+    }
+    QByteArray raw = file.readAll();
+    file.close();
+
+    QJsonValue jval;
+    {
+        BENCH_BEGIN;
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
+        if (err.error != QJsonParseError::NoError) {
+            qDebug() << "  JSON parse error:" << err.errorString();
+            return;
+        }
+        jval = doc.isObject() ? QJsonValue(doc.object()) : QJsonValue(doc.array());
+        BENCH_END("Qt JSON parse");
+    }
+
+    // Phase 2: importFromJson N times (pure ModuleObject construction)
+    const int reps = 10;
+    {
+        int topLevel = 0;
+        BENCH_BEGIN;
+        for (int r = 0; r < reps; ++r) {
+            ModuleObject root("bench_root");
+            root.quiet(true);
+            root.importFromJson(&root, jval, true, true, false);
+            topLevel = root.cmobjCount();
+            root.clear(&root);
+        }
+        BENCH_END("ModuleObject importFromJson+clear x10");
+        qDebug().nospace() << "  top-level children: " << topLevel;
+    }
+
+    // Phase 3: build once and count total
+    {
+        ModuleObject root("bench_root");
+        root.quiet(true);
+        root.importFromJson(&root, jval, true, true, false);
+        int total = countAllMobj(&root) - 1;
+        qDebug().nospace() << "  total nodes: " << total;
+    }
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+
+    // Accept optional JSON path: veBench [json_file]
+    if (argc > 1) g_json_path = QString::fromLocal8Bit(argv[1]);
 
     qDebug() << "==========================================================";
     qDebug() << " veBench — imol::ModuleObject benchmark";
@@ -553,6 +748,8 @@ int main(int argc, char *argv[])
     qDebug() << "Note: ModuleObject quiet(true) is used to skip signal emission.";
     qDebug() << "      Anonymous nodes use UUID generation (extra overhead vs ve::Node).";
     qDebug() << "      Path separator is '.' (ModuleObject) vs '/' (ve::Node).";
+    if (!g_json_path.isEmpty())
+        qDebug().nospace() << "      JSON bench file: " << g_json_path;
     qDebug() << "";
 
     // --- Stress tests ---
@@ -573,24 +770,39 @@ int main(int argc, char *argv[])
     qDebug() << "==================== Benchmarks ====================";
     RUN_TEST(bench_insert_100k_named);
     RUN_TEST(bench_insert_100k_anon);
+    RUN_TEST(bench_insert_500k_named);
+    RUN_TEST(bench_insert_500k_anon);
+    RUN_TEST(bench_insert_1m_named);
+    RUN_TEST(bench_insert_1m_anon);
     RUN_TEST(bench_lookup_name);
     RUN_TEST(bench_lookup_global);
     RUN_TEST(bench_resolve_path);
     RUN_TEST(bench_indexOf_global);
     RUN_TEST(bench_next_dict);
     RUN_TEST(bench_next_xml);
+    RUN_TEST(bench_iter_100k);
     RUN_TEST(bench_list_sequential);
     RUN_TEST(bench_ensure_deep);
     RUN_TEST(bench_clear_100k);
+    RUN_TEST(bench_clear_500k);
+    RUN_TEST(bench_clear_1m);
     RUN_TEST(bench_path_build);
     RUN_TEST(bench_rname);
     RUN_TEST(bench_childAt_key);
+    RUN_TEST(bench_lifecycle_100k);
 
     // --- XML serialization ---
     qDebug() << "";
     qDebug() << "==================== XML serialization ====================";
     RUN_TEST(bench_xml_export);
     RUN_TEST(bench_xml_import);
+
+    // --- JSON file import ---
+    if (!g_json_path.isEmpty()) {
+        qDebug() << "";
+        qDebug() << "==================== JSON file import ====================";
+        RUN_TEST(bench_json_import_file);
+    }
 
     // --- Summary ---
     qDebug() << "";

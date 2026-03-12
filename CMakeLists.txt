@@ -41,8 +41,8 @@ add_subdirectory(core)
 # ==========================================================================
 # Test option — build core unit tests (pure C++, no dependencies beyond libve)
 # ==========================================================================
-option(VE_BUILD_TEST "Build core unit tests (ve_test)" OFF)
-option(VE_BUILD_TERMINAL "Build interactive Node console (ve_terminal)" OFF)
+option(VE_BUILD_TEST "Build core unit tests (ve_test)" ON)
+option(VE_BUILD_TERMINAL "Build interactive Node console (ve_terminal)" ON)
 
 if(VE_BUILD_TEST)
     add_subdirectory(core/test)

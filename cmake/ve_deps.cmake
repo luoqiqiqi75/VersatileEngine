@@ -1,19 +1,29 @@
 # =============================================================================
-# ve_deps.cmake - Bundled dependency targets for VersatileEngine
+# ve_deps.cmake — VersatileEngine 依赖管理
 # =============================================================================
 #
-# Targets:
-#   ve_dep_spdlog  - spdlog 1.12 (logging)
-#   ve_dep_asio    - standalone asio 1.29 (event loop, thread pool, timers)
-#   ve_dep_asio2   - asio2 2.9 (high-level networking + all deps)
-#   ve_dep_yaml    - yaml-cpp 0.9 (bundled source OR system library)
-#   ve_dep_pugixml - pugixml 1.15 (XML parsing, bundled source OR system library)
-#   ve_dep_json    - nlohmann/json (JSON parsing, header-only)
+# 内置依赖 (随 deps/ 目录分发):
+#   ve_dep_spdlog  — spdlog 1.12 (logging, header-only)
+#   ve_dep_asio    — standalone asio 1.29 (header-only)
+#   ve_dep_asio2   — asio2 2.9 (high-level networking, header-only)
+#
+# 外部依赖 (通过 ve_find_package 统一管理):
+#   ve_dep_yaml    — yaml-cpp (YAML parsing)
+#   ve_dep_pugixml — pugixml (XML parsing)
+#   ve_dep_json    — nlohmann/json (JSON parsing, header-only)
+#   ve_dep_simdjson — simdjson (high-perf JSON parsing)
+#
+# 外部依赖查找顺序: 本地路径 → find_package → FetchContent
+# 本地路径在 cmake/_local.cmake 中配置 (gitignored)
 # =============================================================================
 
 set(VE_DEPS_ROOT "${CMAKE_SOURCE_DIR}/deps")
 set(VE_DEPS_ASIO2_ROOT "${VE_DEPS_ROOT}/asio2")
 set(VE_DEPS_3RD  "${VE_DEPS_ASIO2_ROOT}/3rd")
+
+# =============================================================================
+# 内置依赖 (shipped in deps/)
+# =============================================================================
 
 # --- spdlog (header-only) ---
 add_library(ve_dep_spdlog INTERFACE)
@@ -38,62 +48,65 @@ target_include_directories(ve_dep_asio2 INTERFACE
 )
 target_link_libraries(ve_dep_asio2 INTERFACE ve_dep_asio)
 
-# --- yaml-cpp (bundled source OR system library) ---
-# VE_USE_SYSTEM_YAML=ON  → find_package(yaml-cpp), link system lib
-# VE_USE_SYSTEM_YAML=OFF → compile deps/yaml-cpp/ as static lib via add_subdirectory
-#
-# Either way, consumers just:
-#   target_link_libraries(xxx PUBLIC ve_dep_yaml)
-#   #include "yaml-cpp/yaml.h"
-option(VE_USE_SYSTEM_YAML "Use system-installed yaml-cpp instead of bundled source" OFF)
+# =============================================================================
+# 外部依赖 (via ve_find_package)
+# =============================================================================
 
-add_library(ve_dep_yaml INTERFACE)
-
-if(VE_USE_SYSTEM_YAML)
-    find_package(yaml-cpp REQUIRED)
-    target_link_libraries(ve_dep_yaml INTERFACE yaml-cpp::yaml-cpp)
-    message(STATUS "deps: yaml-cpp [SYSTEM]  ${yaml-cpp_VERSION}")
-else()
-    # Build as static lib, disable tests/tools/install
-    set(YAML_CPP_BUILD_TOOLS   OFF CACHE BOOL "" FORCE)
-    set(YAML_CPP_BUILD_CONTRIB ON  CACHE BOOL "" FORCE)
-    set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(YAML_CPP_INSTALL       OFF CACHE BOOL "" FORCE)
-    add_subdirectory("${VE_DEPS_ROOT}/yaml-cpp" "${CMAKE_BINARY_DIR}/_deps/yaml-cpp")
-    # yaml-cpp's CMakeLists automatically defines YAML_CPP_STATIC_DEFINE
-    # when YAML_BUILD_SHARED_LIBS=OFF, so YAML_CPP_API is empty. Perfect.
-    target_link_libraries(ve_dep_yaml INTERFACE yaml-cpp::yaml-cpp)
-    message(STATUS "deps: yaml-cpp [BUNDLED] 0.9 (static)")
-endif()
-
-# --- pugixml (bundled source OR system library) ---
-# VE_USE_SYSTEM_PUGIXML=ON  → find_package(pugixml), link system lib
-# VE_USE_SYSTEM_PUGIXML=OFF → compile deps/pugixml/ as static lib via add_subdirectory
-#
-# Consumers:
-#   target_link_libraries(xxx PUBLIC ve_dep_pugixml)
-#   #include "pugixml.hpp"
-option(VE_USE_SYSTEM_PUGIXML "Use system-installed pugixml instead of bundled source" OFF)
-
-add_library(ve_dep_pugixml INTERFACE)
-
-if(VE_USE_SYSTEM_PUGIXML)
-    find_package(pugixml REQUIRED)
-    target_link_libraries(ve_dep_pugixml INTERFACE pugixml::pugixml)
-    message(STATUS "deps: pugixml  [SYSTEM]  ${pugixml_VERSION}")
-else()
-    set(PUGIXML_INSTALL OFF CACHE BOOL "" FORCE)
-    add_subdirectory("${VE_DEPS_ROOT}/pugixml" "${CMAKE_BINARY_DIR}/_deps/pugixml")
-    target_link_libraries(ve_dep_pugixml INTERFACE pugixml::pugixml)
-    message(STATUS "deps: pugixml  [BUNDLED] 1.15 (static)")
-endif()
-
-# --- nlohmann/json (header-only) ---
-add_library(ve_dep_json INTERFACE)
-target_include_directories(ve_dep_json INTERFACE "${VE_DEPS_ROOT}")
+include(ve_find_package)
 
 message(STATUS "")
-message(STATUS "deps: spdlog   (${VE_DEPS_3RD}/spdlog)")
-message(STATUS "deps: asio     (${VE_DEPS_3RD}/asio)")
-message(STATUS "deps: asio2    (${VE_DEPS_ASIO2_ROOT}/include/asio2)")
-message(STATUS "deps: json     (${VE_DEPS_ROOT}/nlohmann)")
+message(STATUS "External dependencies:")
+
+# --- yaml-cpp ---
+ve_find_package(yaml-cpp
+    GIT_REPO  https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG   0.8.0
+    OPTIONS
+        YAML_CPP_BUILD_TOOLS   OFF
+        YAML_CPP_BUILD_CONTRIB ON
+        YAML_BUILD_SHARED_LIBS OFF
+        YAML_CPP_INSTALL       OFF
+)
+add_library(ve_dep_yaml INTERFACE)
+target_link_libraries(ve_dep_yaml INTERFACE yaml-cpp::yaml-cpp)
+
+# --- pugixml ---
+ve_find_package(pugixml
+    GIT_REPO  https://github.com/zeux/pugixml.git
+    GIT_TAG   v1.14
+    OPTIONS
+        PUGIXML_INSTALL OFF
+)
+add_library(ve_dep_pugixml INTERFACE)
+target_link_libraries(ve_dep_pugixml INTERFACE pugixml::pugixml)
+
+# --- nlohmann/json ---
+ve_find_package(nlohmann_json
+    GIT_REPO  https://github.com/nlohmann/json.git
+    GIT_TAG   v3.11.3
+    OPTIONS
+        JSON_BuildTests OFF
+        JSON_Install    OFF
+)
+add_library(ve_dep_json INTERFACE)
+target_link_libraries(ve_dep_json INTERFACE nlohmann_json::nlohmann_json)
+
+# --- simdjson ---
+ve_find_package(simdjson
+    GIT_REPO  https://github.com/simdjson/simdjson.git
+    GIT_TAG   v3.10.1
+    OPTIONS
+        SIMDJSON_DEVELOPER_MODE OFF
+)
+add_library(ve_dep_simdjson INTERFACE)
+target_link_libraries(ve_dep_simdjson INTERFACE simdjson::simdjson)
+
+# =============================================================================
+# Summary
+# =============================================================================
+
+message(STATUS "")
+message(STATUS "Bundled dependencies:")
+message(STATUS "  spdlog   (${VE_DEPS_3RD}/spdlog)")
+message(STATUS "  asio     (${VE_DEPS_3RD}/asio)")
+message(STATUS "  asio2    (${VE_DEPS_ASIO2_ROOT}/include/asio2)")

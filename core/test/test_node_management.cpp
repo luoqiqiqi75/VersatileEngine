@@ -90,48 +90,114 @@ VE_TEST(node_insert_at_index) {
     VE_ASSERT_EQ(root.child("item", 2), i2);
 }
 
-VE_TEST(node_insert_at_zero_new_group) {
+VE_TEST(node_insert_at_zero) {
     Node root("root");
-    auto* c = new Node("x");
-    // insert at 0 when group doesn't exist → OK
-    VE_ASSERT(root.insert(c, 0));
-    VE_ASSERT_EQ(root.count(), 1);
+    auto* a = new Node("x");
+    auto* b = new Node("y");
+
+    // insert(child) to create first, then insert(child, 0) to prepend
+    root.insert(a);
+    VE_ASSERT(root.insert(b, 0));
+    VE_ASSERT_EQ(root.count(), 2);
+    VE_ASSERT_EQ(root.child(0), b);
+    VE_ASSERT_EQ(root.child(1), a);
 }
 
-VE_TEST(node_insert_auto_fill) {
-    Node root("root");
-    root.append("");  // anon #0
-
-    auto* target = new Node();
-    VE_ASSERT(root.insert(target, 5));  // auto_fill = true
-
-    // 1 existing + 4 fillers + 1 target = 6
-    VE_ASSERT_EQ(root.count(), 6);
-    VE_ASSERT_EQ(root.child("", 5), target);
-    for (int i = 1; i < 5; ++i)
-        VE_ASSERT(root.child("", i) != nullptr);
-}
-
-VE_TEST(node_insert_no_auto_fill) {
+VE_TEST(node_insert_out_of_range_rejected) {
     Node root("root");
     auto* c = new Node();
 
-    // auto_fill=false, index > size → clamp to end
-    VE_ASSERT(root.insert(c, 5, false));
+    // index 0 on empty root → valid (the only valid position)
+    VE_ASSERT(root.insert(c, 0));
     VE_ASSERT_EQ(root.count(), 1);
-    VE_ASSERT_EQ(root.child("", 0), c);
+
+    // index 5 > count()==1 → rejected
+    auto* d = new Node();
+    VE_ASSERT(!root.insert(d, 5));
+    VE_ASSERT_EQ(root.count(), 1);
+
+    // negative overflow: -3 + 1 + 1 = -1 → rejected
+    VE_ASSERT(!root.insert(d, -3));
+    VE_ASSERT_EQ(root.count(), 1);
+    delete d;
 }
 
-VE_TEST(node_insert_auto_fill_100) {
+VE_TEST(node_insert_negative_index) {
     Node root("root");
-    root.append("");
+    auto* a = new Node("a");
+    auto* b = new Node("b");
+    auto* c = new Node("c");
+    auto* d = new Node("d");
 
-    auto* target = new Node();
-    VE_ASSERT(root.insert(target, 100));
+    root.insert(a);         // [a]
+    root.insert(b);         // [a, b]
+    root.insert(c, -1);    // -1 → append → [a, b, c]
+    VE_ASSERT_EQ(root.count(), 3);
+    VE_ASSERT_EQ(root.child(2), c);
 
-    // 1 existing + 99 fillers + 1 target = 101
-    VE_ASSERT_EQ(root.count(), 101);
-    VE_ASSERT_EQ(root.child("", 100), target);
+    root.insert(d, -2);    // -2 + 3+1 = 2 → insert before c → [a, b, d, c]
+    VE_ASSERT_EQ(root.count(), 4);
+    VE_ASSERT_EQ(root.child(0), a);
+    VE_ASSERT_EQ(root.child(1), b);
+    VE_ASSERT_EQ(root.child(2), d);
+    VE_ASSERT_EQ(root.child(3), c);
+}
+
+VE_TEST(node_insert_batch) {
+    Node root("root");
+    root.append("x");   // [x]
+
+    Node::Nodes batch;
+    batch.push_back(new Node("a"));
+    batch.push_back(new Node("b"));
+    batch.push_back(new Node("c"));
+
+    // batch insert at position 0 (prepend)
+    VE_ASSERT(root.insert(batch, 0));
+    VE_ASSERT_EQ(root.count(), 4);
+    VE_ASSERT_EQ(root.child(0)->name(), "a");
+    VE_ASSERT_EQ(root.child(1)->name(), "b");
+    VE_ASSERT_EQ(root.child(2)->name(), "c");
+    VE_ASSERT_EQ(root.child(3)->name(), "x");
+}
+
+VE_TEST(node_insert_batch_append) {
+    Node root("root");
+    root.append("x");   // [x]
+
+    Node::Nodes batch;
+    batch.push_back(new Node("a"));
+    batch.push_back(new Node("b"));
+
+    // batch insert at -1 (append)
+    VE_ASSERT(root.insert(batch));
+    VE_ASSERT_EQ(root.count(), 3);
+    VE_ASSERT_EQ(root.child(0)->name(), "x");
+    VE_ASSERT_EQ(root.child(1)->name(), "a");
+    VE_ASSERT_EQ(root.child(2)->name(), "b");
+}
+
+VE_TEST(node_insert_batch_middle) {
+    Node root("root");
+    root.append("x");
+    root.append("y");   // [x, y]
+
+    Node::Nodes batch;
+    batch.push_back(new Node("a"));
+    batch.push_back(new Node("a"));
+
+    // batch insert at position 1 (between x and y)
+    VE_ASSERT(root.insert(batch, 1));
+    VE_ASSERT_EQ(root.count(), 4);
+    VE_ASSERT_EQ(root.child(0)->name(), "x");
+    VE_ASSERT_EQ(root.child(1)->name(), "a");
+    VE_ASSERT_EQ(root.child(2)->name(), "a");
+    VE_ASSERT_EQ(root.child(3)->name(), "y");
+
+    // same-name indices should be correct
+    VE_ASSERT_EQ(root.count("a"), 2);
+    VE_ASSERT_EQ(root.child("a", 0), root.child(1));
+    VE_ASSERT_EQ(root.child("a", 1), root.child(2));
 }
 
 VE_TEST(node_insert_prepend) {
@@ -180,23 +246,23 @@ VE_TEST(node_append_any_name) {
     VE_ASSERT_EQ(root.count(), 2);
 }
 
-VE_TEST(node_append_at_index) {
+VE_TEST(node_append_overlap) {
     Node root("root");
-    root.append("");
-    Node* target = root.append("", 5);
+    Node* target = root.append("item", 2);  // creates 3 nodes (1 + 2 overlap)
 
     VE_ASSERT(target != nullptr);
-    VE_ASSERT_EQ(root.count(), 6);
-    VE_ASSERT_EQ(root.child("", 5), target);
+    VE_ASSERT_EQ(root.count(), 3);
+    VE_ASSERT_EQ(root.count("item"), 3);
+    VE_ASSERT_EQ(root.child("item", 0), target);  // returns first
 }
 
-VE_TEST(node_append_anon_at_index) {
+VE_TEST(node_append_anon_overlap) {
     Node root("root");
-    Node* c = root.append(3);  // append(int, bool)
+    Node* c = root.append(3);  // append("", 3) → creates 4 anon nodes
 
     VE_ASSERT(c != nullptr);
-    VE_ASSERT_EQ(root.count(), 4);  // 3 fillers + 1
-    VE_ASSERT_EQ(root.child("", 3), c);
+    VE_ASSERT_EQ(root.count(), 4);
+    VE_ASSERT_EQ(root.child(0), c);  // returns first
 }
 
 // ============================================================================

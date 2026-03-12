@@ -17,6 +17,9 @@
 #     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "" FORCE)
 # endif()
 
+# --- 测试 ---
+# set(VE_BUILD_TEST ON CACHE BOOL "" FORCE)
+
 # --- 模块开关 ---
 # set(BUILD_CORE    ON  CACHE BOOL "" FORCE)
 # set(BUILD_SERVICE ON  CACHE BOOL "" FORCE)
@@ -27,3 +30,16 @@
 
 # --- 共享/静态库 ---
 # set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+# =============================================================================
+# 本地三方库路径
+# =============================================================================
+# ve_find_package 优先使用此处的本地路径 (add_subdirectory)，
+# 不设置则走 find_package → FetchContent 自动下载。
+#
+# 格式: set(VE_DEP_<PackageName> "<本地clone路径>" CACHE PATH "" FORCE)
+#
+# set(VE_DEP_nlohmann_json "D:/workspace/github/json"     CACHE PATH "" FORCE)
+# set(VE_DEP_simdjson      "D:/workspace/github/simdjson"  CACHE PATH "" FORCE)
+# set(VE_DEP_yaml-cpp      "D:/workspace/github/yaml-cpp"  CACHE PATH "" FORCE)
+# set(VE_DEP_pugixml       "D:/workspace/github/pugixml"   CACHE PATH "" FORCE)

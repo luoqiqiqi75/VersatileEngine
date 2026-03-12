@@ -81,7 +81,11 @@ VE_TEST(node_has_global_index) {
     VE_ASSERT(root.has(0));
     VE_ASSERT(root.has(1));
     VE_ASSERT(!root.has(2));
-    VE_ASSERT(!root.has(-1));
+
+    // negative index: -1 = last element → has
+    VE_ASSERT(root.has(-1));
+    VE_ASSERT(root.has(-2));
+    VE_ASSERT(!root.has(-3));
 }
 
 // ============================================================================
@@ -126,8 +130,10 @@ VE_TEST(node_anonymous_children) {
     Node* c2 = root.append("");
 
     VE_ASSERT_EQ(root.count(), 3);
-    VE_ASSERT_EQ(root.count(""), 3);
+    VE_ASSERT_EQ(root.count(""), 3);   // count("") = count() = 3
     VE_ASSERT_EQ(c0->name(), "");
+
+    // child("", n) = child(n) — global index
     VE_ASSERT_EQ(root.child("", 0), c0);
     VE_ASSERT_EQ(root.child("", 1), c1);
     VE_ASSERT_EQ(root.child("", 2), c2);
@@ -146,7 +152,11 @@ VE_TEST(node_child_global_pure_list) {
     VE_ASSERT(root.child(50) != nullptr);
     VE_ASSERT(root.child(99) != nullptr);
     VE_ASSERT(root.child(100) == nullptr);
-    VE_ASSERT(root.child(-1) == nullptr);
+
+    // negative index: -1 = last, -100 = first, -101 = OOB
+    VE_ASSERT_EQ(root.child(-1), root.child(99));
+    VE_ASSERT_EQ(root.child(-100), root.child(0));
+    VE_ASSERT(root.child(-101) == nullptr);
 }
 
 VE_TEST(node_child_global_named) {
@@ -178,11 +188,14 @@ VE_TEST(node_child_global_mixed) {
     VE_ASSERT_EQ(root.child(3), a2);
     VE_ASSERT_EQ(root.child(4), y);
 
-    // overlap access still works across interleaved names
+    // child("", n) = child(n) — global index, NOT anon-only
     VE_ASSERT_EQ(root.child("", 0), a0);
-    VE_ASSERT_EQ(root.child("", 1), a1);
-    VE_ASSERT_EQ(root.child("", 2), a2);
+    VE_ASSERT_EQ(root.child("", 2), x);   // global index 2 = x
+    VE_ASSERT_EQ(root.child("", 3), a2);  // global index 3 = a2
+
+    // named access via indices
     VE_ASSERT_EQ(root.child("x", 0), x);
+    VE_ASSERT_EQ(root.child("y", 0), y);
 }
 
 // ============================================================================
@@ -239,7 +252,8 @@ VE_TEST(node_operator_index_int) {
     VE_ASSERT_EQ(root[0], a);
     VE_ASSERT_EQ(root[1], b);
     VE_ASSERT(root[2] == nullptr);
-    VE_ASSERT(root[-1] == nullptr);
+    VE_ASSERT_EQ(root[-1], b);   // negative index: -1 = last
+    VE_ASSERT_EQ(root[-2], a);
 }
 
 VE_TEST(node_operator_index_name) {
