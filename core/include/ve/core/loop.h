@@ -1,0 +1,198 @@
+// ----------------------------------------------------------------------------
+// loop.h — Event loop framework (template, no inheritance)
+// ----------------------------------------------------------------------------
+// Copyright (c) 2023-present Thilo and VersatileEngine contributors.
+// Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+// See LICENSE file in the project root for full license information.
+// ----------------------------------------------------------------------------
+//
+// Design:
+//   Loop<T>        — template loop, backend determined by LoopTraits<T>
+//   LoopTraits<T>  — specialization point per backend (static polymorphism)
+//   LoopRef        — type-erased handle for cross-template usage
+//
+//   Core default:  Loop<AsioContext>  (alias: EventLoop)
+//   Qt extension:  Loop<QEventLoop>   — specialize LoopTraits<QEventLoop> in veQt
+//   RTT extension: Loop<RttActivity>  — specialize LoopTraits<RttActivity> in veRtt
+//
+// ----------------------------------------------------------------------------
+
+#pragma once
+
+#include "ve/global.h"
+
+namespace ve {
+
+using Task = std::function<void()>;
+
+// ============================================================================
+// LoopTraits<T> — specialization point
+// ============================================================================
+//
+// Each specialization must define:
+//
+//   struct Context;                            // backend state (can be opaque)
+//   static Context* create(int threads);       // allocate & init
+//   static void     destroy(Context*);         // stop & free
+//   static void     post(Context*, Task);      // queue a task (thread-safe)
+//   static bool     start(Context*);           // begin processing
+//   static bool     stop(Context*);            // stop processing
+//   static bool     running(const Context*);   // is active?
+//
+// Optional extensions (add if backend supports):
+//   static void     postDelayed(Context*, Task, std::chrono::milliseconds);
+//   static int      postRepeating(Context*, Task, std::chrono::milliseconds);
+//   static void     cancel(Context*, int timer_id);
+//
+
+template<typename T>
+struct LoopTraits;   // primary: intentionally undefined — specialize per backend
+
+
+// ============================================================================
+// LoopRef — type-erased loop handle
+// ============================================================================
+//
+// Lightweight value type for passing loops across template boundaries.
+// Primary use case: Object::connect() with queued dispatch.
+//
+//   obj.connect(SIG, observer, action, LoopRef(some_loop));
+//   // trigger → loop.post(action) instead of direct call
+//
+
+class LoopRef
+{
+    std::function<void(Task)> _post;
+
+public:
+    LoopRef() = default;
+
+    LoopRef(const LoopRef&) = default;
+    LoopRef(LoopRef&&) = default;
+    LoopRef& operator=(const LoopRef&) = default;
+    LoopRef& operator=(LoopRef&&) = default;
+
+    /// Implicit conversion from any Loop<T>  (SFINAE excludes LoopRef itself)
+    template<typename T, typename = std::enable_if_t<!std::is_same_v<std::decay_t<T>, LoopRef>>>
+    LoopRef(T& loop) : _post([&loop](Task t) { loop.post(std::move(t)); }) {}
+
+    void post(Task task) const { if (_post) _post(std::move(task)); }
+    explicit operator bool() const { return !!_post; }
+};
+
+
+// ============================================================================
+// Loop<T> — generic event loop
+// ============================================================================
+//
+// Wraps a backend via LoopTraits<T>. Non-copyable, non-movable.
+//
+// Usage:
+//   EventLoop main_loop("main");          // asio (default)
+//   main_loop.start();
+//   main_loop.post([]{ doWork(); });
+//   main_loop.stop();
+//
+//   // In veQt:
+//   Loop<QEventLoop> qt_loop("qt");       // Qt backend
+//
+
+template<typename T>
+class Loop
+{
+    using Traits  = LoopTraits<T>;
+    using Context = typename Traits::Context;
+
+    Context*    _ctx;
+    std::string _name;
+
+public:
+    explicit Loop(const std::string& name = "", int threads = 1)
+        : _ctx(Traits::create(threads)), _name(name) {}
+
+    ~Loop() {
+        if (_ctx) { Traits::destroy(_ctx); _ctx = nullptr; }
+    }
+
+    // --- Core API ---
+    void post(Task task)        { Traits::post(_ctx, std::move(task)); }
+    bool start()                { return Traits::start(_ctx); }
+    bool stop()                 { return Traits::stop(_ctx); }
+    bool isRunning() const      { return Traits::running(_ctx); }
+
+    // --- Backend access (requires complete Context type) ---
+    Context*           contextPtr()       { return _ctx; }
+    const Context*     contextPtr() const { return _ctx; }
+    const std::string& name()       const { return _name; }
+
+    // --- Implicit conversion to type-erased handle ---
+    operator LoopRef() { return LoopRef(*this); }
+
+    Loop(const Loop&) = delete;
+    Loop& operator=(const Loop&) = delete;
+};
+
+
+// ============================================================================
+// AsioContext — default backend (asio::io_context)
+// ============================================================================
+
+struct AsioContext;   // tag type
+
+template<>
+struct LoopTraits<AsioContext>
+{
+    struct Context;   // opaque — defined in loop.cpp
+
+    static VE_API Context* create(int threads);
+    static VE_API void     destroy(Context*);
+    static VE_API void     post(Context*, Task);
+    static VE_API bool     start(Context*);
+    static VE_API bool     stop(Context*);
+    static VE_API bool     running(const Context*);
+};
+
+
+// Default alias
+using EventLoop = Loop<AsioContext>;
+
+
+// ============================================================================
+// loop:: — global loop accessors
+// ============================================================================
+//
+// loop::main()  — single-threaded, for signal dispatch / thread-affinity
+// loop::pool()  — multi-threaded, for compute / IO tasks
+// loop::post()  — convenience: post to main loop
+//
+
+namespace loop {
+
+VE_API EventLoop& main();
+VE_API EventLoop& pool(int threads = 4);
+
+/// Default loop for Object::trigger() dispatch
+VE_API void    setDefault(LoopRef ref);
+VE_API LoopRef defaultLoop();
+
+/// Template convenience: create + start + setDefault in one call
+///   ve::loop::setDefault<QtContext>("qt.main");   // veQt 一行搞定
+///   ve::loop::setDefault<>();                     // core 用 asio 默认
+template<typename T = AsioContext>
+Loop<T>& setDefault(const std::string& name = "ve.loop.default", int threads = 1) {
+    static auto* l = new Loop<T>(name, threads);
+    l->start();
+    setDefault(LoopRef(*l));
+    return *l;
+}
+
+/// Post to main loop
+inline void post(Task task) { main().post(std::move(task)); }
+
+/// Post to any loop
+template<typename T>
+void post(Loop<T>& loop, Task task) { loop.post(std::move(task)); }
+
+} // namespace loop
+
+} // namespace ve

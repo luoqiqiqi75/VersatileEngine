@@ -26,7 +26,7 @@ const double rad2deg = 180 / pi;
 namespace basic {
 std::string _t_demangle(const char *type_name)
 {
-#ifdef HAS_CXXABI_H
+#ifdef PRIVATE_HAS_CXXABI
     int status = 0;
     std::size_t size = 0;
     const char* demangle_name = abi::__cxa_demangle(type_name, NULL, &size, &status);
@@ -34,7 +34,7 @@ std::string _t_demangle(const char *type_name)
     const char* demangle_name = type_name;
 #endif
     std::string s(demangle_name);
-#ifdef HAS_CXXABI_H
+#ifdef PRIVATE_HAS_CXXABI
     std::free((void*)demangle_name);
 #endif
     return s;
@@ -85,118 +85,6 @@ bool Values::equals(const Values& other) const
         if (std::fabs(at(i) - other.at(i)) > eps) return false;
     }
     return true;
-}
-
-struct Object::Private
-{
-    std::string name;
-    mutable MutexT mtx;
-    UnorderedHashMap<int, UnorderedHashMap<Object*, List<ActionT>>> connections;
-};
-
-Object::Object(const std::string& name) : _p(std::make_unique<Private>()) { _p->name = name; }
-
-Object::~Object()
-{
-    trigger(OBJECT_DELETED);
-}
-
-const std::string& Object::name() const { return _p->name; }
-std::recursive_mutex& Object::mutex() const { return _p->mtx; }
-
-bool Object::hasConnection(int signal, Object* observer)
-{
-    LockT lk(_p->mtx);
-    return _p->connections.has(signal) && _p->connections[signal].has(observer);
-}
-
-void Object::connect(int signal, Object* observer, const ActionT& action)
-{
-    LockT lk(_p->mtx);
-    if (!_p->connections.has(signal)) {
-        _p->connections[signal] = {{observer, {action}}};
-    } else if (!_p->connections[signal].has(observer)) {
-        _p->connections[signal][observer] = {action};
-    } else {
-        _p->connections[signal][observer].push_back(action);
-    }
-    if (observer && observer != this && signal != OBJECT_DELETED) {
-        observer->connect(OBJECT_DELETED, this, [=] { disconnect(observer); });
-        this->connect(OBJECT_DELETED, observer, [=] { observer->disconnect(this); });
-    }
-}
-
-void Object::disconnect(int signal, Object* observer)
-{
-    LockT lk(_p->mtx);
-    if (_p->connections.has(signal)) _p->connections[signal].erase(observer);
-}
-
-void Object::disconnect(Object* observer)
-{
-    LockT lk(_p->mtx);
-    for (auto& kv : _p->connections) kv.second.erase(observer);
-}
-
-void Object::trigger(int signal)
-{
-    LockT lk(_p->mtx);
-    if (!_p->connections.has(signal)) return;
-    auto copy = _p->connections[signal]; // copy before unlock-free iteration
-    for (auto& kv : copy)
-        for (auto& fn : kv.second) fn();
-}
-
-Manager::Manager(const std::string &name) : Object(name)
-{
-}
-
-Manager::~Manager()
-{
-    for (auto& kv : *this) delete kv.second;
-}
-
-Object* Manager::add(Object* obj, bool delete_if_failed)
-{
-    if (!obj) return nullptr;
-    if (has(obj->name())) {
-        if (delete_if_failed) delete obj;
-        return nullptr;
-    }
-    (*this)[obj->name()] = obj;
-    return obj;
-}
-
-bool Manager::remove(Object *obj, bool auto_delete)
-{
-    if (!obj) return false;
-    bool find = erase(obj->name()) > 0;
-    if (!find) {
-        for (const auto& kv : *this) {
-            if (obj == kv.second) {
-                find = erase(kv.first) > 0;
-                break;
-            }
-        }
-    }
-    if (find) {
-        if (auto_delete) delete obj;
-    }
-    return false;
-}
-
-bool Manager::remove(const std::string &name, bool auto_delete)
-{
-    Object* obj = get(name);
-    if (!obj || erase(name) == 0) return false;
-    if (auto_delete) delete obj;
-    return true;
-}
-
-Object* Manager::get(const std::string &key) const
-{
-    auto it = find(key);
-    return it == end() ? nullptr : it->second;
 }
 
 }

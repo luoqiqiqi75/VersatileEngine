@@ -29,7 +29,7 @@
 
 #pragma once
 
-#include "ve/core/impl/hashfuncs.h"
+#include "hashfuncs.h"
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>

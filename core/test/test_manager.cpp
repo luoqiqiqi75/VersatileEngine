@@ -3,7 +3,7 @@
 // ----------------------------------------------------------------------------
 
 #include "ve_test.h"
-#include "ve/core/base.h"
+#include "ve/core/object.h"
 
 using namespace ve;
 

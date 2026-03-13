@@ -50,5 +50,6 @@ target_include_directories(${VE_CORE_LIBRARY} PRIVATE
 # --- deps ---
 target_link_libraries(${VE_CORE_LIBRARY} PUBLIC  yaml-cpp::yaml-cpp)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
+target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
 
 message(STATUS "")

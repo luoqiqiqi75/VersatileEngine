@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "base.h"
+#include "object.h"
 #include "log.h"
 
 #include "yaml-cpp/yaml.h"

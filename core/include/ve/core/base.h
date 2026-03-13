@@ -8,8 +8,8 @@
 #pragma once
 
 #include "ve/global.h"
-#include "ve/core/impl/ordered_hashmap.h"
-#include "ve/core/impl/small_vector.h"
+#include "impl/ordered_hashmap.h"
+#include "impl/small_vector.h"
 
 // --- Type-trait generator macros -------------------------------------------
 // VE_DECLARE_T_CHECKER(Name, ...)   → generates is-valid trait via SFINAE
@@ -22,8 +22,6 @@ template<typename T> struct Checker<T, __VA_ARGS__> : std::true_type {}
 
 #define VE_DECLARE_T_FUNC_CHECKER(Checker, Ret, ...) \
 VE_DECLARE_T_CHECKER(Checker, std::enable_if_t<std::is_same_v<__VA_ARGS__, Ret>, void>)
-
-constexpr const char* VE_UNDEFINED_OBJECT_NAME = "@undefined";
 
 namespace ve {
 
@@ -380,58 +378,6 @@ public:
 
 private:
     Unit m_unit = NONE;
-};
-
-/**
-* @brief Object Class describes a minimum set of properties in order to keep controllable
-*/
-class VE_API Object
-{
-public:
-    using SignalT = int;
-    using ActionT = std::function<void()>;
-
-    using MutexT = std::recursive_mutex;
-    using LockT = std::lock_guard<MutexT>;
-
-    explicit Object(const std::string& name = "");
-    ~Object();
-
-    const std::string& name() const;
-    MutexT& mutex() const;
-
-    enum Signal : SignalT { OBJECT_DELETED = 0xffff };
-
-    bool hasConnection(SignalT signal, Object* observer);
-    void connect(SignalT signal, Object* observer, const ActionT& action);
-    void disconnect(SignalT signal, Object* observer);
-    void disconnect(Object* observer);
-
-    void trigger(SignalT signal);
-
-private:
-    VE_DECLARE_UNIQUE_PRIVATE
-};
-
-/**
-* @brief Manager Class is a convenient object container
-*/
-class VE_API Manager : public Object, public UnorderedHashMap<std::string, Object*>
-{
-public:
-    explicit Manager(const std::string& name);
-    virtual ~Manager();
-
-    Object* add(Object* obj, bool delete_if_failed = false);
-    template<typename SubObj> std::enable_if_t<std::is_base_of_v<Object, SubObj>, SubObj*> add(SubObj* obj, bool delete_if_failed = false)
-    { return add(static_cast<Object *>(obj), delete_if_failed) ? obj : nullptr; }
-
-    bool remove(Object* obj, bool auto_delete = true);
-    bool remove(const std::string& name, bool auto_delete = true);
-
-    Object* get(const std::string& key) const;
-    template<class SubObj> std::enable_if_t<std::is_base_of_v<Object, SubObj>, SubObj*> get(const std::string& key) const
-    { return static_cast<SubObj*>(get(key)); }
 };
 
 }
