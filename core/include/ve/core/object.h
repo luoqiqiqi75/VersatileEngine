@@ -38,13 +38,7 @@ namespace ve {
 */
 class VE_API Object
 {
-    // --- internal: callable → ActionT conversion ---
-    template<typename T> struct _sig : _sig<decltype(&std::decay_t<T>::operator())> {};
-    template<typename C, typename R, typename... A> struct _sig<R(C::*)(A...) const> { using types = std::tuple<A...>; };
-    template<typename C, typename R, typename... A> struct _sig<R(C::*)(A...)>       { using types = std::tuple<A...>; };
-    template<typename R, typename... A> struct _sig<R(*)(A...)>                       { using types = std::tuple<A...>; };
-    template<typename R, typename... A> struct _sig<std::function<R(A...)>>           { using types = std::tuple<A...>; };
-
+    // --- internal: Var → typed args dispatch (uses basic::FnTraits) ---
     template<typename Fn, typename... A, size_t... I>
     static void _call(const Fn& fn, const Var& v, std::tuple<A...>*, std::index_sequence<I...>) {
         if constexpr (sizeof...(A) == 0)
@@ -85,10 +79,10 @@ public:
     template<typename Fn,
         std::enable_if_t<!std::is_convertible_v<Fn, ActionT>, int> = 0>
     void connect(SignalT signal, Object* observer, Fn fn, LoopRef loop = {}) {
-        using T = typename _sig<std::decay_t<Fn>>::types;
+        using Tuple = typename basic::FnTraits<std::decay_t<Fn>>::ArgsTuple;
         connect(signal, observer, [fn](const Var& data) {
-            _call(fn, data, static_cast<T*>(nullptr),
-                  std::make_index_sequence<std::tuple_size_v<T>>{});
+            _call(fn, data, static_cast<Tuple*>(nullptr),
+                  std::make_index_sequence<std::tuple_size_v<Tuple>>{});
         }, loop);
     }
 
@@ -99,10 +93,10 @@ public:
     template<SignalT S, typename Fn,
         std::enable_if_t<!std::is_convertible_v<Fn, ActionT>, int> = 0>
     void connect(Object* observer, Fn fn, LoopRef loop = {}) {
-        using T = typename _sig<std::decay_t<Fn>>::types;
+        using Tuple = typename basic::FnTraits<std::decay_t<Fn>>::ArgsTuple;
         connect(S, observer, [fn](const Var& data) {
-            _call(fn, data, static_cast<T*>(nullptr),
-                  std::make_index_sequence<std::tuple_size_v<T>>{});
+            _call(fn, data, static_cast<Tuple*>(nullptr),
+                  std::make_index_sequence<std::tuple_size_v<Tuple>>{});
         }, loop);
     }
 

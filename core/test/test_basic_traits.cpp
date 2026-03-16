@@ -74,22 +74,26 @@ VE_TEST(is_inputable_not_inputable) {
     VE_ASSERT(!basic::is_inputable<HasOutput>::value);
 }
 
-// --- FInfo — free function ---
+// --- FnTraits — free function ---
 
-VE_TEST(finfo_free_func) {
-    using F = basic::FInfo<decltype(&free_func)>;
+VE_TEST(fntraits_free_func) {
+    using F = basic::FnTraits<decltype(&free_func)>;
     VE_ASSERT(F::IsFunction);
     VE_ASSERT(!F::IsMember);
     VE_ASSERT_EQ(F::ArgCnt, 2);
     VE_ASSERT((std::is_same_v<F::RetT, int>));
     VE_ASSERT((std::is_same_v<F::ArgsT::FirstT, double>));
     VE_ASSERT((std::is_same_v<F::ArgsT::SecondT, int>));
+    // ArgsTuple + ArgAt
+    VE_ASSERT((std::is_same_v<F::ArgsTuple, std::tuple<double, int>>));
+    VE_ASSERT((std::is_same_v<F::ArgAt<0>, double>));
+    VE_ASSERT((std::is_same_v<F::ArgAt<1>, int>));
 }
 
-// --- FInfo — member function ---
+// --- FnTraits — member function ---
 
-VE_TEST(finfo_member_func) {
-    using F = basic::FInfo<decltype(&Klass::method)>;
+VE_TEST(fntraits_member_func) {
+    using F = basic::FnTraits<decltype(&Klass::method)>;
     VE_ASSERT(F::IsFunction);
     VE_ASSERT(F::IsMember);
     VE_ASSERT_EQ(F::ArgCnt, 1);
@@ -97,24 +101,46 @@ VE_TEST(finfo_member_func) {
     VE_ASSERT((std::is_same_v<F::RetT, int>));
 }
 
-VE_TEST(finfo_const_member) {
-    using F = basic::FInfo<decltype(&Klass::const_method)>;
+VE_TEST(fntraits_const_member) {
+    using F = basic::FnTraits<decltype(&Klass::const_method)>;
     VE_ASSERT(F::IsFunction);
     VE_ASSERT(F::IsMember);
 }
 
-// --- FInfo — lambda ---
+// --- FnTraits — lambda ---
 
-VE_TEST(finfo_lambda) {
+VE_TEST(fntraits_lambda) {
     auto lam = [](int a, int b) -> double { return a + b; };
-    using F = basic::FInfo<decltype(lam)>;
+    using F = basic::FnTraits<decltype(lam)>;
     VE_ASSERT(F::IsFunction);
     VE_ASSERT_EQ(F::ArgCnt, 2);
     VE_ASSERT((std::is_same_v<F::RetT, double>));
+    VE_ASSERT((std::is_same_v<F::ArgsTuple, std::tuple<int, int>>));
 }
 
-VE_TEST(finfo_void) {
-    VE_ASSERT(!basic::FInfo<void>::IsFunction);
+VE_TEST(fntraits_void) {
+    VE_ASSERT(!basic::FnTraits<void>::IsFunction);
+}
+
+// --- FnTraits — std::function ---
+
+VE_TEST(fntraits_std_function) {
+    using F = basic::FnTraits<std::function<bool(int, std::string)>>;
+    VE_ASSERT(F::IsFunction);
+    VE_ASSERT_EQ(F::ArgCnt, 2);
+    VE_ASSERT((std::is_same_v<F::RetT, bool>));
+    VE_ASSERT((std::is_same_v<F::ArgAt<0>, int>));
+    VE_ASSERT((std::is_same_v<F::ArgAt<1>, std::string>));
+    VE_ASSERT((std::is_same_v<F::ArgsTuple, std::tuple<int, std::string>>));
+}
+
+// --- FInfo backward-compat alias ---
+
+VE_TEST(finfo_alias) {
+    using F1 = basic::FInfo<decltype(&free_func)>;
+    using F2 = basic::FnTraits<decltype(&free_func)>;
+    VE_ASSERT((std::is_same_v<F1::RetT, F2::RetT>));
+    VE_ASSERT((std::is_same_v<F1::ArgsTuple, F2::ArgsTuple>));
 }
 
 // --- _t_remove_rc ---

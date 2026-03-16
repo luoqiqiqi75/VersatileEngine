@@ -192,8 +192,8 @@ class Factory : public Object, public Dict<std::function<Signature>>
 {
 public:
     using FunctionT = std::function<Signature>;
-    using FInfoT    = basic::FInfo<FunctionT>;
-    using RetT      = typename FInfoT::RetT;
+    using FnTraitsT = basic::FnTraits<FunctionT>;
+    using RetT      = typename FnTraitsT::RetT;
 
 public:
     explicit Factory(const std::string& name) : Object(name) {}

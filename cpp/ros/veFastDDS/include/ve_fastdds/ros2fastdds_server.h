@@ -68,8 +68,8 @@ public:
     template<typename RequestPubSubType, typename ReplyPubSubType, typename ServiceFunction>
     void createServiceByIDL(const std::string& srv_name, ServiceFunction srv_func)
     {
-        using RqT = ve::basic::_t_remove_rc<typename ve::basic::FInfo<ServiceFunction>::ArgsT::FirstT>;
-        using RrT = ve::basic::_t_remove_rc<typename ve::basic::FInfo<ServiceFunction>::ArgsT::SecondT>;
+        using RqT = ve::basic::_t_remove_rc<typename ve::basic::FnTraits<ServiceFunction>::ArgsT::FirstT>;
+        using RrT = ve::basic::_t_remove_rc<typename ve::basic::FnTraits<ServiceFunction>::ArgsT::SecondT>;
 
         createTopicGroup(TopicGroupInfo {
             srv_name,
@@ -113,7 +113,7 @@ public:
     template<typename SubscribePubSubType, typename SubscribeFunction>
     void createSubscribeByIDL(const std::string& msg_name, SubscribeFunction&& msg_func)
     {
-        using MsgT = ve::basic::_t_remove_rc<typename ve::basic::FInfo<SubscribeFunction>::ArgsT::FirstT>;
+        using MsgT = ve::basic::_t_remove_rc<typename ve::basic::FnTraits<SubscribeFunction>::ArgsT::FirstT>;
 
         createTopicGroup(TopicGroupInfo {
             msg_name,

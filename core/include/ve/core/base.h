@@ -54,7 +54,7 @@ static bool equals(const T& t1, const T& t2) {
     else return false;
 }
 
-// --- Type list (for FInfo arg introspection) ---
+// --- Type list (for FnTraits arg introspection) ---
 
 template<typename...> struct _t_list { using FirstT = void; static constexpr std::size_t Size = 0; };
 template<typename T0, typename... T> struct _t_list<T0, T...> { using FirstT = T0; using RestT = _t_list<T...>; static constexpr std::size_t Size = 1 + sizeof...(T); };
@@ -80,74 +80,120 @@ VE_DECLARE_T_FUNC_CHECKER(is_inputable, std::istream, std::remove_reference_t<de
 template<typename T> inline constexpr bool is_outputable_v = is_outputable<T>::value;
 template<typename T> inline constexpr bool is_inputable_v = is_inputable<T>::value;
 
-// --- Function introspection (FInfo) ---
+// --- Function introspection (FnTraits) ----------------------------------
+//
+// Unified callable analysis:  free / member / const-member / noexcept / lambda / std::function
+//
+//   FnTraits<F>::RetT         → return type
+//   FnTraits<F>::ArgsT        → _t_list<Args...>      (legacy, positional access via FirstT/SecondT)
+//   FnTraits<F>::ArgsTuple    → std::tuple<Args...>    (modern, index_sequence friendly)
+//   FnTraits<F>::ArgAt<I>     → I-th arg type
+//   FnTraits<F>::FunctionT    → std::function<Ret(Args...)>
+//   FnTraits<F>::ArgCnt       → number of arguments
+//   FnTraits<F>::IsFunction   → true
+//   FnTraits<F>::IsMember     → true for member functions
+//   FnTraits<F>::IsNoexcept   → true for noexcept callables (when available)
+// -------------------------------------------------------------------------
 
 template<typename T> static decltype(&T::operator()) _t_functional(int);
 template<typename T> static void _t_functional(short);
 
-template<typename F> struct FInfo : public FInfo<decltype(_t_functional<F>(0))> {};
-template<> struct FInfo<void> { enum { IsFunction = false }; };
+template<typename F> struct FnTraits : public FnTraits<decltype(_t_functional<F>(0))> {};
+template<> struct FnTraits<void> { enum { IsFunction = false }; };
 
-template<typename Ret, typename... Args> struct FInfo<Ret (*) (Args...)>
+// --- free function ---
+template<typename Ret, typename... Args> struct FnTraits<Ret (*) (Args...)>
 {
     using RetT      = Ret;
     using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
     using FptrT     = Ret (*)(Args...);
     using FuncT     = Ret (*)(Args...);
     using FunctionT = std::function<Ret(Args...)>;
-    enum { IsFunction = true, IsMember = false, ArgCnt = sizeof...(Args) };
+    enum { IsFunction = true, IsMember = false, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
-template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...)>
+
+// --- member function ---
+template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Class::*) (Args...)>
 {
     using RetT      = Ret;
     using ClassT    = Class;
     using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
     using FptrT     = Ret (*)(Args...);
     using FuncT     = Ret (Class::*)(Args...);
     using FunctionT = std::function<Ret(Args...)>;
-    enum { IsFunction = true, IsMember = true, ArgCnt = sizeof...(Args) };
+    enum { IsFunction = true, IsMember = true, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
-template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...) const>
+
+// --- const member function ---
+template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Class::*) (Args...) const>
 {
     using RetT      = Ret;
     using ClassT    = Class;
     using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
     using FptrT     = Ret (*)(Args...);
     using FuncT     = Ret (Class::*)(Args...) const;
     using FunctionT = std::function<Ret(Args...)>;
-    enum { IsFunction = true, IsMember = true, ArgCnt = sizeof...(Args) };
+    enum { IsFunction = true, IsMember = true, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
 
-// noexcept variants (C++17: noexcept is part of the type system)
-template<typename Ret, typename... Args> struct FInfo<Ret (*) (Args...) noexcept>
+// --- noexcept variants (C++17: noexcept is part of the type system) ---
+template<typename Ret, typename... Args> struct FnTraits<Ret (*) (Args...) noexcept>
 {
     using RetT      = Ret;
     using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
     using FptrT     = Ret (*)(Args...);
     using FuncT     = Ret (*)(Args...) noexcept;
     using FunctionT = std::function<Ret(Args...)>;
     enum { IsFunction = true, IsMember = false, IsNoexcept = true, ArgCnt = sizeof...(Args) };
 };
-template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...) noexcept>
+template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Class::*) (Args...) noexcept>
 {
     using RetT      = Ret;
     using ClassT    = Class;
     using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
     using FptrT     = Ret (*)(Args...);
     using FuncT     = Ret (Class::*)(Args...) noexcept;
     using FunctionT = std::function<Ret(Args...)>;
     enum { IsFunction = true, IsMember = true, IsNoexcept = true, ArgCnt = sizeof...(Args) };
 };
-template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...) const noexcept>
+template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Class::*) (Args...) const noexcept>
 {
     using RetT      = Ret;
     using ClassT    = Class;
     using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
     using FptrT     = Ret (*)(Args...);
     using FuncT     = Ret (Class::*)(Args...) const noexcept;
     using FunctionT = std::function<Ret(Args...)>;
     enum { IsFunction = true, IsMember = true, IsNoexcept = true, ArgCnt = sizeof...(Args) };
 };
+
+// --- std::function ---
+template<typename Ret, typename... Args> struct FnTraits<std::function<Ret(Args...)>>
+{
+    using RetT      = Ret;
+    using ArgsT     = _t_list<Args...>;
+    using ArgsTuple = std::tuple<Args...>;
+    template<size_t I> using ArgAt = std::tuple_element_t<I, ArgsTuple>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = std::function<Ret(Args...)>;
+    using FunctionT = std::function<Ret(Args...)>;
+    enum { IsFunction = true, IsMember = false, IsNoexcept = false, ArgCnt = sizeof...(Args) };
+};
+
+// backward-compat alias
+template<typename F> using FInfo = FnTraits<F>;
 
 // --- Type utilities ---
 
@@ -208,10 +254,10 @@ template<typename T> inline constexpr bool is_smart_pointer_v = is_smart_pointer
 // --- SFINAE helpers for function signature matching ---
 
 template<typename Func1, typename Func2, typename Type>
-using FIfSame = std::enable_if_t<std::is_same_v<typename FInfo<Func1>::FptrT, typename FInfo<Func2>::FptrT>, Type>;
+using FIfSame = std::enable_if_t<std::is_same_v<typename FnTraits<Func1>::FptrT, typename FnTraits<Func2>::FptrT>, Type>;
 
 template<typename Func1, typename Func2, typename Type>
-using FIfConvertible = std::enable_if_t<std::is_convertible_v<Func1, Func2> && std::is_convertible_v<typename FInfo<Func1>::RetT, typename FInfo<Func2>::RetT>, Type>;
+using FIfConvertible = std::enable_if_t<std::is_convertible_v<Func1, Func2> && std::is_convertible_v<typename FnTraits<Func1>::RetT, typename FnTraits<Func2>::RetT>, Type>;
 
 } // namespace basic
 
