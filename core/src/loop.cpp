@@ -93,26 +93,6 @@ bool LoopTraits<AsioContext>::running(const Context* ctx)
 }
 
 // ============================================================================
-// loop:: — default loop for Object signal dispatch
-// ============================================================================
-
-static std::atomic<LoopRef*> s_default_loop{nullptr};
-
-void loop::setDefault(LoopRef ref)
-{
-    // Intentional leak — the LoopRef is small, lives for program lifetime
-    auto* p = new LoopRef(std::move(ref));
-    auto* old = s_default_loop.exchange(p, std::memory_order_acq_rel);
-    delete old;
-}
-
-LoopRef loop::defaultLoop()
-{
-    auto* p = s_default_loop.load(std::memory_order_acquire);
-    return p ? *p : LoopRef{};
-}
-
-// ============================================================================
 // loop:: — global loop singletons
 // ============================================================================
 //

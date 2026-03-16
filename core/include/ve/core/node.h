@@ -53,10 +53,14 @@ public:
     ~Node();
 
     // --- signals ---
+    // Slot parameter count can be ≤ trigger parameter count (Qt-like).
+    //   connect<S>(obs, [](string key, int count) { ... })  — full args
+    //   connect<S>(obs, [](string key) { ... })             — partial args OK
+    //   connect<S>(obs, []() { ... })                       — just notification
     enum NodeSignal : SignalT {
-        NODE_CHILD_ADDED   = 0x0010,
-        NODE_CHILD_REMOVED = 0x0011,
-        NODE_ACTIVATED     = 0x001f,
+        NODE_CHILD_ADDED   = 0x0010,  // (string key, int count) — key of first added child, count of added
+        NODE_CHILD_REMOVED = 0x0011,  // (string key, int count) — key of removed child; clear: ("#0", size)
+        NODE_ACTIVATED     = 0x001f,  // (int signal, Node* source) — bubbles up the ancestor chain
     };
 
     // --- static ---
@@ -118,6 +122,7 @@ public:
 
     // -- key (key = name | name#N | #N) ---
     static bool isKey(const std::string& key);
+    static std::string asKey(const std::string& name, int index);
     static int keyIndex(const std::string& key);
 
     std::string keyOf(const Node* child) const;
@@ -168,11 +173,8 @@ public:
     Node*       ensure(const std::string& path);
     bool        erase(const std::string& path, bool auto_delete = true);
 
-    // --- signal ---
-    // Node-specific signals use Object's typed connect/trigger.
-    // Example (bubbling):
-    //   node.connect<NODE_CHILD_ADDED>(&obs, [](Node* sender) { ... });
-    //   node.trigger<NODE_CHILD_ADDED>(childPtr);  // auto-packed as Var(void*)
+    // --- activate (signal bubbling) ---
+    void activate(int signal, Node* source = nullptr);
 
     // --- debug ---
     std::string dump(int depth = 0) const;

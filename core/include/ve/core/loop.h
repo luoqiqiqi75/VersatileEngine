@@ -171,21 +171,6 @@ namespace loop {
 VE_API EventLoop& main();
 VE_API EventLoop& pool(int threads = 4);
 
-/// Default loop for Object::trigger() dispatch
-VE_API void    setDefault(LoopRef ref);
-VE_API LoopRef defaultLoop();
-
-/// Template convenience: create + start + setDefault in one call
-///   ve::loop::setDefault<QtContext>("qt.main");   // veQt 一行搞定
-///   ve::loop::setDefault<>();                     // core 用 asio 默认
-template<typename T = AsioContext>
-Loop<T>& setDefault(const std::string& name = "ve.loop.default", int threads = 1) {
-    static auto* l = new Loop<T>(name, threads);
-    l->start();
-    setDefault(LoopRef(*l));
-    return *l;
-}
-
 /// Post to main loop
 inline void post(Task task) { main().post(std::move(task)); }
 

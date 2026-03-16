@@ -24,8 +24,7 @@ namespace ve {
 *
 * Dispatch priority for trigger():
 *   1. per-connection LoopRef  (if set in connect())
-*   2. global default LoopRef  (if set via loop::setDefault())
-*   3. direct call             (zero-overhead, default for pure C++)
+*   2. direct call             (zero-overhead, default for pure C++)
 *
 * Signal data passing (Godot-like):
 *   trigger<S>()                       → Var()        (null, no data)
@@ -39,12 +38,25 @@ namespace ve {
 class VE_API Object
 {
     // --- internal: Var → typed args dispatch (uses basic::FnTraits) ---
+    //
+    // Qt-like partial-arg matching:
+    //   Slot may accept fewer parameters than trigger sends.
+    //   - 0 args  → ignore data
+    //   - 1 arg   → if data is a List (multi-arg trigger), unpack data[0];
+    //                otherwise use data directly
+    //   - N args   → unpack data[0]..data[N-1] from the List (extra args ignored)
+    //
     template<typename Fn, typename... A, size_t... I>
     static void _call(const Fn& fn, const Var& v, std::tuple<A...>*, std::index_sequence<I...>) {
         if constexpr (sizeof...(A) == 0)
             fn();
-        else if constexpr (sizeof...(A) == 1)
-            fn(v.template as<std::tuple_element_t<0, std::tuple<A...>>>());
+        else if constexpr (sizeof...(A) == 1) {
+            using T0 = std::tuple_element_t<0, std::tuple<A...>>;
+            if (v.isList())
+                fn(v[0].template as<T0>());
+            else
+                fn(v.template as<T0>());
+        }
         else
             fn(v[I].template as<std::tuple_element_t<I, std::tuple<A...>>>()...);
     }
@@ -62,7 +74,9 @@ public:
     const std::string& name() const;
     MutexT& mutex() const;
 
-    enum Signal : SignalT { OBJECT_DELETED = 0xffff };
+    enum Signal : SignalT {
+        OBJECT_DELETED = 0xffff  // () — emitted in destructor, no data
+    };
 
     bool hasConnection(SignalT signal, Object* observer);
     template<SignalT S> bool hasConnection(Object* observer) { return hasConnection(S, observer); }

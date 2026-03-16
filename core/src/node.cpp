@@ -191,33 +191,40 @@ bool Node::insert(Node* child, int index)
         veLogW << "<ve.node> insert child with parent " << child->path() << " to " << path();
         child->parent()->take(child);
     }
-    LockT lk(mutex());
-    auto* ch = _p->ensureChildren();
-    int sz = ch->nodes.sizeAsInt();
 
-    // resolve negative index: -1 → append, -2 → before last, ...
-    if (index < 0) index += sz + 1;
-    if (index < 0 || index > sz) {
-        veLogE << "<ve.node> insert index " << index << " out of range [0," << sz << "] on " << path();
-        return false;
-    }
+    std::string key;
+    {
+        LockT lk(mutex());
+        auto* ch = _p->ensureChildren();
+        int sz = ch->nodes.sizeAsInt();
 
-    if (index == sz) {
-        // append — fast path, no shift needed
-        if (!child->name().empty()) ch->indices[child->name()].push_back(sz);
-        ch->nodes.push_back(child);
-    } else {
-        // insert at position — shift existing indices
-        ch->shift(index, +1);
-        ch->nodes.insert(ch->nodes.begin() + index, child);
-        if (!child->name().empty()) {
-            auto& iv = ch->indices[child->name()];
-            auto it = std::lower_bound(iv.begin(), iv.end(), index);
-            iv.insert(it, index);
+        // resolve negative index: -1 → append, -2 → before last, ...
+        if (index < 0) index += sz + 1;
+        if (index < 0 || index > sz) {
+            veLogE << "<ve.node> insert index " << index << " out of range [0," << sz << "] on " << path();
+            return false;
         }
+
+        if (index == sz) {
+            // append — fast path, no shift needed
+            if (!child->name().empty()) ch->indices[child->name()].push_back(sz);
+            ch->nodes.push_back(child);
+        } else {
+            // insert at position — shift existing indices
+            ch->shift(index, +1);
+            ch->nodes.insert(ch->nodes.begin() + index, child);
+            if (!child->name().empty()) {
+                auto& iv = ch->indices[child->name()];
+                auto it = std::lower_bound(iv.begin(), iv.end(), index);
+                iv.insert(it, index);
+            }
+        }
+        child->_p->parent = this;
+        key = keyOf(child);
     }
-    child->_p->parent = this;
-    trigger(NODE_CHILD_ADDED);
+
+    trigger(NODE_CHILD_ADDED, Var(Var::ListV{ Var(key), Var(1) }));
+    activate(NODE_CHILD_ADDED, this);
     return true;
 }
 
@@ -240,37 +247,44 @@ bool Node::insert(const Nodes& children, int index)
         }
     }
 
-    LockT lk(mutex());
-    auto* ch = _p->ensureChildren();
-    int sz    = ch->nodes.sizeAsInt();
-    int batch = static_cast<int>(children.size());
+    std::string firstKey;
+    int batch = 0;
+    {
+        LockT lk(mutex());
+        auto* ch = _p->ensureChildren();
+        int sz    = ch->nodes.sizeAsInt();
+        batch = static_cast<int>(children.size());
 
-    // resolve negative index
-    if (index < 0) index += sz + 1;
-    if (index < 0 || index > sz) {
-        veLogE << "<ve.node> batch insert index " << index << " out of range [0," << sz << "] on " << path();
-        return false;
-    }
-
-    // shift existing indices >= pos by batch size (once!)
-    if (index < sz) ch->shift(index, +batch);
-
-    // bulk-insert into flat vector
-    ch->nodes.insert(ch->nodes.begin() + index, children.begin(), children.end());
-
-    // update indices + parent for each child in the batch
-    for (int i = 0; i < batch; ++i) {
-        auto* c  = children[i];
-        int   gi = index + i;
-        c->_p->parent = this;
-        if (!c->name().empty()) {
-            auto& iv = ch->indices[c->name()];
-            auto  it = std::lower_bound(iv.begin(), iv.end(), gi);
-            iv.insert(it, gi);
+        // resolve negative index
+        if (index < 0) index += sz + 1;
+        if (index < 0 || index > sz) {
+            veLogE << "<ve.node> batch insert index " << index << " out of range [0," << sz << "] on " << path();
+            return false;
         }
+
+        // shift existing indices >= pos by batch size (once!)
+        if (index < sz) ch->shift(index, +batch);
+
+        // bulk-insert into flat vector
+        ch->nodes.insert(ch->nodes.begin() + index, children.begin(), children.end());
+
+        // update indices + parent for each child in the batch
+        for (int i = 0; i < batch; ++i) {
+            auto* c  = children[i];
+            int   gi = index + i;
+            c->_p->parent = this;
+            if (!c->name().empty()) {
+                auto& iv = ch->indices[c->name()];
+                auto  it = std::lower_bound(iv.begin(), iv.end(), gi);
+                iv.insert(it, gi);
+            }
+        }
+
+        firstKey = keyOf(children[0]);
     }
 
-    trigger(NODE_CHILD_ADDED);
+    trigger(NODE_CHILD_ADDED, Var(Var::ListV{ Var(firstKey), Var(batch) }));
+    activate(NODE_CHILD_ADDED, this);
     return true;
 }
 
@@ -294,30 +308,38 @@ Node* Node::append(const std::string& name, int overlap)
 Node* Node::take(Node* child)
 {
     if (!child || !_p->children) return nullptr;
-    LockT lk(mutex());
 
-    int pos = indexOf(child);   // recursive mutex — re-locks OK
-    if (pos < 0) return nullptr;
+    std::string key;
+    {
+        LockT lk(mutex());
 
-    // remove pos from indices[name]
-    auto& nm = child->name();
-    auto it = _p->children->indices.find(nm);
-    if (it != _p->children->indices.end()) {
-        auto& ivec = it->second;
-        for (uint32_t j = 0; j < ivec.size(); ++j) {
-            if (ivec[j] == pos) { ivec.erase(j); break; }
+        int pos = indexOf(child);   // recursive mutex — re-locks OK
+        if (pos < 0) return nullptr;
+
+        key = keyOf(child);  // save key before removal
+
+        // remove pos from indices[name]
+        auto& nm = child->name();
+        auto it = _p->children->indices.find(nm);
+        if (it != _p->children->indices.end()) {
+            auto& ivec = it->second;
+            for (uint32_t j = 0; j < ivec.size(); ++j) {
+                if (ivec[j] == pos) { ivec.erase(j); break; }
+            }
+            if (ivec.empty()) _p->children->indices.erase(it);
         }
-        if (ivec.empty()) _p->children->indices.erase(it);
+
+        // remove from flat vector
+        _p->children->nodes.erase(_p->children->nodes.begin() + pos);
+
+        // shift remaining indices > pos by -1
+        _p->children->shift(pos, -1);
+
+        child->_p->parent = nullptr;
     }
 
-    // remove from flat vector
-    _p->children->nodes.erase(_p->children->nodes.begin() + pos);
-
-    // shift remaining indices > pos by -1
-    _p->children->shift(pos, -1);
-
-    child->_p->parent = nullptr;
-    trigger(NODE_CHILD_REMOVED);
+    trigger(NODE_CHILD_REMOVED, Var(Var::ListV{ Var(key), Var(1) }));
+    activate(NODE_CHILD_REMOVED, this);
     return child;
 }
 
@@ -341,9 +363,16 @@ bool Node::remove(const std::string& name)
 void Node::clear(bool auto_delete)
 {
     if (!_p->children) return;
-    LockT lk(mutex());
-    _p->clearChildren(auto_delete);
-    trigger(NODE_CHILD_REMOVED);
+    int cnt;
+    {
+        LockT lk(mutex());
+        cnt = _p->children->nodes.sizeAsInt();
+        _p->clearChildren(auto_delete);
+    }
+    if (cnt > 0) {
+        trigger(NODE_CHILD_REMOVED, Var(Var::ListV{ Var(std::string("#0")), Var(cnt) }));
+        activate(NODE_CHILD_REMOVED, this);
+    }
 }
 
 // ============================================================================
@@ -393,6 +422,11 @@ bool Node::isKey(const std::string& key)
         if (key[i] < '0' || key[i] > '9') return false;
 
     return true;   // name#N  or  #N
+}
+
+std::string Node::asKey(const std::string& name, int index)
+{
+    return name + "#" + std::to_string(index);
 }
 
 int Node::keyIndex(const std::string& key)
@@ -541,40 +575,20 @@ bool Node::erase(const std::string& path, bool auto_delete)
 }
 
 // ============================================================================
-// Node — signal bubbling (template implementation)
+// Node — signal bubbling (activate)
 // ============================================================================
 
-// template<Node::NodeSignal Signal>
-// void Node::connect(Object* observer, const std::function<void(Node*)>& action, LoopRef loop)
-// {
-//     // Wrap action to extract Node* from Var and call user's action
-//     ActionT wrapped = [action](const Var& data) {
-//         if (data.isPointer()) {
-//             Node* sender = static_cast<Node*>(data.toPointer());
-//             action(sender);
-//         }
-//     };
-//     Object::connect(static_cast<SignalT>(Signal), observer, wrapped, loop);
-// }
-//
-// template<Node::NodeSignal Signal>
-// void Node::trigger(Node* sender)
-// {
-//     // Wrap sender in Var and trigger with data
-//     Var data(sender);  // Var(void*) constructor
-//     Object::trigger(static_cast<SignalT>(Signal), data);
-//
-//     // Bubble up to parent if exists
-//     if (_p->parent) {
-//         _p->parent->trigger<Signal>(sender);
-//     }
-// }
-//
-// // Explicit template instantiations
-// template void Node::connect<NODE_CHILD_ADDED>(Object*, const std::function<void(Node*)>&, LoopRef);
-// template void Node::connect<NODE_CHILD_REMOVED>(Object*, const std::function<void(Node*)>&, LoopRef);
-// template void Node::trigger<NODE_CHILD_ADDED>(Node*);
-// template void Node::trigger<NODE_CHILD_REMOVED>(Node*);
+void Node::activate(int signal, Node* source)
+{
+    // Trigger NODE_ACTIVATED on this node with (signal, source)
+    Object::trigger(NODE_ACTIVATED, Var(Var::ListV{
+        Var(signal), Var(static_cast<void*>(source))
+    }));
+
+    // Bubble up to parent
+    if (auto* p = parent())
+        p->activate(signal, source);
+}
 
 // ============================================================================
 // Node — debug

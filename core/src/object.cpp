@@ -155,12 +155,11 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
         }
     }
     // Phase 2: dispatch outside lock
-    auto def = loop::defaultLoop();
+    // If a per-connection LoopRef was set in connect(), post to that loop;
+    // otherwise call directly (zero-overhead, default for pure C++).
     for (auto& d : callbacks) {
         if (d.loop) {
             d.loop.post([action = std::move(d.action), data]() { action(data); });
-        } else if (def) {
-            def.post([action = std::move(d.action), data]() { action(data); });
         } else {
             d.action(data);
         }
