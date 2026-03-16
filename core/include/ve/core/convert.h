@@ -47,8 +47,10 @@ struct convert {
             return Var(v);
         } else if constexpr (std::is_same_v<T, void*>) {
             return Var(v);
+        } else if constexpr (std::is_copy_constructible_v<T>) {
+            return Var::custom(v); // 存储为 Custom 类型（需 T 可拷贝）
         } else {
-            return Var(); // 默认：返回 Null（用户需要特化才能转换自定义类型）
+            return Var(); // 不可拷贝类型：返回 Null
         }
     }
     
@@ -77,7 +79,13 @@ struct convert {
             return true;
         }
         else {
-            // 默认：转换失败（用户需要特化才能转换自定义类型）
+            // 尝试从 Custom 提取
+            if (v.isCustom()) {
+                if (auto* p = v.customPtr<T>()) {
+                    out = *p;
+                    return true;
+                }
+            }
             return false;
         }
     }

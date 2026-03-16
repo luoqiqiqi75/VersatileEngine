@@ -203,11 +203,106 @@ template<typename T> using _t_bare       = std::remove_cv_t<std::remove_pointer_
 
 VE_API std::string _t_demangle(const char* type_name);
 
+// ----------------------------------------------------------------------------
+// Meta<T> — 编译期 + 运行时 类型描述器
+// ----------------------------------------------------------------------------
+// 用途：
+//   1. typeName()  — 人类可读的类型名（_t_demangle），调试日志用
+//   2. typeId()    — std::type_info 引用，运行时比较 / Var::Custom
+//   3. 编译期属性  — const / && / pointer / class / copyable 等
+//   4. describe()  — 一行式完整描述（调试用）
+//
+//   Meta<const int&>::is_const       → true
+//   Meta<const int&>::is_lref        → true
+//   Meta<const int&>::bareName()     → "int"
+//   Meta<const int&>::typeName()     → "int const&" (gcc) / "int const &" (msvc)
+//   Meta<const int&>::describe()     → "int const& [const &] (integral, 4B)"
+// ----------------------------------------------------------------------------
 template<typename T> struct Meta
 {
-    using TypeT = T;
-    inline static const char* typeIdName() { return typeid(T).name(); }
-    inline static std::string typeName() { return _t_demangle(typeid(T).name()); }
+    // --- 类型别名 ---
+    using TypeT    = T;
+    using NoCVRefT = std::remove_cv_t<std::remove_reference_t<T>>;  // 去 cv + ref
+    using BareT    = _t_bare<T>;                                     // 去 cv + ref + ptr
+    using DecayT   = std::decay_t<T>;
+
+    // --- 运行时信息 ---
+    static const std::type_info& typeId()     { return typeid(T); }
+    static const std::type_info& bareTypeId() { return typeid(BareT); }
+    static const char*           typeIdName() { return typeid(T).name(); }
+    static std::string           typeName()   { return _t_demangle(typeid(T).name()); }
+    static std::string           bareName()   { return _t_demangle(typeid(BareT).name()); }
+
+    // --- 编译期：修饰符 ---
+    static constexpr bool is_const    = std::is_const_v<std::remove_reference_t<T>>;
+    static constexpr bool is_volatile = std::is_volatile_v<std::remove_reference_t<T>>;
+    static constexpr bool is_lref     = std::is_lvalue_reference_v<T>;
+    static constexpr bool is_rref     = std::is_rvalue_reference_v<T>;
+    static constexpr bool is_ref      = std::is_reference_v<T>;
+    static constexpr bool is_ptr      = std::is_pointer_v<std::remove_reference_t<T>>;
+
+    // --- 编译期：类别 ---
+    static constexpr bool is_void       = std::is_void_v<BareT>;
+    static constexpr bool is_arithmetic = std::is_arithmetic_v<BareT>;
+    static constexpr bool is_integral   = std::is_integral_v<BareT>;
+    static constexpr bool is_floating   = std::is_floating_point_v<BareT>;
+    static constexpr bool is_enum       = std::is_enum_v<BareT>;
+    static constexpr bool is_class      = std::is_class_v<BareT>;
+
+    // --- 编译期：能力 ---
+    static constexpr bool is_copyable    = std::is_copy_constructible_v<BareT>;
+    static constexpr bool is_movable     = std::is_move_constructible_v<BareT>;
+    static constexpr bool is_trivial     = std::is_trivially_copyable_v<BareT>;
+    static constexpr bool is_abstract    = std::is_abstract_v<BareT>;
+    static constexpr bool is_polymorphic = std::is_polymorphic_v<BareT>;
+
+    // --- 大小 / 对齐 ---
+    static constexpr size_t typeSize() {
+        if constexpr (is_void) return 0;
+        else return sizeof(T);
+    }
+    static constexpr size_t typeAlign() {
+        if constexpr (is_void) return 0;
+        else return alignof(T);
+    }
+
+    // --- 描述（调试/日志）---
+    static std::string describe() {
+        std::string s = typeName();
+
+        // qualifiers
+        std::string q;
+        if (is_const)    q += "const ";
+        if (is_volatile) q += "volatile ";
+        if (is_lref)     q += "& ";
+        if (is_rref)     q += "&& ";
+        if (is_ptr)      q += "* ";
+        if (!q.empty()) q.pop_back(); // remove trailing space
+
+        // category
+        std::string c;
+        if      (is_void)       c = "void";
+        else if (is_integral)   c = "integral";
+        else if (is_floating)   c = "floating";
+        else if (is_enum)       c = "enum";
+        else if (is_class)      c = "class";
+        else if (is_ptr && !is_class) c = "pointer";
+
+        // size
+        if constexpr (!is_void) {
+            c += ", " + std::to_string(typeSize()) + "B";
+        }
+
+        if (!q.empty() || !c.empty()) {
+            s += " [";
+            if (!q.empty()) s += q;
+            if (!q.empty() && !c.empty()) s += "] (";
+            else if (!c.empty()) s += "(";
+            if (!c.empty()) s += c + ")";
+            else s += "]";
+        }
+        return s;
+    }
 };
 
 // --- Detection traits ---

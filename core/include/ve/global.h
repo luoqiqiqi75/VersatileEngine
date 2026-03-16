@@ -25,6 +25,7 @@
 #include <atomic>
 #include <functional>
 #include <future>
+#include <any>
 
 #if (!defined(VE_STATIC_LIBRARY) && (defined(_WIN32) || defined(_WIN64))) // shared as default
 #ifdef VE_LIBRARY

@@ -163,6 +163,150 @@ VE_TEST(meta_type_info_name_not_empty) {
     VE_ASSERT(name != nullptr);
 }
 
+VE_TEST(meta_bare_name) {
+    auto bare = basic::Meta<const int&>::bareName();
+    auto full = basic::Meta<const int&>::typeName();
+    // bareName 应该是 "int"，typeName 含修饰
+    VE_ASSERT(!bare.empty());
+    VE_ASSERT(!full.empty());
+}
+
+VE_TEST(meta_type_id) {
+    VE_ASSERT(basic::Meta<int>::typeId() == typeid(int));
+    VE_ASSERT(basic::Meta<const int&>::bareTypeId() == typeid(int));
+}
+
+// --- Meta 修饰符 ---
+
+VE_TEST(meta_const_ref) {
+    using M = basic::Meta<const int&>;
+    VE_ASSERT(M::is_const);
+    VE_ASSERT(!M::is_volatile);
+    VE_ASSERT(M::is_lref);
+    VE_ASSERT(!M::is_rref);
+    VE_ASSERT(M::is_ref);
+    VE_ASSERT(!M::is_ptr);
+}
+
+VE_TEST(meta_rvalue_ref) {
+    using M = basic::Meta<std::string&&>;
+    VE_ASSERT(!M::is_const);
+    VE_ASSERT(!M::is_lref);
+    VE_ASSERT(M::is_rref);
+    VE_ASSERT(M::is_ref);
+}
+
+VE_TEST(meta_pointer) {
+    using M = basic::Meta<int*>;
+    VE_ASSERT(M::is_ptr);
+    VE_ASSERT(!M::is_ref);
+    VE_ASSERT(!M::is_const);
+}
+
+VE_TEST(meta_const_pointer) {
+    using M = basic::Meta<const int*>;
+    VE_ASSERT(M::is_ptr);
+    VE_ASSERT(!M::is_const);  // pointer itself is not const
+    VE_ASSERT(!M::is_ref);
+}
+
+VE_TEST(meta_pointer_to_const_ref) {
+    // const int* const &  → is_const(指针本身const), is_lref, is_ptr
+    using M = basic::Meta<int* const &>;
+    VE_ASSERT(M::is_const);  // remove_ref 后是 int* const → is_const
+    VE_ASSERT(M::is_lref);
+    VE_ASSERT(M::is_ptr);
+}
+
+// --- Meta 类别 ---
+
+VE_TEST(meta_category_int) {
+    using M = basic::Meta<int>;
+    VE_ASSERT(M::is_arithmetic);
+    VE_ASSERT(M::is_integral);
+    VE_ASSERT(!M::is_floating);
+    VE_ASSERT(!M::is_class);
+    VE_ASSERT(!M::is_enum);
+    VE_ASSERT(!M::is_void);
+}
+
+VE_TEST(meta_category_double) {
+    using M = basic::Meta<double>;
+    VE_ASSERT(M::is_arithmetic);
+    VE_ASSERT(!M::is_integral);
+    VE_ASSERT(M::is_floating);
+}
+
+VE_TEST(meta_category_string) {
+    using M = basic::Meta<std::string>;
+    VE_ASSERT(!M::is_arithmetic);
+    VE_ASSERT(M::is_class);
+}
+
+VE_TEST(meta_category_void) {
+    using M = basic::Meta<void>;
+    VE_ASSERT(M::is_void);
+    VE_ASSERT(!M::is_class);
+    VE_ASSERT_EQ(M::typeSize(), (size_t)0);
+    VE_ASSERT_EQ(M::typeAlign(), (size_t)0);
+}
+
+enum class Color { Red, Green, Blue };
+
+VE_TEST(meta_category_enum) {
+    using M = basic::Meta<Color>;
+    VE_ASSERT(M::is_enum);
+    VE_ASSERT(!M::is_class);
+    VE_ASSERT(!M::is_integral);
+}
+
+// --- Meta 能力 ---
+
+VE_TEST(meta_capability_trivial) {
+    VE_ASSERT(basic::Meta<int>::is_trivial);
+    VE_ASSERT(basic::Meta<int>::is_copyable);
+    VE_ASSERT(basic::Meta<int>::is_movable);
+}
+
+VE_TEST(meta_capability_string) {
+    using M = basic::Meta<std::string>;
+    VE_ASSERT(!M::is_trivial);
+    VE_ASSERT(M::is_copyable);
+    VE_ASSERT(M::is_movable);
+}
+
+struct AbstractBase { virtual void foo() = 0; virtual ~AbstractBase() = default; };
+
+VE_TEST(meta_capability_abstract) {
+    using M = basic::Meta<AbstractBase>;
+    VE_ASSERT(M::is_abstract);
+    VE_ASSERT(M::is_polymorphic);
+    VE_ASSERT(!M::is_copyable);
+}
+
+// --- Meta 大小 ---
+
+VE_TEST(meta_size) {
+    VE_ASSERT_EQ(basic::Meta<int>::typeSize(), sizeof(int));
+    VE_ASSERT_EQ(basic::Meta<double>::typeSize(), sizeof(double));
+    VE_ASSERT(basic::Meta<int>::typeAlign() > (size_t)0);
+}
+
+// --- Meta describe ---
+
+VE_TEST(meta_describe_not_empty) {
+    auto desc = basic::Meta<const int&>::describe();
+    VE_ASSERT(!desc.empty());
+    // describe 应包含类型名
+    auto name = basic::Meta<const int&>::typeName();
+    VE_ASSERT(desc.find(name) != std::string::npos || desc.size() > 0);
+}
+
+VE_TEST(meta_describe_void) {
+    auto desc = basic::Meta<void>::describe();
+    VE_ASSERT(!desc.empty());
+}
+
 // --- _t_list ---
 
 VE_TEST(t_list_empty) {

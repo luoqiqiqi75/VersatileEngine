@@ -67,6 +67,22 @@ template<> const Var::ListV& Var::ref<Var::List, Var::ListV>() const { return *r
 template<> Var::DictV& Var::ref<Var::Dict, Var::DictV>() { return *reinterpret_cast<DictV*>(&_storage._dict); }
 template<> const Var::DictV& Var::ref<Var::Dict, Var::DictV>() const { return *reinterpret_cast<const DictV*>(&_storage._dict); }
 
+template<> Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() { return *reinterpret_cast<CustomV*>(&_storage._custom); }
+template<> const Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() const { return *reinterpret_cast<const CustomV*>(&_storage._custom); }
+
+// ========== 类型查询 (Custom) ==========
+
+const std::type_info& Var::customType() const {
+    if (_type != Custom) return typeid(void);
+    const auto& a = ref<Custom, CustomV>();
+    return a.has_value() ? a.type() : typeid(void);
+}
+
+bool Var::customIs(const std::type_info& ti) const {
+    if (_type != Custom) return false;
+    return ref<Custom, CustomV>().type() == ti;
+}
+
 // ========== 取值（类型安全）==========
 
 bool Var::toBool(bool def) const {
@@ -133,7 +149,6 @@ std::string Var::toString(const std::string& def) const {
     } else if (_type == Null) {
         return "null";
     } else if (_type == Bin) {
-        // Bytes 转换为十六进制字符串
         const auto& bytes = ref<Bin, Bytes>();
         std::ostringstream oss;
         for (uint8_t b : bytes) {
@@ -143,7 +158,11 @@ std::string Var::toString(const std::string& def) const {
     } else if (_type == List) {
         return ref<List, ListV>().toString();
     } else if (_type == Dict) {
-        return "[Dict]"; // TODO: 实现对象的字符串化
+        return "[Dict]";
+    } else if (_type == Custom) {
+        const auto& a = ref<Custom, CustomV>();
+        if (!a.has_value()) return "[Custom:empty]";
+        return std::string("[Custom:") + basic::_t_demangle(a.type().name()) + "]";
     }
     return def;
 }
@@ -164,6 +183,11 @@ const Var::DictV& Var::toDict() const { return _type == Dict ? ref<Dict, DictV>(
 Var::DictV& Var::toDict() { return _type == Dict ? ref<Dict, DictV>() : basic::_t_static_var_helper<DictV>::var; }
 
 void* Var::toPointer() const { return _type == Pointer ? _storage._pointer : nullptr; }
+
+// --- Custom 取值 ---
+static const Var::CustomV empty_custom;
+const Var::CustomV& Var::toCustom() const { return _type == Custom ? ref<Custom, CustomV>() : empty_custom; }
+Var::CustomV& Var::toCustom() { return _type == Custom ? ref<Custom, CustomV>() : const_cast<CustomV&>(empty_custom); }
 
 // ========== 赋值（类型安全）==========
 
@@ -265,6 +289,13 @@ Var& Var::fromPointer(void* ptr) {
     return *this;
 }
 
+Var& Var::fromCustom(CustomV v) {
+    destroy();
+    _type = Custom;
+    new (&_storage._custom) CustomV(std::move(v));
+    return *this;
+}
+
 // ========== operator[] ==========
 
 const Var& Var::operator[](size_t index) const {
@@ -296,7 +327,6 @@ bool Var::operator==(const Var& other) const {
         case List:
             return ref<List, ListV>() == other.ref<List, ListV>();
         case Dict: {
-            // Dict 没有 operator==，手动比较
             const auto& d1 = ref<Dict, DictV>();
             const auto& d2 = other.ref<Dict, DictV>();
             if (d1.size() != d2.size()) return false;
@@ -310,6 +340,9 @@ bool Var::operator==(const Var& other) const {
         }
         case Pointer:
             return _storage._pointer == other._storage._pointer;
+        case Custom:
+            // Custom: same type → delegate to user (not comparable by default)
+            return false;
         default:
             return false;
     }
@@ -338,6 +371,9 @@ void Var::copyFrom(const Var& other) {
         case Dict:
             new (&_storage._dict) DictV(other.ref<Dict, DictV>());
             break;
+        case Custom:
+            new (&_storage._custom) CustomV(other.ref<Custom, CustomV>());
+            break;
         default:
             _storage = other._storage;
             break;
@@ -362,6 +398,10 @@ void Var::moveFrom(Var&& other) {
             new (&_storage._dict) DictV(std::move(other.ref<Dict, DictV>()));
             other.ref<Dict, DictV>().~DictV();
             break;
+        case Custom:
+            new (&_storage._custom) CustomV(std::move(other.ref<Custom, CustomV>()));
+            other.ref<Custom, CustomV>().~any();
+            break;
         default:
             _storage = other._storage;
             break;
@@ -383,6 +423,9 @@ void Var::destroy() {
         case Dict:
             ref<Dict, DictV>().~DictV();
             break;
+        case Custom:
+            ref<Custom, CustomV>().~any();
+            break;
         default:
             break;
     }
@@ -392,7 +435,6 @@ void Var::destroy() {
 // ========== 高性能线程安全 swap ==========
 
 void Var::swap(Var& other) noexcept {
-    // 如果类型相同，直接交换存储内容（O(1)）
     if (_type == other._type) {
         switch (_type) {
             case Null:
@@ -400,23 +442,18 @@ void Var::swap(Var& other) noexcept {
             case Int:
             case Double:
             case Pointer:
-                // 基础类型：直接交换存储
                 std::swap(_storage, other._storage);
                 return;
             case String:
-                // string：交换内容（O(1)）
                 ref<String, std::string>().swap(other.ref<String, std::string>());
                 return;
             case Bin:
-                // Bytes：交换内容（O(1)）
                 ref<Bin, Bytes>().swap(other.ref<Bin, Bytes>());
                 return;
             case List:
-                // ListV：交换内容（O(1)）
                 ref<List, ListV>().swap(other.ref<List, ListV>());
                 return;
             case Dict: {
-                // OrderedHashMap 没有 swap，使用移动语义（O(1)）
                 DictV temp(std::move(ref<Dict, DictV>()));
                 ref<Dict, DictV>().~DictV();
                 new (&_storage._dict) DictV(std::move(other.ref<Dict, DictV>()));
@@ -424,10 +461,18 @@ void Var::swap(Var& other) noexcept {
                 new (&other._storage._dict) DictV(std::move(temp));
                 return;
             }
+            case Custom: {
+                CustomV temp(std::move(ref<Custom, CustomV>()));
+                ref<Custom, CustomV>().~any();
+                new (&_storage._custom) CustomV(std::move(other.ref<Custom, CustomV>()));
+                other.ref<Custom, CustomV>().~any();
+                new (&other._storage._custom) CustomV(std::move(temp));
+                return;
+            }
         }
     }
     
-    // 类型不同：使用移动语义交换（O(1) 移动，避免拷贝）
+    // 类型不同：使用移动语义交换
     Var temp = std::move(*this);
     *this = std::move(other);
     other = std::move(temp);
