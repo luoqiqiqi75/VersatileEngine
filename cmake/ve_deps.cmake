@@ -7,13 +7,12 @@
 #   ve_dep_asio    — standalone asio 1.29 (header-only)
 #   ve_dep_asio2   — asio2 2.9 (high-level networking, header-only)
 #
-# 外部依赖 (通过 ve_find_package 统一管理, 消费方直接用原始 target):
-#   yaml-cpp::yaml-cpp       — yaml-cpp (YAML parsing)
-#   pugixml::pugixml         — pugixml (XML parsing)
-#   nlohmann_json::nlohmann_json — nlohmann/json (JSON parsing, header-only)
-#   simdjson::simdjson       — simdjson (high-perf JSON parsing)
+# 外部依赖由各子项目按需调用 ve_find_package() 声明:
+#   core/          → yaml-cpp::yaml-cpp
+#   core/terminal/ → simdjson::simdjson
+#   cpp/rtt/       → nlohmann_json::nlohmann_json
 #
-# 外部依赖查找顺序: 本地路径 → find_package → FetchContent
+# ve_find_package 查找顺序: 本地路径 → find_package → FetchContent
 # 本地路径在 cmake/_local.cmake 中配置 (gitignored)
 # =============================================================================
 
@@ -49,49 +48,10 @@ target_include_directories(ve_dep_asio2 INTERFACE
 target_link_libraries(ve_dep_asio2 INTERFACE ve_dep_asio)
 
 # =============================================================================
-# 外部依赖 (via ve_find_package)
+# ve_find_package 宏 (供各子项目按需调用)
 # =============================================================================
 
 include(ve_find_package)
-
-message(STATUS "")
-message(STATUS "External dependencies:")
-
-# --- yaml-cpp ---
-ve_find_package(yaml-cpp
-    GIT_REPO  https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG   0.8.0
-    OPTIONS
-        YAML_CPP_BUILD_TOOLS   OFF
-        YAML_CPP_BUILD_CONTRIB ON
-        YAML_BUILD_SHARED_LIBS OFF
-        YAML_CPP_INSTALL       OFF
-)
-
-# --- pugixml ---
-ve_find_package(pugixml
-    GIT_REPO  https://github.com/zeux/pugixml.git
-    GIT_TAG   v1.14
-    OPTIONS
-        PUGIXML_INSTALL OFF
-)
-
-# --- nlohmann/json ---
-ve_find_package(nlohmann_json
-    GIT_REPO  https://github.com/nlohmann/json.git
-    GIT_TAG   v3.11.3
-    OPTIONS
-        JSON_BuildTests OFF
-        JSON_Install    OFF
-)
-
-# --- simdjson ---
-ve_find_package(simdjson
-    GIT_REPO  https://github.com/simdjson/simdjson.git
-    GIT_TAG   v3.10.1
-    OPTIONS
-        SIMDJSON_DEVELOPER_MODE OFF
-)
 
 # =============================================================================
 # Summary

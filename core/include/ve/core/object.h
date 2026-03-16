@@ -57,7 +57,7 @@ private:
 /**
 * @brief Manager Class is a convenient object container
 */
-class VE_API Manager : public Object, public UnorderedHashMap<std::string, Object*>
+class VE_API Manager : public Object, public Hash<Object*>
 {
 public:
     explicit Manager(const std::string& name);

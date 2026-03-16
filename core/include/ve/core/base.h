@@ -41,17 +41,32 @@ template<typename L, typename R, class = void> struct is_comparable : std::false
 template<typename L, typename R>
 struct is_comparable<L, R, std::void_t<decltype(std::declval<L>() == std::declval<R>())>> : std::true_type {};
 
+template<typename L, typename R, class = void> struct is_less_than_comparable : std::false_type {};
+template<typename L, typename R>
+struct is_less_than_comparable<L, R, std::void_t<decltype(std::declval<L>() < std::declval<R>())>> : std::true_type {};
+
+template<typename L, typename R> inline constexpr bool is_comparable_v = is_comparable<L, R>::value;
+template<typename L, typename R> inline constexpr bool is_less_than_comparable_v = is_less_than_comparable<L, R>::value;
+
 template<typename T>
 static bool equals(const T& t1, const T& t2) {
-    if constexpr (is_comparable<T, T>::value) return t1 == t2;
+    if constexpr (is_comparable_v<T, T>) return t1 == t2;
     else return false;
 }
 
 // --- Type list (for FInfo arg introspection) ---
 
-template<typename...> struct _t_list { using FirstT = void; };
-template<typename T0, typename... T> struct _t_list<T0, T...> { using FirstT = T0; using RestT = _t_list<T...>; };
-template<typename T0, typename T1, typename... T> struct _t_list<T0, T1, T...> { using FirstT = T0; using SecondT = T1; using RestT = _t_list<T...>; };
+template<typename...> struct _t_list { using FirstT = void; static constexpr std::size_t Size = 0; };
+template<typename T0, typename... T> struct _t_list<T0, T...> { using FirstT = T0; using RestT = _t_list<T...>; static constexpr std::size_t Size = 1 + sizeof...(T); };
+template<typename T0, typename T1, typename... T> struct _t_list<T0, T1, T...> { using FirstT = T0; using SecondT = T1; using RestT = _t_list<T...>; static constexpr std::size_t Size = 2 + sizeof...(T); };
+
+template<std::size_t N, typename List> struct _t_list_at;
+template<std::size_t N, typename T0, typename... Ts>
+struct _t_list_at<N, _t_list<T0, Ts...>> : _t_list_at<N - 1, _t_list<Ts...>> {};
+template<typename T0, typename... Ts>
+struct _t_list_at<0, _t_list<T0, Ts...>> { using type = T0; };
+template<std::size_t N, typename List>
+using _t_list_at_t = typename _t_list_at<N, List>::type;
 
 // --- Static var helper (for is_inputable / YAML trait detection) ---
 
@@ -61,6 +76,9 @@ template<typename T> struct _t_static_var_helper { static inline T var; };
 
 VE_DECLARE_T_FUNC_CHECKER(is_outputable, std::ostream, std::remove_reference_t<decltype(std::cout << std::declval<T>())>);
 VE_DECLARE_T_FUNC_CHECKER(is_inputable, std::istream, std::remove_reference_t<decltype(std::cin >> _t_static_var_helper<T>::var)>);
+
+template<typename T> inline constexpr bool is_outputable_v = is_outputable<T>::value;
+template<typename T> inline constexpr bool is_inputable_v = is_inputable<T>::value;
 
 // --- Function introspection (FInfo) ---
 
@@ -100,9 +118,42 @@ template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class
     enum { IsFunction = true, IsMember = true, ArgCnt = sizeof...(Args) };
 };
 
+// noexcept variants (C++17: noexcept is part of the type system)
+template<typename Ret, typename... Args> struct FInfo<Ret (*) (Args...) noexcept>
+{
+    using RetT      = Ret;
+    using ArgsT     = _t_list<Args...>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = Ret (*)(Args...) noexcept;
+    using FunctionT = std::function<Ret(Args...)>;
+    enum { IsFunction = true, IsMember = false, IsNoexcept = true, ArgCnt = sizeof...(Args) };
+};
+template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...) noexcept>
+{
+    using RetT      = Ret;
+    using ClassT    = Class;
+    using ArgsT     = _t_list<Args...>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = Ret (Class::*)(Args...) noexcept;
+    using FunctionT = std::function<Ret(Args...)>;
+    enum { IsFunction = true, IsMember = true, IsNoexcept = true, ArgCnt = sizeof...(Args) };
+};
+template<typename Ret, typename Class, typename... Args> struct FInfo<Ret (Class::*) (Args...) const noexcept>
+{
+    using RetT      = Ret;
+    using ClassT    = Class;
+    using ArgsT     = _t_list<Args...>;
+    using FptrT     = Ret (*)(Args...);
+    using FuncT     = Ret (Class::*)(Args...) const noexcept;
+    using FunctionT = std::function<Ret(Args...)>;
+    enum { IsFunction = true, IsMember = true, IsNoexcept = true, ArgCnt = sizeof...(Args) };
+};
+
 // --- Type utilities ---
 
-template<typename T> using _t_remove_rc = std::remove_const_t<std::remove_reference_t<T>>;
+template<typename T> using _t_remove_rc  = std::remove_const_t<std::remove_reference_t<T>>;
+template<typename T> using _t_remove_rcv = std::remove_cv_t<std::remove_reference_t<T>>;
+template<typename T> using _t_bare       = std::remove_cv_t<std::remove_pointer_t<std::remove_reference_t<T>>>;
 
 VE_API std::string _t_demangle(const char* type_name);
 
@@ -112,6 +163,47 @@ template<typename T> struct Meta
     inline static const char* typeInfoName() { return typeid(T).name(); }
     inline static std::string typeName() { return _t_demangle(typeid(T).name()); }
 };
+
+// --- Detection traits ---
+
+template<typename T, class = void> struct is_hashable : std::false_type {};
+template<typename T>
+struct is_hashable<T, std::void_t<decltype(std::hash<T>{}(std::declval<T>()))>> : std::true_type {};
+template<typename T> inline constexpr bool is_hashable_v = is_hashable<T>::value;
+
+template<typename T, class = void> struct is_iterable : std::false_type {};
+template<typename T>
+struct is_iterable<T, std::void_t<
+    decltype(std::begin(std::declval<T&>())),
+    decltype(std::end(std::declval<T&>()))>> : std::true_type {};
+template<typename T> inline constexpr bool is_iterable_v = is_iterable<T>::value;
+
+template<typename T, class = void> struct is_string_like : std::false_type {};
+template<typename T>
+struct is_string_like<T, std::void_t<decltype(std::string(std::declval<T>()))>> : std::true_type {};
+template<typename T> inline constexpr bool is_string_like_v = is_string_like<T>::value;
+
+// --- Enum traits (C++23 backports) ---
+
+template<typename T, class = void>
+struct is_scoped_enum : std::false_type {};
+template<typename T>
+struct is_scoped_enum<T, std::enable_if_t<
+    std::is_enum_v<T> && !std::is_convertible_v<T, std::underlying_type_t<T>>>> : std::true_type {};
+template<typename T> inline constexpr bool is_scoped_enum_v = is_scoped_enum<T>::value;
+
+template<typename E>
+constexpr auto to_underlying(E e) noexcept
+    -> std::enable_if_t<std::is_enum_v<E>, std::underlying_type_t<E>>
+{ return static_cast<std::underlying_type_t<E>>(e); }
+
+// --- Smart pointer detection ---
+
+template<typename T> struct is_smart_pointer : std::false_type {};
+template<typename T> struct is_smart_pointer<std::shared_ptr<T>> : std::true_type {};
+template<typename T> struct is_smart_pointer<std::unique_ptr<T>> : std::true_type {};
+template<typename T> struct is_smart_pointer<std::weak_ptr<T>> : std::true_type {};
+template<typename T> inline constexpr bool is_smart_pointer_v = is_smart_pointer<T>::value;
 
 // --- SFINAE helpers for function signature matching ---
 
@@ -124,9 +216,6 @@ using FIfConvertible = std::enable_if_t<
 
 } // namespace basic
 
-// pointer
-template<typename T> using Pointer = std::shared_ptr<T>;
-
 // --- Container mixin: inherits constructors + adds converting ctors ---
 #define VE_INHERIT_CONSTRUCTOR(CONSTRUCTOR, CLASS, ...) \
 public: \
@@ -136,10 +225,12 @@ CLASS() : BaseT() {} \
 CLASS(const BaseT& other) noexcept : BaseT(other) {} \
 CLASS(BaseT&& other) noexcept : BaseT(std::move(other)) {}
 
+namespace basic {
+
 // --- Sequential container CRTP mixin ---
 
 template<typename DerivedT, typename ValueT>
-class PrivateTContainerBase
+class TContainer
 {
 public:
     using ListLike = std::true_type;
@@ -176,17 +267,19 @@ public:
     }
 };
 
-template<typename T, std::size_t N> class Array : public std::array<T, N>, public PrivateTContainerBase<Array<T, N>, T>
+}
+
+template<typename T, std::size_t N> class Array : public std::array<T, N>, public basic::TContainer<Array<T, N>, T>
 {
     VE_INHERIT_CONSTRUCTOR(array, Array, std::array<T, N>)
 };
 
-template<typename T> class Vector : public std::vector<T>, public PrivateTContainerBase<Vector<T>, T>
+template<typename T> class Vector : public std::vector<T>, public basic::TContainer<Vector<T>, T>
 {
     VE_INHERIT_CONSTRUCTOR(vector, Vector, std::vector<T>)
 };
 
-template<typename T> class List : public std::list<T>, public PrivateTContainerBase<List<T>, T>
+template<typename T> class List : public std::list<T>, public basic::TContainer<List<T>, T>
 {
     VE_INHERIT_CONSTRUCTOR(list, List, std::list<T>)
 
@@ -212,7 +305,7 @@ public:
 
 template<typename T, uint32_t N = 1>
 class SmallVector : public impl::SmallVectorImpl<T, N>,
-                    public PrivateTContainerBase<SmallVector<T, N>, T>
+                    public basic::TContainer<SmallVector<T, N>, T>
 {
 public:
     using ImplT = impl::SmallVectorImpl<T, N>;
@@ -224,6 +317,8 @@ public:
     SmallVector(const ImplT& other) : ImplT(other) {}
     SmallVector(ImplT&& other) noexcept : ImplT(std::move(other)) {}
 };
+
+namespace basic {
 
 // --- KV accessor policies ---
 
@@ -242,7 +337,7 @@ struct ImplKVAccess {
 // --- KV container CRTP mixin ---
 
 template<typename DerivedT, typename KeyT, typename ValueT, typename KVAccessor = StdPairKVAccess>
-class PrivateKVContainerBase
+class KVContainer
 {
 public:
     using MapLike = std::true_type;
@@ -302,15 +397,17 @@ public:
     DerivedT& insertOne(const KeyT& key, ValueT&& value) { auto d = dPtr(); d->operator[](key) = std::move(value); return *d; }
 };
 
+}
+
 template<typename K, typename V>
-class Map : public std::map<K, V>, public PrivateKVContainerBase<Map<K, V>, K, V>
+class Map : public std::map<K, V>, public basic::KVContainer<Map<K, V>, K, V>
 {
     VE_INHERIT_CONSTRUCTOR(map, Map, std::map<K, V>)
     Map(const Vector<K>& keys, const Vector<V>& values) { this->fromKVVectors(keys, values); }
 };
 
 template<typename K, typename V>
-class UnorderedHashMap : public std::unordered_map<K, V>, public PrivateKVContainerBase<UnorderedHashMap<K, V>, K, V>
+class UnorderedHashMap : public std::unordered_map<K, V>, public basic::KVContainer<UnorderedHashMap<K, V>, K, V>
 {
     VE_INHERIT_CONSTRUCTOR(unordered_map, UnorderedHashMap, std::unordered_map<K, V>)
     UnorderedHashMap(const Vector<K>& keys, const Vector<V>& values) { this->fromKVVectors(keys, values); }
@@ -326,7 +423,7 @@ template<typename K, typename V,
          typename Hasher     = impl::HashMapHasherDefault,
          typename Comparator = impl::HashMapComparatorDefault<K>>
 class OrderedHashMap
-    : public impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>, public PrivateKVContainerBase<OrderedHashMap<K, V, Hasher, Comparator>, K, V, ImplKVAccess>
+    : public impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>, public basic::KVContainer<OrderedHashMap<K, V, Hasher, Comparator>, K, V, basic::ImplKVAccess>
 {
     using ImplBase = impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>;
 public:

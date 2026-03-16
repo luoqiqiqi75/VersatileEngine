@@ -46,6 +46,13 @@ else()
 endif()
 
 # nlohmann/json — used by JsonRef / Result / XService
+ve_find_package(nlohmann_json
+    GIT_REPO  https://github.com/nlohmann/json.git
+    GIT_TAG   v3.11.3
+    OPTIONS
+        JSON_BuildTests OFF
+        JSON_Install    OFF
+)
 target_link_libraries(${VE_RTT_LIBRARY} PUBLIC nlohmann_json::nlohmann_json)
 
 # --- Conditional compile definitions ---

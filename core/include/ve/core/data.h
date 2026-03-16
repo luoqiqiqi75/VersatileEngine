@@ -58,7 +58,7 @@ public:
     virtual YAML::Node toYaml() const = 0;
 };
 
-using AbstractDataPointer = Pointer<AbstractData>;
+using AbstractDataPointer = std::shared_ptr<AbstractData>;
 
 ///
 

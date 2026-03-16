@@ -48,6 +48,15 @@ target_include_directories(${VE_CORE_LIBRARY} PRIVATE
 )
 
 # --- deps ---
+ve_find_package(yaml-cpp
+    GIT_REPO  https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG   0.8.0
+    OPTIONS
+        YAML_CPP_BUILD_TOOLS   OFF
+        YAML_CPP_BUILD_CONTRIB ON
+        YAML_BUILD_SHARED_LIBS OFF
+        YAML_CPP_INSTALL       OFF
+)
 target_link_libraries(${VE_CORE_LIBRARY} PUBLIC  yaml-cpp::yaml-cpp)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
