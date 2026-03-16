@@ -1,5 +1,6 @@
 // node.cpp — ve::Node + ve::Schema
 #include "ve/core/node.h"
+#include "ve/core/var.h"
 #include <string_view>
 
 #include "ve/core/log.h"
@@ -466,15 +467,11 @@ Node::ReverseChildIterator Node::rend() const
 }
 
 // ============================================================================
-// Node — shadow
+// Node — path
 // ============================================================================
 
 Node* Node::shadow() const { return _p->shadow; }
 void  Node::setShadow(Node* s) { LockT lk(mutex()); _p->shadow = s; }
-
-// ============================================================================
-// Node — path
-// ============================================================================
 
 // walk path segments, calling step(name, idx, global) for each
 template<typename StepFn>
@@ -542,6 +539,42 @@ bool Node::erase(const std::string& path, bool auto_delete)
     if (auto_delete) return t->_p->parent->remove(t);
     return t->_p->parent->take(t) != nullptr;
 }
+
+// ============================================================================
+// Node — signal bubbling (template implementation)
+// ============================================================================
+
+// template<Node::NodeSignal Signal>
+// void Node::connect(Object* observer, const std::function<void(Node*)>& action, LoopRef loop)
+// {
+//     // Wrap action to extract Node* from Var and call user's action
+//     ActionT wrapped = [action](const Var& data) {
+//         if (data.isPointer()) {
+//             Node* sender = static_cast<Node*>(data.toPointer());
+//             action(sender);
+//         }
+//     };
+//     Object::connect(static_cast<SignalT>(Signal), observer, wrapped, loop);
+// }
+//
+// template<Node::NodeSignal Signal>
+// void Node::trigger(Node* sender)
+// {
+//     // Wrap sender in Var and trigger with data
+//     Var data(sender);  // Var(void*) constructor
+//     Object::trigger(static_cast<SignalT>(Signal), data);
+//
+//     // Bubble up to parent if exists
+//     if (_p->parent) {
+//         _p->parent->trigger<Signal>(sender);
+//     }
+// }
+//
+// // Explicit template instantiations
+// template void Node::connect<NODE_CHILD_ADDED>(Object*, const std::function<void(Node*)>&, LoopRef);
+// template void Node::connect<NODE_CHILD_REMOVED>(Object*, const std::function<void(Node*)>&, LoopRef);
+// template void Node::trigger<NODE_CHILD_ADDED>(Node*);
+// template void Node::trigger<NODE_CHILD_REMOVED>(Node*);
 
 // ============================================================================
 // Node — debug

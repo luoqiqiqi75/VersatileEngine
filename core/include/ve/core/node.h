@@ -56,6 +56,7 @@ public:
     enum NodeSignal : SignalT {
         NODE_CHILD_ADDED   = 0x0010,
         NODE_CHILD_REMOVED = 0x0011,
+        NODE_ACTIVATED     = 0x001f,
     };
 
     // --- static ---
@@ -158,15 +159,20 @@ public:
     ReverseChildIterator rbegin() const;
     ReverseChildIterator rend()   const;
 
-    // --- shadow ---
+    // --- path (path = key/key/...) ---
     Node* shadow() const;
     void  setShadow(Node* shadow);
 
-    // --- path (path = key/key/...) ---
     Node*       resolve(const std::string& path, bool use_shadow = true) const;
     std::string path(Node* ancestor = nullptr) const;
     Node*       ensure(const std::string& path);
     bool        erase(const std::string& path, bool auto_delete = true);
+
+    // --- signal ---
+    // Node-specific signals use Object's typed connect/trigger.
+    // Example (bubbling):
+    //   node.connect<NODE_CHILD_ADDED>(&obs, [](Node* sender) { ... });
+    //   node.trigger<NODE_CHILD_ADDED>(childPtr);  // auto-packed as Var(void*)
 
     // --- debug ---
     std::string dump(int depth = 0) const;

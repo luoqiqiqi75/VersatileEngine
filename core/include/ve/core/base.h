@@ -160,7 +160,7 @@ VE_API std::string _t_demangle(const char* type_name);
 template<typename T> struct Meta
 {
     using TypeT = T;
-    inline static const char* typeInfoName() { return typeid(T).name(); }
+    inline static const char* typeIdName() { return typeid(T).name(); }
     inline static std::string typeName() { return _t_demangle(typeid(T).name()); }
 };
 
@@ -211,8 +211,7 @@ template<typename Func1, typename Func2, typename Type>
 using FIfSame = std::enable_if_t<std::is_same_v<typename FInfo<Func1>::FptrT, typename FInfo<Func2>::FptrT>, Type>;
 
 template<typename Func1, typename Func2, typename Type>
-using FIfConvertible = std::enable_if_t<
-    std::is_convertible_v<Func1, Func2> && std::is_convertible_v<typename FInfo<Func1>::RetT, typename FInfo<Func2>::RetT>, Type>;
+using FIfConvertible = std::enable_if_t<std::is_convertible_v<Func1, Func2> && std::is_convertible_v<typename FInfo<Func1>::RetT, typename FInfo<Func2>::RetT>, Type>;
 
 } // namespace basic
 
@@ -266,6 +265,12 @@ public:
         return ss.str();
     }
 };
+
+template<typename T, typename = void>
+struct is_list_like : std::false_type {};
+
+template<typename T>
+struct is_list_like<T, std::void_t<typename T::ListLike>> : std::is_same<typename T::ListLike, std::true_type> {};
 
 }
 
@@ -397,6 +402,12 @@ public:
     DerivedT& insertOne(const KeyT& key, ValueT&& value) { auto d = dPtr(); d->operator[](key) = std::move(value); return *d; }
 };
 
+template<typename T, typename = void>
+struct is_dict_like : std::false_type {};
+
+template<typename T>
+struct is_dict_like<T, std::void_t<typename T::DictLike>> : std::integral_constant<bool, T::DictLike::value> {};
+
 }
 
 template<typename K, typename V>
@@ -433,12 +444,14 @@ public:
     using ImplBase::has;
 };
 
-template<typename V>
-using Dict = OrderedHashMap<std::string, V>;
+template<typename T>
+inline constexpr bool is_list_like_v = basic::is_list_like<T>::value;
 
 using Ints = Vector<int>;
 using Doubles = Vector<double>;
 using Strings = Vector<std::string>;
+
+using Bytes = Vector<std::uint8_t>;
 
 class VE_API Values : public Doubles
 {
@@ -476,5 +489,11 @@ public:
 private:
     Unit m_unit = NONE;
 };
+
+template<typename T>
+inline constexpr bool is_dict_like_v = basic::is_dict_like<T>::value;
+
+template<typename V>
+using Dict = OrderedHashMap<std::string, V>;
 
 }

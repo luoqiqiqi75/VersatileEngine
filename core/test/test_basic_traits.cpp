@@ -133,7 +133,7 @@ VE_TEST(meta_type_name_not_empty) {
 }
 
 VE_TEST(meta_type_info_name_not_empty) {
-    auto name = basic::Meta<double>::typeInfoName();
+    auto name = basic::Meta<double>::typeIdName();
     VE_ASSERT(name != nullptr);
 }
 

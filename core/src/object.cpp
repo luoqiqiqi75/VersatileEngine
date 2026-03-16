@@ -1,4 +1,5 @@
 #include "ve/core/object.h"
+#include "ve/core/var.h"
 
 namespace ve {
 
@@ -10,7 +11,7 @@ struct Object::Private
     // signal → [(observer, action, loop)]  — flat vector, no nested hash maps
     struct Connection {
         Object*  observer;
-        ActionT  action;
+        ActionT  action;   // std::function<void(const Var&)>
         LoopRef  loop;     // optional: if set, action is posted to this loop
     };
     UnorderedHashMap<int, Vector<Connection>> connections;
@@ -65,7 +66,7 @@ Object::Object(const std::string& name) : _p(std::make_unique<Private>()) { _p->
 
 Object::~Object()
 {
-    trigger(OBJECT_DELETED);
+    trigger(OBJECT_DELETED, Var());
     // After OBJECT_DELETED fires, clear all connections so dangling refs can't be called
     LockT lk(_p->mtx);
     _p->connections.clear();
@@ -117,9 +118,9 @@ void Object::connect(int signal, Object* observer, const ActionT& action, LoopRe
             LockT lk2(second->_p->mtx);
 
             // When observer dies → this disconnects observer
-            observer->_p->addConnection(OBJECT_DELETED, this, [this, observer] { disconnect(observer); });
+            observer->_p->addConnection(OBJECT_DELETED, this, [this, observer](const Var&) { disconnect(observer); });
             // When this dies → observer disconnects this
-            this->_p->addConnection(OBJECT_DELETED, observer, [this, observer] { observer->disconnect(this); });
+            this->_p->addConnection(OBJECT_DELETED, observer, [this, observer](const Var&) { observer->disconnect(this); });
 
             // Also register in observer's cross_links
             observer->_p->cross_links.insert(pp);
@@ -139,7 +140,7 @@ void Object::disconnect(Object* observer)
     _p->removeObserverAll(observer);
 }
 
-void Object::trigger(int signal)
+void Object::trigger(int signal, const Var& data /*= {}*/)
 {
     // Phase 1: copy (action + loop) under lock
     struct Dispatch { ActionT action; LoopRef loop; };
@@ -147,18 +148,22 @@ void Object::trigger(int signal)
     {
         LockT lk(_p->mtx);
         auto it = _p->connections.find(signal);
-        if (it == _p->connections.end()) return;
-        callbacks.reserve(it->second.size());
-        for (auto& c : it->second)
-            callbacks.push_back({c.action, c.loop});
+        if (it != _p->connections.end()) {
+            callbacks.reserve(it->second.size());
+            for (auto& c : it->second)
+                callbacks.push_back({c.action, c.loop});
+        }
     }
     // Phase 2: dispatch outside lock
-    //   priority: per-connection loop > global default loop > direct call
     auto def = loop::defaultLoop();
     for (auto& d : callbacks) {
-        if (d.loop)        d.loop.post(std::move(d.action));
-        else if (def)      def.post(std::move(d.action));
-        else               d.action();
+        if (d.loop) {
+            d.loop.post([action = std::move(d.action), data]() { action(data); });
+        } else if (def) {
+            def.post([action = std::move(d.action), data]() { action(data); });
+        } else {
+            d.action(data);
+        }
     }
 }
 

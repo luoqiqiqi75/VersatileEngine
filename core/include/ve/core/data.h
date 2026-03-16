@@ -427,6 +427,16 @@ VE_API TypedData<void>* createVoid(const std::string& key, bool* ok = nullptr);
 VE_API TypedData<void>* createTrigger(const std::string& key, const Object::ActionT& action, bool trigger_now = false);
 VE_API TypedData<void>* createTrigger(const std::string& key, Object* observer, const Object::ActionT& action, bool trigger_now = false);
 
+// Convenience: accept any callable (e.g. []() { ... })
+template<typename Fn, std::enable_if_t<!std::is_convertible_v<Fn, Object::ActionT>, int> = 0>
+TypedData<void>* createTrigger(const std::string& key, Fn fn, bool trigger_now = false) {
+    return createTrigger(key, Object::ActionT([fn](const Var&) { fn(); }), trigger_now);
+}
+template<typename Fn, std::enable_if_t<!std::is_convertible_v<Fn, Object::ActionT>, int> = 0>
+TypedData<void>* createTrigger(const std::string& key, Object* observer, Fn fn, bool trigger_now = false) {
+    return createTrigger(key, observer, Object::ActionT([fn](const Var&) { fn(); }), trigger_now);
+}
+
 #define VE_D_FUNC_IMPL(Type, ...) auto ptr = d<Type>(key); if (!ptr) return false; __VA_ARGS__; return true
 
 template<typename T> inline bool get(const std::string& key, T& value) { VE_D_FUNC_IMPL(T, value = ptr->get()); }
