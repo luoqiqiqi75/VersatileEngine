@@ -93,6 +93,34 @@ bool LoopTraits<AsioContext>::running(const Context* ctx)
 }
 
 // ============================================================================
+// loop:: — context (thread-local, set by owner-aware post)
+// ============================================================================
+
+thread_local void* t_loop_context = nullptr;
+
+void* loop::context()              { return t_loop_context; }
+void* loop::setContext(void* ctx)  { auto prev = t_loop_context; t_loop_context = ctx; return prev; }
+
+void loop::post(Alive token, Task task)
+{
+    main().post(std::move(token), std::move(task));
+}
+
+void loop::post(Alive token, void* ctx, Task task)
+{
+    main().post(std::move(token), [ctx, task = std::move(task)]() {
+        void* prev = setContext(ctx);
+        task();
+        setContext(prev);
+    });
+}
+
+void loop::post(LoopRef loop, Alive token, Task task)
+{
+    loop.post(std::move(token), std::move(task));
+}
+
+// ============================================================================
 // loop:: — global loop singletons
 // ============================================================================
 //

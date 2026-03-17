@@ -221,8 +221,12 @@ VE_API Node* root(); // --- global data tree accessor ---
 
 }
 
-// ve::n("robot.arm.joint1") — dot-separated path convenience accessor.
+// ve::n("robot/arm/joint1") — slash-separated path accessor.
+// Delegates to ve::node::root()->ensure(path).
+VE_API Node* n(const std::string& path);
+
+// ve::d("robot.arm.joint1") — dot-separated path accessor (Data-compatible).
 // Translates '.' to '/' and delegates to ve::node::root()->ensure().
-VE_API Node* n(const std::string& dot_path);
+VE_API Node* d(const std::string& dot_path);
 
 } // namespace ve

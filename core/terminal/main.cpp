@@ -759,7 +759,7 @@ int main()
 
         else if (cmd == "n") {
             if (args.size() < 2) { std::cout << "usage: n <dot.path>\n"; continue; }
-            auto* target = ve::n(args[1]);
+            auto* target = ve::d(args[1]);
             if (target) {
                 g_root = ve::node::root();
                 g_cur = target;

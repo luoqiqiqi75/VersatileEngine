@@ -4,6 +4,7 @@
 
 #include "ve_test.h"
 #include "ve/core/loop.h"
+#include "ve/core/object.h"
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -120,6 +121,18 @@ VE_TEST(loop_ref_empty) {
     ref.post([] {});  // should not crash
 }
 
+VE_TEST(loop_ref_dead_loop) {
+    LoopRef ref;
+    {
+        EventLoop loop("temp", 1);
+        loop.start();
+        ref = loop;
+        VE_ASSERT(!!ref);
+    }  // loop destroyed here
+    // ref still "looks" valid (has _post) but loop is dead
+    ref.post([] {});  // should not crash — alive check prevents call
+}
+
 // --- global loop ---
 
 VE_TEST(loop_global_main) {
@@ -172,6 +185,133 @@ VE_TEST(loop_restart) {
     for (int i = 0; i < 100 && val.load() == 1; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     VE_ASSERT_EQ(val.load(), 2);
+
+    loop.stop();
+}
+
+// --- AliveToken: owner destroyed → task discarded ---
+
+VE_TEST(loop_alive_token_basic) {
+    auto token = std::make_shared<std::atomic<bool>>(true);
+    EventLoop loop("test", 1);
+    loop.start();
+
+    std::atomic<int> val{0};
+    loop.post(token, [&] { val.store(1); });
+
+    for (int i = 0; i < 100 && val.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    VE_ASSERT_EQ(val.load(), 1);
+    loop.stop();
+}
+
+VE_TEST(loop_alive_token_dead) {
+    auto token = std::make_shared<std::atomic<bool>>(true);
+    EventLoop loop("test", 1);
+    loop.start();
+
+    std::atomic<int> val{0};
+    token->store(false);  // "dead" before task executes
+    loop.post(token, [&] { val.store(99); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    VE_ASSERT_EQ(val.load(), 0);  // task was discarded
+    loop.stop();
+}
+
+VE_TEST(loop_post_token_alive) {
+    auto token = std::make_shared<std::atomic<bool>>(true);
+    std::atomic<int> val{0};
+
+    loop::post(token, [&] { val.store(42); });
+
+    for (int i = 0; i < 100 && val.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    VE_ASSERT_EQ(val.load(), 42);
+}
+
+VE_TEST(loop_post_token_dead) {
+    auto token = std::make_shared<std::atomic<bool>>(true);
+    EventLoop loop("test", 1);
+    std::atomic<int> val{0};
+
+    loop::post(LoopRef(loop), token, [&] { val.store(99); });
+    token->store(false);  // "dead" before task executes
+
+    loop.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    VE_ASSERT_EQ(val.load(), 0);  // task discarded
+    loop.stop();
+}
+
+VE_TEST(loop_post_token_context) {
+    auto token = std::make_shared<std::atomic<bool>>(true);
+    int dummy;
+    void* ctx = &dummy;
+    std::atomic<void*> captured_ctx{nullptr};
+
+    loop::post(token, ctx, [&] {
+        captured_ctx.store(loop::context());
+    });
+
+    for (int i = 0; i < 100 && !captured_ctx.load(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    VE_ASSERT_EQ(captured_ctx.load(), ctx);
+}
+
+VE_TEST(loop_context_null_outside) {
+    VE_ASSERT(loop::context() == nullptr);
+}
+
+// --- signal dispatch with loop: observer destroyed → no crash ---
+
+VE_TEST(loop_signal_observer_destroyed) {
+    EventLoop loop("test", 1);
+    loop.start();
+
+    Object sender("sender");
+    auto* observer = new Object("observer");
+
+    std::atomic<int> val{0};
+    sender.connect<1>(observer, [&]() { val.store(1); }, LoopRef(loop));
+
+    sender.trigger<1>();
+    for (int i = 0; i < 100 && val.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    VE_ASSERT_EQ(val.load(), 1);
+
+    // destroy observer → task silently discarded
+    delete observer;
+    val.store(0);
+    sender.trigger<1>();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    VE_ASSERT_EQ(val.load(), 0);
+
+    loop.stop();
+}
+
+VE_TEST(loop_signal_sender_destroyed) {
+    EventLoop loop("test", 1);
+    loop.start();
+
+    auto* sender = new Object("sender");
+    Object observer("observer");
+
+    std::atomic<int> val{0};
+    sender->connect<1>(&observer, [&]() { val.store(1); }, LoopRef(loop));
+
+    sender->trigger<1>();
+    for (int i = 0; i < 100 && val.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    VE_ASSERT_EQ(val.load(), 1);
+
+    // trigger, then immediately destroy sender before loop can execute
+    val.store(0);
+    sender->trigger<1>();
+    delete sender;  // sender dead, posted task should be discarded
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    VE_ASSERT_EQ(val.load(), 0);
 
     loop.stop();
 }

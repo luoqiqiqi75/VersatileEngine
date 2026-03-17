@@ -644,4 +644,11 @@ inline constexpr bool is_dict_like_v = basic::is_dict_like<T>::value;
 template<typename V>
 using Dict = OrderedHashMap<std::string, V>;
 
+// execution support
+using Task = std::function<void()>;
+
+/// Shared alive flag — set to false in Object destructor.
+/// Loop checks before executing a posted task; if false the task is silently discarded.
+using Alive = std::shared_ptr<std::atomic<bool>>;
+
 }

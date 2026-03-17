@@ -7,34 +7,21 @@ struct Object::Private
 {
     std::string name;
     mutable MutexT mtx;
+    Alive alive = std::make_shared<std::atomic<bool>>(true);
 
-    // signal → [(observer, action, loop)]  — flat vector, no nested hash maps
     struct Connection {
-        Object*  observer;
-        ActionT  action;   // std::function<void(const Var&)>
-        LoopRef  loop;     // optional: if set, action is posted to this loop
+        Object*    observer;
+        ActionT    action;
+        LoopRef    loop;
+        Alive alive;  // observer's alive token (captured at connect time)
     };
     UnorderedHashMap<int, Vector<Connection>> connections;
 
-    // track which observer pairs already have cross-OBJECT_DELETED links
-    // stored as min/max pointer pair to deduplicate
-    struct PtrPair {
-        Object* a; Object* b;
-        bool operator==(const PtrPair& o) const { return a == o.a && b == o.b; }
-    };
-    struct PtrPairHash {
-        std::size_t operator()(const PtrPair& p) const {
-            auto h1 = std::hash<void*>{}(p.a);
-            auto h2 = std::hash<void*>{}(p.b);
-            return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL);
-        }
-    };
-    std::unordered_set<PtrPair, PtrPairHash> cross_links;
 
-    // add connection (internal, already under lock)
-    void addConnection(int signal, Object* observer, const ActionT& action, LoopRef loop = {})
+    void addConnection(int signal, Object* observer, const ActionT& action,
+                        LoopRef loop = {}, Alive token = {})
     {
-        connections[signal].push_back({observer, action, std::move(loop)});
+        connections[signal].push_back({observer, action, std::move(loop), std::move(token)});
     }
 
     // remove all connections for observer from a signal (internal, already under lock)
@@ -47,17 +34,11 @@ struct Object::Private
             [observer](const Connection& c) { return c.observer == observer; }), vec.end());
     }
 
-    // remove observer from all signals (internal, already under lock)
     void removeObserverAll(Object* observer)
     {
         for (auto& [_, vec] : connections) {
             vec.erase(std::remove_if(vec.begin(), vec.end(),
                 [observer](const Connection& c) { return c.observer == observer; }), vec.end());
-        }
-        // also clean cross_links involving observer
-        for (auto it = cross_links.begin(); it != cross_links.end(); ) {
-            if (it->a == observer || it->b == observer) it = cross_links.erase(it);
-            else ++it;
         }
     }
 };
@@ -66,11 +47,10 @@ Object::Object(const std::string& name) : _p(std::make_unique<Private>()) { _p->
 
 Object::~Object()
 {
+    _p->alive->store(false, std::memory_order_release);
     trigger(OBJECT_DELETED, Var());
-    // After OBJECT_DELETED fires, clear all connections so dangling refs can't be called
     LockT lk(_p->mtx);
     _p->connections.clear();
-    _p->cross_links.clear();
 }
 
 const std::string& Object::name() const { return _p->name; }
@@ -95,44 +75,9 @@ bool Object::hasConnection(int signal, Object* observer)
 
 void Object::connect(int signal, Object* observer, const ActionT& action, LoopRef loop)
 {
-    // Phase 1: add the user connection under lock
-    {
-        LockT lk(_p->mtx);
-        _p->addConnection(signal, observer, action, std::move(loop));
-    }
-
-    // Phase 2: set up cross OBJECT_DELETED links (outside this->lock to avoid ABBA)
-    if (observer && observer != this && signal != OBJECT_DELETED) {
-        // Use ordered pointer pair to ensure only one cross-link per pair
-        auto lo = (this < observer) ? this : observer;
-        auto hi = (this < observer) ? observer : this;
-        Private::PtrPair pp{lo, hi};
-
-        bool need_cross = false;
-        {
-            LockT lk(_p->mtx);
-            if (_p->cross_links.find(pp) == _p->cross_links.end()) {
-                _p->cross_links.insert(pp);
-                need_cross = true;
-            }
-        }
-
-        if (need_cross) {
-            // Lock in consistent pointer order to prevent ABBA deadlock
-            auto* first  = lo;
-            auto* second = hi;
-            LockT lk1(first->_p->mtx);
-            LockT lk2(second->_p->mtx);
-
-            // When observer dies → this disconnects observer
-            observer->_p->addConnection(OBJECT_DELETED, this, [this, observer](const Var&) { disconnect(observer); });
-            // When this dies → observer disconnects this
-            this->_p->addConnection(OBJECT_DELETED, observer, [this, observer](const Var&) { observer->disconnect(this); });
-
-            // Also register in observer's cross_links
-            observer->_p->cross_links.insert(pp);
-        }
-    }
+    LockT lk(_p->mtx);
+    _p->addConnection(signal, observer, action, std::move(loop),
+                       observer ? observer->_p->alive : Alive{});
 }
 
 void Object::disconnect(int signal, Object* observer)
@@ -149,11 +94,9 @@ void Object::disconnect(Object* observer)
 
 void Object::trigger(int signal, const Var& data /*= {}*/)
 {
-    // Silent: suppress all signals except OBJECT_DELETED (cleanup must always fire)
     if (signal != OBJECT_DELETED && isSilent()) return;
 
-    // Phase 1: copy (action + loop) under lock
-    struct Dispatch { ActionT action; LoopRef loop; };
+    struct Dispatch { Object* observer; ActionT action; LoopRef loop; Alive alive; };
     Vector<Dispatch> callbacks;
     {
         LockT lk(_p->mtx);
@@ -161,17 +104,40 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
         if (it != _p->connections.end()) {
             callbacks.reserve(it->second.size());
             for (auto& c : it->second)
-                callbacks.push_back({c.action, c.loop});
+                callbacks.push_back({c.observer, c.action, c.loop, c.alive});
         }
     }
-    // Phase 2: dispatch outside lock
-    // If a per-connection LoopRef was set in connect(), post to that loop;
-    // otherwise call directly (zero-overhead, default for pure C++).
+
+    auto sender_alive = _p->alive;
+    bool has_dead = false;
+
     for (auto& d : callbacks) {
+        if (d.alive && !d.alive->load(std::memory_order_acquire)) {
+            has_dead = true;
+            continue;
+        }
         if (d.loop) {
-            d.loop.post([action = std::move(d.action), data]() { action(data); });
+            void* ctx = loop::context();
+            d.loop.post([sender_alive, action = std::move(d.action), data, ctx]() {
+                if (!sender_alive->load(std::memory_order_acquire)) return;
+                void* prev = loop::setContext(ctx);
+                action(data);
+                loop::setContext(prev);
+            });
         } else {
             d.action(data);
+        }
+    }
+
+    if (has_dead) {
+        LockT lk(_p->mtx);
+        auto it = _p->connections.find(signal);
+        if (it != _p->connections.end()) {
+            auto& vec = it->second;
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                [](const Private::Connection& c) {
+                    return c.alive && !c.alive->load(std::memory_order_acquire);
+                }), vec.end());
         }
     }
 }

@@ -194,23 +194,29 @@ VE_TEST(node_global_data_root) {
     VE_ASSERT(dr == ve::node::root());
 }
 
-VE_TEST(node_global_n_create_and_get) {
-    ve::n("test_global.a.b")->set(Var(42));
-    VE_ASSERT_EQ(ve::n("test_global.a.b")->get<int>(), 42);
+VE_TEST(node_global_d_create_and_get) {
+    ve::d("test_global.a.b")->set(Var(42));
+    VE_ASSERT_EQ(ve::d("test_global.a.b")->get<int>(), 42);
 }
 
-VE_TEST(node_global_n_path_hierarchy) {
-    ve::n("test_hier.x.y")->set(Var(1));
-    ve::n("test_hier.x.z")->set(Var(2));
+VE_TEST(node_global_d_path_hierarchy) {
+    ve::d("test_hier.x.y")->set(Var(1));
+    ve::d("test_hier.x.z")->set(Var(2));
 
-    // dot in ve::n() maps to '/' in the tree
+    // dot in ve::d() maps to '/' in the tree
     auto* x = ve::node::root()->resolve("test_hier/x");
     VE_ASSERT(x != nullptr);
     VE_ASSERT_EQ(x->count(), 2);
 }
 
-VE_TEST(node_global_n_update) {
-    auto* node = ve::n("test_upd.val");
+VE_TEST(node_global_n_slash_path) {
+    ve::n("test_n/a/b")->set(Var(99));
+    VE_ASSERT_EQ(ve::n("test_n/a/b")->get<int>(), 99);
+    VE_ASSERT(ve::node::root()->resolve("test_n/a/b") != nullptr);
+}
+
+VE_TEST(node_global_d_update) {
+    auto* node = ve::d("test_upd.val");
     node->set(Var(0));
     VE_ASSERT(!node->update(Var(0)));
     VE_ASSERT(node->update(Var(1)));

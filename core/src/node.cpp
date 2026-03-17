@@ -702,7 +702,12 @@ Node* root() { return &basic::_t_static_var_helper<Node>::var; }
 
 }
 
-Node* n(const std::string& dot_path)
+Node* n(const std::string& path)
+{
+    return node::root()->ensure(path);
+}
+
+Node* d(const std::string& dot_path)
 {
     std::string slash_path(dot_path);
     std::replace(slash_path.begin(), slash_path.end(), '.', '/');

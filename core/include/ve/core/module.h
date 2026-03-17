@@ -11,8 +11,7 @@
 
 #pragma once
 
-#include "data.h"
-#include "factory.h"
+#include "node.h"
 
 namespace ve {
 
@@ -77,7 +76,7 @@ template<class C>
 inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(const std::string& key)
 {
     globalModuleFactory().insertOne(key, [=] () -> Module* {
-        data::create("_p.global_module_key", std::string(key))->set(key);
+        ve::d("_p.global_module_key")->set(Var(key));
         return new C();
     });
 }

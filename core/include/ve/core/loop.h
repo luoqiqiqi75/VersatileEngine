@@ -19,11 +19,9 @@
 
 #pragma once
 
-#include "ve/global.h"
+#include "base.h"
 
 namespace ve {
-
-using Task = std::function<void()>;
 
 // ============================================================================
 // LoopTraits<T> — specialization point
@@ -63,6 +61,7 @@ struct LoopTraits;   // primary: intentionally undefined — specialize per back
 class LoopRef
 {
     std::function<void(Task)> _post;
+    Alive _alive;   // loop's alive token — if false, _post is dangling
 
 public:
     LoopRef() = default;
@@ -72,11 +71,28 @@ public:
     LoopRef& operator=(const LoopRef&) = default;
     LoopRef& operator=(LoopRef&&) = default;
 
-    /// Implicit conversion from any Loop<T>  (SFINAE excludes LoopRef itself)
+    /// Implicit conversion from any Loop<T>
     template<typename T, typename = std::enable_if_t<!std::is_same_v<std::decay_t<T>, LoopRef>>>
-    LoopRef(T& loop) : _post([&loop](Task t) { loop.post(std::move(t)); }) {}
+    LoopRef(T& loop)
+        : _post([&loop](Task t) { loop.post(std::move(t)); })
+        , _alive(loop.alive()) {}
 
-    void post(Task task) const { if (_post) _post(std::move(task)); }
+    void post(Task task) const {
+        if (!_post) return;
+        if (_alive && !_alive->load(std::memory_order_acquire)) return;
+        _post(std::move(task));
+    }
+
+    void post(Alive token, Task task) const {
+        if (!_post) return;
+        if (_alive && !_alive->load(std::memory_order_acquire)) return;
+        if (!token) { _post(std::move(task)); return; }
+        _post([token = std::move(token), task = std::move(task)]() {
+            if (token->load(std::memory_order_acquire))
+                task();
+        });
+    }
+
     explicit operator bool() const { return !!_post; }
 };
 
@@ -105,17 +121,28 @@ class Loop
 
     Context*    _ctx;
     std::string _name;
+    Alive  _alive = std::make_shared<std::atomic<bool>>(true);
 
 public:
     explicit Loop(const std::string& name = "", int threads = 1)
         : _ctx(Traits::create(threads)), _name(name) {}
 
     ~Loop() {
+        _alive->store(false, std::memory_order_release);
         if (_ctx) { Traits::destroy(_ctx); _ctx = nullptr; }
     }
 
+    const Alive& alive() const { return _alive; }
+
     // --- Core API ---
-    void post(Task task)        { Traits::post(_ctx, std::move(task)); }
+    void post(Task task)         { Traits::post(_ctx, std::move(task)); }
+    void post(Alive token, Task task) {
+        if (!token) { post(std::move(task)); return; }
+        Traits::post(_ctx, [token = std::move(token), task = std::move(task)]() {
+            if (token->load(std::memory_order_acquire))
+                task();
+        });
+    }
     bool start()                { return Traits::start(_ctx); }
     bool stop()                 { return Traits::stop(_ctx); }
     bool isRunning() const      { return Traits::running(_ctx); }
@@ -177,6 +204,21 @@ inline void post(Task task) { main().post(std::move(task)); }
 /// Post to any loop
 template<typename T>
 void post(Loop<T>& loop, Task task) { loop.post(std::move(task)); }
+
+/// Guarded post to main loop. Task is discarded if token is false.
+VE_API void post(Alive token, Task task);
+
+/// Guarded post with context to main loop.
+VE_API void post(Alive token, void* ctx, Task task);
+
+/// Guarded post to a specific loop.
+VE_API void post(LoopRef loop, Alive token, Task task);
+
+/// Returns the owner of the currently executing loop task (nullptr if none).
+VE_API void* context();
+
+/// Sets loop context, returns previous value. For internal / Loop-backend use.
+VE_API void* setContext(void* ctx);
 
 } // namespace loop
 

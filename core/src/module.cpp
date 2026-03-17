@@ -1,4 +1,5 @@
 #include "ve/core/module.h"
+#include "ve/core/convert.h"
 
 #define STATE_IMPL(S, F) \
 trigger(MODULE_STATE_ABOUT_TO_CHANGE); \
@@ -12,7 +13,7 @@ struct Module::Private
     State s = NONE;
 };
 
-Module::Module() : Object("ve::m_" + d<std::string>("_p.global_module_key")->get()), _p(new Private) {}
+Module::Module() : Object("ve::m_" + ve::d("_p.global_module_key")->get<std::string>()), _p(new Private) {}
 Module::~Module() noexcept { delete _p; }
 
 Module::State Module::state() const { return _p->s; }
