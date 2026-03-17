@@ -192,7 +192,7 @@ VE_TEST(loop_restart) {
 // --- AliveToken: owner destroyed → task discarded ---
 
 VE_TEST(loop_alive_token_basic) {
-    auto token = std::make_shared<std::atomic<bool>>(true);
+    auto token = Alive::create();
     EventLoop loop("test", 1);
     loop.start();
 
@@ -206,12 +206,12 @@ VE_TEST(loop_alive_token_basic) {
 }
 
 VE_TEST(loop_alive_token_dead) {
-    auto token = std::make_shared<std::atomic<bool>>(true);
+    auto token = Alive::create();
     EventLoop loop("test", 1);
     loop.start();
 
     std::atomic<int> val{0};
-    token->store(false);  // "dead" before task executes
+    token.kill();  // "dead" before task executes
     loop.post(token, [&] { val.store(99); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -220,7 +220,7 @@ VE_TEST(loop_alive_token_dead) {
 }
 
 VE_TEST(loop_post_token_alive) {
-    auto token = std::make_shared<std::atomic<bool>>(true);
+    auto token = Alive::create();
     std::atomic<int> val{0};
 
     loop::post(token, [&] { val.store(42); });
@@ -231,12 +231,12 @@ VE_TEST(loop_post_token_alive) {
 }
 
 VE_TEST(loop_post_token_dead) {
-    auto token = std::make_shared<std::atomic<bool>>(true);
+    auto token = Alive::create();
     EventLoop loop("test", 1);
     std::atomic<int> val{0};
 
     loop::post(LoopRef(loop), token, [&] { val.store(99); });
-    token->store(false);  // "dead" before task executes
+    token.kill();  // "dead" before task executes
 
     loop.start();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -245,7 +245,7 @@ VE_TEST(loop_post_token_dead) {
 }
 
 VE_TEST(loop_post_token_context) {
-    auto token = std::make_shared<std::atomic<bool>>(true);
+    auto token = Alive::create();
     int dummy;
     void* ctx = &dummy;
     std::atomic<void*> captured_ctx{nullptr};
@@ -293,7 +293,6 @@ VE_TEST(loop_signal_observer_destroyed) {
 
 VE_TEST(loop_signal_sender_destroyed) {
     EventLoop loop("test", 1);
-    loop.start();
 
     auto* sender = new Object("sender");
     Object observer("observer");
@@ -301,17 +300,12 @@ VE_TEST(loop_signal_sender_destroyed) {
     std::atomic<int> val{0};
     sender->connect<1>(&observer, [&]() { val.store(1); }, LoopRef(loop));
 
+    // queue task while loop is stopped, then destroy sender before starting
     sender->trigger<1>();
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    VE_ASSERT_EQ(val.load(), 1);
+    delete sender;
 
-    // trigger, then immediately destroy sender before loop can execute
-    val.store(0);
-    sender->trigger<1>();
-    delete sender;  // sender dead, posted task should be discarded
+    loop.start();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    VE_ASSERT_EQ(val.load(), 0);
-
+    VE_ASSERT_EQ(val.load(), 0);  // task discarded: sender_alive is false
     loop.stop();
 }

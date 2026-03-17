@@ -109,9 +109,8 @@ void loop::post(Alive token, Task task)
 void loop::post(Alive token, void* ctx, Task task)
 {
     main().post(std::move(token), [ctx, task = std::move(task)]() {
-        void* prev = setContext(ctx);
+        ContextGuard _(ctx);
         task();
-        setContext(prev);
     });
 }
 

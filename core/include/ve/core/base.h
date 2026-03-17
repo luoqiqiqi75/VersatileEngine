@@ -647,8 +647,18 @@ using Dict = OrderedHashMap<std::string, V>;
 // execution support
 using Task = std::function<void()>;
 
-/// Shared alive flag — set to false in Object destructor.
-/// Loop checks before executing a posted task; if false the task is silently discarded.
-using Alive = std::shared_ptr<std::atomic<bool>>;
+/// Lightweight lifetime token.
+/// Default-constructed (null) means "no tracking — always alive".
+/// Use Alive::create() to start tracking; .kill() on teardown; .dead() to check.
+struct Alive : std::shared_ptr<std::atomic<bool>>
+{
+    using shared_ptr::shared_ptr;
+    Alive() = default;
+    Alive(shared_ptr p) : shared_ptr(std::move(p)) {}
+
+    static Alive create() { return Alive(std::make_shared<std::atomic<bool>>(true)); }
+    bool dead() const { return *this && !get()->load(std::memory_order_acquire); }
+    void kill()       { if (*this) get()->store(false, std::memory_order_release); }
+};
 
 }

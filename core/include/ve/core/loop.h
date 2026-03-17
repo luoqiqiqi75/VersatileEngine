@@ -78,18 +78,15 @@ public:
         , _alive(loop.alive()) {}
 
     void post(Task task) const {
-        if (!_post) return;
-        if (_alive && !_alive->load(std::memory_order_acquire)) return;
+        if (!_post || _alive.dead()) return;
         _post(std::move(task));
     }
 
     void post(Alive token, Task task) const {
-        if (!_post) return;
-        if (_alive && !_alive->load(std::memory_order_acquire)) return;
+        if (!_post || _alive.dead()) return;
         if (!token) { _post(std::move(task)); return; }
         _post([token = std::move(token), task = std::move(task)]() {
-            if (token->load(std::memory_order_acquire))
-                task();
+            if (!token.dead()) task();
         });
     }
 
@@ -121,14 +118,14 @@ class Loop
 
     Context*    _ctx;
     std::string _name;
-    Alive  _alive = std::make_shared<std::atomic<bool>>(true);
+    Alive  _alive = Alive::create();
 
 public:
     explicit Loop(const std::string& name = "", int threads = 1)
         : _ctx(Traits::create(threads)), _name(name) {}
 
     ~Loop() {
-        _alive->store(false, std::memory_order_release);
+        _alive.kill();
         if (_ctx) { Traits::destroy(_ctx); _ctx = nullptr; }
     }
 
@@ -139,8 +136,7 @@ public:
     void post(Alive token, Task task) {
         if (!token) { post(std::move(task)); return; }
         Traits::post(_ctx, [token = std::move(token), task = std::move(task)]() {
-            if (token->load(std::memory_order_acquire))
-                task();
+            if (!token.dead()) task();
         });
     }
     bool start()                { return Traits::start(_ctx); }
@@ -219,6 +215,14 @@ VE_API void* context();
 
 /// Sets loop context, returns previous value. For internal / Loop-backend use.
 VE_API void* setContext(void* ctx);
+
+struct ContextGuard {
+    void* prev;
+    ContextGuard(void* ctx) : prev(setContext(ctx)) {}
+    ~ContextGuard() { setContext(prev); }
+    ContextGuard(const ContextGuard&) = delete;
+    ContextGuard& operator=(const ContextGuard&) = delete;
+};
 
 } // namespace loop
 

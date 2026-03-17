@@ -7,7 +7,7 @@ struct Object::Private
 {
     std::string name;
     mutable MutexT mtx;
-    Alive alive = std::make_shared<std::atomic<bool>>(true);
+    Alive alive = Alive::create();
 
     struct Connection {
         Object*    observer;
@@ -47,7 +47,7 @@ Object::Object(const std::string& name) : _p(std::make_unique<Private>()) { _p->
 
 Object::~Object()
 {
-    _p->alive->store(false, std::memory_order_release);
+    _p->alive.kill();
     trigger(OBJECT_DELETED, Var());
     LockT lk(_p->mtx);
     _p->connections.clear();
@@ -109,22 +109,27 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
     }
 
     auto sender_alive = _p->alive;
+    void* ctx = static_cast<void*>(this);
     bool has_dead = false;
+    bool check_sender = (signal != OBJECT_DELETED);
 
     for (auto& d : callbacks) {
-        if (d.alive && !d.alive->load(std::memory_order_acquire)) {
+        if (d.alive.dead()) {
             has_dead = true;
             continue;
         }
         if (d.loop) {
-            void* ctx = loop::context();
-            d.loop.post([sender_alive, action = std::move(d.action), data, ctx]() {
-                if (!sender_alive->load(std::memory_order_acquire)) return;
-                void* prev = loop::setContext(ctx);
-                action(data);
-                loop::setContext(prev);
-            });
+            if (check_sender) {
+                d.loop.post([sender_alive, ctx, action = std::move(d.action), data]() {
+                    if (sender_alive.dead()) return;
+                    loop::ContextGuard _(ctx);
+                    action(data);
+                });
+            } else {
+                d.loop.post([action = std::move(d.action), data]() { action(data); });
+            }
         } else {
+            loop::ContextGuard _(ctx);
             d.action(data);
         }
     }
@@ -136,7 +141,7 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
             auto& vec = it->second;
             vec.erase(std::remove_if(vec.begin(), vec.end(),
                 [](const Private::Connection& c) {
-                    return c.alive && !c.alive->load(std::memory_order_acquire);
+                    return c.alive.dead();
                 }), vec.end());
         }
     }
