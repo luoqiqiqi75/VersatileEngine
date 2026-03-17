@@ -775,3 +775,98 @@ VE_TEST(node_bench_lifecycle_wide_tree) {
     }
     BENCH_END("lifecycle: build+destroy 100k-wide tree x10");
 }
+
+// ============================================================================
+// Benchmarks — Silent mode (signal OFF, fair comparison with MObj quiet)
+// ============================================================================
+
+VE_TEST(node_bench_silent_insert_100k_named) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("n" + std::to_string(i));
+    BENCH_END("silent: insert 100k named");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_silent_insert_100k_anon) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("");
+    BENCH_END("silent: insert 100k anon");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_silent_clear_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    root.clear();
+    BENCH_END("silent: clear 100k");
+    VE_ASSERT_EQ(root.count(), 0);
+}
+
+VE_TEST(node_bench_silent_lifecycle_100k) {
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep) {
+        Node root("root");
+        root.setSilent(true);
+        for (int i = 0; i < 100000; ++i)
+            root.append("n" + std::to_string(i));
+    }
+    BENCH_END("silent: lifecycle 100k x10");
+}
+
+// ============================================================================
+// Benchmarks — indexOf with guess
+// ============================================================================
+
+VE_TEST(node_bench_indexOf_guess) {
+    Node root("root");
+    root.setSilent(true);
+    Vector<Node*> nodes;
+    for (int i = 0; i < 1000; ++i)
+        nodes.push_back(root.append(""));
+
+    // with guess (exact hit)
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 100; ++rep)
+        for (int i = 0; i < 1000; ++i)
+            (void)root.indexOf(nodes[i], i);
+    BENCH_END("indexOf(guess=exact) 1k anon x100");
+}
+
+VE_TEST(node_bench_indexOf_guess_offset) {
+    Node root("root");
+    root.setSilent(true);
+    Vector<Node*> nodes;
+    for (int i = 0; i < 1000; ++i)
+        nodes.push_back(root.append(""));
+
+    // with guess (off by ~5)
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 100; ++rep)
+        for (int i = 0; i < 1000; ++i)
+            (void)root.indexOf(nodes[i], std::max(0, i - 5));
+    BENCH_END("indexOf(guess=off5) 1k anon x100");
+}
+
+VE_TEST(node_bench_indexOf_no_guess) {
+    Node root("root");
+    root.setSilent(true);
+    Vector<Node*> nodes;
+    for (int i = 0; i < 1000; ++i)
+        nodes.push_back(root.append(""));
+
+    // no guess (baseline)
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 100; ++rep)
+        for (int i = 0; i < 1000; ++i)
+            (void)root.indexOf(nodes[i]);
+    BENCH_END("indexOf(no guess) 1k anon x100");
+}

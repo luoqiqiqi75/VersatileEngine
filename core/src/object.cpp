@@ -76,6 +76,13 @@ Object::~Object()
 const std::string& Object::name() const { return _p->name; }
 std::recursive_mutex& Object::mutex() const { return _p->mtx; }
 
+bool Object::hasConnection(int signal)
+{
+    LockT lk(_p->mtx);
+    auto it = _p->connections.find(signal);
+    return it != _p->connections.end() && !it->second.empty();
+}
+
 bool Object::hasConnection(int signal, Object* observer)
 {
     LockT lk(_p->mtx);
@@ -142,6 +149,9 @@ void Object::disconnect(Object* observer)
 
 void Object::trigger(int signal, const Var& data /*= {}*/)
 {
+    // Silent: suppress all signals except OBJECT_DELETED (cleanup must always fire)
+    if (signal != OBJECT_DELETED && isSilent()) return;
+
     // Phase 1: copy (action + loop) under lock
     struct Dispatch { ActionT action; LoopRef loop; };
     Vector<Dispatch> callbacks;

@@ -26,25 +26,25 @@ VE_TEST(object_connect_trigger) {
     Object src("src");
     Object obs("obs");
     int count = 0;
-    src.connect(1, &obs, [&](const Var&) { count++; });
-    src.trigger(1);
+    src.connect<1>(&obs, [&](const Var&) { count++; });
+    src.trigger<1>();
     VE_ASSERT_EQ(count, 1);
-    src.trigger(1);
+    src.trigger<1>();
     VE_ASSERT_EQ(count, 2);
 }
 
 VE_TEST(object_trigger_no_connection) {
     Object src;
-    src.trigger(999);  // should not crash
+    src.trigger<999>();  // should not crash
 }
 
 VE_TEST(object_multiple_observers) {
     Object src;
     Object obs1("o1"), obs2("o2");
     int c1 = 0, c2 = 0;
-    src.connect(1, &obs1, [&](const Var&) { c1++; });
-    src.connect(1, &obs2, [&](const Var&) { c2++; });
-    src.trigger(1);
+    src.connect<1>(&obs1, [&](const Var&) { c1++; });
+    src.connect<1>(&obs2, [&](const Var&) { c2++; });
+    src.trigger<1>();
     VE_ASSERT_EQ(c1, 1);
     VE_ASSERT_EQ(c2, 1);
 }
@@ -53,9 +53,9 @@ VE_TEST(object_disconnect_signal_observer) {
     Object src;
     Object obs;
     int count = 0;
-    src.connect(1, &obs, [&](const Var&) { count++; });
-    src.disconnect(1, &obs);
-    src.trigger(1);
+    src.connect<1>(&obs, [&](const Var&) { count++; });
+    src.disconnect<1>(&obs);
+    src.trigger<1>();
     VE_ASSERT_EQ(count, 0);
 }
 
@@ -63,11 +63,11 @@ VE_TEST(object_disconnect_all_from_observer) {
     Object src;
     Object obs;
     int c1 = 0, c2 = 0;
-    src.connect(1, &obs, [&](const Var&) { c1++; });
-    src.connect(2, &obs, [&](const Var&) { c2++; });
+    src.connect<1>(&obs, [&](const Var&) { c1++; });
+    src.connect<2>(&obs, [&](const Var&) { c2++; });
     src.disconnect(&obs);
-    src.trigger(1);
-    src.trigger(2);
+    src.trigger<1>();
+    src.trigger<2>();
     VE_ASSERT_EQ(c1, 0);
     VE_ASSERT_EQ(c2, 0);
 }
@@ -75,11 +75,21 @@ VE_TEST(object_disconnect_all_from_observer) {
 VE_TEST(object_hasConnection) {
     Object src;
     Object obs;
-    VE_ASSERT(!src.hasConnection(1, &obs));
-    src.connect(1, &obs, [](const Var&) {});
-    VE_ASSERT(src.hasConnection(1, &obs));
-    src.disconnect(1, &obs);
-    VE_ASSERT(!src.hasConnection(1, &obs));
+    VE_ASSERT(!src.hasConnection<1>(&obs));
+    src.connect<1>(&obs, [](const Var&) {});
+    VE_ASSERT(src.hasConnection<1>(&obs));
+    src.disconnect<1>(&obs);
+    VE_ASSERT(!src.hasConnection<1>(&obs));
+}
+
+VE_TEST(object_hasConnection_any) {
+    Object src;
+    Object obs;
+    VE_ASSERT(!src.hasConnection<1>());
+    src.connect<1>(&obs, [](const Var&) {});
+    VE_ASSERT(src.hasConnection<1>());
+    src.disconnect<1>(&obs);
+    VE_ASSERT(!src.hasConnection<1>());
 }
 
 VE_TEST(object_deleted_signal) {
@@ -87,7 +97,7 @@ VE_TEST(object_deleted_signal) {
     Object obs;
     {
         Object src("temp");
-        src.connect(Object::OBJECT_DELETED, &obs, [&](const Var&) { count++; });
+        src.connect<Object::OBJECT_DELETED>(&obs, [&](const Var&) { count++; });
     }
     // src destroyed — OBJECT_DELETED should have fired
     VE_ASSERT_EQ(count, 1);
@@ -114,11 +124,11 @@ VE_TEST(object_thread_concurrent_trigger) {
     Object obs("obs");
     std::atomic<int> count{0};
 
-    src.connect(1, &obs, [&](const Var&) { count.fetch_add(1, std::memory_order_relaxed); });
+    src.connect<1>(&obs, [&](const Var&) { count.fetch_add(1, std::memory_order_relaxed); });
 
     std::vector<std::thread> threads;
     for (int t = 0; t < 4; ++t)
-        threads.emplace_back([&] { for (int i = 0; i < 500; ++i) src.trigger(1); });
+        threads.emplace_back([&] { for (int i = 0; i < 500; ++i) src.trigger<1>(); });
     for (auto& th : threads) th.join();
 
     VE_ASSERT_EQ(count.load(), 2000);
@@ -133,9 +143,9 @@ VE_TEST(object_thread_connect_disconnect) {
     auto worker = [&](int idx) {
         while (!go.load()) {}
         for (int i = 0; i < 200; ++i) {
-            src.connect(1, obs[idx], [](const Var&) {});
-            src.trigger(1);
-            src.disconnect(1, obs[idx]);
+            src.connect<1>(obs[idx], [](const Var&) {});
+            src.trigger<1>();
+            src.disconnect<1>(obs[idx]);
         }
     };
 

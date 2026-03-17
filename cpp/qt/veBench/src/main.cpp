@@ -612,6 +612,98 @@ static void bench_childAt_key()
 }
 
 // ============================================================================
+// Benchmarks — Signal enabled (fair comparison with ve::Node)
+// ============================================================================
+
+// ve::Node always triggers signals on insert/remove/clear.
+// These benchmarks run with quiet(false) to match that behavior.
+
+static void bench_signal_insert_100k_named()
+{
+    ModuleObject root("root");
+    // quiet(false) — default, signals enabled
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "n" + QString::number(i));
+    BENCH_END("signal ON: insert 100k named");
+
+    ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+static void bench_signal_insert_100k_anon()
+{
+    ModuleObject root("root");
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "");
+    BENCH_END("signal ON: insert 100k anon (UUID)");
+
+    ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+static void bench_signal_clear_100k()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+    for (int i = 0; i < 100000; ++i) root.append(&root, "");
+    root.quiet(false);
+
+    BENCH_BEGIN;
+    root.clear(&root);
+    BENCH_END("signal ON: clear 100k");
+
+    ASSERT_EQ(root.cmobjCount(), 0);
+}
+
+static void bench_signal_lifecycle_100k()
+{
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep) {
+        ModuleObject root("root");
+        // signals enabled
+        for (int i = 0; i < 100000; ++i)
+            root.append(&root, "n" + QString::number(i));
+        root.clear(&root);
+    }
+    BENCH_END("signal ON: lifecycle 100k x10");
+}
+
+// ============================================================================
+// Benchmarks — Remove (mirrors ve::Node remove benchmarks)
+// ============================================================================
+
+static void bench_remove_100k_from_back()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+    for (int i = 0; i < 100000; ++i) root.append(&root, "");
+
+    BENCH_BEGIN;
+    while (root.cmobjCount() > 0) {
+        auto* last = root.cmobj(root.cmobjCount() - 1);
+        root.remove(&root, last);
+    }
+    BENCH_END("remove 100k from back (one by one)");
+
+    ASSERT_EQ(root.cmobjCount(), 0);
+}
+
+static void bench_remove_100k_from_front()
+{
+    ModuleObject root("root");
+    root.quiet(true);
+    for (int i = 0; i < 100000; ++i) root.append(&root, "");
+
+    BENCH_BEGIN;
+    while (root.cmobjCount() > 0) root.remove(&root, root.first());
+    BENCH_END("remove 100k from front (one by one)");
+
+    ASSERT_EQ(root.cmobjCount(), 0);
+}
+
+// ============================================================================
 // XML serialization benchmarks (ModuleObject's own XML format)
 // ============================================================================
 
@@ -790,6 +882,20 @@ int main(int argc, char *argv[])
     RUN_TEST(bench_rname);
     RUN_TEST(bench_childAt_key);
     RUN_TEST(bench_lifecycle_100k);
+
+    // --- Signal enabled (fair comparison) ---
+    qDebug() << "";
+    qDebug() << "==================== Signal enabled ====================";
+    RUN_TEST(bench_signal_insert_100k_named);
+    RUN_TEST(bench_signal_insert_100k_anon);
+    RUN_TEST(bench_signal_clear_100k);
+    RUN_TEST(bench_signal_lifecycle_100k);
+
+    // --- Remove ---
+    qDebug() << "";
+    qDebug() << "==================== Remove ====================";
+    RUN_TEST(bench_remove_100k_from_back);
+    RUN_TEST(bench_remove_100k_from_front);
 
     // --- XML serialization ---
     qDebug() << "";

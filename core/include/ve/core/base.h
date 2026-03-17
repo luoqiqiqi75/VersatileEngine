@@ -356,6 +356,13 @@ using FIfConvertible = std::enable_if_t<std::is_convertible_v<Func1, Func2> && s
 
 } // namespace basic
 
+namespace flags {
+
+inline bool get(int flags, int f) { return (flags & f) == f; }
+inline int set(int& flags, int f, bool on_off) { return flags = on_off ? flags | f : flags & ~f; }
+
+}
+
 // --- Container mixin: inherits constructors + adds converting ctors ---
 #define VE_INHERIT_CONSTRUCTOR(CONSTRUCTOR, CLASS, ...) \
 public: \

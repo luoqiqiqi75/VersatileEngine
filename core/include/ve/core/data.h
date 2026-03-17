@@ -15,13 +15,6 @@
 
 namespace ve {
 
-namespace flags {
-
-inline bool get(int flags, int f) { return (flags & f) == f; }
-inline int set(int& flags, int f, bool on_off) { return flags = on_off ? flags | f : flags & ~f; }
-
-}
-
 enum DataSignal : int {
     DATA_ABOUT_TO_CHANGE    = 0xff10,
     DATA_CHANGED            = 0xff1f
@@ -217,10 +210,10 @@ template<typename T> inline typename DataSerializeHelper<T>::IsDictT toYaml(cons
 ///
 
 #define VE_DATA_UPDATE(...) \
-    listener()->trigger(DATA_ABOUT_TO_CHANGE); \
+    listener()->trigger<DATA_ABOUT_TO_CHANGE>(); \
     if (!flag<CHANGEABLE>()) return false; \
     __VA_ARGS__; \
-    listener()->trigger(DATA_CHANGED); \
+    listener()->trigger<DATA_CHANGED>(); \
     return true
 
 template<typename T>

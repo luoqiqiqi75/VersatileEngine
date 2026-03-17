@@ -19,7 +19,7 @@ VE_REGISTER_VERSION(ve.core, 3)
 // veTerminal (terminal widget + TCP server)
 #include "ve/qt/widget/terminal.h"
 #include "imol/logmanager.h"
-#include "ve/core/rescue.h"
+#include "ve/service/rescue.h"
 
 #include "ve/core/module.h"
 

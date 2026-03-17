@@ -1,6 +1,7 @@
 // node.cpp — ve::Node + ve::Schema
 #include "ve/core/node.h"
 #include "ve/core/var.h"
+#include <charconv>
 #include <string_view>
 
 #include "ve/core/log.h"
@@ -111,19 +112,39 @@ Node* Node::child(const std::string& name, int overlap) const
     return nullptr;
 }
 
-int Node::indexOf(const Node* child_node) const
+int Node::indexOf(const Node* child_node, int guess) const
 {
     if (!child_node || !_p->children) return -1;
     LockT lk(mutex());
-    if (child_node->name().empty()) { // global search, slow
-        for (int i = 0; i < _p->children->nodes.sizeAsInt(); ++i) {
-            if (_p->children->nodes.at(i) == child_node) return i;
-        }
-    } else { // search indicies
+
+    auto& nodes = _p->children->nodes;
+    const int sz = nodes.sizeAsInt();
+
+    if (!child_node->name().empty()) {
+        // named: search via indices map (fast)
         if (const auto* iv = _p->children->indices.ptr(child_node->name()); iv) {
             for (const int i : *iv)
-                if (_p->children->nodes.value(i, nullptr) == child_node) return i;
+                if (nodes.value(i, nullptr) == child_node) return i;
         }
+        return -1;
+    }
+
+    // anonymous: linear scan — use guess for bidirectional expansion
+    if (guess >= 0 && guess < sz) {
+        // check guess first
+        if (nodes.at(guess) == child_node) return guess;
+        // expand outward: guess-1, guess+1, guess-2, guess+2, ...
+        for (int d = 1; d < sz; ++d) {
+            int lo = guess - d;
+            int hi = guess + d;
+            if (lo >= 0 && nodes.at(lo) == child_node) return lo;
+            if (hi < sz && nodes.at(hi) == child_node) return hi;
+            if (lo < 0 && hi >= sz) break; // both out of range
+        }
+    } else {
+        // no guess: plain forward scan
+        for (int i = 0; i < sz; ++i)
+            if (nodes.at(i) == child_node) return i;
     }
     return -1;
 }
@@ -205,25 +226,36 @@ bool Node::insert(Node* child, int index)
             return false;
         }
 
+        auto& nm = child->name();
+        int oi = -1; // overlap index within same-name group (-1 = sole)
+
         if (index == sz) {
             // append — fast path, no shift needed
-            if (!child->name().empty()) ch->indices[child->name()].push_back(sz);
             ch->nodes.push_back(child);
+            if (!nm.empty()) {
+                auto& iv = ch->indices[nm];
+                iv.push_back(sz);
+                if (iv.sizeAsInt() > 1) oi = iv.sizeAsInt() - 1;
+            }
         } else {
             // insert at position — shift existing indices
             ch->shift(index, +1);
             ch->nodes.insert(ch->nodes.begin() + index, child);
-            if (!child->name().empty()) {
-                auto& iv = ch->indices[child->name()];
+            if (!nm.empty()) {
+                auto& iv = ch->indices[nm];
                 auto it = std::lower_bound(iv.begin(), iv.end(), index);
+                oi = static_cast<int>(it - iv.begin());
                 iv.insert(it, index);
+                if (iv.sizeAsInt() <= 1) oi = -1;
             }
         }
         child->_p->parent = this;
-        key = keyOf(child);
+
+        // build key (index already known — no indexOf needed)
+        key = toKey(nm, nm.empty() ? index : oi);
     }
 
-    trigger(NODE_CHILD_ADDED, Var(Var::ListV{ Var(key), Var(1) }));
+    trigger<NODE_CHILD_ADDED>(key, 0);
     activate(NODE_CHILD_ADDED, this);
     return true;
 }
@@ -269,6 +301,7 @@ bool Node::insert(const Nodes& children, int index)
         ch->nodes.insert(ch->nodes.begin() + index, children.begin(), children.end());
 
         // update indices + parent for each child in the batch
+        int firstOI = -1; // overlap index for first child
         for (int i = 0; i < batch; ++i) {
             auto* c  = children[i];
             int   gi = index + i;
@@ -276,14 +309,18 @@ bool Node::insert(const Nodes& children, int index)
             if (!c->name().empty()) {
                 auto& iv = ch->indices[c->name()];
                 auto  it = std::lower_bound(iv.begin(), iv.end(), gi);
+                if (i == 0) firstOI = static_cast<int>(it - iv.begin());
                 iv.insert(it, gi);
+                if (i == 0 && iv.sizeAsInt() <= 1) firstOI = -1;
             }
         }
 
-        firstKey = keyOf(children[0]);
+        // build firstKey (index already known)
+        auto& nm = children[0]->name();
+        firstKey = toKey(nm, nm.empty() ? index : firstOI);
     }
 
-    trigger(NODE_CHILD_ADDED, Var(Var::ListV{ Var(firstKey), Var(batch) }));
+    trigger<NODE_CHILD_ADDED>(firstKey, batch - 1);
     activate(NODE_CHILD_ADDED, this);
     return true;
 }
@@ -313,32 +350,45 @@ Node* Node::take(Node* child)
     {
         LockT lk(mutex());
 
-        int pos = indexOf(child);   // recursive mutex — re-locks OK
-        if (pos < 0) return nullptr;
-
-        key = keyOf(child);  // save key before removal
-
-        // remove pos from indices[name]
         auto& nm = child->name();
-        auto it = _p->children->indices.find(nm);
-        if (it != _p->children->indices.end()) {
-            auto& ivec = it->second;
-            for (uint32_t j = 0; j < ivec.size(); ++j) {
-                if (ivec[j] == pos) { ivec.erase(j); break; }
+        int pos = -1;
+        int oi  = -1; // overlap index (-1 = sole)
+
+        if (nm.empty()) {
+            // anonymous: linear scan (only way without extra indexing)
+            for (int i = 0; i < _p->children->nodes.sizeAsInt(); ++i) {
+                if (_p->children->nodes.at(i) == child) { pos = i; break; }
             }
-            if (ivec.empty()) _p->children->indices.erase(it);
+        } else {
+            // named: one-pass → find pos + overlap index + erase from indices
+            auto it = _p->children->indices.find(nm);
+            if (it != _p->children->indices.end()) {
+                auto& ivec = it->second;
+                for (uint32_t j = 0; j < ivec.size(); ++j) {
+                    if (_p->children->nodes.value(ivec[j], nullptr) == child) {
+                        pos = ivec[j];
+                        if (ivec.sizeAsInt() > 1) oi = static_cast<int>(j);
+                        ivec.erase(j);
+                        break;
+                    }
+                }
+                if (ivec.empty()) _p->children->indices.erase(it);
+            }
         }
 
-        // remove from flat vector
-        _p->children->nodes.erase(_p->children->nodes.begin() + pos);
+        if (pos < 0) return nullptr;
 
-        // shift remaining indices > pos by -1
+        // build key before removal (pos/oi already known)
+        key = nm.empty() ? toKey("", pos) : toKey(nm, oi);
+
+        // remove from flat vector + shift remaining indices
+        _p->children->nodes.erase(_p->children->nodes.begin() + pos);
         _p->children->shift(pos, -1);
 
         child->_p->parent = nullptr;
     }
 
-    trigger(NODE_CHILD_REMOVED, Var(Var::ListV{ Var(key), Var(1) }));
+    trigger<NODE_CHILD_REMOVED>(key, 0);
     activate(NODE_CHILD_REMOVED, this);
     return child;
 }
@@ -370,7 +420,7 @@ void Node::clear(bool auto_delete)
         _p->clearChildren(auto_delete);
     }
     if (cnt > 0) {
-        trigger(NODE_CHILD_REMOVED, Var(Var::ListV{ Var(std::string("#0")), Var(cnt) }));
+        trigger<NODE_CHILD_REMOVED>(std::string("#0"), cnt - 1);
         activate(NODE_CHILD_REMOVED, this);
     }
 }
@@ -379,95 +429,97 @@ void Node::clear(bool auto_delete)
 // Node — key helpers
 // ============================================================================
 
-// parse key: "name#N" → (name,N), "#N" → global, "name" → (name,0)
-static bool _parse(std::string_view seg, std::string& name, int& idx, bool& global)
-{
-    global = false; idx = 0;
-    if (seg.empty()) return false;
-
-    auto pos = seg.rfind('#');
-    if (pos == std::string_view::npos) { name.assign(seg.data(), seg.size()); return true; }
-
-    auto ip = seg.substr(pos + 1);
-    if (ip.empty()) { name.assign(seg.data(), seg.size()); return true; }
-
-    int val = 0;
-    for (char c : ip) {
-        if (c < '0' || c > '9') { name.assign(seg.data(), seg.size()); return true; }
-        val = val * 10 + (c - '0');
-    }
-    idx = val;
-
-    auto kp = seg.substr(0, pos);
-    if (kp.empty()) global = true;
-    else name.assign(kp.data(), kp.size());
-    return true;
-}
-
 // ============================================================================
 // Node — key
 // ============================================================================
 
-bool Node::isKey(const std::string& key)
+// Core parser: "name#N"→(name,N)  "#N"→("",N)  "name"→(name,-1)  ""→false
+bool Node::parseKey(std::string_view key, std::string_view& name, int& index)
 {
-    if (key.empty()) return false;
-    if (key.find('/') != std::string::npos) return false;
+    index = -1;
+    if (key.empty()) { name = {}; return false; }
 
     auto pos = key.rfind('#');
-    if (pos == std::string::npos) return true;   // plain name
+    if (pos == std::string_view::npos) { name = key; return true; } // plain name
 
-    // must have digits after #
-    if (pos + 1 >= key.size()) return false;
-    for (std::size_t i = pos + 1; i < key.size(); ++i)
-        if (key[i] < '0' || key[i] > '9') return false;
+    // parse digits after #
+    auto dp = key.substr(pos + 1);
+    if (dp.empty()) { name = key; return true; }  // trailing '#' with no digits — treat whole as name
 
-    return true;   // name#N  or  #N
+    int val = 0;
+    for (char c : dp) {
+        if (c < '0' || c > '9') { name = key; return true; }  // non-digit — treat whole as name
+        val = val * 10 + (c - '0');
+    }
+
+    index = val;
+    name  = key.substr(0, pos);   // may be empty for "#N" (global)
+    return true;
 }
 
-std::string Node::asKey(const std::string& name, int index)
+std::string Node::toKey(std::string_view name, int index)
 {
-    return name + "#" + std::to_string(index);
+    // inverse of parseKey: (name,-1)→"name"  ("",N)→"#N"  (name,N)→"name#N"
+    char buf[16];
+    if (name.empty()) {
+        auto [p, _] = std::to_chars(buf, buf + sizeof(buf), index);
+        std::string r;
+        r.reserve(1 + static_cast<size_t>(p - buf));
+        r.push_back('#');
+        r.append(buf, p);
+        return r;
+    }
+    if (index < 0) return std::string(name);
+    auto [p, _] = std::to_chars(buf, buf + sizeof(buf), index);
+    std::string r;
+    r.reserve(name.size() + 1 + static_cast<size_t>(p - buf));
+    r.append(name);
+    r.push_back('#');
+    r.append(buf, p);
+    return r;
+}
+
+bool Node::isKey(const std::string& key)
+{
+    if (key.find('/') != std::string::npos) return false;
+    std::string_view nm; int idx;
+    if (!parseKey(key, nm, idx)) return false;
+    // key with '#' must have been successfully parsed (idx >= 0)
+    return key.find('#') == std::string::npos || idx >= 0;
 }
 
 int Node::keyIndex(const std::string& key)
 {
-    auto pos = key.rfind('#');
-    if (pos == std::string::npos || pos + 1 >= key.size()) return -1;
-
-    int val = 0;
-    for (std::size_t i = pos + 1; i < key.size(); ++i) {
-        if (key[i] < '0' || key[i] > '9') return -1;
-        val = val * 10 + (key[i] - '0');
-    }
-    return val;
+    std::string_view nm; int idx;
+    return parseKey(key, nm, idx) ? idx : -1;
 }
 
-std::string Node::keyOf(const Node* child) const
+std::string Node::keyOf(const Node* child, int guess) const
 {
     if (!child || !_p->children) return "";
     LockT lk(mutex());
 
-    int gi = indexOf(child);
+    int gi = indexOf(child, guess);
     if (gi < 0) return "";
 
     auto& nm = child->name();
-    if (nm.empty()) return "#" + std::to_string(gi);
+    if (nm.empty()) return toKey("", gi);
 
     auto* iv = _p->children->indices.ptr(nm);
     if (!iv || iv->sizeAsInt() <= 1) return nm;
 
-    // find overlap index within the same-name group
     for (uint32_t k = 0; k < iv->size(); ++k)
-        if ((*iv)[k] == gi) return nm + "#" + std::to_string(k);
+        if ((*iv)[k] == gi) return toKey(nm, static_cast<int>(k));
 
     return nm;
 }
 
 Node* Node::childAt(const std::string& key) const
 {
-    std::string nm; int idx; bool gl;
-    if (!_parse(key, nm, idx, gl)) return nullptr;
-    return gl ? child(idx) : child(nm, idx);
+    std::string_view nm; int idx;
+    if (!parseKey(key, nm, idx)) return nullptr;
+    if (nm.empty() && idx >= 0) return child(idx);       // global #N
+    return child(std::string(nm), idx < 0 ? 0 : idx);
 }
 
 // ============================================================================
@@ -518,9 +570,11 @@ static Node* _walk(std::string_view sv, const Node* start, StepFn step)
         sv = (slash == std::string_view::npos) ? std::string_view{} : sv.substr(slash + 1);
         if (seg.empty()) continue;
 
-        std::string nm; int idx; bool gl;
-        if (!_parse(seg, nm, idx, gl)) return nullptr;
-        cur = step(const_cast<Node*>(cur), nm, idx, gl);
+        std::string_view nmv; int idx;
+        if (!Node::parseKey(seg, nmv, idx)) return nullptr;
+        bool gl = nmv.empty() && idx >= 0;
+        std::string nm(nmv);
+        cur = step(const_cast<Node*>(cur), nm, gl ? idx : std::max(idx, 0), gl);
     }
     return const_cast<Node*>(cur);
 }
@@ -580,14 +634,18 @@ bool Node::erase(const std::string& path, bool auto_delete)
 
 void Node::activate(int signal, Node* source)
 {
+    if (isSilent()) return;  // silent: suppress emission + stop bubbling
+
     // Trigger NODE_ACTIVATED on this node with (signal, source)
     Object::trigger(NODE_ACTIVATED, Var(Var::ListV{
         Var(signal), Var(static_cast<void*>(source))
     }));
 
-    // Bubble up to parent
-    if (auto* p = parent())
-        p->activate(signal, source);
+    // Bubble up to parent only if parent is watching
+    if (auto* p = parent()) {
+        if (p->isWatching())
+            p->activate(signal, source);
+    }
 }
 
 // ============================================================================

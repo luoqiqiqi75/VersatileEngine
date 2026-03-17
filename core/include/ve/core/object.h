@@ -16,6 +16,12 @@ constexpr const char* VE_UNDEFINED_OBJECT_NAME = "@undefined";
 
 namespace ve {
 
+struct ObjectData
+{
+protected:
+    int _flags = 0;
+};
+
 /**
 * @brief Object — minimal controllable entity with signal/slot
 *
@@ -35,7 +41,7 @@ namespace ve {
 *   connect<S>(obs, [](int a, string b) { ... })       → auto-unpack from Var
 *   connect<S>(obs, []() { ... })                      → ignore data
 */
-class VE_API Object
+class VE_API Object : public ObjectData
 {
     // --- internal: Var → typed args dispatch (uses basic::FnTraits) ---
     //
@@ -74,15 +80,23 @@ public:
     const std::string& name() const;
     MutexT& mutex() const;
 
-    enum Signal : SignalT {
+    enum ObjectSignal : SignalT {
         OBJECT_DELETED = 0xffff  // () — emitted in destructor, no data
     };
 
+    enum ObjectFlag : int {
+        SILENT = 0x01,  // suppress signal emission (except OBJECT_DELETED)
+    };
+
+    bool isSilent() const { return flags::get(_flags, SILENT); }
+    void setSilent(bool on) { flags::set(_flags, SILENT, on); }
+
+    bool hasConnection(SignalT signal);
     bool hasConnection(SignalT signal, Object* observer);
+    template<SignalT S> bool hasConnection() { return hasConnection(S); }
     template<SignalT S> bool hasConnection(Object* observer) { return hasConnection(S, observer); }
 
-    // --- connect ---
-    void connect(SignalT signal, Object* observer, const ActionT& action, LoopRef loop = {});
+    // --- connect (compile-time signal) ---
     template<SignalT S> void connect(Object* observer, const ActionT& action, LoopRef loop = {})
     { connect(S, observer, action, loop); }
 
@@ -114,21 +128,25 @@ public:
         }, loop);
     }
 
-    // --- trigger ---
-    void trigger(SignalT signal, const Var& data = {});
+    // --- trigger (compile-time signal, hasConnection check avoids Var construction) ---
 
     // 0-arg
-    template<SignalT S> void trigger()
-    { trigger(S); }
+    template<SignalT S> void trigger() {
+        if (isSilent() || !hasConnection(S)) return;
+        trigger(S);
+    }
 
     // 1-arg (implicit Var conversion)
     template<SignalT S, typename Arg>
-    void trigger(Arg&& arg)
-    { trigger(S, Var(std::forward<Arg>(arg))); }
+    void trigger(Arg&& arg) {
+        if (isSilent() || !hasConnection(S)) return;
+        trigger(S, Var(std::forward<Arg>(arg)));
+    }
 
     // 2+ args → pack into Var list
     template<SignalT S, typename A1, typename A2, typename... Rest>
     void trigger(A1&& a1, A2&& a2, Rest&&... rest) {
+        if (isSilent() || !hasConnection(S)) return;
         trigger(S, Var(Var::ListV{
             Var(std::forward<A1>(a1)),
             Var(std::forward<A2>(a2)),
@@ -140,6 +158,12 @@ public:
     void disconnect(SignalT signal, Object* observer);
     void disconnect(Object* observer);
     template<SignalT S> void disconnect(Object* observer) { disconnect(S, observer); }
+
+protected:
+    // Runtime-signal connect/trigger — prefer compile-time template versions above.
+    // Protected so derived classes (e.g. Node::activate) can still use them directly.
+    void connect(SignalT signal, Object* observer, const ActionT& action, LoopRef loop = {});
+    void trigger(SignalT signal, const Var& data = {});
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

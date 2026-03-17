@@ -2,6 +2,7 @@
 #pragma once
 
 #include "factory.h"
+#include <string_view>
 
 namespace ve {
 
@@ -58,8 +59,8 @@ public:
     //   connect<S>(obs, [](string key) { ... })             — partial args OK
     //   connect<S>(obs, []() { ... })                       — just notification
     enum NodeSignal : SignalT {
-        NODE_CHILD_ADDED   = 0x0010,  // (string key, int count) — key of first added child, count of added
-        NODE_CHILD_REMOVED = 0x0011,  // (string key, int count) — key of removed child; clear: ("#0", size)
+        NODE_CHILD_ADDED   = 0x0010,  // (string key, int overlap) — key of first added, overlap count (0 = single)
+        NODE_CHILD_REMOVED = 0x0011,  // (string key, int overlap) — key of removed, overlap count; clear: ("#0", count-1)
         NODE_ACTIVATED     = 0x001f,  // (int signal, Node* source) — bubbles up the ancestor chain
     };
 
@@ -76,7 +77,7 @@ public:
     Node* child(int index) const;
     Node* child(const std::string& name, int overlap = 0) const;
 
-    int indexOf(const Node* child_node) const;
+    int indexOf(const Node* child_node, int guess = -1) const;
 
     bool has(int index) const { return child(index) != nullptr; }
     bool has(const std::string& name, int overlap = 0) const { return child(name, overlap) != nullptr; }
@@ -121,11 +122,14 @@ public:
     void  clear(bool auto_delete = true);
 
     // -- key (key = name | name#N | #N) ---
+    //  parseKey: "name" → (name,-1)  "name#N" → (name,N)  "#N" → ("",N)
+    //  toKey:    inverse of parseKey
+    static bool parseKey(std::string_view key, std::string_view& name, int& index);
+    static std::string toKey(std::string_view name, int index);
     static bool isKey(const std::string& key);
-    static std::string asKey(const std::string& name, int index);
-    static int keyIndex(const std::string& key);
+    static int  keyIndex(const std::string& key);
 
-    std::string keyOf(const Node* child) const;
+    std::string keyOf(const Node* child, int guess = -1) const;
 
     Node* childAt(const std::string& key) const;
 
@@ -173,7 +177,18 @@ public:
     Node*       ensure(const std::string& path);
     bool        erase(const std::string& path, bool auto_delete = true);
 
+    // --- flags (reuses Object::_flags, higher bits) ---
+    enum NodeFlag : int {
+        WATCHING = 0x02,  // participate in signal bubbling (receive NODE_ACTIVATED from descendants)
+    };
+
+    bool isWatching() const { return flags::get(_flags, WATCHING); }
+    void setWatching(bool on) { flags::set(_flags, WATCHING, on); }
+
     // --- activate (signal bubbling) ---
+    // Triggers NODE_ACTIVATED on this node, then bubbles up to each watching ancestor.
+    // SILENT on any node in the chain stops emission + bubbling at that node.
+    // WATCHING on parent controls whether the bubble continues upward.
     void activate(int signal, Node* source = nullptr);
 
     // --- debug ---

@@ -200,7 +200,7 @@ TypedData<void>* createTrigger(const std::string& key, Object* observer, const O
     auto d = createVoid(key, &ok);
     if (!ok) return nullptr;
     if (trigger_now) action(Var());
-    d->listener()->connect(DATA_CHANGED, observer ? observer : d->listener(), std::move(action));
+    d->listener()->connect<DATA_CHANGED>(observer ? observer : d->listener(), std::move(action));
     return d;
 }
 
