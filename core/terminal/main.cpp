@@ -771,19 +771,19 @@ int main()
 
         // ========== Flags ==========
         else if (cmd == "watch") {
-            g_cur->setWatching(true);
+            g_cur->watch(true);
             std::cout << "WATCHING = on\n";
         }
         else if (cmd == "unwatch") {
-            g_cur->setWatching(false);
+            g_cur->watch(false);
             std::cout << "WATCHING = off\n";
         }
         else if (cmd == "silent") {
-            g_cur->setSilent(true);
+            g_cur->silent(true);
             std::cout << "SILENT = on\n";
         }
         else if (cmd == "unsilent") {
-            g_cur->setSilent(false);
+            g_cur->silent(false);
             std::cout << "SILENT = off\n";
         }
 

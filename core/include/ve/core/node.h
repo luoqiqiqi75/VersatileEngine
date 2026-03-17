@@ -70,15 +70,18 @@ public:
     bool hasValue() const;
     const Var& value() const;
 
-    void set(const Var& v);
-    void set(Var&& v);
+    Node* set(const Var& v);
+    Node* set(Var&& v);
+
+    template<typename T>
+    Node* set(const std::string& path, T&& t) { return ensure(path)->set(std::forward<T>(t)); }
 
     template<typename T>
     T get(const T& def = T{}) const { return hasValue() ? value().to<T>(def) : def; }
 
     template<typename T>
-    T get(const std::string& child_path, const T& def = T{}) const {
-        auto* c = resolve(child_path);
+    T get(const std::string& path, const T& def = T{}) const {
+        auto* c = resolve(path);
         return c ? c->value().to<T>(def) : def;
     }
 
@@ -200,7 +203,10 @@ public:
     };
 
     bool isWatching() const { return flags::get(_flags, WATCHING); }
-    void setWatching(bool on) { flags::set(_flags, WATCHING, on); }
+    void watch(bool on) { flags::set(_flags, WATCHING, on); }
+
+    void watchAll(bool on);
+    void silentAll(bool on);
 
     // --- activate (signal bubbling) ---
     // Triggers NODE_ACTIVATED on this node, then bubbles up to each watching ancestor.

@@ -174,11 +174,11 @@ VE_TEST(node_signal_silent_suppresses_added) {
     Node root("root");
     int fired = 0;
     root.connect(Node::NODE_ADDED, &root, [&](const std::string&, int) { ++fired; });
-    root.setSilent(true);
+    root.silent(true);
     root.append("x");
     VE_ASSERT_EQ(fired, 0);  // signal suppressed
 
-    root.setSilent(false);
+    root.silent(false);
     root.append("y");
     VE_ASSERT_EQ(fired, 1);  // signal fires again
 }
@@ -188,12 +188,12 @@ VE_TEST(node_signal_silent_suppresses_removed) {
     auto* c = root.append("x");
     int fired = 0;
     root.connect(Node::NODE_REMOVED, &root, [&](const std::string&, int) { ++fired; });
-    root.setSilent(true);
+    root.silent(true);
     root.remove(c);
     VE_ASSERT_EQ(fired, 0);
 
     auto* c2 = root.append("y");
-    root.setSilent(false);
+    root.silent(false);
     root.remove(c2);
     VE_ASSERT_EQ(fired, 1);
 }
@@ -217,7 +217,7 @@ VE_TEST(node_signal_activate_fires_locally) {
 
 VE_TEST(node_signal_activate_bubbles_up) {
     Node root("root");
-    root.setWatching(true);
+    root.watch(true);
     auto* child = root.append("child");
 
     int root_sig = -1;
@@ -246,9 +246,9 @@ VE_TEST(node_signal_activate_not_watching_stops_bubble) {
 
 VE_TEST(node_signal_activate_silent_stops_bubble) {
     Node root("root");
-    root.setWatching(true);
+    root.watch(true);
     auto* child = root.append("child");
-    child->setSilent(true);
+    child->silent(true);
 
     int fired = 0;
     root.connect(Node::NODE_ACTIVATED, &root, [&](int, void*) { ++fired; });
@@ -259,11 +259,11 @@ VE_TEST(node_signal_activate_silent_stops_bubble) {
 
 VE_TEST(node_signal_activate_deep_chain) {
     Node root("root");
-    root.setWatching(true);
+    root.watch(true);
     auto* a = root.append("a");
-    a->setWatching(true);
+    a->watch(true);
     auto* b = a->append("b");
-    b->setWatching(true);
+    b->watch(true);
     auto* c = b->append("c");
 
     int root_count = 0;
@@ -286,7 +286,7 @@ VE_TEST(node_signal_activate_deep_chain) {
 
 VE_TEST(node_signal_insert_triggers_activate) {
     Node root("root");
-    root.setWatching(true);
+    root.watch(true);
 
     int activated = 0;
     root.connect(Node::NODE_ACTIVATED, &root, [&](int sig, void*) {
@@ -299,7 +299,7 @@ VE_TEST(node_signal_insert_triggers_activate) {
 
 VE_TEST(node_signal_remove_triggers_activate) {
     Node root("root");
-    root.setWatching(true);
+    root.watch(true);
     auto* c = root.append("test");
 
     int activated = 0;

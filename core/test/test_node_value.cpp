@@ -145,7 +145,7 @@ VE_TEST(node_signal_data_changed_update_no_fire) {
 
 VE_TEST(node_signal_data_changed_bubbles) {
     Node root("root");
-    root.setWatching(true);
+    root.watch(true);
     auto* child = root.append("child");
 
     int sig = -1;
@@ -164,11 +164,11 @@ VE_TEST(node_signal_data_changed_silent) {
     int fired = 0;
     n.connect(Node::NODE_CHANGED, &n, [&](const Var&, const Var&) { ++fired; });
 
-    n.setSilent(true);
+    n.silent(true);
     n.set(Var(1));
     VE_ASSERT_EQ(fired, 0);
 
-    n.setSilent(false);
+    n.silent(false);
     n.set(Var(2));
     VE_ASSERT_EQ(fired, 1);
 }

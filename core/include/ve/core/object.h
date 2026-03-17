@@ -89,7 +89,7 @@ public:
     };
 
     bool isSilent() const { return flags::get(_flags, SILENT); }
-    void setSilent(bool on) { flags::set(_flags, SILENT, on); }
+    void silent(bool on) { flags::set(_flags, SILENT, on); }
 
     bool hasConnection(SignalT signal);
     bool hasConnection(SignalT signal, Object* observer);

@@ -784,7 +784,7 @@ VE_TEST(node_bench_lifecycle_wide_tree) {
 
 VE_TEST(node_bench_silent_insert_100k_named) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append("n" + std::to_string(i));
@@ -794,7 +794,7 @@ VE_TEST(node_bench_silent_insert_100k_named) {
 
 VE_TEST(node_bench_silent_insert_100k_anon) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append("");
@@ -804,7 +804,7 @@ VE_TEST(node_bench_silent_insert_100k_anon) {
 
 VE_TEST(node_bench_silent_clear_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i) root.append("");
 
     BENCH_BEGIN;
@@ -817,7 +817,7 @@ VE_TEST(node_bench_silent_lifecycle_100k) {
     BENCH_BEGIN;
     for (int rep = 0; rep < 10; ++rep) {
         Node root("root");
-        root.setSilent(true);
+        root.silent(true);
         for (int i = 0; i < 100000; ++i)
             root.append("n" + std::to_string(i));
     }
@@ -830,7 +830,7 @@ VE_TEST(node_bench_silent_lifecycle_100k) {
 
 VE_TEST(node_bench_indexOf_guess) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     Vector<Node*> nodes;
     for (int i = 0; i < 1000; ++i)
         nodes.push_back(root.append(""));
@@ -845,7 +845,7 @@ VE_TEST(node_bench_indexOf_guess) {
 
 VE_TEST(node_bench_indexOf_guess_offset) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     Vector<Node*> nodes;
     for (int i = 0; i < 1000; ++i)
         nodes.push_back(root.append(""));
@@ -860,7 +860,7 @@ VE_TEST(node_bench_indexOf_guess_offset) {
 
 VE_TEST(node_bench_indexOf_no_guess) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     Vector<Node*> nodes;
     for (int i = 0; i < 1000; ++i)
         nodes.push_back(root.append(""));
@@ -881,7 +881,7 @@ VE_TEST(node_bench_indexOf_no_guess) {
 
 VE_TEST(node_bench_json_dict_10k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 10000; ++i) {
         auto* c = root.append("k" + std::to_string(i));
@@ -894,7 +894,7 @@ VE_TEST(node_bench_json_dict_10k) {
 
 VE_TEST(node_bench_json_dict_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i) {
         auto* c = root.append("k" + std::to_string(i));
@@ -906,7 +906,7 @@ VE_TEST(node_bench_json_dict_100k) {
 
 VE_TEST(node_bench_json_dict_str_10k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 10000; ++i) {
         auto* c = root.append("k" + std::to_string(i));
@@ -918,7 +918,7 @@ VE_TEST(node_bench_json_dict_str_10k) {
 
 VE_TEST(node_bench_json_dict_str_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i) {
         auto* c = root.append("k" + std::to_string(i));
@@ -932,7 +932,7 @@ VE_TEST(node_bench_json_dict_str_100k) {
 
 VE_TEST(node_bench_json_array_10k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 10000; ++i)
         root.append("")->set(Var(i));
@@ -943,7 +943,7 @@ VE_TEST(node_bench_json_array_10k) {
 
 VE_TEST(node_bench_json_array_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append("")->set(Var(i));
@@ -955,7 +955,7 @@ VE_TEST(node_bench_json_array_100k) {
 
 VE_TEST(node_bench_set_int_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i) root.append("");
 
     BENCH_BEGIN;
@@ -967,7 +967,7 @@ VE_TEST(node_bench_set_int_100k) {
 
 VE_TEST(node_bench_set_string_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i) root.append("");
 
     BENCH_BEGIN;
@@ -978,7 +978,7 @@ VE_TEST(node_bench_set_string_100k) {
 
 VE_TEST(node_bench_set_double_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i) root.append("");
 
     BENCH_BEGIN;
@@ -991,7 +991,7 @@ VE_TEST(node_bench_set_double_100k) {
 
 VE_TEST(node_bench_read_int_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i)
         root.append("")->set(Var(i));
 
@@ -1004,7 +1004,7 @@ VE_TEST(node_bench_read_int_100k) {
 
 VE_TEST(node_bench_read_string_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i)
         root.append("")->set(Var("val_" + std::to_string(i)));
 
@@ -1019,7 +1019,7 @@ VE_TEST(node_bench_read_string_100k) {
 
 VE_TEST(node_bench_update_int_100k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     for (int i = 0; i < 100000; ++i)
         root.append("")->set(Var(i));
 
@@ -1035,7 +1035,7 @@ VE_TEST(node_bench_update_int_100k) {
 
 VE_TEST(node_bench_json_aoo_1k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 1000; ++i) {
         auto* obj = root.append("");
@@ -1051,7 +1051,7 @@ VE_TEST(node_bench_json_aoo_1k) {
 
 VE_TEST(node_bench_json_aoo_10k) {
     Node root("root");
-    root.setSilent(true);
+    root.silent(true);
     BENCH_BEGIN;
     for (int i = 0; i < 10000; ++i) {
         auto* obj = root.append("");
@@ -1071,7 +1071,7 @@ VE_TEST(node_bench_json_config_100g) {
     BENCH_BEGIN;
     for (int rep = 0; rep < 10; ++rep) {
         Node root("root");
-        root.setSilent(true);
+        root.silent(true);
         for (int g = 0; g < 100; ++g) {
             auto* group = root.append("g" + std::to_string(g));
             group->append("name")->set(Var("Group " + std::to_string(g)));
@@ -1091,7 +1091,7 @@ VE_TEST(node_bench_json_lifecycle_dict_10k) {
     BENCH_BEGIN;
     for (int rep = 0; rep < 10; ++rep) {
         Node root("root");
-        root.setSilent(true);
+        root.silent(true);
         for (int i = 0; i < 10000; ++i)
             root.append("k" + std::to_string(i))->set(Var("value_" + std::to_string(i)));
         for (auto* n : root) (void)n->get<std::string>();
@@ -1103,7 +1103,7 @@ VE_TEST(node_bench_json_lifecycle_aoo_1k) {
     BENCH_BEGIN;
     for (int rep = 0; rep < 10; ++rep) {
         Node root("root");
-        root.setSilent(true);
+        root.silent(true);
         for (int i = 0; i < 1000; ++i) {
             auto* obj = root.append("");
             obj->append("id")->set(Var(i));

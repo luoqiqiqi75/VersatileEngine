@@ -648,6 +648,18 @@ void Node::activate(int signal, Node* source)
     }
 }
 
+void Node::watchAll(bool on)
+{
+    watch(on);
+    for (auto* c : *this) c->watchAll(on);
+}
+
+void Node::silentAll(bool on)
+{
+    silent(on);
+    for (auto* c : *this) c->silentAll(on);
+}
+
 // ============================================================================
 // Node — value operations
 // ============================================================================
@@ -658,7 +670,7 @@ bool Node::hasValue() const { return _p->value != nullptr; }
 
 const Var& Node::value() const { return _p->value ? *_p->value : _null_var; }
 
-void Node::set(const Var& v)
+Node* Node::set(const Var& v)
 {
     Var nv(v);                              // copy outside lock
     {
@@ -669,9 +681,10 @@ void Node::set(const Var& v)
     // nv = old value (swapped out); v = new value (original ref still valid)
     trigger<NODE_CHANGED>(v, nv);
     activate(NODE_CHANGED, this);
+    return this;
 }
 
-void Node::set(Var&& v)
+Node* Node::set(Var&& v)
 {
     Var nv(std::move(v));                   // move outside lock
     const Var sig(nv);                      // snapshot for signal
@@ -683,6 +696,7 @@ void Node::set(Var&& v)
     // nv = old value; sig = new value
     trigger<NODE_CHANGED>(sig, nv);
     activate(NODE_CHANGED, this);
+    return this;
 }
 
 bool Node::update(const Var& v)
