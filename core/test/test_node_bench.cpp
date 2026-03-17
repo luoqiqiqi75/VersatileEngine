@@ -1,6 +1,8 @@
 // test_node_bench.cpp — stress tests, complex structures, benchmarks
 #include "ve_test.h"
 #include "ve/core/node.h"
+#include "ve/core/var.h"
+#include "ve/core/convert.h"
 #include "ve/core/log.h"
 #include <chrono>
 
@@ -869,4 +871,252 @@ VE_TEST(node_bench_indexOf_no_guess) {
         for (int i = 0; i < 1000; ++i)
             (void)root.indexOf(nodes[i]);
     BENCH_END("indexOf(no guess) 1k anon x100");
+}
+
+// ============================================================================
+// Benchmarks — JSON scenarios (tree + value)
+// ============================================================================
+
+// --- Build: JSON dict { "k0": 0, "k1": 1, ... } ---
+
+VE_TEST(node_bench_json_dict_10k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 10000; ++i) {
+        auto* c = root.append("k" + std::to_string(i));
+        c->set(Var(i));
+    }
+    BENCH_END("json dict 10k (insert+set int)");
+    VE_ASSERT_EQ(root.count(), 10000);
+    VE_ASSERT_EQ(root.child("k5000")->get<int>(), 5000);
+}
+
+VE_TEST(node_bench_json_dict_100k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i) {
+        auto* c = root.append("k" + std::to_string(i));
+        c->set(Var(i));
+    }
+    BENCH_END("json dict 100k (insert+set int)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_json_dict_str_10k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 10000; ++i) {
+        auto* c = root.append("k" + std::to_string(i));
+        c->set(Var("value_" + std::to_string(i)));
+    }
+    BENCH_END("json dict 10k (insert+set string)");
+    VE_ASSERT_EQ(root.count(), 10000);
+}
+
+VE_TEST(node_bench_json_dict_str_100k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i) {
+        auto* c = root.append("k" + std::to_string(i));
+        c->set(Var("value_" + std::to_string(i)));
+    }
+    BENCH_END("json dict 100k (insert+set string)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+// --- Build: JSON array [ 0, 1, 2, ... ] ---
+
+VE_TEST(node_bench_json_array_10k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 10000; ++i)
+        root.append("")->set(Var(i));
+    BENCH_END("json array 10k (insert+set int)");
+    VE_ASSERT_EQ(root.count(), 10000);
+    VE_ASSERT_EQ(root.child(5000)->get<int>(), 5000);
+}
+
+VE_TEST(node_bench_json_array_100k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("")->set(Var(i));
+    BENCH_END("json array 100k (insert+set int)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+// --- Set values only (tree already built) ---
+
+VE_TEST(node_bench_set_int_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    int idx = 0;
+    for (auto* n : root) n->set(Var(idx++));
+    BENCH_END("set 100k values (int)");
+    VE_ASSERT_EQ(root.child(50000)->get<int>(), 50000);
+}
+
+VE_TEST(node_bench_set_string_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.child(i)->set(Var("val_" + std::to_string(i)));
+    BENCH_END("set 100k values (string)");
+}
+
+VE_TEST(node_bench_set_double_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i) root.append("");
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.child(i)->set(Var(i * 0.001));
+    BENCH_END("set 100k values (double)");
+}
+
+// --- Read values (iterate + get) ---
+
+VE_TEST(node_bench_read_int_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i)
+        root.append("")->set(Var(i));
+
+    BENCH_BEGIN;
+    long long sum = 0;
+    for (auto* n : root) sum += n->get<int>();
+    BENCH_END("read 100k int values");
+    VE_ASSERT_EQ(sum, (long long)100000 * 99999 / 2);
+}
+
+VE_TEST(node_bench_read_string_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i)
+        root.append("")->set(Var("val_" + std::to_string(i)));
+
+    BENCH_BEGIN;
+    int total_len = 0;
+    for (auto* n : root) total_len += (int)n->get<std::string>().size();
+    BENCH_END("read 100k string values");
+    VE_ASSERT(total_len > 0);
+}
+
+// --- Update values (conditional set, all changed) ---
+
+VE_TEST(node_bench_update_int_100k) {
+    Node root("root");
+    root.setSilent(true);
+    for (int i = 0; i < 100000; ++i)
+        root.append("")->set(Var(i));
+
+    BENCH_BEGIN;
+    int idx = 0;
+    for (auto* n : root) { n->update(Var(idx + 100000)); ++idx; }
+    BENCH_END("update 100k values (all changed)");
+    VE_ASSERT_EQ(root.child(0)->get<int>(), 100000);
+}
+
+// --- Realistic JSON: array of objects ---
+// [ {"id":0, "name":"user_0", "email":"u0@test.com", "score":0.5}, ... ]
+
+VE_TEST(node_bench_json_aoo_1k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 1000; ++i) {
+        auto* obj = root.append("");
+        obj->append("id")->set(Var(i));
+        obj->append("name")->set(Var("user_" + std::to_string(i)));
+        obj->append("email")->set(Var("u" + std::to_string(i) + "@test.com"));
+        obj->append("score")->set(Var(i * 0.5));
+    }
+    BENCH_END("json array-of-objects 1k x4 fields");
+    VE_ASSERT_EQ(root.count(), 1000);
+    VE_ASSERT_EQ(root.child(500)->child("id")->get<int>(), 500);
+}
+
+VE_TEST(node_bench_json_aoo_10k) {
+    Node root("root");
+    root.setSilent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 10000; ++i) {
+        auto* obj = root.append("");
+        obj->append("id")->set(Var(i));
+        obj->append("name")->set(Var("user_" + std::to_string(i)));
+        obj->append("email")->set(Var("u" + std::to_string(i) + "@test.com"));
+        obj->append("score")->set(Var(i * 0.5));
+    }
+    BENCH_END("json array-of-objects 10k x4 fields");
+    VE_ASSERT_EQ(root.count(), 10000);
+}
+
+// --- JSON nested config: 100 groups x 10 fields ---
+// { "group0": { "name": "...", "enabled": true, "count": N, "ratio": 0.1, "items": [0..5] }, ... }
+
+VE_TEST(node_bench_json_config_100g) {
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep) {
+        Node root("root");
+        root.setSilent(true);
+        for (int g = 0; g < 100; ++g) {
+            auto* group = root.append("g" + std::to_string(g));
+            group->append("name")->set(Var("Group " + std::to_string(g)));
+            group->append("enabled")->set(Var(true));
+            group->append("count")->set(Var(g * 10));
+            group->append("ratio")->set(Var(g * 0.1));
+            for (int c = 0; c < 6; ++c)
+                group->append("item")->set(Var(c));
+        }
+    }
+    BENCH_END("json config 100g x10 fields lifecycle x10");
+}
+
+// --- Full JSON dict lifecycle: build + read + destroy ---
+
+VE_TEST(node_bench_json_lifecycle_dict_10k) {
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep) {
+        Node root("root");
+        root.setSilent(true);
+        for (int i = 0; i < 10000; ++i)
+            root.append("k" + std::to_string(i))->set(Var("value_" + std::to_string(i)));
+        for (auto* n : root) (void)n->get<std::string>();
+    }
+    BENCH_END("json dict 10k lifecycle (build+read+destroy) x10");
+}
+
+VE_TEST(node_bench_json_lifecycle_aoo_1k) {
+    BENCH_BEGIN;
+    for (int rep = 0; rep < 10; ++rep) {
+        Node root("root");
+        root.setSilent(true);
+        for (int i = 0; i < 1000; ++i) {
+            auto* obj = root.append("");
+            obj->append("id")->set(Var(i));
+            obj->append("name")->set(Var("user_" + std::to_string(i)));
+            obj->append("email")->set(Var("u" + std::to_string(i) + "@test.com"));
+            obj->append("score")->set(Var(i * 0.5));
+        }
+        for (auto* obj : root) {
+            (void)obj->child("id")->get<int>();
+            (void)obj->child("name")->get<std::string>();
+            (void)obj->child("email")->get<std::string>();
+            (void)obj->child("score")->get<double>();
+        }
+    }
+    BENCH_END("json aoo 1k lifecycle (build+read+destroy) x10");
 }

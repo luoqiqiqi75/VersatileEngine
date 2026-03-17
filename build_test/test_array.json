@@ -1,0 +1,17 @@
+{
+  "inspection_config": {
+    "bad_actions": [
+      "叠衣服"
+    ],
+    "good_actions": [
+      "叠衣服"
+    ]
+  },
+  "sensors": [
+    {"type": "lidar", "hz": 10},
+    {"type": "camera", "hz": 30}
+  ],
+  "tags": ["alpha", "beta", "gamma"],
+  "name": "test",
+  "count": 42
+}

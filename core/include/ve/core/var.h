@@ -73,25 +73,23 @@ public:
     
     // 模板构造：支持 ListLike / DictLike / convert<T>
     template<typename T>
-    Var(const T& v) {
+    Var(const T& v) : _type(Null), _storage{} {
         if constexpr (is_list_like_v<T>) {
             _type = List;
-            new (&_storage._list) ListV();
-            auto& lv = ref<List, ListV>();
-            lv.reserve(v.size());
+            _storage._list = new ListV();
+            _storage._list->reserve(v.size());
             for (const auto& item : v) {
-                lv.push_back(Var(item));
+                _storage._list->push_back(Var(item));
             }
         } else if constexpr (is_dict_like_v<T>) {
             _type = Dict;
-            new (&_storage._dict) DictV();
-            auto& dv = ref<Dict, DictV>();
+            _storage._dict = new DictV();
             for (const auto& kv : v) {
                 using KVAccess = typename T::KVAccessT;
-                dv[KVAccess::key(kv)] = Var(KVAccess::value(kv));
+                (*_storage._dict)[KVAccess::key(kv)] = Var(KVAccess::value(kv));
             }
         } else {
-            *this = convert<T>::toVar(v); // 通过 convert<T> 转换（Custom 类型也走这里）
+            *this = convert<T>::toVar(v);
         }
     }
 
@@ -102,7 +100,7 @@ public:
     static Var custom(T&& v) {
         Var result;
         result._type = Custom;
-        new (&result._storage._custom) CustomV(std::forward<T>(v));
+        result._storage._custom = new CustomV(std::forward<T>(v));
         return result;
     }
 
@@ -138,6 +136,7 @@ public:
     // --- 基础类型取值（类型不匹配返回默认值）---
     bool toBool(bool def = false) const;
     int toInt(int def = -1) const;
+    std::int64_t toInt64(std::int64_t def = -1) const;
     double toDouble(double def = 0.0) const;
     std::string toString(const std::string& def = "") const;
     Bytes toBin() const;
@@ -182,7 +181,7 @@ public:
         if constexpr (std::is_same_v<U, Var>)               return *this;
         else if constexpr (std::is_same_v<U, bool>)          return toBool();
         else if constexpr (std::is_same_v<U, int>)           return toInt();
-        else if constexpr (std::is_integral_v<U>)             return static_cast<U>(toInt());
+        else if constexpr (std::is_integral_v<U>)             return static_cast<U>(toInt64());
         else if constexpr (std::is_floating_point_v<U>)       return static_cast<U>(toDouble());
         else if constexpr (std::is_same_v<U, std::string>)    return toString();
         else if constexpr (std::is_pointer_v<U>)              return static_cast<U>(toPointer());
@@ -249,15 +248,15 @@ private:
     Type _type;
 
     union Storage {
-        bool _bool;
-        int64_t _int;
-        double _double;
-        void* _pointer;
-        std::aligned_storage_t<sizeof(std::string), alignof(std::string)> _str;
-        std::aligned_storage_t<sizeof(Bytes), alignof(Bytes)> _bin;
-        std::aligned_storage_t<sizeof(ListV), alignof(ListV)> _list;
-        std::aligned_storage_t<sizeof(DictV), alignof(DictV)> _dict;
-        std::aligned_storage_t<sizeof(CustomV), alignof(CustomV)> _custom;
+        bool            _bool;
+        int64_t         _int;
+        double          _double;
+        void*           _pointer;
+        std::string*    _str;
+        Bytes*          _bin;
+        ListV*          _list;
+        DictV*          _dict;
+        CustomV*        _custom;
     } _storage;
 };
 

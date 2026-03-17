@@ -1,6 +1,7 @@
 // node.cpp — ve::Node + ve::Schema
 #include "ve/core/node.h"
 #include "ve/core/var.h"
+#include <algorithm>
 #include <charconv>
 #include <string_view>
 
@@ -43,6 +44,7 @@ struct Node::Private
     };
 
     Children* children = nullptr;
+    Var*      value    = nullptr;
 
     Children* ensureChildren()
     {
@@ -63,9 +65,7 @@ struct Node::Private
 // ============================================================================
 
 Node::Node(const std::string& name) : Object(name) {}
-Node::~Node() { _p->clearChildren(true); }
-
-Node* Node::root() { static Node r; return &r; }
+Node::~Node() { _p->clearChildren(true); delete _p->value; }
 
 // ============================================================================
 // Node — tree navigation
@@ -255,8 +255,8 @@ bool Node::insert(Node* child, int index)
         key = toKey(nm, nm.empty() ? index : oi);
     }
 
-    trigger<NODE_CHILD_ADDED>(key, 0);
-    activate(NODE_CHILD_ADDED, this);
+    trigger<NODE_ADDED>(key, 0);
+    activate(NODE_ADDED, this);
     return true;
 }
 
@@ -320,8 +320,8 @@ bool Node::insert(const Nodes& children, int index)
         firstKey = toKey(nm, nm.empty() ? index : firstOI);
     }
 
-    trigger<NODE_CHILD_ADDED>(firstKey, batch - 1);
-    activate(NODE_CHILD_ADDED, this);
+    trigger<NODE_ADDED>(firstKey, batch - 1);
+    activate(NODE_ADDED, this);
     return true;
 }
 
@@ -388,8 +388,8 @@ Node* Node::take(Node* child)
         child->_p->parent = nullptr;
     }
 
-    trigger<NODE_CHILD_REMOVED>(key, 0);
-    activate(NODE_CHILD_REMOVED, this);
+    trigger<NODE_REMOVED>(key, 0);
+    activate(NODE_REMOVED, this);
     return child;
 }
 
@@ -420,8 +420,8 @@ void Node::clear(bool auto_delete)
         _p->clearChildren(auto_delete);
     }
     if (cnt > 0) {
-        trigger<NODE_CHILD_REMOVED>(std::string("#0"), cnt - 1);
-        activate(NODE_CHILD_REMOVED, this);
+        trigger<NODE_REMOVED>(std::string("#0"), cnt - 1);
+        activate(NODE_REMOVED, this);
     }
 }
 
@@ -649,6 +649,67 @@ void Node::activate(int signal, Node* source)
 }
 
 // ============================================================================
+// Node — value operations
+// ============================================================================
+
+static const Var _null_var;
+
+bool Node::hasValue() const { return _p->value != nullptr; }
+
+const Var& Node::value() const { return _p->value ? *_p->value : _null_var; }
+
+void Node::set(const Var& v)
+{
+    Var nv(v);                              // copy outside lock
+    {
+        LockT lk(mutex());
+        if (!_p->value) _p->value = new Var();
+        _p->value->swap(nv);               // swap ≈ 16 bytes, no heap op
+    }
+    // nv = old value (swapped out); v = new value (original ref still valid)
+    trigger<NODE_CHANGED>(v, nv);
+    activate(NODE_CHANGED, this);
+}
+
+void Node::set(Var&& v)
+{
+    Var nv(std::move(v));                   // move outside lock
+    const Var sig(nv);                      // snapshot for signal
+    {
+        LockT lk(mutex());
+        if (!_p->value) _p->value = new Var();
+        _p->value->swap(nv);               // swap ≈ 16 bytes, no heap op
+    }
+    // nv = old value; sig = new value
+    trigger<NODE_CHANGED>(sig, nv);
+    activate(NODE_CHANGED, this);
+}
+
+bool Node::update(const Var& v)
+{
+    if (_p->value && *_p->value == v) return false;
+    set(v);
+    return true;
+}
+
+// ============================================================================
+// Node — global data tree
+// ============================================================================
+
+namespace node {
+
+Node* root() { return &basic::_t_static_var_helper<Node>::var; }
+
+}
+
+Node* n(const std::string& dot_path)
+{
+    std::string slash_path(dot_path);
+    std::replace(slash_path.begin(), slash_path.end(), '.', '/');
+    return node::root()->ensure(slash_path);
+}
+
+// ============================================================================
 // Node — debug
 // ============================================================================
 
@@ -660,6 +721,7 @@ std::string Node::dump(int depth) const
     if (key.empty()) key = "(anon)";
 
     std::string out = indent + key;
+    if (_p->value) out += " = " + _p->value->toString();
     if (_p->shadow) out += "  -> " + _p->shadow->name();
     out += "\n";
 

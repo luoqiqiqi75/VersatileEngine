@@ -2,6 +2,7 @@
 #pragma once
 
 #include "factory.h"
+#include "var.h"
 #include <string_view>
 
 namespace ve {
@@ -59,13 +60,29 @@ public:
     //   connect<S>(obs, [](string key) { ... })             — partial args OK
     //   connect<S>(obs, []() { ... })                       — just notification
     enum NodeSignal : SignalT {
-        NODE_CHILD_ADDED   = 0x0010,  // (string key, int overlap) — key of first added, overlap count (0 = single)
-        NODE_CHILD_REMOVED = 0x0011,  // (string key, int overlap) — key of removed, overlap count; clear: ("#0", count-1)
-        NODE_ACTIVATED     = 0x001f,  // (int signal, Node* source) — bubbles up the ancestor chain
+        NODE_CHANGED    = 0x0010,  // (Var new_val, Var old_val) — value changed via set()/update()
+        NODE_ADDED      = 0x0011,  // (string key, int overlap) — key of first added, overlap count (0 = single)
+        NODE_REMOVED    = 0x0012,  // (string key, int overlap) — key of removed, overlap count; clear: ("#0", count-1)
+        NODE_ACTIVATED  = 0x001f,  // (int signal, Node* source) — bubbles up the ancestor chain
     };
 
-    // --- static ---
-    static Node* root();
+    // --- value ---
+    bool hasValue() const;
+    const Var& value() const;
+
+    void set(const Var& v);
+    void set(Var&& v);
+
+    template<typename T>
+    T get(const T& def = T{}) const { return hasValue() ? value().to<T>(def) : def; }
+
+    template<typename T>
+    T get(const std::string& child_path, const T& def = T{}) const {
+        auto* c = resolve(child_path);
+        return c ? c->value().to<T>(def) : def;
+    }
+
+    bool update(const Var& v);
 
     // --- tree navigation ---
     Node* parent() const;
@@ -197,5 +214,15 @@ public:
 private:
     VE_DECLARE_POOL_PRIVATE
 };
+
+namespace node {
+
+VE_API Node* root(); // --- global data tree accessor ---
+
+}
+
+// ve::n("robot.arm.joint1") — dot-separated path convenience accessor.
+// Translates '.' to '/' and delegates to ve::node::root()->ensure().
+VE_API Node* n(const std::string& dot_path);
 
 } // namespace ve

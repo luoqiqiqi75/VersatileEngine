@@ -13,7 +13,7 @@ VE_TEST(node_signal_insert_fires_added) {
     int fired = 0;
     std::string key;
     int overlap = -1;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string& k, int ov) {
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string& k, int ov) {
         key = k; overlap = ov; ++fired;
     });
     root.append("child");
@@ -25,7 +25,7 @@ VE_TEST(node_signal_insert_fires_added) {
 VE_TEST(node_signal_insert_anon_fires_added) {
     Node root("root");
     std::string key;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string& k, int) { key = k; });
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string& k, int) { key = k; });
     root.append("");
     VE_ASSERT_EQ(key, "#0");  // first anon child → global index 0
 }
@@ -36,7 +36,7 @@ VE_TEST(node_signal_insert_at_fires_key) {
     root.append("b");
 
     std::string key;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string& k, int) { key = k; });
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string& k, int) { key = k; });
     root.insert(new Node("mid"), 1);  // insert at index 1
 
     VE_ASSERT_EQ(key, "mid");
@@ -47,7 +47,7 @@ VE_TEST(node_signal_insert_overlap_key) {
     root.append("item");
 
     std::string key;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string& k, int) { key = k; });
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string& k, int) { key = k; });
     root.append("item");  // second "item" → "item#1"
 
     VE_ASSERT_EQ(key, "item#1");
@@ -62,7 +62,7 @@ VE_TEST(node_signal_batch_insert_fires_once) {
     int fired = 0;
     std::string key;
     int overlap = -1;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string& k, int ov) {
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string& k, int ov) {
         key = k; overlap = ov; ++fired;
     });
 
@@ -79,7 +79,7 @@ VE_TEST(node_signal_batch_insert_anon) {
     Node root("root");
     std::string key;
     int overlap = -1;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string& k, int ov) { key = k; overlap = ov; });
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string& k, int ov) { key = k; overlap = ov; });
 
     Node::Nodes batch;
     for (int i = 0; i < 3; ++i) batch.push_back(new Node(""));
@@ -99,7 +99,7 @@ VE_TEST(node_signal_take_fires_removed) {
     int fired = 0;
     std::string key;
     int overlap = -1;
-    root.connect(Node::NODE_CHILD_REMOVED, &root, [&](const std::string& k, int ov) {
+    root.connect(Node::NODE_REMOVED, &root, [&](const std::string& k, int ov) {
         key = k; overlap = ov; ++fired;
     });
     auto* taken = root.take(c);
@@ -117,7 +117,7 @@ VE_TEST(node_signal_remove_overlap_key) {
     root.append("item");                 // item#2
 
     std::string key;
-    root.connect(Node::NODE_CHILD_REMOVED, &root, [&](const std::string& k, int) { key = k; });
+    root.connect(Node::NODE_REMOVED, &root, [&](const std::string& k, int) { key = k; });
     root.take(second);
 
     VE_ASSERT_EQ(key, "item#1");
@@ -130,7 +130,7 @@ VE_TEST(node_signal_remove_anon) {
     auto* c = root.append("");
 
     std::string key;
-    root.connect(Node::NODE_CHILD_REMOVED, &root, [&](const std::string& k, int) { key = k; });
+    root.connect(Node::NODE_REMOVED, &root, [&](const std::string& k, int) { key = k; });
     root.take(c);
 
     VE_ASSERT_EQ(key, "#1");
@@ -148,7 +148,7 @@ VE_TEST(node_signal_clear_fires_removed) {
     int fired = 0;
     std::string key;
     int overlap = -1;
-    root.connect(Node::NODE_CHILD_REMOVED, &root, [&](const std::string& k, int ov) {
+    root.connect(Node::NODE_REMOVED, &root, [&](const std::string& k, int ov) {
         key = k; overlap = ov; ++fired;
     });
     root.clear();
@@ -161,7 +161,7 @@ VE_TEST(node_signal_clear_fires_removed) {
 VE_TEST(node_signal_clear_empty_no_fire) {
     Node root("root");
     int fired = 0;
-    root.connect(Node::NODE_CHILD_REMOVED, &root, [&](const std::string&, int) { ++fired; });
+    root.connect(Node::NODE_REMOVED, &root, [&](const std::string&, int) { ++fired; });
     root.clear();
     VE_ASSERT_EQ(fired, 0);  // no children → no signal
 }
@@ -173,7 +173,7 @@ VE_TEST(node_signal_clear_empty_no_fire) {
 VE_TEST(node_signal_silent_suppresses_added) {
     Node root("root");
     int fired = 0;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string&, int) { ++fired; });
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string&, int) { ++fired; });
     root.setSilent(true);
     root.append("x");
     VE_ASSERT_EQ(fired, 0);  // signal suppressed
@@ -187,7 +187,7 @@ VE_TEST(node_signal_silent_suppresses_removed) {
     Node root("root");
     auto* c = root.append("x");
     int fired = 0;
-    root.connect(Node::NODE_CHILD_REMOVED, &root, [&](const std::string&, int) { ++fired; });
+    root.connect(Node::NODE_REMOVED, &root, [&](const std::string&, int) { ++fired; });
     root.setSilent(true);
     root.remove(c);
     VE_ASSERT_EQ(fired, 0);
@@ -290,7 +290,7 @@ VE_TEST(node_signal_insert_triggers_activate) {
 
     int activated = 0;
     root.connect(Node::NODE_ACTIVATED, &root, [&](int sig, void*) {
-        if (sig == Node::NODE_CHILD_ADDED) ++activated;
+        if (sig == Node::NODE_ADDED) ++activated;
     });
 
     root.append("test");
@@ -304,7 +304,7 @@ VE_TEST(node_signal_remove_triggers_activate) {
 
     int activated = 0;
     root.connect(Node::NODE_ACTIVATED, &root, [&](int sig, void*) {
-        if (sig == Node::NODE_CHILD_REMOVED) ++activated;
+        if (sig == Node::NODE_REMOVED) ++activated;
     });
 
     root.remove(c);
@@ -319,7 +319,7 @@ VE_TEST(node_signal_multiple_inserts_fires) {
     Node root("root");
     int fires = 0;
     int last_overlap = -1;
-    root.connect(Node::NODE_CHILD_ADDED, &root, [&](const std::string&, int ov) {
+    root.connect(Node::NODE_ADDED, &root, [&](const std::string&, int ov) {
         last_overlap = ov; ++fires;
     });
 
@@ -336,12 +336,12 @@ VE_TEST(node_signal_disconnect_stops_delivery) {
     Node root("root");
     Object obs("obs");
     int fired = 0;
-    root.connect(Node::NODE_CHILD_ADDED, &obs, [&](const std::string&, int) { ++fired; });
+    root.connect(Node::NODE_ADDED, &obs, [&](const std::string&, int) { ++fired; });
 
     root.append("a");
     VE_ASSERT_EQ(fired, 1);
 
-    root.disconnect(Node::NODE_CHILD_ADDED, &obs);
+    root.disconnect(Node::NODE_ADDED, &obs);
     root.append("b");
     VE_ASSERT_EQ(fired, 1);  // disconnected, no more signals
 }

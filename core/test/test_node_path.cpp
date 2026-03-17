@@ -432,10 +432,9 @@ VE_TEST(node_schema_shared) {
 // ============================================================================
 
 VE_TEST(node_static_root) {
-    Node* r1 = Node::root();
-    Node* r2 = Node::root();
+    Node* r1 = ve::node::root();
+    Node* r2 = ve::node::root();
     VE_ASSERT(r1 == r2);
-    VE_ASSERT_EQ(r1->name(), "");
 }
 
 // ============================================================================

@@ -4,20 +4,29 @@
 //   cd <path>              navigate to node (supports "..")
 //   pwd                    print current path from root
 //   root                   go to root
-//   up [N]                 go up N parent levels (default 1)
+//   up/p [N]               go up N parent levels (default 1)
 //   first / last           go to first/last child
 //   prev / next            go to prev/next sibling
 //   sibling <N>            go to sibling at offset N
 //
 // === Viewing ===
-//   ls [path]              list children in insertion order
+//   ls [path]              list children in insertion order (shows values)
 //   tree [path]            dump subtree
-//   info [path]            show node details
+//   info [path]            show node details (with value)
 //   names [path]           list unique child names
 //
+// === Value ===
+//   get/g [path]           get value of current or target node
+//   set/s <value> [path]   set value (auto: int/double/bool/null/string)
+//   type [path]            show value type
+//   unset [path]           clear value
+//
+// === Data Tree (ve::n) ===
+//   data/d                 switch to global data root
+//   n <dot.path>           ensure & cd via dot-path (like ve::n("a.b.c"))
+//
 // === Child Access ===
-//   child <index>          get child by global index (negative ok)
-//   child <name> [overlap] get child by name + overlap
+//   child/c <idx|name> [o] get child by index or name+overlap
 //   at <key>               childAt(key)
 //   has <name|index>       check existence
 //   count [name]           count children (or by name)
@@ -51,6 +60,10 @@
 //   find <path>            resolve path (without shadow)
 //   erase <path>           erase node at path
 //
+// === Flags ===
+//   watch / unwatch        toggle WATCHING (signal bubbling)
+//   silent / unsilent      toggle SILENT (suppress signals)
+//
 // === Iterator ===
 //   iter [path]            iterate children forward
 //   riter [path]           iterate children reverse
@@ -66,9 +79,12 @@
 //   quit / exit            exit
 
 #include "ve/core/node.h"
+#include "ve/core/var.h"
+#include "ve/core/convert.h"
 #include "ve/core/log.h"
 #include <simdjson.h>
 #include <iostream>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -101,6 +117,71 @@ static bool isInt(const std::string& s)
     return std::all_of(s.begin() + start, s.end(), ::isdigit);
 }
 
+static bool isDouble(const std::string& s)
+{
+    if (s.empty()) return false;
+    bool dot = false;
+    size_t start = (s[0] == '-' || s[0] == '+') ? 1 : 0;
+    if (start >= s.size()) return false;
+    for (size_t i = start; i < s.size(); ++i) {
+        if (s[i] == '.') { if (dot) return false; dot = true; }
+        else if (!std::isdigit((unsigned char)s[i])) return false;
+    }
+    return dot;
+}
+
+// rest-of-line after the first token (preserves spaces, quotes, etc.)
+static std::string restOfLine(const std::string& line, size_t arg_start = 1)
+{
+    size_t pos = 0;
+    for (size_t i = 0; i < arg_start; ++i) {
+        while (pos < line.size() && std::isspace((unsigned char)line[pos])) ++pos;
+        while (pos < line.size() && !std::isspace((unsigned char)line[pos])) ++pos;
+    }
+    while (pos < line.size() && std::isspace((unsigned char)line[pos])) ++pos;
+    return (pos < line.size()) ? line.substr(pos) : "";
+}
+
+static const char* varTypeName(Var::Type t)
+{
+    switch (t) {
+        case Var::Null:    return "Null";
+        case Var::Bool:    return "Bool";
+        case Var::Int:     return "Int";
+        case Var::Double:  return "Double";
+        case Var::String:  return "String";
+        case Var::Bin:     return "Bin";
+        case Var::List:    return "List";
+        case Var::Dict:    return "Dict";
+        case Var::Pointer: return "Pointer";
+        case Var::Custom:  return "Custom";
+        default:           return "?";
+    }
+}
+
+// Parse user input to Var — auto-detect type
+static Var parseVar(const std::string& raw)
+{
+    if (raw == "null")  return Var();
+    if (raw == "true")  return Var(true);
+    if (raw == "false") return Var(false);
+
+    if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"')
+        return Var(raw.substr(1, raw.size() - 2));
+
+    if (isInt(raw))    return Var(static_cast<std::int64_t>(std::stoll(raw)));
+    if (isDouble(raw)) return Var(std::stod(raw));
+
+    return Var(raw);
+}
+
+static std::string varPreview(const Var& v, size_t max_len = 60)
+{
+    std::string s = v.toString();
+    if (s.size() > max_len) s = s.substr(0, max_len - 3) + "...";
+    return s;
+}
+
 static std::string nodeSummary(const Node* n)
 {
     if (!n) return "(null)";
@@ -112,80 +193,73 @@ static std::string nodeSummary(const Node* n)
 // JSON ↔ Node
 // ============================================================================
 //
-// JSON format:
-//   {                                     →  named children
-//     "camera": {                         →  child "camera" with sub-children
-//       "resolution": null,               →  leaf child "resolution"
-//       "fps": null                       →  leaf child "fps"
-//     },
-//     "lidar": null,                      →  leaf child "lidar"
-//     "item": [                           →  array → N children all named "item"
-//       { "name": null, "value": null },  →  item#0 with sub-children
-//       { "name": null, "value": null }   →  item#1 with sub-children
-//     ],
-//     "": [null, null, null]              →  3 anonymous children
-//   }
-//   number N (as value)                   →  N leaf copies of that name
+// JSON ↔ Node mapping:
+//   object    →  named children          (keys become child names)
+//   array     →  same-name children      (parent key = each child's name)
+//   string    →  Var(String)             on leaf node
+//   number    →  Var(Int) or Var(Double) on leaf node
+//   true/false→  Var(Bool)              on leaf node
+//   null      →  no value (Var::Null)
 //
-// savejson: reverse — Node tree → JSON
+// A node with both value AND children: value stored on node, children as sub-keys.
+
+static void json_set_value(Node* node, simdjson::dom::element elem)
+{
+    switch (elem.type()) {
+        case simdjson::dom::element_type::STRING:
+            node->set(Var(std::string(elem.get_string().value())));
+            break;
+        case simdjson::dom::element_type::INT64:
+            node->set(Var(static_cast<std::int64_t>(elem.get_int64().value())));
+            break;
+        case simdjson::dom::element_type::UINT64:
+            node->set(Var(static_cast<std::int64_t>(elem.get_uint64().value())));
+            break;
+        case simdjson::dom::element_type::DOUBLE:
+            node->set(Var(elem.get_double().value()));
+            break;
+        case simdjson::dom::element_type::BOOL:
+            node->set(Var(elem.get_bool().value()));
+            break;
+        default:
+            break;
+    }
+}
 
 static void json_build(Node* parent, simdjson::dom::element elem)
 {
     if (elem.is_object()) {
         simdjson::dom::object obj = elem.get_object().value();
-        // Phase 1: collect all children for this level
+        // one node per field (arrays become container nodes, not N siblings)
         Node::Nodes batch;
-        for (auto field : obj) {
-            if (field.value.is_array()) {
-                simdjson::dom::array arr = field.value.get_array().value();
-                for (size_t i = 0; i < arr.size(); ++i)
-                    batch.push_back(new Node(std::string(field.key)));
-            } else {
-                batch.push_back(new Node(std::string(field.key)));
-            }
-        }
-        // Phase 2: single batch insert
+        for (auto field : obj)
+            batch.push_back(new Node(std::string(field.key)));
         parent->insert(batch);
-        // Phase 3: recurse into children that have sub-content
         int idx = 0;
         for (auto field : obj) {
-            if (field.value.is_array()) {
-                simdjson::dom::array arr = field.value.get_array().value();
-                for (auto sub : arr) {
-                    if (sub.is_object()) {
-                        simdjson::dom::object subobj = sub.get_object().value();
-                        if (subobj.size() > 0)
-                            json_build(batch[idx], sub);
-                    }
-                    ++idx;
-                }
-            } else if (field.value.is_object()) {
-                simdjson::dom::object subobj = field.value.get_object().value();
-                if (subobj.size() > 0)
-                    json_build(batch[idx], field.value);
-                ++idx;
-            } else {
-                ++idx;
-            }
+            if (field.value.is_object() || field.value.is_array())
+                json_build(batch[idx], field.value);
+            else
+                json_set_value(batch[idx], field.value);
+            ++idx;
         }
     } else if (elem.is_array()) {
+        // array elements → anonymous children of parent
         simdjson::dom::array arr = elem.get_array().value();
-        // Phase 1: collect all anonymous children
         Node::Nodes batch;
         for (size_t i = 0; i < arr.size(); ++i)
             batch.push_back(new Node(""));
-        // Phase 2: single batch insert
         parent->insert(batch);
-        // Phase 3: recurse
         int idx = 0;
         for (auto sub : arr) {
-            if (sub.is_object()) {
-                simdjson::dom::object subobj = sub.get_object().value();
-                if (subobj.size() > 0)
-                    json_build(batch[idx], sub);
-            }
+            if (sub.is_object() || sub.is_array())
+                json_build(batch[idx], sub);
+            else
+                json_set_value(batch[idx], sub);
             ++idx;
         }
+    } else {
+        json_set_value(parent, elem);
     }
 }
 
@@ -210,13 +284,31 @@ static std::string json_escape(const std::string& s)
     return out;
 }
 
+static void var_to_json(const Var& v, std::string& out)
+{
+    switch (v.type()) {
+        case Var::Null:    out += "null"; break;
+        case Var::Bool:    out += v.toBool() ? "true" : "false"; break;
+        case Var::Int:     out += std::to_string(v.toInt64()); break;
+        case Var::Double:  out += v.toString(); break;
+        case Var::String:  out += "\"" + json_escape(v.toString()) + "\""; break;
+        default:           out += "\"" + json_escape(v.toString()) + "\""; break;
+    }
+}
+
 static void node_to_json_impl(const Node* node, std::string& out, int indent, int depth)
 {
     std::string pad(depth * indent, ' ');
     std::string pad1((depth + 1) * indent, ' ');
 
-    if (node->count() == 0) {
-        out += "null";
+    bool hasChildren = node->count() > 0;
+    bool hasVal = node->hasValue() && !node->value().isNull();
+
+    if (!hasChildren) {
+        if (hasVal)
+            var_to_json(node->value(), out);
+        else
+            out += "null";
         return;
     }
 
@@ -227,7 +319,6 @@ static void node_to_json_impl(const Node* node, std::string& out, int indent, in
     }
 
     if (allAnon) {
-        // → JSON array
         out += "[\n";
         int total = node->count();
         int i = 0;
@@ -241,16 +332,22 @@ static void node_to_json_impl(const Node* node, std::string& out, int indent, in
         return;
     }
 
-    // → JSON object, group same-name children
     out += "{\n";
     auto names = node->childNames();
 
-    // count anonymous children
     int anonCnt = 0;
     for (auto* c : *node) if (c->name().empty()) ++anonCnt;
 
     int fieldIdx = 0;
-    int totalFields = (int)names.size() + (anonCnt > 0 ? 1 : 0);
+    int totalFields = (int)names.size() + (anonCnt > 0 ? 1 : 0) + (hasVal ? 1 : 0);
+
+    // emit own value as "_value" if node has both value and children
+    if (hasVal) {
+        out += pad1 + "\"_value\": ";
+        var_to_json(node->value(), out);
+        if (++fieldIdx < totalFields) out += ",";
+        out += "\n";
+    }
 
     for (auto& nm : names) {
         int cnt = node->count(nm);
@@ -309,20 +406,29 @@ static void cmd_help()
         "  cd <path>              navigate (supports '..')\n"
         "  pwd                    print current path\n"
         "  root                   go to root\n"
-        "  up [N]                 go up N levels (default 1)\n"
+        "  up/p [N]               go up N levels (default 1)\n"
         "  first / last           go to first/last child\n"
         "  prev / next            go to prev/next sibling\n"
         "  sibling <N>            go to sibling at offset N\n"
         "\n"
         "=== Viewing ===\n"
-        "  ls [path]              list children in order\n"
+        "  ls [path]              list children (with values)\n"
         "  tree [path]            dump subtree\n"
         "  info [path]            show node details\n"
         "  names [path]           list unique child names\n"
         "\n"
+        "=== Value ===\n"
+        "  get/g [path]           get value (auto: int/double/bool/string)\n"
+        "  set/s <val> [path]     set value (42, 3.14, true, \"hi\", null)\n"
+        "  type [path]            show value type\n"
+        "  unset [path]           clear value\n"
+        "\n"
+        "=== Data Tree ===\n"
+        "  data/d                 switch to global data root (ve::node::root)\n"
+        "  n <dot.path>           ensure & cd via dot-path (a.b.c → a/b/c)\n"
+        "\n"
         "=== Child Access ===\n"
-        "  child <index>          get child by global index (-N ok)\n"
-        "  child <name> [overlap] get child by name + overlap\n"
+        "  child/c <idx|name> [o] get child by index or name+overlap\n"
         "  at <key>               childAt(key)\n"
         "  has <name|index>       check existence\n"
         "  count [name]           count children (or by name)\n"
@@ -358,6 +464,10 @@ static void cmd_help()
         "  find <path>            resolve without shadow\n"
         "  erase <path>           erase at path\n"
         "\n"
+        "=== Flags ===\n"
+        "  watch / unwatch        toggle WATCHING (signal bubbling)\n"
+        "  silent / unsilent      toggle SILENT (suppress signals)\n"
+        "\n"
         "=== Iterator ===\n"
         "  iter [path]            iterate children forward\n"
         "  riter [path]           iterate children reverse\n"
@@ -384,18 +494,30 @@ static void cmd_ls(Node* node)
         auto* c = node->child(i);
         auto nm = c->name().empty() ? "(anon)" : c->name();
         std::cout << "  [" << i << "] " << nm;
-        // show key if it differs from name
         auto k = node->keyOf(c);
         if (k != nm && k != "(anon)") std::cout << "  (key: " << k << ")";
+        if (c->hasValue())
+            std::cout << "  = " << varPreview(c->value());
         std::cout << "\n";
     }
     std::cout << "  (" << total << " total)\n";
 }
 
+static void chunked_print(const std::string& s)
+{
+    const size_t chunk = 4096;
+    for (size_t pos = 0; pos < s.size(); pos += chunk) {
+        size_t len = std::min(chunk, s.size() - pos);
+        clearerr(stdout);
+        fwrite(s.data() + pos, 1, len, stdout);
+        fflush(stdout);
+    }
+}
+
 static void cmd_tree(Node* node)
 {
     if (!node) { std::cout << "(null)\n"; return; }
-    std::cout << node->dump();
+    chunked_print(node->dump());
 }
 
 static void cmd_info(Node* node)
@@ -409,6 +531,17 @@ static void cmd_info(Node* node)
               << "  children:  " << node->count() << "\n"
               << "  empty:     " << (node->empty() ? "yes" : "no") << "\n"
               << "  shadow:    " << (node->shadow() ? nodeSummary(node->shadow()) : "(none)") << "\n";
+
+    if (node->hasValue()) {
+        auto& v = node->value();
+        std::cout << "  value:     " << varPreview(v) << "\n"
+                  << "  type:      " << varTypeName(v.type()) << "\n";
+    } else {
+        std::cout << "  value:     (none)\n";
+    }
+
+    std::cout << "  watching:  " << (node->isWatching() ? "yes" : "no") << "\n"
+              << "  silent:    " << (node->isSilent() ? "yes" : "no") << "\n";
 
     if (node->parent()) {
         std::cout << "  indexOf:   " << node->parent()->indexOf(node) << "\n"
@@ -459,7 +592,9 @@ int main()
 
     std::string line;
     while (true) {
-        std::cout << prompt();
+        std::cout.clear();
+        clearerr(stdout);
+        std::cout << prompt() << std::flush;
         if (!std::getline(std::cin, line)) break;
         if (line.empty()) continue;
 
@@ -480,9 +615,8 @@ int main()
             std::cout << "/" << g_cur->path(g_root) << "\n";
         }
 
-        else if (cmd == "up") {
+        else if (cmd == "up" || cmd == "p") {
             int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
-            // parent(level): 0=parent, 1=grandparent, ...
             auto* p = g_cur->parent(n - 1);
             if (p) g_cur = p;
             else std::cout << "cannot go up " << n << " levels\n";
@@ -557,8 +691,104 @@ int main()
             cmd_names(target);
         }
 
+        // ========== Value ==========
+        else if (cmd == "get" || cmd == "g") {
+            Node* target = g_cur;
+            if (args.size() > 1) target = g_cur->resolve(args[1]);
+            if (!target) { std::cout << "not found: " << args[1] << "\n"; continue; }
+            if (target->hasValue()) {
+                auto& v = target->value();
+                std::cout << varPreview(v, 256) << "  (" << varTypeName(v.type()) << ")\n";
+            } else {
+                std::cout << "(no value)\n";
+            }
+        }
+
+        else if (cmd == "set" || cmd == "s") {
+            if (args.size() < 2) { std::cout << "usage: set <value> [path]\n"; continue; }
+            Node* target = g_cur;
+            std::string raw;
+            if (args.size() > 2) {
+                // last arg could be a path — check if it resolves
+                auto* maybe = g_cur->resolve(args.back());
+                if (maybe) {
+                    target = maybe;
+                    // raw = everything between cmd and last arg
+                    raw = restOfLine(line, 1);
+                    auto lastArg = args.back();
+                    auto pos = raw.rfind(lastArg);
+                    if (pos != std::string::npos) {
+                        raw = raw.substr(0, pos);
+                        while (!raw.empty() && std::isspace((unsigned char)raw.back())) raw.pop_back();
+                    }
+                } else {
+                    raw = restOfLine(line, 1);
+                }
+            } else {
+                raw = args[1];
+            }
+            Var v = parseVar(raw);
+            target->set(std::move(v));
+            std::cout << "set: " << varPreview(target->value()) << "  (" << varTypeName(target->value().type()) << ")\n";
+        }
+
+        else if (cmd == "type") {
+            Node* target = g_cur;
+            if (args.size() > 1) target = g_cur->resolve(args[1]);
+            if (!target) { std::cout << "not found: " << args[1] << "\n"; continue; }
+            if (target->hasValue())
+                std::cout << varTypeName(target->value().type()) << "\n";
+            else
+                std::cout << "(no value)\n";
+        }
+
+        else if (cmd == "unset") {
+            Node* target = g_cur;
+            if (args.size() > 1) target = g_cur->resolve(args[1]);
+            if (!target) { std::cout << "not found: " << args[1] << "\n"; continue; }
+            target->set(Var());
+            std::cout << "value cleared\n";
+        }
+
+        // ========== Data Tree (ve::n) ==========
+        else if (cmd == "data" || cmd == "d") {
+            g_cur = ve::node::root();
+            g_root = g_cur;
+            std::cout << "switched to global data root\n";
+        }
+
+        else if (cmd == "n") {
+            if (args.size() < 2) { std::cout << "usage: n <dot.path>\n"; continue; }
+            auto* target = ve::n(args[1]);
+            if (target) {
+                g_root = ve::node::root();
+                g_cur = target;
+                std::cout << "→ /" << target->path(g_root) << "\n";
+            } else {
+                std::cout << "failed to ensure: " << args[1] << "\n";
+            }
+        }
+
+        // ========== Flags ==========
+        else if (cmd == "watch") {
+            g_cur->setWatching(true);
+            std::cout << "WATCHING = on\n";
+        }
+        else if (cmd == "unwatch") {
+            g_cur->setWatching(false);
+            std::cout << "WATCHING = off\n";
+        }
+        else if (cmd == "silent") {
+            g_cur->setSilent(true);
+            std::cout << "SILENT = on\n";
+        }
+        else if (cmd == "unsilent") {
+            g_cur->setSilent(false);
+            std::cout << "SILENT = off\n";
+        }
+
         // ========== Child Access ==========
-        else if (cmd == "child") {
+        else if (cmd == "child" || cmd == "c") {
             if (args.size() < 2) { std::cout << "usage: child <index> | child <name> [overlap]\n"; continue; }
             Node* c = nullptr;
             if (isInt(args[1])) {
@@ -921,7 +1151,7 @@ int main()
                 target = g_cur->resolve(args[1]);
                 if (!target) { std::cout << "not found: " << args[1] << "\n"; continue; }
             }
-            std::cout << node_to_json(target);
+            chunked_print(node_to_json(target));
         }
 
         // ========== Unknown ==========

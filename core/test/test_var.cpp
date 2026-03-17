@@ -417,3 +417,63 @@ VE_TEST(var_invalid_conversion) {
     VE_ASSERT_EQ(v.toInt(-1), -1); // 转换失败返回默认值
     VE_ASSERT_NEAR(v.toDouble(-1.0), -1.0, 0.001);
 }
+
+// ========== sizeof 验证（堆指针优化后）==========
+
+VE_TEST(var_sizeof_optimized) {
+    // Type (uint8_t) + padding + union (max pointer/int64/double = 8 bytes)
+    // Expected: 16 bytes on 64-bit platforms
+    VE_ASSERT(sizeof(Var) <= 24);
+    std::cout << "        sizeof(Var) = " << sizeof(Var) << " bytes\n";
+}
+
+// ========== Custom 类型测试 ==========
+
+VE_TEST(var_custom_type) {
+    struct Point { double x, y; };
+    Var v = Var::custom(Point{1.0, 2.0});
+    VE_ASSERT(v.isCustom());
+    VE_ASSERT(v.customIs<Point>());
+    auto* p = v.customPtr<Point>();
+    VE_ASSERT(p != nullptr);
+    VE_ASSERT_NEAR(p->x, 1.0, 0.001);
+    VE_ASSERT_NEAR(p->y, 2.0, 0.001);
+}
+
+VE_TEST(var_custom_copy) {
+    Var v1 = Var::custom(std::string("custom_data"));
+    Var v2 = v1;
+    VE_ASSERT(v2.isCustom());
+    auto* p = v2.customPtr<std::string>();
+    VE_ASSERT(p != nullptr);
+    VE_ASSERT_EQ(*p, "custom_data");
+}
+
+VE_TEST(var_custom_move) {
+    Var v1 = Var::custom(42);
+    Var v2 = std::move(v1);
+    VE_ASSERT(v1.isNull());
+    VE_ASSERT(v2.isCustom());
+    VE_ASSERT_EQ(*v2.customPtr<int>(), 42);
+}
+
+// ========== as<T>() 模板取值测试 ==========
+
+VE_TEST(var_as_basic_types) {
+    VE_ASSERT_EQ(Var(42).as<int>(), 42);
+    VE_ASSERT_EQ(Var(true).as<bool>(), true);
+    VE_ASSERT_NEAR(Var(3.14).as<double>(), 3.14, 0.001);
+    VE_ASSERT_EQ(Var("hello").as<std::string>(), "hello");
+}
+
+VE_TEST(var_as_pointer) {
+    int x = 0;
+    Var v(static_cast<void*>(&x));
+    VE_ASSERT_EQ(v.as<int*>(), &x);
+}
+
+VE_TEST(var_as_var) {
+    Var v(42);
+    Var v2 = v.as<Var>();
+    VE_ASSERT_EQ(v2.toInt(), 42);
+}
