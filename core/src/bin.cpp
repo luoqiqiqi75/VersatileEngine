@@ -12,18 +12,18 @@ namespace ve::bin {
 // Little-endian read/write primitives
 // ============================================================================
 
-static inline void writeU8(std::vector<uint8_t>& buf, uint8_t v)
+static inline void writeU8(Bytes& buf, uint8_t v)
 {
     buf.push_back(v);
 }
 
-static inline void writeU16(std::vector<uint8_t>& buf, uint16_t v)
+static inline void writeU16(Bytes& buf, uint16_t v)
 {
     buf.push_back(static_cast<uint8_t>(v));
     buf.push_back(static_cast<uint8_t>(v >> 8));
 }
 
-static inline void writeU32(std::vector<uint8_t>& buf, uint32_t v)
+static inline void writeU32(Bytes& buf, uint32_t v)
 {
     buf.push_back(static_cast<uint8_t>(v));
     buf.push_back(static_cast<uint8_t>(v >> 8));
@@ -31,7 +31,7 @@ static inline void writeU32(std::vector<uint8_t>& buf, uint32_t v)
     buf.push_back(static_cast<uint8_t>(v >> 24));
 }
 
-static inline void writeI64(std::vector<uint8_t>& buf, int64_t v)
+static inline void writeI64(Bytes& buf, int64_t v)
 {
     uint64_t u;
     std::memcpy(&u, &v, 8);
@@ -39,7 +39,7 @@ static inline void writeI64(std::vector<uint8_t>& buf, int64_t v)
         buf.push_back(static_cast<uint8_t>(u >> (i * 8)));
 }
 
-static inline void writeF64(std::vector<uint8_t>& buf, double v)
+static inline void writeF64(Bytes& buf, double v)
 {
     uint64_t u;
     std::memcpy(&u, &v, 8);
@@ -47,13 +47,13 @@ static inline void writeF64(std::vector<uint8_t>& buf, double v)
         buf.push_back(static_cast<uint8_t>(u >> (i * 8)));
 }
 
-static inline void writeStr(std::vector<uint8_t>& buf, const std::string& s)
+static inline void writeStr(Bytes& buf, const std::string& s)
 {
     writeU32(buf, static_cast<uint32_t>(s.size()));
     buf.insert(buf.end(), s.begin(), s.end());
 }
 
-static inline void writeBytes(std::vector<uint8_t>& buf, const Bytes& b)
+static inline void writeBin(Bytes& buf, const Bytes& b)
 {
     writeU32(buf, static_cast<uint32_t>(b.size()));
     buf.insert(buf.end(), b.begin(), b.end());
@@ -147,7 +147,7 @@ static constexpr uint8_t TAG_BIN     = 5;
 static constexpr uint8_t TAG_LIST    = 6;
 static constexpr uint8_t TAG_DICT    = 7;
 
-void writeVar(const Var& v, std::vector<uint8_t>& buf)
+void writeVar(const Var& v, Bytes& buf)
 {
     switch (v.type()) {
         case Var::Null:
@@ -171,7 +171,7 @@ void writeVar(const Var& v, std::vector<uint8_t>& buf)
             break;
         case Var::Bin:
             writeU8(buf, TAG_BIN);
-            writeBytes(buf, v.toBin());
+            writeBin(buf, v.toBin());
             break;
         case Var::List: {
             writeU8(buf, TAG_LIST);
@@ -242,7 +242,7 @@ Var readVar(const uint8_t*& ptr, const uint8_t* end)
 // Node tree serialization
 // ============================================================================
 
-static void writeNode(const Node* node, std::vector<uint8_t>& buf)
+static void writeNode(const Node* node, Bytes& buf)
 {
     // value
     if (node->hasValue() && !node->value().isNull())
@@ -280,10 +280,10 @@ static void readNode(const uint8_t*& ptr, const uint8_t* end, Node* node)
     }
 }
 
-std::vector<uint8_t> exportTree(const Node* node)
+Bytes exportTree(const Node* node)
 {
     if (!node) return {};
-    std::vector<uint8_t> buf;
+    Bytes buf;
     buf.reserve(1024);
     writeNode(node, buf);
     return buf;

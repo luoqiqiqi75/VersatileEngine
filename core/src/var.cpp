@@ -6,7 +6,6 @@
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
 #include "ve/core/var.h"
-#include "ve/core/convert.h"
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -16,7 +15,7 @@
 
 namespace ve {
 
-// ========== 构造与赋值 ==========
+// construction
 
 Var::Var() : _type(Null), _storage{} { _storage._int = 0; }
 Var::Var(bool v) : _type(Bool), _storage{} { _storage._bool = v; }
@@ -58,7 +57,7 @@ Var::~Var() {
     destroy();
 }
 
-// ========== 私有辅助方法 ==========
+// ref<> specializations
 
 template<> std::string& Var::ref<Var::String, std::string>() { return *_storage._str; }
 template<> const std::string& Var::ref<Var::String, std::string>() const { return *_storage._str; }
@@ -73,7 +72,7 @@ template<> const Var::DictV& Var::ref<Var::Dict, Var::DictV>() const { return *_
 template<> Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() { return _storage._custom->value; }
 template<> const Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() const { return _storage._custom->value; }
 
-// ========== 类型查询 (Custom) ==========
+// Custom type query
 
 const std::type_info& Var::customType() const {
     if (_type != Custom || !_storage._custom) return typeid(void);
@@ -86,7 +85,7 @@ bool Var::customIs(const std::type_info& ti) const {
     return _storage._custom->value.type() == ti;
 }
 
-// ========== 取值（类型安全）==========
+// value extraction
 
 bool Var::toBool(bool def) const {
     if (_type == Bool) {
@@ -159,7 +158,7 @@ std::string Var::toString(const std::string& def) const {
     } else if (_type == Int) {
         return std::to_string(_storage._int);
     } else if (_type == Double) {
-        // shortest representation that round-trips exactly
+        // shortest round-trip representation
         char buf[32];
         for (int prec = 1; prec <= 17; ++prec) {
             std::snprintf(buf, sizeof(buf), "%.*g", prec, _storage._double);
@@ -188,8 +187,8 @@ std::string Var::toString(const std::string& def) const {
     } else if (_type == Custom) {
         if (!_storage._custom || !_storage._custom->value.has_value())
             return "[Custom:empty]";
-        if (_storage._custom->to_string)
-            return _storage._custom->to_string(_storage._custom->value);
+        if (_storage._custom->to_str)
+            return _storage._custom->to_str(_storage._custom->value);
         return std::string("[Custom:") + basic::_t_demangle(_storage._custom->value.type().name()) + "]";
     }
     return def;
@@ -201,8 +200,8 @@ Bytes Var::toBin() const {
     } else if (_type == String) {
         const std::string& s = *_storage._str;
         return Bytes(s.begin(), s.end());
-    } else if (_type == Custom && _storage._custom && _storage._custom->to_bytes) {
-        return _storage._custom->to_bytes(_storage._custom->value);
+    } else if (_type == Custom && _storage._custom && _storage._custom->to_bin) {
+        return _storage._custom->to_bin(_storage._custom->value);
     }
     return Bytes();
 }
@@ -214,7 +213,7 @@ Var::DictV& Var::toDict() { return _type == Dict ? *_storage._dict : basic::_t_s
 
 void* Var::toPointer() const { return _type == Pointer ? _storage._pointer : nullptr; }
 
-// --- Custom 取值 ---
+// Custom extraction
 static const Var::CustomV empty_custom;
 const Var::CustomV& Var::toCustom() const {
     return (_type == Custom && _storage._custom) ? _storage._custom->value : empty_custom;
@@ -223,7 +222,7 @@ Var::CustomV& Var::toCustom() {
     return (_type == Custom && _storage._custom) ? _storage._custom->value : const_cast<CustomV&>(empty_custom);
 }
 
-// ========== 赋值（类型安全）==========
+// value assignment
 
 Var& Var::fromBool(bool v) {
     destroy();
@@ -330,7 +329,7 @@ Var& Var::fromCustom(CustomV v) {
     return *this;
 }
 
-// ========== operator[] ==========
+// operator[]
 
 const Var& Var::operator[](size_t index) const {
     static const Var null_var;
@@ -340,7 +339,7 @@ const Var& Var::operator[](size_t index) const {
     return list[index];
 }
 
-// ========== 比较操作 ==========
+// comparison
 
 bool Var::operator==(const Var& other) const {
     if (_type != other._type) return false;
@@ -381,14 +380,14 @@ bool Var::operator==(const Var& other) const {
     }
 }
 
-// ========== 调试输出 ==========
+// debug output
 
 std::ostream& operator<<(std::ostream& os, const Var& v) {
     os << v.toString();
     return os;
 }
 
-// ========== 内部辅助方法 ==========
+// internal helpers
 
 void Var::copyFrom(const Var& other) {
     switch (_type) {
@@ -425,7 +424,7 @@ void Var::destroy() {
     _type = Null;
 }
 
-// ========== 高性能线程安全 swap ==========
+// swap
 
 void Var::swap(Var& other) noexcept {
     std::swap(_type, other._type);

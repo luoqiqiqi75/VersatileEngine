@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// var.h
+// var.h — Var: high-performance variant type (replaces QVariant)
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -7,61 +7,37 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
-#include "ve/global.h"
-#include "ve/core/base.h"
+#include "ve/core/convert.h"
 
 namespace ve {
-    
-template<typename T>
-struct convert;
 
-// ----------------------------------------------------------------------------
-// Var - 高性能通用数据类型，替代 QVariant 和 Value
-// ----------------------------------------------------------------------------
-// 设计目标：
-// 1. 基础类型（bool, int, double, string, void*）零开销存储
-// 2. 支持 Array 和 Object（类似 JSON）
-// 3. 通过 Custom + convert<T> 支持任意自定义类型
-// 4. 非 Object，纯数据类型，不包含信号/槽机制
-//
-// 模板取值：
-//   as<T>()        — 快速提取：基础类型直接分发 > Custom any_cast > convert<T>
-//   to<T>(def)     — 安全转换：通过 convert<T>，失败返回 def
-//   customPtr<T>() — Custom 专用：直接获取存储值的指针（nullptr = 类型不匹配）
-// ----------------------------------------------------------------------------
 class VE_API Var {
 public:
     using ListV   = ve::Vector<Var>;
     using DictV   = ve::Dict<Var>;
-    using CustomV = std::any;   // public API type (unchanged)
+    using CustomV = std::any;
 
-    // internal: Custom values store serialization functions alongside std::any
     struct CustomStorage {
         std::any value;
-        std::string(*to_string)(const std::any&) = nullptr;
-        Bytes(*to_bytes)(const std::any&) = nullptr;
+        std::string(*to_str)(const std::any&) = nullptr;
+        Bytes(*to_bin)(const std::any&) = nullptr;
     };
-    
+
     enum Type : uint8_t {
-        Null,           // 空值
-
-        Bool,           // bool
-        Int,            // int (int64_t)
-        Double,         // double
-        String,         // std::string
-        Bin,            // Bytes（二进制数据）
-
-        List,           // Vector<Var>（数组）
-        Dict,           // Dict<Var>（对象，有序哈希表）
-
-        Pointer,        // void*
-        Custom          // std::any — 用户自定义类型（通过 convert<T> 注册）
+        Null,
+        Bool,
+        Int,
+        Double,
+        String,
+        Bin,
+        List,
+        Dict,
+        Pointer,
+        Custom
     };
 
-    // ========== 构造与赋值 ==========
-
+    // construction
     Var();
-
     Var(bool v);
     Var(int v);
     Var(std::int64_t v);
@@ -72,22 +48,19 @@ public:
     Var(const Bytes& v);
     Var(Bytes&& v);
     Var(void* ptr);
-
     Var(const ListV& v);
     Var(ListV&& v);
     Var(const DictV& v);
     Var(DictV&& v);
-    
-    // 模板构造：支持 ListLike / DictLike / convert<T>
+
     template<typename T>
     Var(const T& v) : _type(Null), _storage{} {
         if constexpr (is_list_like_v<T>) {
             _type = List;
             _storage._list = new ListV();
             _storage._list->reserve(v.size());
-            for (const auto& item : v) {
+            for (const auto& item : v)
                 _storage._list->push_back(Var(item));
-            }
         } else if constexpr (is_dict_like_v<T>) {
             _type = Dict;
             _storage._dict = new DictV();
@@ -95,14 +68,22 @@ public:
                 using KVAccess = typename T::KVAccessT;
                 (*_storage._dict)[KVAccess::key(kv)] = Var(KVAccess::value(kv));
             }
+        } else if constexpr (basic::Meta<T>::is_numeric) {
+            if constexpr (std::is_same_v<T, bool>)
+                { _type = Bool; _storage._bool = v; }
+            else if constexpr (std::is_integral_v<T>)
+                { _type = Int; _storage._int = static_cast<int64_t>(v); }
+            else
+                { _type = Double; _storage._double = static_cast<double>(v); }
+        } else if constexpr (basic::Meta<T>::is_string) {
+            _type = String;
+            _storage._str = new std::string(v);
         } else {
-            *this = convert<T>::toVar(v);
+            *this = Var::custom(v);
         }
     }
 
-    // Custom 工厂方法：显式创建 Custom 类型
-    // Captures convert<T>::toString / toBytes at compile time for runtime dispatch.
-    //   Var v = Var::custom(myObj);
+    // Custom factory: stores value as std::any + captures Convert<T> hooks
     template<typename T>
     static Var custom(T&& v) {
         using U = std::decay_t<T>;
@@ -111,14 +92,11 @@ public:
         result._storage._custom = new CustomStorage{
             std::any(std::forward<T>(v)),
             [](const std::any& a) -> std::string {
-                if (auto* p = std::any_cast<U>(&a)) return convert<U>::toString(*p);
+                if (auto* p = std::any_cast<U>(&a)) return Convert<U>::toString(*p);
                 return "";
             },
             [](const std::any& a) -> Bytes {
-                if (auto* p = std::any_cast<U>(&a)) {
-                    auto vec = convert<U>::toBytes(*p);
-                    return Bytes(vec.begin(), vec.end());
-                }
+                if (auto* p = std::any_cast<U>(&a)) return Convert<U>::toBin(*p);
                 return {};
             }
         };
@@ -130,9 +108,8 @@ public:
     Var& operator=(const Var& other);
     Var& operator=(Var&& other) noexcept;
     ~Var();
-    
-    // ========== 类型查询 ==========
-    
+
+    // type query
     Type type() const { return _type; }
     bool isNull() const { return _type == Null; }
     bool is(const Type t) const { return _type == t; }
@@ -141,40 +118,33 @@ public:
     bool isInt() const { return _type == Int; }
     bool isDouble() const { return _type == Double; }
     bool isString() const { return _type == String; }
-    bool isBytes() const { return _type == Bin; }
+    bool isBin() const { return _type == Bin; }
     bool isList() const { return _type == List; }
     bool isDict() const { return _type == Dict; }
     bool isPointer() const { return _type == Pointer; }
     bool isCustom() const { return _type == Custom; }
 
-    // Custom 类型信息
-    const std::type_info& customType() const;      // Custom 内部类型（非 Custom 返回 typeid(void)）
-    bool customIs(const std::type_info& ti) const;  // 检查 Custom 内部类型
+    const std::type_info& customType() const;
+    bool customIs(const std::type_info& ti) const;
     template<typename T> bool customIs() const { return customIs(typeid(T)); }
-    
-    // ========== 取值（类型安全）==========
-    
-    // --- 基础类型取值（类型不匹配返回默认值）---
+
+    // value extraction (type-safe, returns default on mismatch)
     bool toBool(bool def = false) const;
     int toInt(int def = -1) const;
     std::int64_t toInt64(std::int64_t def = -1) const;
     double toDouble(double def = 0.0) const;
     std::string toString(const std::string& def = "") const;
     Bytes toBin() const;
-    
+
     const ListV& toList() const;
     ListV& toList();
     const DictV& toDict() const;
     DictV& toDict();
     void* toPointer() const;
 
-    // --- Custom 取值 ---
     const CustomV& toCustom() const;
     CustomV& toCustom();
 
-    // --- 模板取值 ---
-
-    // customPtr<T>() — Custom 专用：返回指向存储值的指针（nullptr = 非 Custom 或类型不匹配）
     template<typename T> const T* customPtr() const {
         if (_type != Custom || !_storage._custom) return nullptr;
         return std::any_cast<T>(&_storage._custom->value);
@@ -184,18 +154,7 @@ public:
         return std::any_cast<T>(&_storage._custom->value);
     }
 
-    // to<T>(def) — 安全转换：通过 convert<T>，转换失败返回 def
-    template<typename T>
-    T to(const T& def = T{}) const {
-        T out;
-        if (convert<T>::fromVar(*this, out)) return out;
-        return def;
-    }
-
-    // as<T>() — 快速类型提取（信号拆包 / 通用场景）
-    //   基础类型 → 直接分发（零开销）
-    //   Custom   → any_cast（直接提取）
-    //   其它     → convert<T>（兜底）
+    // as<T>() — fast extraction: basic types → direct, Custom → any_cast
     template<typename T>
     std::decay_t<T> as() const {
         using U = std::decay_t<T>;
@@ -211,16 +170,31 @@ public:
                 if (auto* p = std::any_cast<U>(&_storage._custom->value))
                     return *p;
             }
-            return to<U>();
+            return U{};
         }
     }
-    
-    // operator[] — 按下标访问 List 元素（越界返回 Null Var）
+
+    // to<T>(def) — safe conversion: basic → direct, else → any_cast + string intermediate
+    template<typename T>
+    T to(const T& def = T{}) const {
+        using U = std::decay_t<T>;
+        if constexpr (std::is_same_v<U, Var> || basic::Meta<U>::is_numeric
+                      || basic::Meta<U>::is_string || std::is_pointer_v<U>) {
+            return as<T>();
+        } else {
+            if (_type == Custom && _storage._custom) {
+                if (auto* p = std::any_cast<U>(&_storage._custom->value))
+                    return *p;
+            }
+            U out;
+            if (Convert<U>::fromString(toString(), out)) return out;
+            return def;
+        }
+    }
+
     const Var& operator[](size_t index) const;
-    
-    // ========== 赋值（类型安全）==========
-    
-    // 基础类型赋值
+
+    // value assignment
     Var& fromBool(bool v);
     Var& fromInt(int v);
     Var& fromInt64(std::int64_t v);
@@ -236,29 +210,24 @@ public:
     Var& fromDict(DictV&& v);
     Var& fromPointer(void* ptr);
     Var& fromCustom(CustomV v);
-    
-    // 通用赋值（通过 convert<T>）
+
     template<typename T>
     Var& from(const T& v) {
-        *this = convert<T>::toVar(v);
+        *this = Var(v);
         return *this;
     }
-    
-    // ========== 比较操作 ==========
-    
+
+    // comparison
     bool operator==(const Var& other) const;
     bool operator!=(const Var& other) const { return !(*this == other); }
-    
-    // ========== 高性能线程安全 swap ==========
+
     void swap(Var& other) noexcept;
-    
-    // ========== 调试输出 ==========
-    
+
     friend std::ostream& operator<<(std::ostream& os, const Var& v);
 
 private:
-    template<Type T, typename V> V& ref();
-    template<Type T, typename V> const V& ref() const;
+    template<Type E, typename V> V& ref();
+    template<Type E, typename V> const V& ref() const;
 
     void copyFrom(const Var& other);
     void moveFrom(Var&& other);

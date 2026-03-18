@@ -40,7 +40,7 @@ bool SchemaTraits<Json>::importNode(Node* node, const std::string& data)
 // SchemaTraits<Bin>
 // ============================================================================
 
-std::vector<uint8_t> SchemaTraits<Bin>::exportNode(const Node* node)
+Bytes SchemaTraits<Bin>::exportNode(const Node* node)
 {
     return bin::exportTree(node);
 }

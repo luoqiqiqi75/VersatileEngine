@@ -13,8 +13,6 @@
 #include "ve/core/base.h"
 #include <string>
 #include <memory>
-#include <vector>
-#include <cstdint>
 
 namespace ve {
 
@@ -69,8 +67,8 @@ struct SchemaTraits<Json>
 template<>
 struct SchemaTraits<Bin>
 {
-    VE_API static std::vector<uint8_t> exportNode(const Node* node);
-    VE_API static bool                 importNode(Node* node, const uint8_t* data, size_t len);
+    VE_API static Bytes exportNode(const Node* node);
+    VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len);
 };
 
 // --- Convenience functions -------------------------------------------------

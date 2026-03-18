@@ -61,7 +61,7 @@ VE_TEST(var_construct_string) {
 VE_TEST(var_construct_bytes) {
     Bytes bytes = {0x01, 0x02, 0x03, 0xFF};
     Var v(bytes);
-    VE_ASSERT(v.isBytes());
+    VE_ASSERT(v.isBin());
     Bytes result = v.toBin();
     VE_ASSERT_EQ(result.size(), 4);
     VE_ASSERT_EQ(result[0], 0x01);
@@ -135,7 +135,7 @@ VE_TEST(var_from_bin) {
     Var v;
     Bytes bytes = {0xAA, 0xBB, 0xCC};
     v.fromBin(bytes);
-    VE_ASSERT(v.isBytes());
+    VE_ASSERT(v.isBin());
     Bytes result = v.toBin();
     VE_ASSERT_EQ(result.size(), 3);
     VE_ASSERT_EQ(result[0], 0xAA);

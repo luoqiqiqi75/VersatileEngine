@@ -11,11 +11,6 @@
 #include "impl/ordered_hashmap.h"
 #include "impl/small_vector.h"
 
-// --- Type-trait generator macros -------------------------------------------
-// VE_DECLARE_T_CHECKER(Name, ...)   → generates is-valid trait via SFINAE
-// VE_DECLARE_T_FUNC_CHECKER(Name, Ret, ...)  → generates function-existence trait
-// VE_INHERIT_CONSTRUCTOR(CTOR, Class, Base)   → inherits + adds converting ctors
-
 #define VE_DECLARE_T_CHECKER(Checker, ...) \
 template<typename T, typename dummy = void> struct Checker : std::false_type {}; \
 template<typename T> struct Checker<T, __VA_ARGS__> : std::true_type {}
@@ -26,16 +21,6 @@ VE_DECLARE_T_CHECKER(Checker, std::enable_if_t<std::is_same_v<__VA_ARGS__, Ret>,
 namespace ve {
 
 namespace basic {
-
-// --- Removed (C++17 standard equivalents) ---
-//   enable_if_t<b,T>  → std::enable_if_t<b,T>
-//   enable_if_void<b>  → std::enable_if_t<b>       (void is default)
-//   disable_if_t<b,T>  → std::enable_if_t<!b,T>
-//   _void_t<...>       → std::void_t<...>
-//   _t_index_sequence   → std::index_sequence
-//   _t_build_index_sequence → std::make_index_sequence
-
-// --- Type comparability detection ---
 
 template<typename L, typename R, class = void> struct is_comparable : std::false_type {};
 template<typename L, typename R>
@@ -54,7 +39,7 @@ static bool equals(const T& t1, const T& t2) {
     else return false;
 }
 
-// --- Type list (for FnTraits arg introspection) ---
+// type list (for FnTraits arg access)
 
 template<typename...> struct _t_list { using FirstT = void; static constexpr std::size_t Size = 0; };
 template<typename T0, typename... T> struct _t_list<T0, T...> { using FirstT = T0; using RestT = _t_list<T...>; static constexpr std::size_t Size = 1 + sizeof...(T); };
@@ -68,11 +53,7 @@ struct _t_list_at<0, _t_list<T0, Ts...>> { using type = T0; };
 template<std::size_t N, typename List>
 using _t_list_at_t = typename _t_list_at<N, List>::type;
 
-// --- Static var helper (for is_inputable / YAML trait detection) ---
-
 template<typename T> struct _t_static_var_helper { static inline T var; };
-
-// --- Stream I/O detection traits ---
 
 VE_DECLARE_T_FUNC_CHECKER(is_outputable, std::ostream, std::remove_reference_t<decltype(std::cout << std::declval<T>())>);
 VE_DECLARE_T_FUNC_CHECKER(is_inputable, std::istream, std::remove_reference_t<decltype(std::cin >> _t_static_var_helper<T>::var)>);
@@ -80,20 +61,7 @@ VE_DECLARE_T_FUNC_CHECKER(is_inputable, std::istream, std::remove_reference_t<de
 template<typename T> inline constexpr bool is_outputable_v = is_outputable<T>::value;
 template<typename T> inline constexpr bool is_inputable_v = is_inputable<T>::value;
 
-// --- Function introspection (FnTraits) ----------------------------------
-//
-// Unified callable analysis:  free / member / const-member / noexcept / lambda / std::function
-//
-//   FnTraits<F>::RetT         → return type
-//   FnTraits<F>::ArgsT        → _t_list<Args...>      (legacy, positional access via FirstT/SecondT)
-//   FnTraits<F>::ArgsTuple    → std::tuple<Args...>    (modern, index_sequence friendly)
-//   FnTraits<F>::ArgAt<I>     → I-th arg type
-//   FnTraits<F>::FunctionT    → std::function<Ret(Args...)>
-//   FnTraits<F>::ArgCnt       → number of arguments
-//   FnTraits<F>::IsFunction   → true
-//   FnTraits<F>::IsMember     → true for member functions
-//   FnTraits<F>::IsNoexcept   → true for noexcept callables (when available)
-// -------------------------------------------------------------------------
+// FnTraits<F> — unified callable introspection
 
 template<typename T> static decltype(&T::operator()) _t_functional(int);
 template<typename T> static void _t_functional(short);
@@ -101,7 +69,6 @@ template<typename T> static void _t_functional(short);
 template<typename F> struct FnTraits : public FnTraits<decltype(_t_functional<F>(0))> {};
 template<> struct FnTraits<void> { enum { IsFunction = false }; };
 
-// --- free function ---
 template<typename Ret, typename... Args> struct FnTraits<Ret (*) (Args...)>
 {
     using RetT      = Ret;
@@ -114,7 +81,6 @@ template<typename Ret, typename... Args> struct FnTraits<Ret (*) (Args...)>
     enum { IsFunction = true, IsMember = false, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
 
-// --- member function ---
 template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Class::*) (Args...)>
 {
     using RetT      = Ret;
@@ -128,7 +94,6 @@ template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Cl
     enum { IsFunction = true, IsMember = true, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
 
-// --- const member function ---
 template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Class::*) (Args...) const>
 {
     using RetT      = Ret;
@@ -142,7 +107,6 @@ template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Cl
     enum { IsFunction = true, IsMember = true, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
 
-// --- noexcept variants (C++17: noexcept is part of the type system) ---
 template<typename Ret, typename... Args> struct FnTraits<Ret (*) (Args...) noexcept>
 {
     using RetT      = Ret;
@@ -179,7 +143,6 @@ template<typename Ret, typename Class, typename... Args> struct FnTraits<Ret (Cl
     enum { IsFunction = true, IsMember = true, IsNoexcept = true, ArgCnt = sizeof...(Args) };
 };
 
-// --- std::function ---
 template<typename Ret, typename... Args> struct FnTraits<std::function<Ret(Args...)>>
 {
     using RetT      = Ret;
@@ -192,10 +155,7 @@ template<typename Ret, typename... Args> struct FnTraits<std::function<Ret(Args.
     enum { IsFunction = true, IsMember = false, IsNoexcept = false, ArgCnt = sizeof...(Args) };
 };
 
-// backward-compat alias
 template<typename F> using FInfo = FnTraits<F>;
-
-// --- Type utilities ---
 
 template<typename T> using _t_remove_rc  = std::remove_const_t<std::remove_reference_t<T>>;
 template<typename T> using _t_remove_rcv = std::remove_cv_t<std::remove_reference_t<T>>;
@@ -203,37 +163,21 @@ template<typename T> using _t_bare       = std::remove_cv_t<std::remove_pointer_
 
 VE_API std::string _t_demangle(const char* type_name);
 
-// ----------------------------------------------------------------------------
-// Meta<T> — 编译期 + 运行时 类型描述器
-// ----------------------------------------------------------------------------
-// 用途：
-//   1. typeName()  — 人类可读的类型名（_t_demangle），调试日志用
-//   2. typeId()    — std::type_info 引用，运行时比较 / Var::Custom
-//   3. 编译期属性  — const / && / pointer / class / copyable 等
-//   4. describe()  — 一行式完整描述（调试用）
-//
-//   Meta<const int&>::is_const       → true
-//   Meta<const int&>::is_lref        → true
-//   Meta<const int&>::bareName()     → "int"
-//   Meta<const int&>::typeName()     → "int const&" (gcc) / "int const &" (msvc)
-//   Meta<const int&>::describe()     → "int const& [const &] (integral, 4B)"
-// ----------------------------------------------------------------------------
+// Meta<T> — compile-time + runtime type descriptor
 template<typename T> struct Meta
 {
-    // --- 类型别名 ---
     using TypeT    = T;
-    using NoCVRefT = std::remove_cv_t<std::remove_reference_t<T>>;  // 去 cv + ref
-    using BareT    = _t_bare<T>;                                     // 去 cv + ref + ptr
+    using NoCVRefT = std::remove_cv_t<std::remove_reference_t<T>>;
+    using BareT    = _t_bare<T>;
     using DecayT   = std::decay_t<T>;
 
-    // --- 运行时信息 ---
     static const std::type_info& typeId()     { return typeid(T); }
     static const std::type_info& bareTypeId() { return typeid(BareT); }
     static const char*           typeIdName() { return typeid(T).name(); }
     static std::string           typeName()   { return _t_demangle(typeid(T).name()); }
     static std::string           bareName()   { return _t_demangle(typeid(BareT).name()); }
 
-    // --- 编译期：修饰符 ---
+    // qualifiers
     static constexpr bool is_const    = std::is_const_v<std::remove_reference_t<T>>;
     static constexpr bool is_volatile = std::is_volatile_v<std::remove_reference_t<T>>;
     static constexpr bool is_lref     = std::is_lvalue_reference_v<T>;
@@ -241,22 +185,25 @@ template<typename T> struct Meta
     static constexpr bool is_ref      = std::is_reference_v<T>;
     static constexpr bool is_ptr      = std::is_pointer_v<std::remove_reference_t<T>>;
 
-    // --- 编译期：类别 ---
+    // category
     static constexpr bool is_void       = std::is_void_v<BareT>;
     static constexpr bool is_arithmetic = std::is_arithmetic_v<BareT>;
     static constexpr bool is_integral   = std::is_integral_v<BareT>;
     static constexpr bool is_floating   = std::is_floating_point_v<BareT>;
     static constexpr bool is_enum       = std::is_enum_v<BareT>;
     static constexpr bool is_class      = std::is_class_v<BareT>;
+    static constexpr bool is_numeric    = std::is_arithmetic_v<NoCVRefT>;
+    static constexpr bool is_string     = std::is_same_v<NoCVRefT, std::string>
+                                       || std::is_same_v<NoCVRefT, const char*>
+                                       || std::is_same_v<NoCVRefT, char*>;
 
-    // --- 编译期：能力 ---
+    // capability
     static constexpr bool is_copyable    = std::is_copy_constructible_v<BareT>;
     static constexpr bool is_movable     = std::is_move_constructible_v<BareT>;
     static constexpr bool is_trivial     = std::is_trivially_copyable_v<BareT>;
     static constexpr bool is_abstract    = std::is_abstract_v<BareT>;
     static constexpr bool is_polymorphic = std::is_polymorphic_v<BareT>;
 
-    // --- 大小 / 对齐 ---
     static constexpr size_t typeSize() {
         if constexpr (is_void) return 0;
         else return sizeof(T);
@@ -266,20 +213,16 @@ template<typename T> struct Meta
         else return alignof(T);
     }
 
-    // --- 描述（调试/日志）---
     static std::string describe() {
         std::string s = typeName();
-
-        // qualifiers
         std::string q;
         if (is_const)    q += "const ";
         if (is_volatile) q += "volatile ";
         if (is_lref)     q += "& ";
         if (is_rref)     q += "&& ";
         if (is_ptr)      q += "* ";
-        if (!q.empty()) q.pop_back(); // remove trailing space
+        if (!q.empty()) q.pop_back();
 
-        // category
         std::string c;
         if      (is_void)       c = "void";
         else if (is_integral)   c = "integral";
@@ -288,7 +231,6 @@ template<typename T> struct Meta
         else if (is_class)      c = "class";
         else if (is_ptr && !is_class) c = "pointer";
 
-        // size
         if constexpr (!is_void) {
             c += ", " + std::to_string(typeSize()) + "B";
         }
@@ -305,7 +247,7 @@ template<typename T> struct Meta
     }
 };
 
-// --- Detection traits ---
+// detection traits
 
 template<typename T, class = void> struct is_hashable : std::false_type {};
 template<typename T>
@@ -324,7 +266,7 @@ template<typename T>
 struct is_string_like<T, std::void_t<decltype(std::string(std::declval<T>()))>> : std::true_type {};
 template<typename T> inline constexpr bool is_string_like_v = is_string_like<T>::value;
 
-// --- Enum traits (C++23 backports) ---
+// enum traits
 
 template<typename T, class = void>
 struct is_scoped_enum : std::false_type {};
@@ -338,7 +280,7 @@ constexpr auto to_underlying(E e) noexcept
     -> std::enable_if_t<std::is_enum_v<E>, std::underlying_type_t<E>>
 { return static_cast<std::underlying_type_t<E>>(e); }
 
-// --- Smart pointer detection ---
+// smart pointer detection
 
 template<typename T> struct is_smart_pointer : std::false_type {};
 template<typename T> struct is_smart_pointer<std::shared_ptr<T>> : std::true_type {};
@@ -346,7 +288,7 @@ template<typename T> struct is_smart_pointer<std::unique_ptr<T>> : std::true_typ
 template<typename T> struct is_smart_pointer<std::weak_ptr<T>> : std::true_type {};
 template<typename T> inline constexpr bool is_smart_pointer_v = is_smart_pointer<T>::value;
 
-// --- SFINAE helpers for function signature matching ---
+// SFINAE helpers for function signature matching
 
 template<typename Func1, typename Func2, typename Type>
 using FIfSame = std::enable_if_t<std::is_same_v<typename FnTraits<Func1>::FptrT, typename FnTraits<Func2>::FptrT>, Type>;
@@ -363,7 +305,7 @@ inline int set(int& flags, int f, bool on_off) { return flags = on_off ? flags |
 
 }
 
-// --- Container mixin: inherits constructors + adds converting ctors ---
+// container mixin: inherits constructors + adds converting ctors
 #define VE_INHERIT_CONSTRUCTOR(CONSTRUCTOR, CLASS, ...) \
 public: \
 using __VA_ARGS__::CONSTRUCTOR; \
@@ -374,7 +316,7 @@ CLASS(BaseT&& other) noexcept : BaseT(std::move(other)) {}
 
 namespace basic {
 
-// --- Sequential container CRTP mixin ---
+// sequential container CRTP mixin
 
 template<typename DerivedT, typename ValueT>
 class TContainer
@@ -451,10 +393,7 @@ public:
     }
 };
 
-// --- SmallVector: inline SBO vector (default N = 1) -------------------------
-// Same API as Vector, but stores up to N elements on the stack.
-// Ideal for the common case where a container holds very few items
-// (e.g. 1 child pointer per name group in Node's children map).
+// SmallVector: SBO vector (default N = 1), same API as Vector
 
 template<typename T, uint32_t N = 1>
 class SmallVector : public impl::SmallVectorImpl<T, N>,
@@ -463,7 +402,6 @@ class SmallVector : public impl::SmallVectorImpl<T, N>,
 public:
     using ImplT = impl::SmallVectorImpl<T, N>;
 
-    // --- inherit all constructors from impl ---
     using ImplT::SmallVectorImpl;
 
     SmallVector() : ImplT() {}
@@ -473,7 +411,7 @@ public:
 
 namespace basic {
 
-// --- KV accessor policies ---
+// KV accessor policies
 
 struct StdPairKVAccess {
     template<typename KV> static const auto& key(const KV& kv) { return kv.first; }
@@ -487,7 +425,7 @@ struct ImplKVAccess {
     template<typename KV> static const auto& value(const KV& kv) { return kv.value; }
 };
 
-// --- KV container CRTP mixin ---
+// KV container CRTP mixin
 
 template<typename DerivedT, typename KeyT, typename ValueT, typename KVAccessor = StdPairKVAccess>
 class KVContainer
@@ -575,9 +513,7 @@ class UnorderedHashMap : public std::unordered_map<K, V>, public basic::KVContai
 template<typename V>
 using Hash = UnorderedHashMap<std::string, V>;
 
-// --- Ordered hash map (insertion-ordered, Robin Hood hashing) ---
-// Adapted from Godot Engine's HashMap (see ve/core/impl/ for license).
-// Iteration yields impl::KeyValue<K,V> with .key / .value members.
+// OrderedHashMap: insertion-ordered Robin Hood hashing (Godot-derived)
 template<typename K, typename V,
          typename Hasher     = impl::HashMapHasherDefault,
          typename Comparator = impl::HashMapComparatorDefault<K>>
@@ -644,12 +580,9 @@ inline constexpr bool is_dict_like_v = basic::is_dict_like<T>::value;
 template<typename V>
 using Dict = OrderedHashMap<std::string, V>;
 
-// execution support
 using Task = std::function<void()>;
 
-/// Lightweight lifetime token.
-/// Default-constructed (null) means "no tracking — always alive".
-/// Use Alive::create() to start tracking; .kill() on teardown; .dead() to check.
+// Alive: lightweight lifetime token (null = no tracking = always alive)
 struct Alive : std::shared_ptr<std::atomic<bool>>
 {
     using shared_ptr::shared_ptr;

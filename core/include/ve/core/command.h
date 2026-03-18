@@ -1,32 +1,22 @@
 //
-// command.h — ve::Result, ve::Step, ve::Command, ve::command::
+// command.h — Node-centric command system
 //
-// Command execution engine with Factory-based registration.
-// Supports: simple call (zero-alloc), serial Step chain, async via LoopRef.
+// Step   = Node + connected slot (fn + loop + result)
+// Command = Node subtree under /command/
+// DAG     = shadow edges between step Nodes
 //
 // Design doc: docs/internal/plan/command-design.md
-//
-// Created by luoqi on 2026/3/16.
 //
 
 #pragma once
 
-#include "factory.h"
-#include "var.h"
-#include "loop.h"
-
-#include <chrono>
+#include "node.h"
 
 namespace ve {
 
 // ============================================================================
 // Result — unified command return type
 // ============================================================================
-//
-//   SUCCESS (0)   — command completed synchronously
-//   FAIL    (<0)  — error (negative codes)
-//   ACCEPT  (>0)  — async: accepted, result delivered via handler
-//
 
 class VE_API Result
 {
@@ -39,12 +29,12 @@ public:
 
     Result() : _code(SUCCESS) {}
     Result(Code code) : _code(code) {}
-    Result(int code, const std::string& text = "") : _code(code), _text(text) {}
+    Result(int code, const Var& content) : _code(code), _content(content) {}
+    Result(int code, const std::string& err) : _code(code), _content(err) {}
     Result(bool ok, int err = FAIL) : _code(ok ? SUCCESS : err) {}
 
-    int              code() const { return _code; }
-    const std::string& text() const { return _text; }
-    const Var&       content() const { return _content; }
+    int        code() const { return _code; }
+    const Var& content() const { return _content; }
 
     bool isSuccess()  const { return _code == 0; }
     bool isError()    const { return _code < 0; }
@@ -52,317 +42,136 @@ public:
 
     Result& setContent(const Var& v) { _content = v; return *this; }
     Result& setContent(Var&& v)      { _content = std::move(v); return *this; }
-    Result& setText(const std::string& t) { _text = t; return *this; }
 
     std::string toString() const;
 
     explicit operator bool() const { return isSuccess(); }
 
 private:
-    int         _code;
-    std::string _text;
-    Var         _content;
+    int _code;
+    Var _content;
 };
 
 // ============================================================================
-// Step — single execution unit in a command chain
+// Command signal
 // ============================================================================
 
-class Command;
-
-class Step
-{
-public:
-    using Fn = std::function<Result(Command&)>;
-
-    Step() = default;
-    Step(Fn fn, LoopRef loop = {})
-        : _fn(std::move(fn)), _loop(loop) {}
-    Step(Fn fn, const std::string& name, LoopRef loop = {})
-        : _fn(std::move(fn)), _name(name), _loop(loop) {}
-
-    explicit operator bool() const { return !!_fn; }
-
-    const std::string& name() const { return _name; }
-    LoopRef loop() const { return _loop; }
-
-    Result operator()(Command& cmd) const { return _fn(cmd); }
-
-    // --- factory methods ---
-
-    static Step fromVoid(std::function<void()> fn, LoopRef loop = {}) {
-        return Step([f = std::move(fn)](Command&) -> Result { f(); return Result::SUCCESS; }, loop);
-    }
-
-    static Step fromResult(std::function<Result()> fn, LoopRef loop = {}) {
-        return Step([f = std::move(fn)](Command&) -> Result { return f(); }, loop);
-    }
-
-    template<typename F>
-    static Step fromInput(F fn, LoopRef loop = {});
-
-    template<typename F, typename T>
-    static Step fromBind(F fn, T value, LoopRef loop = {}) {
-        return Step([f = std::move(fn), v = std::move(value)](Command&) -> Result {
-            using Ret = typename basic::FnTraits<F>::RetT;
-            if constexpr (std::is_same_v<Ret, Result>)
-                return f(v);
-            else if constexpr (std::is_same_v<Ret, bool>)
-                return Result(f(v));
-            else {
-                f(v); return Result::SUCCESS;
-            }
-        }, loop);
-    }
-
-private:
-    Fn          _fn;
-    std::string _name;
-    LoopRef     _loop;
+enum CommandSignal : Object::SignalT {
+    CMD_DONE = 0x0030,   // (Var result) — step/command completed
 };
 
-
 // ============================================================================
-// Command — execution instance (non-copyable)
+// StepFn / StepInfo — step function type + registration helper
 // ============================================================================
 
-class VE_API Command
-{
-public:
-    using ResultHandler = std::function<void(const Result&)>;
+using StepFn = std::function<Result(Node*)>;
 
-    ~Command();
-
-    // --- identity ---
-    const std::string& key() const { return _key; }
-
-    // --- private data storage (Var Dict) ---
-    Var              data(const std::string& name) const;
-    template<typename T>
-    T                data(const std::string& name) const { return data(name).as<T>(); }
-
-    void             setData(const std::string& name, const Var& v);
-    template<typename T>
-    void             setData(const std::string& name, const T& v) { setData(name, Var(v)); }
-
-    bool             hasData(const std::string& name) const;
-
-    // --- input shorthand ---
-    static constexpr const char* INPUT_KEY = "_input";
-
-    Var              input() const { return data(INPUT_KEY); }
-    template<typename T>
-    T                input() const { return data<T>(INPUT_KEY); }
-
-    void             setInput(const Var& v) { setData(INPUT_KEY, v); }
-    template<typename T>
-    void             setInput(const T& v) { setData(INPUT_KEY, Var(v)); }
-
-    // --- step chain ---
-    void             addStep(const Step& step);
-    void             addStep(Step&& step);
-    void             prependStep(const Step& step);
-    int              stepCount() const { return static_cast<int>(_steps.size()); }
-
-    // --- result handler ---
-    void             setResultHandler(const ResultHandler& h) { _result_handler = h; }
-
-    // --- execution ---
-    Result           start();
-    void             finish(const Result& result);
-
-    // --- state ---
-    bool             isRunning()  const { return _running; }
-    bool             isFinished() const { return _finished; }
-
-    // --- debug info ---
-    int              currentStepIndex() const { return _step_idx; }
-    std::string      currentStepName()  const;
-    int64_t          elapsedUs()        const;
-
-    // internal: used by command:: namespace and CommandGraph
-    explicit Command(const std::string& key);
-
-private:
-    Command(const Command&) = delete;
-    Command& operator=(const Command&) = delete;
-
-    Result runCurrentStep();
-    void   advance(const Result& res);
-
-    std::string   _key;
-    Var           _data;             // Dict type
-    Vector<Step>  _steps;
-    int           _step_idx    = 0;
-    ResultHandler _result_handler;
-    bool          _running     = false;
-    bool          _finished    = false;
-    int64_t       _start_time  = 0;
+struct StepInfo {
+    std::string name;
+    StepFn      fn;
+    LoopRef     loop = {};
 };
 
-
 // ============================================================================
-// Step::fromInput — deferred definition (needs Command)
-// ============================================================================
-
-template<typename F>
-Step Step::fromInput(F fn, LoopRef loop) {
-    return Step([f = std::move(fn)](Command& cmd) -> Result {
-        using Traits = basic::FnTraits<F>;
-        using ArgT   = typename Traits::template ArgAt<0>;
-        auto val = cmd.input<ArgT>();
-        using Ret = typename Traits::RetT;
-        if constexpr (std::is_same_v<Ret, Result>)
-            return f(val);
-        else if constexpr (std::is_same_v<Ret, bool>)
-            return Result(f(val));
-        else {
-            f(val); return Result::SUCCESS;
-        }
-    }, loop);
-}
-
-
-// ============================================================================
-// CommandFactory — Factory-based command registry
-// ============================================================================
-
-using CommandFactory = Factory<Result(Command&)>;
-VE_API CommandFactory& commandFactory();
-
-
-// ============================================================================
-// command:: — namespace-level API (register / execute / query)
+// command:: — namespace-level API
 // ============================================================================
 //
-// Registration delegates to commandFactory(). The reg() overloads are
-// syntactic sugar that adapt various callable signatures into Step chains.
+// Registration creates Node subtrees under /command/.
+// For multi-step, shadow chains are auto-wired sequentially.
+// CMD_DONE signals chain async steps.
 //
 
 namespace command {
 
-// --- registration (delegates to commandFactory) ---
+VE_API Node* root();
 
-VE_API void reg(const std::string& key, const Vector<Step>& steps);
-VE_API void reg(const std::string& key, std::initializer_list<Step> steps);
+// --- registration ---
 
-// Single-step registration with FnTraits auto-deduction
-template<typename F, typename = std::enable_if_t<basic::FnTraits<std::decay_t<F>>::IsFunction>>
-void reg(const std::string& key, F fn, LoopRef loop = {}) {
+VE_API Node* reg(const std::string& key, StepFn fn, LoopRef loop = {});
+VE_API Node* reg(const std::string& key, std::initializer_list<StepInfo> steps);
+
+template<typename F, typename = std::enable_if_t<basic::FnTraits<std::decay_t<F>>::IsFunction
+    && !std::is_convertible_v<F, StepFn>>>
+Node* reg(const std::string& key, F fn, LoopRef loop = {}) {
     using Traits = basic::FnTraits<std::decay_t<F>>;
-    if constexpr (Traits::ArgCnt == 0) {
-        reg(key, { Step::fromResult([f = std::move(fn)]() -> Result {
-            using Ret = typename Traits::RetT;
-            if constexpr (std::is_same_v<Ret, Result>) return f();
-            else if constexpr (std::is_same_v<Ret, bool>) return Result(f());
-            else { f(); return Result::SUCCESS; }
-        }, loop) });
-    } else if constexpr (Traits::ArgCnt == 1 &&
-                         std::is_same_v<typename Traits::template ArgAt<0>, Command&>) {
-        reg(key, { Step(std::move(fn), loop) });
-    } else if constexpr (Traits::ArgCnt == 1) {
-        reg(key, { Step::fromInput(std::move(fn), loop) });
+    using Ret = typename Traits::RetT;
+
+    if constexpr (Traits::ArgCnt == 1 &&
+                  std::is_same_v<typename Traits::template ArgAt<0>, Node*>) {
+        if constexpr (std::is_same_v<Ret, Result>)
+            return reg(key, StepFn(std::move(fn)), loop);
+        else if constexpr (std::is_same_v<Ret, bool>)
+            return reg(key, StepFn([f = std::move(fn)](Node* n) -> Result { return Result(f(n)); }), loop);
+        else
+            return reg(key, StepFn([f = std::move(fn)](Node* n) -> Result { f(n); return Result::SUCCESS; }), loop);
+    }
+    else if constexpr (Traits::ArgCnt == 0) {
+        if constexpr (std::is_same_v<Ret, Result>)
+            return reg(key, StepFn([f = std::move(fn)](Node*) -> Result { return f(); }), loop);
+        else if constexpr (std::is_same_v<Ret, bool>)
+            return reg(key, StepFn([f = std::move(fn)](Node*) -> Result { return Result(f()); }), loop);
+        else
+            return reg(key, StepFn([f = std::move(fn)](Node*) -> Result { f(); return Result::SUCCESS; }), loop);
+    }
+    else if constexpr (Traits::ArgCnt == 1) {
+        using ArgT = typename Traits::template ArgAt<0>;
+        if constexpr (std::is_same_v<Ret, Result>)
+            return reg(key, StepFn([f = std::move(fn)](Node* n) -> Result { return f(n->get<ArgT>()); }), loop);
+        else if constexpr (std::is_same_v<Ret, bool>)
+            return reg(key, StepFn([f = std::move(fn)](Node* n) -> Result { return Result(f(n->get<ArgT>())); }), loop);
+        else
+            return reg(key, StepFn([f = std::move(fn)](Node* n) -> Result { f(n->get<ArgT>()); return Result::SUCCESS; }), loop);
+    }
+    else {
+        return nullptr;
     }
 }
 
-// Registration with bound parameter
-template<typename F, typename T>
-void reg(const std::string& key, F fn, T value, LoopRef loop = {}) {
-    reg(key, { Step::fromBind(std::move(fn), std::move(value), loop) });
-}
-
-// Member function registration
 template<typename Ret, typename Class, typename... Args>
-void reg(const std::string& key, Ret(Class::*fn)(Args...), Class* obj, LoopRef loop = {}) {
+Node* reg(const std::string& key, Ret(Class::*fn)(Args...), Class* obj, LoopRef loop = {}) {
     if constexpr (sizeof...(Args) == 0) {
-        reg(key, { Step::fromResult([obj, fn]() -> Result {
+        return reg(key, [obj, fn](Node*) -> Result {
             if constexpr (std::is_same_v<Ret, Result>) return (obj->*fn)();
             else if constexpr (std::is_same_v<Ret, bool>) return Result((obj->*fn)());
             else { (obj->*fn)(); return Result::SUCCESS; }
-        }, loop) });
+        }, loop);
     } else {
-        reg(key, { Step([obj, fn](Command& cmd) -> Result {
-            using ArgT = typename basic::_t_list<Args...>::FirstT;
-            auto val = cmd.input<ArgT>();
+        using ArgT = typename basic::_t_list<Args...>::FirstT;
+        return reg(key, [obj, fn](Node* n) -> Result {
+            auto val = n->get<ArgT>();
             if constexpr (std::is_same_v<Ret, Result>) return (obj->*fn)(val);
             else if constexpr (std::is_same_v<Ret, bool>) return Result((obj->*fn)(val));
             else { (obj->*fn)(val); return Result::SUCCESS; }
-        }, loop) });
+        }, loop);
     }
 }
 
-VE_API bool    unreg(const std::string& key);
+VE_API bool unreg(const std::string& key);
 
-// --- query (delegates to commandFactory) ---
+// --- query ---
 
 VE_API bool    has(const std::string& key);
 VE_API Strings keys();
 
-// --- simple call (zero Command allocation, sync only) ---
-// For single-step sync commands: directly invokes the registered function
-// without allocating a persistent Command object.
+// --- execution ---
 
-VE_API Result  call(const std::string& key, const Var& input = {});
+// Sync call: traverses step chain, returns final Result.
+VE_API Result call(const std::string& key, const Var& input = {});
 
-// --- full execution (allocates Command, supports async step chain) ---
-
-VE_API Command* create(const std::string& key);
-VE_API Command* create(const std::string& key, const Command::ResultHandler& handler);
-
-VE_API Result   exec(const std::string& key);
-VE_API Result   exec(const std::string& key, const Var& input);
-VE_API Result   exec(const std::string& key, const Var& input,
-                     const Command::ResultHandler& handler);
+// Full execution: supports async steps via LoopRef.
+VE_API Result exec(const std::string& key, const Var& input = {});
+VE_API Result exec(const std::string& key, const Var& input,
+                   std::function<void(const Result&)> onDone);
 
 template<typename T>
-Result exec(const std::string& key, const T& input) {
-    return exec(key, Var(input));
-}
+Result exec(const std::string& key, const T& input) { return exec(key, Var(input)); }
 
 template<typename T>
 Result exec(const std::string& key, const T& input,
-            const Command::ResultHandler& handler) {
-    return exec(key, Var(input), handler);
+            const std::function<void(const Result&)>& onDone) {
+    return exec(key, Var(input), onDone);
 }
 
 } // namespace command
-
-
-// ============================================================================
-// CommandGraph — DAG execution (topological sort + parallel dispatch)
-// ============================================================================
-//
-// Build a directed acyclic graph of Steps. Nodes with no unresolved
-// dependencies execute in parallel (dispatched via LoopRef if provided).
-// Execution fails fast on first error.
-//
-
-class VE_API CommandGraph
-{
-public:
-    CommandGraph() = default;
-    ~CommandGraph() = default;
-
-    // Add a named step node to the graph
-    void addNode(const std::string& id, Step step);
-
-    // Add a dependency edge: `from` must complete before `to` starts
-    void addEdge(const std::string& from, const std::string& to);
-
-    // Execute the graph. Blocks until all steps complete or first error.
-    // Uses `loop` for parallel dispatch of independent nodes.
-    Result execute(LoopRef loop = {});
-
-    int nodeCount() const { return static_cast<int>(_nodes.size()); }
-
-private:
-    struct GraphNode {
-        std::string id;
-        Step        step;
-        Strings     deps;     // IDs this node depends on
-    };
-    Vector<GraphNode> _nodes;
-    Vector<std::pair<std::string, std::string>> _edges;
-};
 
 } // namespace ve
