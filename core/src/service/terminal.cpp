@@ -60,16 +60,16 @@ static std::string restOfLine(const std::string& line, size_t arg_start = 1)
 static const char* varTypeName(Var::Type t)
 {
     switch (t) {
-        case Var::Null:    return "Null";
-        case Var::Bool:    return "Bool";
-        case Var::Int:     return "Int";
-        case Var::Double:  return "Double";
-        case Var::String:  return "String";
-        case Var::Bin:     return "Bin";
-        case Var::List:    return "List";
-        case Var::Dict:    return "Dict";
-        case Var::Pointer: return "Pointer";
-        case Var::Custom:  return "Custom";
+        case Var::NONE:    return "Null";
+        case Var::BOOL:    return "Bool";
+        case Var::INT:     return "Int";
+        case Var::DOUBLE:  return "Double";
+        case Var::STRING:  return "String";
+        case Var::BIN:     return "Bin";
+        case Var::LIST:    return "List";
+        case Var::DICT:    return "Dict";
+        case Var::POINTER: return "Pointer";
+        case Var::CUSTOM:  return "Custom";
         default:           return "?";
     }
 }

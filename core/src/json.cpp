@@ -41,10 +41,10 @@ static void escape(const std::string& s, std::string& out)
 static void varToJson(const Var& v, std::string& out)
 {
     switch (v.type()) {
-        case Var::Null:    out += "null"; break;
-        case Var::Bool:    out += v.toBool() ? "true" : "false"; break;
-        case Var::Int:     out += std::to_string(v.toInt64()); break;
-        case Var::Double: {
+        case Var::NONE:    out += "null"; break;
+        case Var::BOOL:    out += v.toBool() ? "true" : "false"; break;
+        case Var::INT:     out += std::to_string(v.toInt64()); break;
+        case Var::DOUBLE: {
             double d = v.toDouble();
             if (std::isnan(d))       { out += "null"; break; }
             if (std::isinf(d))       { out += "null"; break; }
@@ -53,19 +53,19 @@ static void varToJson(const Var& v, std::string& out)
             out.append(buf, n);
             break;
         }
-        case Var::String:
+        case Var::STRING:
             out += '"';
             escape(v.toString(), out);
             out += '"';
             break;
-        case Var::Bin: {
+        case Var::BIN: {
             auto bytes = v.toBin();
             out += '"';
             escape(std::string(bytes.begin(), bytes.end()), out);
             out += '"';
             break;
         }
-        case Var::List: {
+        case Var::LIST: {
             auto& list = v.toList();
             out += '[';
             for (size_t i = 0; i < list.size(); ++i) {
@@ -75,7 +75,7 @@ static void varToJson(const Var& v, std::string& out)
             out += ']';
             break;
         }
-        case Var::Dict: {
+        case Var::DICT: {
             auto& dict = v.toDict();
             out += '{';
             bool first = true;

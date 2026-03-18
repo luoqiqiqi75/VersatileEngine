@@ -13,7 +13,7 @@ using namespace ve;
 VE_TEST(var_construct_null) {
     Var v;
     VE_ASSERT(v.isNull());
-    VE_ASSERT(v.type() == Var::Null);
+    VE_ASSERT(v.type() == Var::NONE);
 }
 
 VE_TEST(var_construct_bool) {

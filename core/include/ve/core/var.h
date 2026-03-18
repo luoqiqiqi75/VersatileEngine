@@ -24,16 +24,16 @@ public:
     };
 
     enum Type : uint8_t {
-        Null,
-        Bool,
-        Int,
-        Double,
-        String,
-        Bin,
-        List,
-        Dict,
-        Pointer,
-        Custom
+        NONE,
+        BOOL,
+        INT,
+        DOUBLE,
+        STRING,
+        BIN,
+        LIST,
+        DICT,
+        POINTER,
+        CUSTOM
     };
 
     // construction
@@ -54,15 +54,15 @@ public:
     Var(DictV&& v);
 
     template<typename T>
-    Var(const T& v) : _type(Null), _storage{} {
+    Var(const T& v) : _type(NONE), _storage{} {
         if constexpr (is_list_like_v<T>) {
-            _type = List;
+            _type = LIST;
             _storage._list = new ListV();
             _storage._list->reserve(v.size());
             for (const auto& item : v)
                 _storage._list->push_back(Var(item));
         } else if constexpr (is_dict_like_v<T>) {
-            _type = Dict;
+            _type = DICT;
             _storage._dict = new DictV();
             for (const auto& kv : v) {
                 using KVAccess = typename T::KVAccessT;
@@ -70,25 +70,24 @@ public:
             }
         } else if constexpr (basic::Meta<T>::is_numeric) {
             if constexpr (std::is_same_v<T, bool>)
-                { _type = Bool; _storage._bool = v; }
+                { _type = BOOL; _storage._bool = v; }
             else if constexpr (std::is_integral_v<T>)
-                { _type = Int; _storage._int = static_cast<int64_t>(v); }
+                { _type = INT; _storage._int = static_cast<int64_t>(v); }
             else
-                { _type = Double; _storage._double = static_cast<double>(v); }
+                { _type = DOUBLE; _storage._double = static_cast<double>(v); }
         } else if constexpr (basic::Meta<T>::is_string) {
-            _type = String;
+            _type = STRING;
             _storage._str = new std::string(v);
         } else {
             *this = Var::custom(v);
         }
     }
 
-    // Custom factory: stores value as std::any + captures Convert<T> hooks
     template<typename T>
     static Var custom(T&& v) {
         using U = std::decay_t<T>;
         Var result;
-        result._type = Custom;
+        result._type = CUSTOM;
         result._storage._custom = new CustomStorage{
             std::any(std::forward<T>(v)),
             [](const std::any& a) -> std::string {
@@ -111,18 +110,18 @@ public:
 
     // type query
     Type type() const { return _type; }
-    bool isNull() const { return _type == Null; }
+    bool isNull() const { return _type == NONE; }
     bool is(const Type t) const { return _type == t; }
 
-    bool isBool() const { return _type == Bool; }
-    bool isInt() const { return _type == Int; }
-    bool isDouble() const { return _type == Double; }
-    bool isString() const { return _type == String; }
-    bool isBin() const { return _type == Bin; }
-    bool isList() const { return _type == List; }
-    bool isDict() const { return _type == Dict; }
-    bool isPointer() const { return _type == Pointer; }
-    bool isCustom() const { return _type == Custom; }
+    bool isBool() const { return _type == BOOL; }
+    bool isInt() const { return _type == INT; }
+    bool isDouble() const { return _type == DOUBLE; }
+    bool isString() const { return _type == STRING; }
+    bool isBin() const { return _type == BIN; }
+    bool isList() const { return _type == LIST; }
+    bool isDict() const { return _type == DICT; }
+    bool isPointer() const { return _type == POINTER; }
+    bool isCustom() const { return _type == CUSTOM; }
 
     const std::type_info& customType() const;
     bool customIs(const std::type_info& ti) const;
@@ -146,15 +145,15 @@ public:
     CustomV& toCustom();
 
     template<typename T> const T* customPtr() const {
-        if (_type != Custom || !_storage._custom) return nullptr;
+        if (_type != CUSTOM || !_storage._custom) return nullptr;
         return std::any_cast<T>(&_storage._custom->value);
     }
     template<typename T> T* customPtr() {
-        if (_type != Custom || !_storage._custom) return nullptr;
+        if (_type != CUSTOM || !_storage._custom) return nullptr;
         return std::any_cast<T>(&_storage._custom->value);
     }
 
-    // as<T>() — fast extraction: basic types → direct, Custom → any_cast
+    // as<T>() — fast extraction: basic types → direct, CUSTOM → any_cast
     template<typename T>
     std::decay_t<T> as() const {
         using U = std::decay_t<T>;
@@ -166,7 +165,7 @@ public:
         else if constexpr (std::is_same_v<U, std::string>)    return toString();
         else if constexpr (std::is_pointer_v<U>)              return static_cast<U>(toPointer());
         else {
-            if (_type == Custom && _storage._custom) {
+            if (_type == CUSTOM && _storage._custom) {
                 if (auto* p = std::any_cast<U>(&_storage._custom->value))
                     return *p;
             }
@@ -182,7 +181,7 @@ public:
                       || basic::Meta<U>::is_string || std::is_pointer_v<U>) {
             return as<T>();
         } else {
-            if (_type == Custom && _storage._custom) {
+            if (_type == CUSTOM && _storage._custom) {
                 if (auto* p = std::any_cast<U>(&_storage._custom->value))
                     return *p;
             }

@@ -150,30 +150,30 @@ static constexpr uint8_t TAG_DICT    = 7;
 void writeVar(const Var& v, Bytes& buf)
 {
     switch (v.type()) {
-        case Var::Null:
+        case Var::NONE:
             writeU8(buf, TAG_NULL);
             break;
-        case Var::Bool:
+        case Var::BOOL:
             writeU8(buf, TAG_BOOL);
             writeU8(buf, v.toBool() ? 1 : 0);
             break;
-        case Var::Int:
+        case Var::INT:
             writeU8(buf, TAG_INT);
             writeI64(buf, v.toInt64());
             break;
-        case Var::Double:
+        case Var::DOUBLE:
             writeU8(buf, TAG_DOUBLE);
             writeF64(buf, v.toDouble());
             break;
-        case Var::String:
+        case Var::STRING:
             writeU8(buf, TAG_STRING);
             writeStr(buf, v.toString());
             break;
-        case Var::Bin:
+        case Var::BIN:
             writeU8(buf, TAG_BIN);
             writeBin(buf, v.toBin());
             break;
-        case Var::List: {
+        case Var::LIST: {
             writeU8(buf, TAG_LIST);
             auto& list = v.toList();
             writeU32(buf, static_cast<uint32_t>(list.size()));
@@ -181,7 +181,7 @@ void writeVar(const Var& v, Bytes& buf)
                 writeVar(item, buf);
             break;
         }
-        case Var::Dict: {
+        case Var::DICT: {
             writeU8(buf, TAG_DICT);
             auto& dict = v.toDict();
             writeU32(buf, static_cast<uint32_t>(dict.size()));
