@@ -1,39 +1,11 @@
-// node.h — ve::Node + ve::Schema
+// node.h — ve::Node
 #pragma once
 
 #include "factory.h"
-#include "var.h"
+#include "schema.h"
 #include <string_view>
 
 namespace ve {
-
-class Node;
-
-// --- Schema ----------------------------------------------------------------
-
-struct SchemaField
-{
-    std::string name;
-    std::shared_ptr<struct Schema> sub;
-
-    SchemaField(const std::string& n) : name(n) {}
-    SchemaField(std::string n, std::shared_ptr<struct Schema> s)
-        : name(std::move(n)), sub(std::move(s)) {}
-};
-
-struct VE_API Schema
-{
-    Vector<SchemaField> fields;
-
-    Schema() = default;
-    Schema(std::initializer_list<SchemaField> f) : fields(f.begin(), f.end()) {}
-
-    static std::shared_ptr<Schema> create(std::initializer_list<SchemaField> f)
-    { return std::make_shared<Schema>(f); }
-
-    int fieldCount() const { return (int)fields.size(); }
-    void build(Node* node) const;
-};
 
 // --- Node ------------------------------------------------------------------
 //

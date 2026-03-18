@@ -8,8 +8,7 @@
 #   ve_dep_asio2   — asio2 2.9 (high-level networking, header-only)
 #
 # 外部依赖由各子项目按需调用 ve_find_package() 声明:
-#   core/          → yaml-cpp::yaml-cpp
-#   core/terminal/ → simdjson::simdjson
+#   core/          → yaml-cpp::yaml-cpp, simdjson::simdjson
 #   cpp/rtt/       → nlohmann_json::nlohmann_json
 #
 # ve_find_package 查找顺序: 本地路径 → find_package → FetchContent

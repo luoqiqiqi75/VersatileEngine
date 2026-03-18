@@ -92,7 +92,7 @@ struct convert {
     
     // ========== string 互转（文本化）==========
     
-    // T → string
+    // T → string (must NOT go through Var to avoid recursion with CustomStorage::to_string)
     static std::string toString(const T& v) {
         if constexpr (std::is_arithmetic_v<T>) {
             return std::to_string(v);
@@ -101,9 +101,7 @@ struct convert {
         } else if constexpr (std::is_same_v<T, const char*>) {
             return std::string(v);
         } else {
-            // 默认：通过 Var 转换
-            Var var = toVar(v);
-            return var.toString();
+            return std::string("[") + basic::_t_demangle(typeid(T).name()) + "]";
         }
     }
     
@@ -142,16 +140,14 @@ struct convert {
     
     // ========== 二进制互转（序列化）==========
     
-    // T → bytes
+    // T → bytes (must NOT go through Var to avoid recursion with CustomStorage::to_bytes)
     static std::vector<uint8_t> toBytes(const T& v) {
         if constexpr (std::is_trivially_copyable_v<T> && sizeof(T) <= 64) {
-            // 小对象直接 memcpy
             std::vector<uint8_t> bytes(sizeof(T));
             std::memcpy(bytes.data(), &v, sizeof(T));
             return bytes;
         }
         else {
-            // 大对象或复杂类型：通过 string 序列化
             std::string s = toString(v);
             return std::vector<uint8_t>(s.begin(), s.end());
         }

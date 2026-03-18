@@ -70,20 +70,20 @@ template<> const Var::ListV& Var::ref<Var::List, Var::ListV>() const { return *_
 template<> Var::DictV& Var::ref<Var::Dict, Var::DictV>() { return *_storage._dict; }
 template<> const Var::DictV& Var::ref<Var::Dict, Var::DictV>() const { return *_storage._dict; }
 
-template<> Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() { return *_storage._custom; }
-template<> const Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() const { return *_storage._custom; }
+template<> Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() { return _storage._custom->value; }
+template<> const Var::CustomV& Var::ref<Var::Custom, Var::CustomV>() const { return _storage._custom->value; }
 
 // ========== 类型查询 (Custom) ==========
 
 const std::type_info& Var::customType() const {
-    if (_type != Custom) return typeid(void);
-    const auto& a = ref<Custom, CustomV>();
+    if (_type != Custom || !_storage._custom) return typeid(void);
+    const auto& a = _storage._custom->value;
     return a.has_value() ? a.type() : typeid(void);
 }
 
 bool Var::customIs(const std::type_info& ti) const {
-    if (_type != Custom) return false;
-    return ref<Custom, CustomV>().type() == ti;
+    if (_type != Custom || !_storage._custom) return false;
+    return _storage._custom->value.type() == ti;
 }
 
 // ========== 取值（类型安全）==========
@@ -186,9 +186,11 @@ std::string Var::toString(const std::string& def) const {
     } else if (_type == Dict) {
         return "[Dict]";
     } else if (_type == Custom) {
-        const auto& a = *_storage._custom;
-        if (!a.has_value()) return "[Custom:empty]";
-        return std::string("[Custom:") + basic::_t_demangle(a.type().name()) + "]";
+        if (!_storage._custom || !_storage._custom->value.has_value())
+            return "[Custom:empty]";
+        if (_storage._custom->to_string)
+            return _storage._custom->to_string(_storage._custom->value);
+        return std::string("[Custom:") + basic::_t_demangle(_storage._custom->value.type().name()) + "]";
     }
     return def;
 }
@@ -199,6 +201,8 @@ Bytes Var::toBin() const {
     } else if (_type == String) {
         const std::string& s = *_storage._str;
         return Bytes(s.begin(), s.end());
+    } else if (_type == Custom && _storage._custom && _storage._custom->to_bytes) {
+        return _storage._custom->to_bytes(_storage._custom->value);
     }
     return Bytes();
 }
@@ -212,8 +216,12 @@ void* Var::toPointer() const { return _type == Pointer ? _storage._pointer : nul
 
 // --- Custom 取值 ---
 static const Var::CustomV empty_custom;
-const Var::CustomV& Var::toCustom() const { return _type == Custom ? *_storage._custom : empty_custom; }
-Var::CustomV& Var::toCustom() { return _type == Custom ? *_storage._custom : const_cast<CustomV&>(empty_custom); }
+const Var::CustomV& Var::toCustom() const {
+    return (_type == Custom && _storage._custom) ? _storage._custom->value : empty_custom;
+}
+Var::CustomV& Var::toCustom() {
+    return (_type == Custom && _storage._custom) ? _storage._custom->value : const_cast<CustomV&>(empty_custom);
+}
 
 // ========== 赋值（类型安全）==========
 
@@ -318,7 +326,7 @@ Var& Var::fromPointer(void* ptr) {
 Var& Var::fromCustom(CustomV v) {
     destroy();
     _type = Custom;
-    _storage._custom = new CustomV(std::move(v));
+    _storage._custom = new CustomStorage{std::move(v), nullptr, nullptr};
     return *this;
 }
 
@@ -388,7 +396,7 @@ void Var::copyFrom(const Var& other) {
         case Bin:     _storage._bin    = new Bytes(*other._storage._bin);       break;
         case List:    _storage._list   = new ListV(*other._storage._list);      break;
         case Dict:    _storage._dict   = new DictV(*other._storage._dict);      break;
-        case Custom:  _storage._custom = new CustomV(*other._storage._custom);  break;
+        case Custom:  _storage._custom = new CustomStorage(*other._storage._custom); break;
         default:      _storage = other._storage; break;
     }
 }

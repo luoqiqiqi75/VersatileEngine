@@ -21,6 +21,9 @@ if (MSVC)
     # 允许多个 MSBuild 进程同时写入同一个 PDB 文件（并行编译必需）
     add_compile_options(/FS)
     
+    # asio2 headers produce many sections; /bigobj raises the limit
+    add_compile_options(/bigobj)
+    
     option(VE_FORCE_DEBUG_INFO "Generate pdb for crash tracking" OFF)
     if (VE_FORCE_DEBUG_INFO)
         set(CMAKE_CXX_FLAGS_RELEASE "/MD /Od /Ob2 /DNDEBUG /Zi")

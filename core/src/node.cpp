@@ -1,4 +1,4 @@
-// node.cpp — ve::Node + ve::Schema
+// node.cpp — ve::Node
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include <algorithm>
@@ -8,18 +8,6 @@
 #include "ve/core/log.h"
 
 namespace ve {
-
-// ============================================================================
-// Schema
-// ============================================================================
-
-void Schema::build(Node* node) const
-{
-    if (!node) return;
-    for (auto& f : fields) {
-        if (f.sub) f.sub->build(node->append(f.name));
-    }
-}
 
 // ============================================================================
 // Node::Private

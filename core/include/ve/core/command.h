@@ -1,8 +1,8 @@
 //
-// command.h — ve::Result, ve::Step, ve::Command, ve::cmd::
+// command.h — ve::Result, ve::Step, ve::Command, ve::command::
 //
-// High-performance command execution engine.
-// Serial Step chain with optional async dispatch via LoopRef.
+// Command execution engine with Factory-based registration.
+// Supports: simple call (zero-alloc), serial Step chain, async via LoopRef.
 //
 // Design doc: docs/internal/plan/command-design.md
 //
@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "factory.h"
 #include "var.h"
 #include "loop.h"
 
@@ -97,12 +98,9 @@ public:
         return Step([f = std::move(fn)](Command&) -> Result { return f(); }, loop);
     }
 
-    // fromInput<F>: extract typed argument from cmd.input<T>()
-    //   Adapts return type: Result / bool / void
     template<typename F>
     static Step fromInput(F fn, LoopRef loop = {});
 
-    // fromBind<F,T>: bind a fixed value at registration time
     template<typename F, typename T>
     static Step fromBind(F fn, T value, LoopRef loop = {}) {
         return Step([f = std::move(fn), v = std::move(value)](Command&) -> Result {
@@ -125,7 +123,7 @@ private:
 
 
 // ============================================================================
-// Command — execution instance (pool-allocated, non-copyable)
+// Command — execution instance (non-copyable)
 // ============================================================================
 
 class VE_API Command
@@ -182,10 +180,10 @@ public:
     std::string      currentStepName()  const;
     int64_t          elapsedUs()        const;
 
-private:
-    friend struct cmd;
-
+    // internal: used by command:: namespace and CommandGraph
     explicit Command(const std::string& key);
+
+private:
     Command(const Command&) = delete;
     Command& operator=(const Command&) = delete;
 
@@ -226,12 +224,24 @@ Step Step::fromInput(F fn, LoopRef loop) {
 
 
 // ============================================================================
-// cmd:: — namespace-level API (register / execute / query)
+// CommandFactory — Factory-based command registry
 // ============================================================================
 
-namespace cmd {
+using CommandFactory = Factory<Result(Command&)>;
+VE_API CommandFactory& commandFactory();
 
-// --- registration ---
+
+// ============================================================================
+// command:: — namespace-level API (register / execute / query)
+// ============================================================================
+//
+// Registration delegates to commandFactory(). The reg() overloads are
+// syntactic sugar that adapt various callable signatures into Step chains.
+//
+
+namespace command {
+
+// --- registration (delegates to commandFactory) ---
 
 VE_API void reg(const std::string& key, const Vector<Step>& steps);
 VE_API void reg(const std::string& key, std::initializer_list<Step> steps);
@@ -241,7 +251,6 @@ template<typename F, typename = std::enable_if_t<basic::FnTraits<std::decay_t<F>
 void reg(const std::string& key, F fn, LoopRef loop = {}) {
     using Traits = basic::FnTraits<std::decay_t<F>>;
     if constexpr (Traits::ArgCnt == 0) {
-        // void/bool/Result f()
         reg(key, { Step::fromResult([f = std::move(fn)]() -> Result {
             using Ret = typename Traits::RetT;
             if constexpr (std::is_same_v<Ret, Result>) return f();
@@ -250,10 +259,8 @@ void reg(const std::string& key, F fn, LoopRef loop = {}) {
         }, loop) });
     } else if constexpr (Traits::ArgCnt == 1 &&
                          std::is_same_v<typename Traits::template ArgAt<0>, Command&>) {
-        // Result f(Command&)  — direct step
         reg(key, { Step(std::move(fn), loop) });
     } else if constexpr (Traits::ArgCnt == 1) {
-        // Result/bool/void f(T)  — fromInput
         reg(key, { Step::fromInput(std::move(fn), loop) });
     }
 }
@@ -286,15 +293,21 @@ void reg(const std::string& key, Ret(Class::*fn)(Args...), Class* obj, LoopRef l
 
 VE_API bool    unreg(const std::string& key);
 
-// --- query ---
+// --- query (delegates to commandFactory) ---
 
 VE_API bool    has(const std::string& key);
 VE_API Strings keys();
 
-// --- execution ---
+// --- simple call (zero Command allocation, sync only) ---
+// For single-step sync commands: directly invokes the registered function
+// without allocating a persistent Command object.
 
-VE_API Command* copy(const std::string& key);
-VE_API Command* copy(const std::string& key, const Command::ResultHandler& handler);
+VE_API Result  call(const std::string& key, const Var& input = {});
+
+// --- full execution (allocates Command, supports async step chain) ---
+
+VE_API Command* create(const std::string& key);
+VE_API Command* create(const std::string& key, const Command::ResultHandler& handler);
 
 VE_API Result   exec(const std::string& key);
 VE_API Result   exec(const std::string& key, const Var& input);
@@ -312,6 +325,44 @@ Result exec(const std::string& key, const T& input,
     return exec(key, Var(input), handler);
 }
 
-} // namespace cmd
+} // namespace command
+
+
+// ============================================================================
+// CommandGraph — DAG execution (topological sort + parallel dispatch)
+// ============================================================================
+//
+// Build a directed acyclic graph of Steps. Nodes with no unresolved
+// dependencies execute in parallel (dispatched via LoopRef if provided).
+// Execution fails fast on first error.
+//
+
+class VE_API CommandGraph
+{
+public:
+    CommandGraph() = default;
+    ~CommandGraph() = default;
+
+    // Add a named step node to the graph
+    void addNode(const std::string& id, Step step);
+
+    // Add a dependency edge: `from` must complete before `to` starts
+    void addEdge(const std::string& from, const std::string& to);
+
+    // Execute the graph. Blocks until all steps complete or first error.
+    // Uses `loop` for parallel dispatch of independent nodes.
+    Result execute(LoopRef loop = {});
+
+    int nodeCount() const { return static_cast<int>(_nodes.size()); }
+
+private:
+    struct GraphNode {
+        std::string id;
+        Step        step;
+        Strings     deps;     // IDs this node depends on
+    };
+    Vector<GraphNode> _nodes;
+    Vector<std::pair<std::string, std::string>> _edges;
+};
 
 } // namespace ve

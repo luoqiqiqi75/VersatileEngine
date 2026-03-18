@@ -33,7 +33,14 @@ class VE_API Var {
 public:
     using ListV   = ve::Vector<Var>;
     using DictV   = ve::Dict<Var>;
-    using CustomV = std::any;
+    using CustomV = std::any;   // public API type (unchanged)
+
+    // internal: Custom values store serialization functions alongside std::any
+    struct CustomStorage {
+        std::any value;
+        std::string(*to_string)(const std::any&) = nullptr;
+        Bytes(*to_bytes)(const std::any&) = nullptr;
+    };
     
     enum Type : uint8_t {
         Null,           // 空值
@@ -94,13 +101,27 @@ public:
     }
 
     // Custom 工厂方法：显式创建 Custom 类型
+    // Captures convert<T>::toString / toBytes at compile time for runtime dispatch.
     //   Var v = Var::custom(myObj);
-    //   Var v = Var::custom<MyType>(args...);
     template<typename T>
     static Var custom(T&& v) {
+        using U = std::decay_t<T>;
         Var result;
         result._type = Custom;
-        result._storage._custom = new CustomV(std::forward<T>(v));
+        result._storage._custom = new CustomStorage{
+            std::any(std::forward<T>(v)),
+            [](const std::any& a) -> std::string {
+                if (auto* p = std::any_cast<U>(&a)) return convert<U>::toString(*p);
+                return "";
+            },
+            [](const std::any& a) -> Bytes {
+                if (auto* p = std::any_cast<U>(&a)) {
+                    auto vec = convert<U>::toBytes(*p);
+                    return Bytes(vec.begin(), vec.end());
+                }
+                return {};
+            }
+        };
         return result;
     }
 
@@ -155,12 +176,12 @@ public:
 
     // customPtr<T>() — Custom 专用：返回指向存储值的指针（nullptr = 非 Custom 或类型不匹配）
     template<typename T> const T* customPtr() const {
-        if (_type != Custom) return nullptr;
-        return std::any_cast<T>(&toCustom());
+        if (_type != Custom || !_storage._custom) return nullptr;
+        return std::any_cast<T>(&_storage._custom->value);
     }
     template<typename T> T* customPtr() {
-        if (_type != Custom) return nullptr;
-        return std::any_cast<T>(&toCustom());
+        if (_type != Custom || !_storage._custom) return nullptr;
+        return std::any_cast<T>(&_storage._custom->value);
     }
 
     // to<T>(def) — 安全转换：通过 convert<T>，转换失败返回 def
@@ -186,9 +207,8 @@ public:
         else if constexpr (std::is_same_v<U, std::string>)    return toString();
         else if constexpr (std::is_pointer_v<U>)              return static_cast<U>(toPointer());
         else {
-            // Custom: try direct any_cast first (fast path)
-            if (_type == Custom) {
-                if (auto* p = std::any_cast<U>(&toCustom()))
+            if (_type == Custom && _storage._custom) {
+                if (auto* p = std::any_cast<U>(&_storage._custom->value))
                     return *p;
             }
             return to<U>();
@@ -256,7 +276,7 @@ private:
         Bytes*          _bin;
         ListV*          _list;
         DictV*          _dict;
-        CustomV*        _custom;
+        CustomStorage*  _custom;
     } _storage;
 };
 
