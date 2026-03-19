@@ -24,6 +24,7 @@ if(WIN32)
 else()
     set(VE_DDS_LIBRARY vedds)
 endif()
+set(VE_DDS_LIBRARY ${VE_DDS_LIBRARY} PARENT_SCOPE)
 
 # --- Create shared library ---
 add_library(${VE_DDS_LIBRARY} SHARED)
@@ -53,6 +54,8 @@ target_link_libraries(${VE_DDS_LIBRARY} PUBLIC yaml-cpp::yaml-cpp)
 
 # --- Sub-modules ---
 add_subdirectory(veFastDDS)
+add_subdirectory(veRos)
 
 message(STATUS "  + veFastDDS (Participant, Topic, Service, DynTypes, Bridge)")
+message(STATUS "  + veRos     (CommandService, RosModule, RosDemoModule)")
 message(STATUS "")

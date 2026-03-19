@@ -72,6 +72,13 @@ if(VE_BUILD_RTT)
     add_subdirectory(cpp/rtt)
 endif()
 
+# ==========================================================================
+# Full-stack examples (after all libraries, links available targets)
+# ==========================================================================
+if(VE_BUILD_EXAMPLE)
+    add_subdirectory(cpp/example)
+endif()
+
 message(STATUS "")
 message(STATUS "${VE_NAME} CMake End    ========================")
 message(STATUS "")

@@ -1126,10 +1126,20 @@ build-*/
 # End of https://www.toptal.com/developers/gitignore/api/c++,python,android,web,clion,eclipse,jetbrains,qtcreator,cmake,visualstudiocode,vim,xcode,visualstudio,windows,linux,macos
 
 # ------------------------------------------------------------
+# VE out-of-source build directories (build_test, build_dds_test, etc.)
+# ------------------------------------------------------------
+build_*/
+
+# ------------------------------------------------------------
 # VE local CMake overrides (per-developer, never committed)
 # e.g. cmake/_local.cmake, cmake/_my_setup.cmake
 # ------------------------------------------------------------
 cmake/_*.cmake
+
+# ------------------------------------------------------------
+# Temporary test output files
+# ------------------------------------------------------------
+test_*.txt
 
 # ------------------------------------------------------------
 # VE 内部文档（不公开到 GitHub）
