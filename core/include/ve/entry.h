@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// entry.h — VersatileEngine initialization / module loading / shutdown
+// entry.h - VersatileEngine initialization / module loading / shutdown
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -27,10 +27,10 @@
 //
 // Node layout:
 //   ve/
-//   ve/state                          — current entry::State
-//   ve/entry/                         — setup-loaded config
-//   ve/entry/module/{key}/            — per-module workspace (config, state, ...)
-//   ve/entry/plugins/                 — dynamic plugin config
+//   ve/state                          - current entry::State
+//   ve/entry/                         - setup-loaded config
+//   ve/entry/module/{key}/            - per-module workspace (config, state, ...)
+//   ve/entry/plugins/                 - dynamic plugin config
 //
 // Module loading policy:
 //   - Registered modules (VE_REGISTER_MODULE) load by default.
@@ -49,7 +49,7 @@ namespace ve {
 class Node;
 
 // ============================================================================
-// ve::entry — application lifecycle
+// ve::entry - application lifecycle
 // ============================================================================
 
 namespace entry {
@@ -69,18 +69,18 @@ struct Options {
     int  pool_threads   = 4;
 };
 
-// Phase 1 — Load configuration into ve/entry/ node tree
+// Phase 1 - Load configuration into ve/entry/ node tree
 VE_API void setup(const std::string& config_file);
 VE_API void setup(const Options& options);
 VE_API void setup(Node* config_node);
 
-// Phase 2 — Load plugins → create modules → INIT → READY
+// Phase 2 - Load plugins → create modules → INIT → READY
 VE_API void init();
 
-// Phase 3 — Block on condition variable until requestQuit()
+// Phase 3 - Block on condition variable until requestQuit()
 VE_API int  run();
 
-// Phase 4 — DEINIT modules (reverse order) → cleanup
+// Phase 4 - DEINIT modules (reverse order) → cleanup
 VE_API void deinit();
 
 // Request run() to return
@@ -99,7 +99,7 @@ VE_API Node* config();
 } // namespace entry
 
 // ============================================================================
-// ve::plugin — cross-platform dynamic library loading
+// ve::plugin - cross-platform dynamic library loading
 // ============================================================================
 
 namespace plugin {

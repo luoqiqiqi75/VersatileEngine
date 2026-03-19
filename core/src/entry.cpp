@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// entry.cpp — ve::entry, ve::version, ve::plugin implementations
+// entry.cpp - ve::entry, ve::version, ve::plugin implementations
 // ----------------------------------------------------------------------------
 #include "ve/entry.h"
 #include "ve/core/schema.h"
@@ -99,8 +99,9 @@ void setup(const Options& options)
         }
     }
 
-    if (options.verbose)
+    if (options.verbose) {
         n("ve/entry/verbose")->set(Var(true));
+    }
 
     g.state = SETUP;
     n("ve/state")->set(Var("SETUP"));
@@ -192,8 +193,9 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
 
     if (mod_root) {
         for (auto* child : *mod_root) {
-            if (!factory.has(child->name()))
+            if (!factory.has(child->name())) {
                 veLogW << "[ve::entry] Config references unregistered module: " << child->name();
+            }
         }
     }
 
@@ -209,8 +211,9 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
     if (!mod_root) return;
 
     Hash<int> key_to_idx;
-    for (int i = 0; i < (int)slots.size(); ++i)
+    for (int i = 0; i < (int)slots.size(); ++i) {
         key_to_idx[slots[i].key] = i;
+    }
 
     int n_slots = (int)slots.size();
     Vector<Vector<int>> adj(n_slots);
@@ -239,8 +242,9 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
     }
 
     Vector<int> queue;
-    for (int i = 0; i < n_slots; ++i)
+    for (int i = 0; i < n_slots; ++i) {
         if (indegree[i] == 0) queue.push_back(i);
+    }
 
     Vector<int> order;
     order.reserve(n_slots);
@@ -249,8 +253,7 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
         int u = queue[head++];
         order.push_back(u);
         for (int v : adj[u]) {
-            if (--indegree[v] == 0)
-                queue.push_back(v);
+            if (--indegree[v] == 0) queue.push_back(v);
         }
     }
 
@@ -261,8 +264,9 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
 
     Vector<ModuleSlot> sorted;
     sorted.reserve(n_slots);
-    for (int idx : order)
+    for (int idx : order) {
         sorted.push_back(std::move(slots[idx]));
+    }
     slots = std::move(sorted);
 }
 
@@ -278,10 +282,11 @@ void init()
 
     auto& factory = globalModuleFactory();
 
-    // Instantiate — each module's constructor reads its node() config
+    // Instantiate - each module's constructor reads its node() config
     for (auto& slot : g.modules) {
-        if (verbose)
+        if (verbose) {
             veLogI << "[ve::entry] Creating module: " << slot.key;
+        }
         try {
             slot.instance = factory.produce(slot.key);
         } catch (const std::exception& e) {
@@ -289,8 +294,9 @@ void init()
         }
         if (slot.instance) {
             slot.instance->node()->set("state", Var("NONE"));
-            if (verbose)
+            if (verbose) {
                 veLogI << "[ve::entry] Module created: " << slot.key;
+            }
         }
     }
 
@@ -299,8 +305,9 @@ void init()
     n("ve/state")->set(Var("INIT"));
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
-        if (verbose)
+        if (verbose) {
             veLogI << "[ve::entry] INIT: " << slot.key;
+        }
         slot.instance->exeState<Module::INIT>();
         slot.instance->node()->set("state", Var("INIT"));
     }
@@ -308,8 +315,9 @@ void init()
     // READY phase
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
-        if (verbose)
+        if (verbose) {
             veLogI << "[ve::entry] READY: " << slot.key;
+        }
         slot.instance->exeState<Module::READY>();
         slot.instance->node()->set("state", Var("READY"));
     }
@@ -317,8 +325,9 @@ void init()
     g.state = READY;
     n("ve/state")->set(Var("READY"));
 
-    if (verbose)
+    if (verbose) {
         veLogI << "[ve::entry] init complete (" << g.modules.size() << " modules)";
+    }
 }
 
 // --- run -------------------------------------------------------------------
@@ -359,8 +368,9 @@ void deinit()
     for (int i = (int)g.modules.size() - 1; i >= 0; --i) {
         auto& slot = g.modules[i];
         if (!slot.instance) continue;
-        if (verbose)
+        if (verbose) {
             veLogI << "[ve::entry] DEINIT: " << slot.key;
+        }
         slot.instance->exeState<Module::DEINIT>();
         slot.instance->node()->set("state", Var("DEINIT"));
     }
@@ -376,8 +386,9 @@ void deinit()
     n("ve/state")->set(Var("SHUTDOWN"));
     g.quit_requested = false;
 
-    if (verbose)
+    if (verbose) {
         veLogI << "[ve::entry] deinit complete";
+    }
 }
 
 // --- convenience -----------------------------------------------------------
@@ -436,7 +447,7 @@ Node* config() { return n("ve"); }
 } // namespace entry
 
 // ============================================================================
-// ve::plugin — cross-platform dynamic library loading
+// ve::plugin - cross-platform dynamic library loading
 // ============================================================================
 
 namespace plugin {

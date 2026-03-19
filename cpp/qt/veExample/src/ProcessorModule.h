@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// ProcessorModule.h — Watches sensor data, computes statistics & alerts
+// ProcessorModule.h - Watches sensor data, computes statistics & alerts
 //
 //  Data tree (created by this module):
 //    processor.temperature.average  double

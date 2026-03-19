@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// module.h — Module lifecycle
+// module.h - Module lifecycle
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -14,7 +14,7 @@
 //   constructor:  read node() config, create own resources (no cross-module deps)
 //   init():       data tree setup, register commands
 //   ready():      subscribe to other modules' data (cross-module dependencies)
-//   deinit():     reverse of ready — disconnect cross-module subscriptions
+//   deinit():     reverse of ready - disconnect cross-module subscriptions
 //   destructor:   release own resources (reverse of constructor)
 //
 // ----------------------------------------------------------------------------

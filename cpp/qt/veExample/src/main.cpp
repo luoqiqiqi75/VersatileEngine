@@ -1,12 +1,12 @@
 ﻿// ----------------------------------------------------------------------------
-// veExample — main.cpp
+// veExample - main.cpp
 //
 //  Multi-module demo showing reactive data flow across VE modules.
 //
 //  Registered modules (via VE_REGISTER_MODULE):
-//    sensor      — Simulates temperature & humidity readings (1 Hz)
-//    processor   — Computes min/max/avg, raises threshold alerts
-//    dashboard   — Aggregates cross-module data into periodic reports
+//    sensor      - Simulates temperature & humidity readings (1 Hz)
+//    processor   - Computes min/max/avg, raises threshold alerts
+//    dashboard   - Aggregates cross-module data into periodic reports
 //
 //  Data flow:
 //    sensor.temperature.value ──► processor.temperature.{avg,min,max}
@@ -29,15 +29,15 @@ int main(int argc, char* argv[])
     ve::log::setAppName("veExample");
 
     ve::log::line<>();
-    veLogI << "VersatileEngine — Multi-Module Example";
+    veLogI << "VersatileEngine - Multi-Module Example";
     ve::log::line<>();
 
-    // 1. Setup — load config, create root data tree
+    // 1. Setup - load config, create root data tree
     ve::entry::setup("config.ini");
 
     QApplication app(argc, argv);
 
-    // 2. Init — instantiate & init all registered modules
+    // 2. Init -instantiate & init all registered modules
     //    Order: sensor → processor → dashboard (alphabetical by key)
     ve::entry::init();
 
@@ -48,10 +48,10 @@ int main(int argc, char* argv[])
         tw->show();
     }
 
-    veLogI << "Application running — watch the terminal for live updates.";
+    veLogI << "Application running - watch the terminal for live updates.";
     int result = app.exec();
 
-    // 4. Deinit — tear down all modules in reverse order
+    // 4. Deinit - tear down all modules in reverse order
     ve::entry::deinit();
 
     veLogIs << "Application exited with code" << result;

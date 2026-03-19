@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// DashboardModule.h — Aggregates data from other modules into a summary
+// DashboardModule.h - Aggregates data from other modules into a summary
 //
 //  Data tree (created by this module):
 //    dashboard.refresh_count   int     how many reports generated

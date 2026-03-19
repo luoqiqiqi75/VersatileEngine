@@ -1,4 +1,4 @@
-// tcp_bin_module.cpp — ve::TcpBinModule (ve.service.tcp_bin)
+// tcp_bin_module.cpp - ve::TcpBinModule (ve.service.tcp_bin)
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
@@ -23,10 +23,11 @@ protected:
             node()->resolve("config/port")->get<int>(5065));
 
         server_ = std::make_unique<TcpBinServer>(node::root(), port);
-        if (server_->start())
+        if (server_->start()) {
             veLogI << "[ve.service.tcp_bin] started on port " << port;
-        else
+        } else {
             veLogE << "[ve.service.tcp_bin] failed to start on port " << port;
+        }
     }
 
     void deinit() override

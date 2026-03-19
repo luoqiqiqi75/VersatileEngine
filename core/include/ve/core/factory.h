@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// factory.h — Pool, Pooled, PoolPtr, SharedPoolPtr, Factory
+// factory.h - Pool, Pooled, PoolPtr, SharedPoolPtr, Factory
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -13,7 +13,7 @@
 namespace ve {
 
 // ============================================================================
-// Pool<T> — fixed-size object pool, singleton per T
+// Pool<T> - fixed-size object pool, singleton per T
 // ============================================================================
 //
 // Bump-allocates from large blocks, recycles via free list.
@@ -70,7 +70,7 @@ private:
 };
 
 // ============================================================================
-// Pooled<T> — CRTP mixin: routes new/delete through Pool<T>
+// Pooled<T> - CRTP mixin: routes new/delete through Pool<T>
 // ============================================================================
 //
 // Usage (in .cpp only):
@@ -86,7 +86,7 @@ struct Pooled
 };
 
 // ============================================================================
-// PoolPtr<T> — scoped pool pointer (like QScopedPointer)
+// PoolPtr<T> - scoped pool pointer (like QScopedPointer)
 // ============================================================================
 //
 // Auto-creates T() from Pool<T> on construction.
@@ -125,7 +125,7 @@ public:
 };
 
 // ============================================================================
-// SharedPoolPtr<T> — ref-counted pool pointer (like std::shared_ptr)
+// SharedPoolPtr<T> - ref-counted pool pointer (like std::shared_ptr)
 // ============================================================================
 //
 // Co-allocates ref count + T in a single Pool block.
@@ -184,7 +184,7 @@ public:
 #define VE_DECLARE_SHARED_POOL_PRIVATE struct Private; ve::SharedPoolPtr<Private> _p;
 
 // ============================================================================
-// Factory<Signature> — named function registry with cache
+// Factory<Signature> - named function registry with cache
 // ============================================================================
 
 template<class Signature>
@@ -220,7 +220,7 @@ private:
 };
 
 // ============================================================================
-// ve::version — named version registry (Factory<int()>)
+// ve::version - named version registry (Factory<int()>)
 // ============================================================================
 
 namespace version {

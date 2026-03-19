@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// SensorModule.h — Simulates a hardware sensor producing periodic readings
+// SensorModule.h - Simulates a hardware sensor producing periodic readings
 //
 //  Data tree (created by this module):
 //    sensor.status           bool    online / offline

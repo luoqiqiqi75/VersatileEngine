@@ -1,4 +1,4 @@
-// http_module.cpp — ve::HttpModule (ve.service.http)
+// http_module.cpp - ve::HttpModule (ve.service.http)
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
@@ -23,10 +23,11 @@ protected:
             node()->resolve("config/port")->get<int>(8080));
 
         server_ = std::make_unique<HttpServer>(node::root(), port);
-        if (server_->start())
+        if (server_->start()) {
             veLogI << "[ve.service.http] started on port " << port;
-        else
+        } else {
             veLogE << "[ve.service.http] failed to start on port " << port;
+        }
     }
 
     void deinit() override

@@ -45,29 +45,29 @@ Local per-developer overrides go in `cmake/_local.cmake` (gitignored). Example: 
 
 ```
 core/test/
-├── ve_test.h                 — Custom test framework (VE_TEST, VE_ASSERT_*, VE_RUN_ALL)
-├── main.cpp                  — Entry point: VE_RUN_ALL()
-├── test_basic_traits.cpp     — basic:: type traits (is_comparable, FnTraits, Meta, etc.)
-├── test_containers.cpp       — Vector, List, Map, HashMap, Dict
-├── test_ordered_hashmap.cpp  — OrderedHashMap (Godot-derived Robin Hood)
-├── test_small_vector.cpp     — SmallVector<T,N> inline/heap, copy/move, mixin
-├── test_object.cpp           — Object lifecycle + signal/slot + thread safety
-├── test_manager.cpp          — Manager add/remove/get
-├── test_data.cpp             — AnyData<T>, DataManager, DataList/DataDict
-├── test_data_serialize.cpp   — String & YAML serialization
-├── test_hashfuncs.cpp        — ve::impl:: hash functions
-├── test_log.cpp              — Log system (smoke tests)
-├── test_values.cpp           — Values unit conversion
-├── test_var.cpp              — Var (10 types, copy/move, list/dict, CUSTOM)
-├── test_command.cpp          — Step, Pipeline, Command, Factory, Object::once
-├── test_loop.cpp             — Loop, EventLoop, LoopRef
-├── test_node_basic.cpp       — Node creation, child query, count, iteration
-├── test_node_signal.cpp      — Node signals (ADDED, REMOVED, ACTIVATED, bubbling)
-├── test_node_path.cpp        — key, path, resolve, ensure, erase, shadow, schema
-├── test_node_value.cpp       — Node value operations and ve::n() global accessor
-├── test_node_navigation.cpp  — parent, indexOf, sibling, prev/next, isAncestorOf
-├── test_node_management.cpp  — insert, append, take, remove, clear, name validation
-└── test_node_bench.cpp       — Stress tests, complex structures, benchmarks
+├── ve_test.h                 - Custom test framework (VE_TEST, VE_ASSERT_*, VE_RUN_ALL)
+├── main.cpp                  - Entry point: VE_RUN_ALL()
+├── test_basic_traits.cpp     - basic:: type traits (is_comparable, FnTraits, Meta, etc.)
+├── test_containers.cpp       - Vector, List, Map, HashMap, Dict
+├── test_ordered_hashmap.cpp  - OrderedHashMap (Godot-derived Robin Hood)
+├── test_small_vector.cpp     - SmallVector<T,N> inline/heap, copy/move, mixin
+├── test_object.cpp           - Object lifecycle + signal/slot + thread safety
+├── test_manager.cpp          - Manager add/remove/get
+├── test_data.cpp             - AnyData<T>, DataManager, DataList/DataDict
+├── test_data_serialize.cpp   - String & YAML serialization
+├── test_hashfuncs.cpp        - ve::impl:: hash functions
+├── test_log.cpp              - Log system (smoke tests)
+├── test_values.cpp           - Values unit conversion
+├── test_var.cpp              - Var (10 types, copy/move, list/dict, CUSTOM)
+├── test_command.cpp          - Step, Pipeline, Command, Factory, Object::once
+├── test_loop.cpp             - Loop, EventLoop, LoopRef
+├── test_node_basic.cpp       - Node creation, child query, count, iteration
+├── test_node_signal.cpp      - Node signals (ADDED, REMOVED, ACTIVATED, bubbling)
+├── test_node_path.cpp        - key, path, resolve, ensure, erase, shadow, schema
+├── test_node_value.cpp       - Node value operations and ve::n() global accessor
+├── test_node_navigation.cpp  - parent, indexOf, sibling, prev/next, isAncestorOf
+├── test_node_management.cpp  - insert, append, take, remove, clear, name validation
+└── test_node_bench.cpp       - Stress tests, complex structures, benchmarks
 ```
 
 See `docs/internal/test/core-test-plan.md` for detailed test case design.
@@ -141,7 +141,7 @@ VersatileEngine/
     ├── ARCHITECTURE.md     Architecture overview & evolution roadmap
     ├── core/               Core module documentation (platform/rescue)
     └── internal/
-        ├── plan/           Phased development plan (Phase 0–7)
+        ├── plan/           Phased development plan (Phase 0-7)
         ├── test/           Test plan (core-test-plan.md)
         ├── analysis/       Design analysis (framework comparison, decision fork)
         ├── advise/         Technical advice documents
@@ -152,57 +152,67 @@ VersatileEngine/
 
 ### Core Components
 
-- **`ve::Var`** — 16-byte variant (NONE/BOOL/INT/INT64/DOUBLE/STRING/BIN/LIST/DICT/POINTER/CUSTOM), Convert<T> extension point
-- **`ve::Node`** — Reactive data tree node (Vector+Hash storage, Pool allocation, same-name `#N`, shadow, schema, signal bubbling)
-- **`ve::Object`** — Base class with name, parent/child, integer signal/slot system, thread-safe dispatch, LoopRef queued dispatch
-- **`ve::Manager`** — Object container (HashMap<string, Object*>), parent management
-- **Containers** — `Vector<T>`, `List<T>`, `Map<K,V>`, `HashMap<K,V>`, `Dict<V>`, `OrderedHashMap<K,V>`, `OrderedDict<V>`, `SmallVector<T,N>`, `Array<T,N>`
-- **Type Traits (`ve::basic::`)** — `is_comparable`, `is_outputable`, `is_inputable`, `FnTraits<F>` (function introspection), `Meta` (RTTI helpers)
+- **`ve::Var`** - 16-byte variant (NONE/BOOL/INT/INT64/DOUBLE/STRING/BIN/LIST/DICT/POINTER/CUSTOM), Convert<T> extension point
+- **`ve::Node`** - Reactive data tree node (Vector+Hash storage, Pool allocation, same-name `#N`, shadow, schema, signal bubbling)
+- **`ve::Object`** - Base class with name, parent/child, integer signal/slot system, thread-safe dispatch, LoopRef queued dispatch
+- **`ve::Manager`** - Object container (HashMap<string, Object*>), parent management
+- **Containers** - `Vector<T>`, `List<T>`, `Map<K,V>`, `HashMap<K,V>`, `Dict<V>`, `OrderedHashMap<K,V>`, `OrderedDict<V>`, `SmallVector<T,N>`, `Array<T,N>`
+- **Type Traits (`ve::basic::`)** - `is_comparable`, `is_outputable`, `is_inputable`, `FnTraits<F>` (function introspection), `Meta` (RTTI helpers)
 
 ### Command System
 
-- **`ve::Step`** — Single execution unit: `Result(const Var&)`, flexible signatures
-- **`ve::Pipeline`** — State machine: IDLE→RUNNING→PAUSED→DONE/ERRORED, signals CMD_DONE/CMD_ERROR
-- **`ve::Command`** — Named sequence of Steps, `pipeline()` creates execution instance
-- **Built-in commands** — `ls`, `info`, `get`, `set`, `add`, `rm`, `mv`, `mk`, `find`, `erase`, `json`, `help`, `child`, `shadow`, `watch`, `iter`, `schema`, `cmd`
+- **`ve::Step`** - Single execution unit: `Result(const Var&)`, flexible signatures
+- **`ve::Pipeline`** - State machine: IDLE→RUNNING→PAUSED→DONE/ERRORED, signals CMD_DONE/CMD_ERROR
+- **`ve::Command`** - Named sequence of Steps, `pipeline()` creates execution instance
+- **Built-in commands** - `ls`, `info`, `get`, `set`, `add`, `rm`, `mv`, `mk`, `find`, `erase`, `json`, `help`, `child`, `shadow`, `watch`, `iter`, `schema`, `cmd`
 
 ### Service Layer
 
-- **`ve::Terminal`** — TCP REPL (port 5061), TerminalSession per connection, command execution + tab completion
-- **`ve::HttpServer`** — REST-like HTTP API (port 8080)
-- **`ve::WsServer`** — WebSocket real-time Node updates (port 8081)
-- **`ve::TcpBinServer`** — CBS binary protocol (port 5065)
-- **`ve::SubscribeService`** — Node change subscription service
+- **`ve::Terminal`** - TCP REPL (port 5061), TerminalSession per connection, command execution + tab completion
+- **`ve::HttpServer`** - REST-like HTTP API (port 8080)
+- **`ve::WsServer`** - WebSocket real-time Node updates (port 8081)
+- **`ve::TcpBinServer`** - CBS binary protocol (port 5065)
+- **`ve::SubscribeService`** - Node change subscription service
 
 ### Entry & Lifecycle
 
-- **`ve::Entry`** — Config-driven lifecycle: NONE→SETUP→INIT→READY→RUNNING→SHUTDOWN
-- **`ve::Module`** — Module lifecycle (NONE→INIT→READY→DEINIT), topological sort
-- **`ve::Loop`** — Asio event loop (`EventLoop` + `loop::main()` / `loop::pool(n)` + `LoopRef`)
-- **`ve::plugin`** — Dynamic library loading (load/unload/loaded)
+- **`ve::Entry`** - Config-driven lifecycle: NONE→SETUP→INIT→READY→RUNNING→SHUTDOWN
+- **`ve::Module`** - Module lifecycle (NONE→INIT→READY→DEINIT), topological sort
+- **`ve::Loop`** - Asio event loop (`EventLoop` + `loop::main()` / `loop::pool(n)` + `LoopRef`)
+- **`ve::plugin`** - Dynamic library loading (load/unload/loaded)
 
 ### Data Layer (data.h)
 
-- **`ve::AnyData<T>`** — Type-safe reactive data with signals, bind(), YAML serialization
-- **`ve::DataManager`** — Path-based data registry (`data::create`, `data::get`, `data::at`)
-- **`ve::DataList` / `ve::DataDict`** — Heterogeneous typed collections
+- **`ve::AnyData<T>`** - Type-safe reactive data with signals, bind(), YAML serialization
+- **`ve::DataManager`** - Path-based data registry (`data::create`, `data::get`, `data::at`)
+- **`ve::DataList` / `ve::DataDict`** - Heterogeneous typed collections
 
 ### Serialization
 
-- **`ve::Schema`** — Field list for Node structure, `schema::exportAs<F>` / `importAs<F>`
-- **`json::`** — `stringify`, `parse`, `exportTree`, `importTree` (simdjson backend)
-- **`bin::`** — `exportTree`, `importTree`, `writeVar`, `readVar` (CBS-compatible binary)
+- **`ve::Schema`** - Field list for Node structure, `schema::exportAs<F>` / `importAs<F>`
+- **`json::`** - `stringify`, `parse`, `exportTree`, `importTree` (simdjson backend)
+- **`bin::`** - `exportTree`, `importTree`, `writeVar`, `readVar` (CBS-compatible binary)
 
 ### CMake Layout
 
-- **Root `CMakeLists.txt`** — Project setup, deps, delegates to `core/`, `cpp/qt/`, `cpp/ros/`, `cpp/rtt/`, `core/test/`
-- **`core/CMakeLists.txt`** — Builds `libve` shared library, exports `VE_CORE_LIBRARY` to parent scope
-- **`core/test/CMakeLists.txt`** — Builds `ve_test`, links against `libve` only
-- **`cpp/qt/CMakeLists.txt`** — Finds Qt, manages Qt module options
+- **Root `CMakeLists.txt`** - Project setup, deps, delegates to `core/`, `cpp/qt/`, `cpp/ros/`, `cpp/rtt/`, `core/test/`
+- **`core/CMakeLists.txt`** - Builds `libve` shared library, exports `VE_CORE_LIBRARY` to parent scope
+- **`core/test/CMakeLists.txt`** - Builds `ve_test`, links against `libve` only
+- **`cpp/qt/CMakeLists.txt`** - Finds Qt, manages Qt module options
 
 ## Code Conventions
 
-- Pure C++ headers in `core/include/ve/core/`. Qt adapter headers in `cpp/qt/{module}/include/`.
+### Formatting rules
+
+- **No em-dash**: never use `—` (U+2014) in code or comments; use `-` instead
+- **Braces on loops**: `for`, `while`, `do` must always have `{}`, even for single statements
+- **Braces on if/else**: either write the entire `if` on one line (`if (cond) stmt;`), or use `{}` for the body. Multi-line `if` without braces is forbidden
+- **No narration comments**: do not add comments that merely restate what the code does
+
+### Naming & structure
+
+- Pure C++ headers in `core/include/ve/core/`. Qt adapter headers in `cpp/qt/{module}/include/`
+- Internal module implementations live in `core/src/module/` (not public headers)
 - C++17 features used: `std::enable_if_t`, `std::void_t`, `if constexpr`, `std::is_same_v`, `std::index_sequence`
 - Macros prefixed with `VE_`: `VE_DECLARE_T_CHECKER`, `VE_DECLARE_T_FUNC_CHECKER`, `VE_INHERIT_CONSTRUCTOR`, `VE_DATA_UPDATE`, `VE_D_FUNC_IMPL`
 - The `imol` namespace (in `cpp/qt/imol/`) is the legacy implementation; `ve` namespace is the modern API
@@ -210,3 +220,13 @@ VersatileEngine/
 - Internal planning docs in `docs/internal/plan/`. Historical analysis in `docs/internal/history/`
 - Local CMake overrides via `cmake/_*.cmake` files (gitignored)
 - DLL export: core uses `VE_LIBRARY` / `VE_API`; Qt modules have their own export macros
+
+### Module system
+
+- `VE_REGISTER_MODULE(Key, Class)` - register with default priority (100), no version
+- `VE_REGISTER_PRIORITY_MODULE(Key, Class, Priority, Ver)` - register with priority and version
+- `VE_REGISTER_VERSION(Key, Ver)` - standalone version registration (in factory.h, no module dependency)
+- Internal modules (core, service) are defined entirely in `.cpp` files under `core/src/module/`, no separate headers, no PIMPL
+- Module constructor takes `const std::string& name` (provided by registration macro), no default value
+- Each module is mounted at `ve/entry/module/{key}` and accesses its workspace via `Module::node()`
+- Module lifecycle: all constructors (by priority) -> all init -> all ready -> ... -> all deinit (reverse) -> all destructors

@@ -1,4 +1,4 @@
-// core_module.cpp — ve::CoreModule (ve.core)
+// core_module.cpp - ve::CoreModule (ve.core)
 //
 // System module: log configuration, crash handler (rescue), builtin commands.
 //   constructor: rescue + log config (from JSON defaults)
@@ -19,8 +19,9 @@ public:
         auto* n = node();
 
         bool rescue = true;
-        if (auto* rn = n->resolve("config/rescue/enabled"))
+        if (auto* rn = n->resolve("config/rescue/enabled")) {
             rescue = rn->get<bool>(true);
+        }
         if (rescue) setupRescue();
 
         if (auto* log_n = n->resolve("config/log")) {
@@ -31,10 +32,12 @@ public:
                 else if (lvl == "warn")  log::setLevel(LogLevel::Waring);
                 else if (lvl == "error") log::setLevel(LogLevel::Error);
             }
-            if (auto* app_n = log_n->resolve("app"))
+            if (auto* app_n = log_n->resolve("app")) {
                 log::setAppName(app_n->get<std::string>());
-            if (auto* dir_n = log_n->resolve("dir"))
+            }
+            if (auto* dir_n = log_n->resolve("dir")) {
                 log::setLogDir(dir_n->get<std::string>());
+            }
         }
     }
 

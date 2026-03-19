@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// DashboardModule.cpp — Cross-module data aggregation
+// DashboardModule.cpp - Cross-module data aggregation
 //
 //  Demonstrates:
 //    - Reading data nodes created by other modules
@@ -55,7 +55,7 @@ void refreshSummary()
 
 void DashboardModule::init()
 {
-    veLogI << "[Dashboard] init — creating dashboard nodes";
+    veLogI << "[Dashboard] init - creating dashboard nodes";
 
     ve::d("dashboard.refresh_count")->set(0);
     ve::d("dashboard.summary")->set(QString("(no data yet)"));
@@ -63,7 +63,7 @@ void DashboardModule::init()
 
 void DashboardModule::ready()
 {
-    veLogI << "[Dashboard] ready — subscribing to cross-module events";
+    veLogI << "[Dashboard] ready - subscribing to cross-module events";
 
     // -- React to alerts from ProcessorModule --
     ve::data::on("processor.alert", ve::global(), [] (const QVariant& v) {
@@ -82,7 +82,7 @@ void DashboardModule::ready()
     // -- Final summary when sensor goes offline --
     ve::data::on("sensor.status", ve::global(), [] (const QVariant& v) {
         if (!v.toBool()) {
-            veLogI << "[Dashboard] sensor offline — generating final report";
+            veLogI << "[Dashboard] sensor offline - generating final report";
             refreshSummary();
         }
     });
@@ -90,6 +90,6 @@ void DashboardModule::ready()
 
 void DashboardModule::deinit()
 {
-    veLogIs << "[Dashboard] deinit — generated"
+    veLogIs << "[Dashboard] deinit - generated"
             << ve::d("dashboard.refresh_count")->getInt() << "reports total";
 }

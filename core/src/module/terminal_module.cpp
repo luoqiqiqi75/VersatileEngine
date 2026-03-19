@@ -1,4 +1,4 @@
-// terminal_module.cpp — ve::TerminalModule (ve.service.terminal)
+// terminal_module.cpp - ve::TerminalModule (ve.service.terminal)
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
@@ -23,10 +23,11 @@ protected:
             node()->resolve("config/port")->get<int>(5061));
 
         server_ = std::make_unique<Terminal>(node::root(), port);
-        if (server_->start())
+        if (server_->start()) {
             veLogI << "[ve.service.terminal] started on port " << server_->port();
-        else
+        } else {
             veLogE << "[ve.service.terminal] failed to start on port " << port;
+        }
     }
 
     void deinit() override

@@ -1,4 +1,4 @@
-// ws_module.cpp — ve::WsModule (ve.service.ws)
+// ws_module.cpp - ve::WsModule (ve.service.ws)
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
@@ -23,10 +23,11 @@ protected:
             node()->resolve("config/port")->get<int>(8081));
 
         server_ = std::make_unique<WsServer>(node::root(), port);
-        if (server_->start())
+        if (server_->start()) {
             veLogI << "[ve.service.ws] started on port " << port;
-        else
+        } else {
             veLogE << "[ve.service.ws] failed to start on port " << port;
+        }
     }
 
     void deinit() override

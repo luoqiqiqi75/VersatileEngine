@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// SensorModule.cpp — Periodic sensor simulation
+// SensorModule.cpp - Periodic sensor simulation
 //
 //  Produces temperature & humidity readings once per second.
 //  Other modules observe the data tree to react to changes.
@@ -13,7 +13,7 @@ VE_REGISTER_MODULE(sensor, SensorModule)
 
 void SensorModule::init()
 {
-    veLogI << "[Sensor] init — building data tree";
+    veLogI << "[Sensor] init - building data tree";
 
     // -- build the sensor sub-tree --
     ve::d("sensor.status")->set(false);
@@ -28,7 +28,7 @@ void SensorModule::init()
 
 void SensorModule::ready()
 {
-    veLogI << "[Sensor] ready — starting periodic sampling (1 Hz)";
+    veLogI << "[Sensor] ready - starting periodic sampling (1 Hz)";
 
     // go online
     ve::d("sensor.status")->set(true);
@@ -47,7 +47,7 @@ void SensorModule::ready()
         ve::d("sensor.humidity.value")->set(h);
 
         if (n >= 20) {
-            veLogI << "[Sensor] 20 samples produced — stopping";
+            veLogI << "[Sensor] 20 samples produced - stopping";
             ve::d("sensor.status")->set(false);
             timer->stop();
             timer->deleteLater();
@@ -58,6 +58,6 @@ void SensorModule::ready()
 
 void SensorModule::deinit()
 {
-    veLogIs << "[Sensor] deinit — total samples:"
+    veLogIs << "[Sensor] deinit - total samples:"
             << ve::d("sensor.sample_count")->getInt();
 }
