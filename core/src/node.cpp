@@ -608,6 +608,24 @@ Node* Node::ensure(const std::string& path)
     });
 }
 
+Node* Node::ensure(int index)
+{
+    if (index < 0) return nullptr;
+    int have = count();
+    for (int i = have; i <= index; ++i)
+        insert(new Node(""));
+    return child(index);
+}
+
+Node* Node::ensure(const std::string& name, int overlap)
+{
+    if (overlap < 0) return nullptr;
+    int have = name.empty() ? count() : count(name);
+    for (int i = have; i <= overlap; ++i)
+        insert(new Node(name));
+    return child(name, overlap);
+}
+
 bool Node::erase(const std::string& path, bool auto_delete)
 {
     auto* t = resolve(path, false);   // no shadow — only erase local nodes
@@ -654,7 +672,7 @@ void Node::silentAll(bool on)
 
 static const Var _null_var;
 
-bool Node::hasValue() const { return _p->value != nullptr; }
+bool Node::hasValue() const { return _p->value && !_p->value->isNull(); }
 
 const Var& Node::value() const { return _p->value ? *_p->value : _null_var; }
 

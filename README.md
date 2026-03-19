@@ -16,9 +16,9 @@
 
 ---
 
-> **⚠️ Project Status: Active Refactoring**
+> **Project Status: Core Layer Complete**
 >
-> VersatileEngine has evolved over 10 years across multiple commercial projects. The codebase is currently being refactored: the core layer (`core/`) is transitioning from a Qt-dependent implementation to a pure C++17 foundation (`ve::Value`, `ve::Node`), while the existing Qt-based API is preserved as the adapter layer (`cpp/qt/`). The API and architecture may undergo significant changes in upcoming releases. Use in production with caution and expect breaking changes.
+> VersatileEngine has evolved over 10 years across multiple commercial projects. The core layer (`libve`) is now a **complete pure C++17 implementation** with 535 unit tests passing. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP), and Entry lifecycle. The existing Qt-based API is preserved as the adapter layer (`cpp/qt/`). Performance benchmarks show ve::Node outperforming the legacy Qt-based implementation (imol::ModuleObject) by up to 590x on indexed access.
 
 ---
 
@@ -41,13 +41,17 @@ VE has been battle-tested in commercial projects across multiple domains:
 
 ## Features
 
-- **Reactive data tree** — global tree with values, signal propagation, and path addressing
-- **Rich signal system** — `changed` (value), `activated` (subtree bubbling), `added`/`removed` (child lifecycle)
-- **Multiple serialization** — JSON / XML / Binary / QVariant
-- **Module lifecycle** — `NONE → INIT → READY → DEINIT`, plugin-based management
-- **IPC communication** — CBS binary protocol (C++↔C++), WebSocket JSON protocol (C++↔JS)
+- **Reactive data tree** — `ve::Node` with `ve::Var` values, signal propagation (bubbling), and path addressing
+- **Rich signal system** — `NODE_CHANGED` (value), `NODE_ACTIVATED` (subtree bubbling), `NODE_ADDED`/`NODE_REMOVED` (child lifecycle)
+- **Command system** — `Step`/`Pipeline`/`Command` abstraction + 20+ built-in commands (`ls`/`get`/`set`/`json`/`find`/...)
+- **Service layer** — Terminal REPL (TCP), HTTP API, WebSocket push, TCP Binary (CBS protocol)
+- **Multiple serialization** — JSON (simdjson) / Binary (CBS) / Schema-based import/export
+- **Module lifecycle** — `NONE → INIT → READY → DEINIT`, plugin loading, topological sort
+- **Event loop** — Asio-based `EventLoop` + `LoopRef` for cross-thread dispatch
+- **IPC communication** — CBS binary protocol (C++↔C++), WebSocket JSON (C++↔JS), DDS bridge (FastDDS)
 - **Cross-platform** — Windows / Linux / macOS, with crash capture & diagnostics
-- **Built-in terminal** — runtime debugger for data tree inspection and manipulation
+- **Built-in terminal** — runtime REPL for data tree inspection and manipulation via TCP/netcat
+- **High performance** — `child(index)` 590x faster, `iterator` 135x faster, `indexOf` 42x faster than Qt-based legacy (535 tests passing)
 
 ## Architecture
 

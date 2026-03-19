@@ -1,7 +1,9 @@
-// ws_server.cpp — ve::WsServer implementation
+// ws_server.cpp — ve::WsServer: WebSocket transport using SubscribeService + command::call()
 #include "ve/service/ws_server.h"
+#include "ve/service/subscribe_service.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
+#include "ve/core/command.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
 
@@ -15,7 +17,6 @@
 
 #include <mutex>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace ve {
 
@@ -54,12 +55,9 @@ struct WsServer::Private
 
     asio2::ws_server server;
     std::mutex mtx;
-
-    struct SessionInfo {
-        std::unordered_set<std::string> subscriptions;
-    };
-    std::unordered_map<std::size_t, SessionInfo> sessions;
     std::atomic<int> connCount{0};
+
+    std::unique_ptr<SubscribeService> subscribeSvc;
 };
 
 // ============================================================================
@@ -80,20 +78,36 @@ WsServer::~WsServer()
 
 bool WsServer::start()
 {
+    // --- SubscribeService setup ---
+    _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
+    _p->subscribeSvc->setPushCallback(
+        [this](uint64_t sessionId, const std::string& path, const Var& value) {
+            std::string eventMsg = "{\"type\":\"event\",\"path\":"
+                + json::stringify(Var(path))
+                + ",\"value\":" + json::stringify(value) + "}";
+
+            _p->server.post([this, sessionId, eventMsg = std::move(eventMsg)]() {
+                _p->server.foreach_session(
+                    [&](auto& session_ptr) {
+                        if (static_cast<uint64_t>(session_ptr->hash_key()) == sessionId)
+                            session_ptr->async_send(eventMsg);
+                    });
+            });
+        });
+    _p->subscribeSvc->start();
+
+    // --- Connection handling ---
     _p->server.bind_connect([this](auto& session_ptr) {
-        auto key = session_ptr->hash_key();
-        {
-            std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->sessions[key] = {};
-        }
         _p->connCount.fetch_add(1, std::memory_order_relaxed);
     });
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         std::string msg(data);
         auto cmd = parseWsCommand(msg);
+        auto sessionId = static_cast<uint64_t>(session_ptr->hash_key());
 
         if (cmd.cmd == "get") {
+            Var input = cmd.path.empty() ? Var(std::string{}) : Var(cmd.path);
             Node* target = cmd.path.empty() ? _p->root : _p->root->resolve(cmd.path);
             if (!target) {
                 session_ptr->async_send("{\"type\":\"error\",\"msg\":\"node not found\"}");
@@ -119,27 +133,11 @@ bool WsServer::start()
             session_ptr->async_send("{\"type\":\"ok\",\"path\":" + json::stringify(Var(target->path(_p->root))) + "}");
         }
         else if (cmd.cmd == "subscribe") {
-            if (cmd.path.empty()) {
-                session_ptr->async_send("{\"type\":\"error\",\"msg\":\"path required\"}");
-                return;
-            }
-            auto key = session_ptr->hash_key();
-            {
-                std::lock_guard<std::mutex> lock(_p->mtx);
-                auto it = _p->sessions.find(key);
-                if (it != _p->sessions.end())
-                    it->second.subscriptions.insert(cmd.path);
-            }
+            _p->subscribeSvc->subscribe(sessionId, cmd.path);
             session_ptr->async_send("{\"type\":\"subscribed\",\"path\":" + json::stringify(Var(cmd.path)) + "}");
         }
         else if (cmd.cmd == "unsubscribe") {
-            auto key = session_ptr->hash_key();
-            {
-                std::lock_guard<std::mutex> lock(_p->mtx);
-                auto it = _p->sessions.find(key);
-                if (it != _p->sessions.end())
-                    it->second.subscriptions.erase(cmd.path);
-            }
+            _p->subscribeSvc->unsubscribe(sessionId, cmd.path);
             session_ptr->async_send("{\"type\":\"unsubscribed\",\"path\":" + json::stringify(Var(cmd.path)) + "}");
         }
         else {
@@ -148,11 +146,8 @@ bool WsServer::start()
     });
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
-        auto key = session_ptr->hash_key();
-        {
-            std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->sessions.erase(key);
-        }
+        auto sessionId = static_cast<uint64_t>(session_ptr->hash_key());
+        _p->subscribeSvc->removeSession(sessionId);
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
 
@@ -166,9 +161,11 @@ bool WsServer::start()
 
 void WsServer::stop()
 {
+    if (_p->subscribeSvc) {
+        _p->subscribeSvc->stop();
+        _p->subscribeSvc.reset();
+    }
     _p->server.stop();
-    std::lock_guard<std::mutex> lock(_p->mtx);
-    _p->sessions.clear();
 }
 
 bool WsServer::isRunning() const

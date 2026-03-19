@@ -11,8 +11,6 @@
 #include "object.h"
 #include "log.h"
 
-#include "yaml-cpp/yaml.h"
-
 namespace ve {
 
 enum DataSignal : int {
@@ -46,9 +44,6 @@ public:
 
     virtual bool fromString(const std::string&) = 0;
     virtual std::string toString() const = 0;
-
-    virtual bool fromYaml(const YAML::Node&) = 0;
-    virtual YAML::Node toYaml() const = 0;
 };
 
 using AbstractDataPointer = std::shared_ptr<AbstractData>;
@@ -146,65 +141,6 @@ template<typename T> inline typename DataSerializeHelper<T>::IsDictT toString(co
     return true;
 }
 
-// --- yaml serialization ---
-
-VE_DECLARE_T_FUNC_CHECKER(is_yaml_decodable, bool, decltype(YAML::convert<T>::decode(YAML::Node(), basic::_t_static_var_helper<T>::var)));
-VE_DECLARE_T_FUNC_CHECKER(is_yaml_encodable, YAML::Node, decltype(YAML::convert<T>::encode(basic::_t_static_var_helper<T>::var)));
-
-template<typename T> inline std::enable_if_t<!is_yaml_decodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> fromYaml(const YAML::Node& from, T& value)
-{ return false; }
-template<typename T> inline std::enable_if_t<!is_yaml_encodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> toYaml(const T& value, YAML::Node& to)
-{ return false; }
-
-template<typename T> inline std::enable_if_t<is_yaml_decodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> fromYaml(const YAML::Node& from, T& value)
-{
-    try { return YAML::convert<T>::decode(from, value); }
-    catch (const std::exception&) { return false; }
-}
-template<typename T> inline std::enable_if_t<is_yaml_encodable<T>::value, typename DataSerializeHelper<T>::IsCommonT> toYaml(const T& value, YAML::Node& to)
-{
-    try { to = YAML::convert<T>::encode(value); }
-    catch (const std::exception&) { return false; }
-    return true;
-}
-
-template<typename T> inline typename DataSerializeHelper<T>::IsDataPointerT fromYaml(const YAML::Node& from, T& ptr) { return ptr->fromYaml(from); }
-template<typename T> inline typename DataSerializeHelper<T>::IsDataPointerT toYaml(const T& ptr, YAML::Node& to) { to = ptr->toYaml(); return true; }
-
-template<typename T> inline typename DataSerializeHelper<T>::IsListT fromYaml(const YAML::Node& from, T& value)
-{
-    if (!from.IsSequence() || value.size() != from.size()) return false;
-    std::size_t cnt = 0;
-    for (typename T::reference it : value) { fromYaml(from[cnt], it); cnt++; }
-    return true;
-}
-template<typename T> inline typename DataSerializeHelper<T>::IsListT toYaml(const T& value, YAML::Node& to)
-{
-    std::size_t cnt = 0;
-    for (const auto& it : value) { auto n = to[cnt]; toYaml(it, n); cnt++; }
-    return true;
-}
-
-template<typename T> inline typename DataSerializeHelper<T>::IsDictT fromYaml(const YAML::Node& from, T& value)
-{
-    using Access = typename T::KVAccessT;
-    for (auto& kv : value) {
-        try { fromYaml(from[Access::key(kv)], Access::value(kv)); }
-        catch (const std::exception&) { continue; }
-    }
-    return true;
-}
-template<typename T> inline typename DataSerializeHelper<T>::IsDictT toYaml(const T& value, YAML::Node& to)
-{
-    using Access = typename T::KVAccessT;
-    for (const auto& kv : value) {
-        if (Access::key(kv).size() > 0 && Access::key(kv)[0] == '_') continue;
-        auto n = to[Access::key(kv)];
-        toYaml(Access::value(kv), n);
-    }
-    return true;
-}
-
 } // namespace serialize
 
 ///
@@ -248,11 +184,6 @@ public:
     std::string toString() const override
     { std::string s; return serialize::toString(this->get(), s) ? s : "@invalid"; }
 
-    bool fromYaml(const YAML::Node& n) override
-    { VE_DATA_UPDATE(if (!serialize::fromYaml(n, ref())) return false); }
-    YAML::Node toYaml() const override
-    { YAML::Node n; return serialize::toYaml(this->get(), n) ? n : YAML::Node(); }
-
 protected:
     V v_;
 };
@@ -270,11 +201,6 @@ public:
     { return (s.empty() || s == "void") ? update() : false; }
     std::string toString() const override
     { return "void"; }
-
-    bool fromYaml(const YAML::Node& n) override
-    { return n.IsNull(); }
-    YAML::Node toYaml() const override
-    { return YAML::Node(); }
 };
 
 ///

@@ -1,12 +1,22 @@
 // ----------------------------------------------------------------------------
-// module.h — Module lifecycle: init → ready → deinit
+// module.h — Module lifecycle
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
 //
-// Origin: hemera_core/module (2023) — ported to ve:: namespace.
+// Lifecycle (driven by ve::entry or manual):
+//   all constructors (by priority) → all init → all ready
+//                                  → all deinit → all destructors
+//
+// Convention:
+//   constructor:  read node() config, create own resources (no cross-module deps)
+//   init():       data tree setup, register commands
+//   ready():      subscribe to other modules' data (cross-module dependencies)
+//   deinit():     reverse of ready — disconnect cross-module subscriptions
+//   destructor:   release own resources (reverse of constructor)
+//
 // ----------------------------------------------------------------------------
 
 #pragma once
@@ -33,10 +43,15 @@ public:
     };
 
 public:
-    Module();
+    explicit Module(const std::string& name);
     ~Module();
 
     State state() const;
+
+    const std::string& key() const { return name(); }
+
+    /// Module workspace node at ve/entry/module/{name}
+    Node* node() const;
 
     template<State s> void exeState();
 
@@ -71,14 +86,19 @@ protected:
 
 using ModuleFactory = Factory<Module*()>;
 VE_API ModuleFactory& globalModuleFactory();
+VE_API Dict<int>& globalModulePriority();
 
 template<class C>
-inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(const std::string& key)
+inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
+    const std::string& key, int priority = 100, int ver = 0)
 {
     globalModuleFactory().insertOne(key, [=] () -> Module* {
-        ve::d("_p.global_module_key")->set(Var(key));
-        return new C();
+        return new C(key);
     });
+    if (priority != 100)
+        globalModulePriority()[key] = priority;
+    if (ver > 0)
+        version::manager().insertOne(key, [=] () -> int { return ver; });
 }
 
 namespace module {
@@ -93,4 +113,8 @@ template<typename T> inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> i
 
 VE_API std::ostream& operator<< (std::ostream& os, ve::Module::State s);
 
-#define VE_REGISTER_MODULE(Key, Class) VE_AUTO_RUN(ve::registerModule<Class>(#Key);)
+#define VE_REGISTER_MODULE(Key, Class) \
+    VE_AUTO_RUN(ve::registerModule<Class>(#Key);)
+
+#define VE_REGISTER_PRIORITY_MODULE(Key, Class, Priority, Ver) \
+    VE_AUTO_RUN(ve::registerModule<Class>(#Key, Priority, Ver);)

@@ -1,5 +1,4 @@
 #include "ve/core/module.h"
-#include "ve/core/convert.h"
 
 #define STATE_IMPL(S, F) \
 trigger(MODULE_STATE_ABOUT_TO_CHANGE); \
@@ -11,12 +10,19 @@ namespace ve {
 struct Module::Private
 {
     State s = NONE;
+    Node* node = nullptr;
 };
 
-Module::Module() : Object("ve::m_" + ve::d("_p.global_module_key")->get<std::string>()), _p(new Private) {}
+Module::Module(const std::string& name) : Object(name), _p(new Private)
+{
+    _p->node = ve::n("ve/entry/module/" + name);
+}
+
 Module::~Module() noexcept { delete _p; }
 
 Module::State Module::state() const { return _p->s; }
+
+Node* Module::node() const { return _p->node; }
 
 template<> VE_API void Module::exeState<Module::INIT>() { STATE_IMPL(INIT, init); }
 template<> VE_API void Module::exeState<Module::READY>() { STATE_IMPL(READY, ready); }
@@ -31,6 +37,37 @@ ModuleFactory& globalModuleFactory()
     static ModuleFactory i("ve::g_module_factory");
     return i;
 }
+
+Dict<int>& globalModulePriority()
+{
+    static Dict<int> m;
+    return m;
+}
+
+// ============================================================================
+// ve::version
+// ============================================================================
+
+namespace version {
+
+Manager& manager()
+{
+    static Manager m("ve::version_manager");
+    return m;
+}
+
+int number(const std::string& key)
+{
+    return manager().exec(key);
+}
+
+bool check(const std::string& key, int min_api)
+{
+    if (!manager().has(key)) return false;
+    return manager().exec(key) >= min_api;
+}
+
+} // namespace version
 
 }
 

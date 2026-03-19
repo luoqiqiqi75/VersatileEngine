@@ -1,44 +1,33 @@
-// terminal.h — ve::Terminal: embeddable Node tree REPL
+// terminal.h — ve::Terminal: TCP-based remote Node REPL service
+//
+// Combines the REPL engine and TCP server into a single class.
+// Commands are registered globally via command::reg(); Terminal is a frontend.
+// Per-session state (current node, history, orphans) is managed internally.
+//
 #pragma once
 
-#include "ve/core/node.h"
-#include <functional>
+#include "ve/global.h"
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace ve {
+
+class Node;
 
 class VE_API Terminal
 {
 public:
-    using Output  = std::function<void(const std::string&)>;
-    using Args    = std::vector<std::string>;
-    using Handler = std::function<void(Terminal&, const Args& args, const std::string& line)>;
-
-    explicit Terminal(Node* root = nullptr);
+    explicit Terminal(Node* root = nullptr, uint16_t port = 5061);
     ~Terminal();
 
-    void setOutput(Output cb);
-    void print(const std::string& text);
+    bool     start();
+    void     stop();
+    bool     isRunning() const;
+    int      connectionCount() const;
+    uint16_t port() const;
 
-    bool execute(const std::string& line);
-
-    Node* root() const;
-    Node* current() const;
-    void  setCurrent(Node* node);
-    std::string currentPath() const;
-    std::string prompt() const;
-
-    void registerCommand(const std::string& name, Handler handler, const std::string& help = "");
-
-    const std::vector<std::string>& history() const;
-
-    // JSON utilities (Node ↔ JSON string)
     static std::string nodeToJson(const Node* node, int indent = 2);
-
-    // orphan management
-    std::vector<Node*>& orphans();
 
 private:
     struct Private;

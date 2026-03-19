@@ -13,15 +13,22 @@ struct Object::Private
         Object*    observer;
         ActionT    action;
         LoopRef    loop;
-        Alive alive;  // observer's alive token (captured at connect time)
+        Alive      alive;       // observer's alive token (captured at connect time)
+        Alive      shotToken;   // per-connection token for oneShot (null = persistent)
     };
     UnorderedHashMap<int, Vector<Connection>> connections;
 
 
     void addConnection(int signal, Object* observer, const ActionT& action,
-                        LoopRef loop = {}, Alive token = {})
+                        LoopRef loop = {}, Alive token = {}, bool oneShot = false)
     {
-        connections[signal].push_back({observer, action, std::move(loop), std::move(token)});
+        Alive shot = oneShot ? Alive::create() : Alive{};
+        connections[signal].push_back({observer, action, std::move(loop), std::move(token), std::move(shot)});
+    }
+
+    static bool isDead(const Connection& c)
+    {
+        return c.alive.dead() || c.shotToken.dead();
     }
 
     // remove all connections for observer from a signal (internal, already under lock)
@@ -80,6 +87,13 @@ void Object::connect(int signal, Object* observer, const ActionT& action, LoopRe
                        observer ? observer->_p->alive : Alive{});
 }
 
+void Object::once(int signal, Object* observer, const ActionT& action, LoopRef loop)
+{
+    LockT lk(_p->mtx);
+    _p->addConnection(signal, observer, action, std::move(loop),
+                       observer ? observer->_p->alive : Alive{}, true);
+}
+
 void Object::disconnect(int signal, Object* observer)
 {
     LockT lk(_p->mtx);
@@ -96,7 +110,7 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
 {
     if (signal != OBJECT_DELETED && isSilent()) return;
 
-    struct Dispatch { Object* observer; ActionT action; LoopRef loop; Alive alive; };
+    struct Dispatch { Object* observer; ActionT action; LoopRef loop; Alive alive; Alive shotToken; };
     Vector<Dispatch> callbacks;
     {
         LockT lk(_p->mtx);
@@ -104,7 +118,7 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
         if (it != _p->connections.end()) {
             callbacks.reserve(it->second.size());
             for (auto& c : it->second)
-                callbacks.push_back({c.observer, c.action, c.loop, c.alive});
+                callbacks.push_back({c.observer, c.action, c.loop, c.alive, c.shotToken});
         }
     }
 
@@ -114,7 +128,7 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
     bool check_sender = (signal != OBJECT_DELETED);
 
     for (auto& d : callbacks) {
-        if (d.alive.dead()) {
+        if (d.alive.dead() || d.shotToken.dead()) {
             has_dead = true;
             continue;
         }
@@ -132,6 +146,10 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
             loop::ContextGuard _(ctx);
             d.action(data);
         }
+        if (d.shotToken) {
+            d.shotToken.kill();
+            has_dead = true;
+        }
     }
 
     if (has_dead) {
@@ -140,9 +158,7 @@ void Object::trigger(int signal, const Var& data /*= {}*/)
         if (it != _p->connections.end()) {
             auto& vec = it->second;
             vec.erase(std::remove_if(vec.begin(), vec.end(),
-                [](const Private::Connection& c) {
-                    return c.alive.dead();
-                }), vec.end());
+                &Private::isDead), vec.end());
         }
     }
 }

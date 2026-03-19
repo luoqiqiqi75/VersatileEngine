@@ -29,23 +29,24 @@ static void demo_tree_and_values()
 
     // append children
     Node* arm = root.append("arm");
-    Node* joint1 = arm->append("joint1");
-    Node* joint2 = arm->append("joint2");
-    Node* gripper = arm->append("gripper");
 
-    // set values
-    joint1->set(Var(45.0));
-    joint2->set(Var(90.0));
-    gripper->set(Var("open"));
+    Node* joint1 = arm->append("joint1");
+    joint1->set(45.0);
+
+    // Node* joint2 = arm->append("joint2");
+    arm->set("joint2", 90.0);
+
+    Node* gripper = arm->append("gripper");
+    gripper->set("open");
 
     // get values
-    std::cout << "joint1 angle: " << joint1->get<double>() << std::endl;
-    std::cout << "joint2 angle: " << root.get<double>("arm/joint2") << std::endl;
+    std::cout << "joint1 angle: " << joint1->get<double>() << root.get("default_str") << std::endl;
+    std::cout << "joint2 angle: " << root.resolve("arm/joint2")->get<double>() << std::endl;
     std::cout << "gripper:      " << gripper->get<std::string>() << std::endl;
 
     // ensure creates the full path if missing
-    root.ensure("arm/wrist/roll")->set(Var(15.0));
-    root.ensure("arm/wrist/pitch")->set(Var(-5.0));
+    root.ensure("arm/wrist/roll")->set(15.0);
+    root.ensure("arm/wrist/pitch")->set(-5.0);
 
     // resolve to read back
     if (auto* roll = root.resolve("arm/wrist/roll"))
@@ -65,10 +66,11 @@ static void demo_path_navigation()
     Node root("sensors");
 
     // overlapping names: multiple children named "temp"
-    root.append("temp", 0)->set(Var(36.5));
-    root.append("temp", 1)->set(Var(37.0));
-    root.append("temp", 2)->set(Var(38.2));
-    root.append("pressure")->set(Var(1013.25));
+    // root.append("temp", 0)->set(Var(36.5));
+    // root.append("temp", 1)->set(Var(37.0));
+    root.set("temp", 2, 38.2);
+    root.append("temp", 1); // append 2 more
+    root.append("pressure")->set(1013.25);
 
     // access by name#N (overlap index)
     std::cout << "temp#0: " << root.resolve("temp#0")->get<double>() << std::endl;
@@ -99,14 +101,15 @@ static void demo_signals()
 
     // NODE_CHANGED: fired when set() changes a value
     root.connect<Node::NODE_CHANGED>(&observer, [](Var new_val, Var old_val) {
-        std::cout << "[CHANGED] " << old_val.toString() << " -> " << new_val.toString() << std::endl;
+        std::cout << "[CHANGED] " << loop::context() << " " << old_val.toString() << " -> " << new_val.toString() << std::endl;
     });
 
-    root.set(Var(1));
-    root.set(Var(2));
+    std::cout << "update(1) root " << &root << std::endl;
+    root.set(1);
+    root.set(2);
 
     // update() only fires if value differs
-    std::cout << "update(2) same value -> no signal: " << (!root.update(Var(2)) ? "skipped" : "fired") << std::endl;
+    std::cout << "update(2) same value -> no signal: " << (!root.update(2) ? "skipped" : "fired") << std::endl;
     std::cout << "update(3) new value:  ";
     root.update(Var(3));
 

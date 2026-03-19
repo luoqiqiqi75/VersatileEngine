@@ -41,7 +41,7 @@ protected:
 *   connect<S>(obs, [](int a, string b) { ... })       → auto-unpack from Var
 *   connect<S>(obs, []() { ... })                      → ignore data
 */
-class VE_API Object : public ObjectData
+struct VE_API Object : public ObjectData
 {
     // --- internal: Var → typed args dispatch (uses basic::FnTraits) ---
     //
@@ -154,6 +154,21 @@ public:
         }));
     }
 
+    // --- once (single-shot connect, auto-disconnects after first trigger) ---
+
+    template<SignalT S> void once(Object* observer, const ActionT& action, LoopRef loop = {})
+    { once(S, observer, action, loop); }
+
+    template<SignalT S, typename Fn,
+        std::enable_if_t<!std::is_convertible_v<Fn, ActionT>, int> = 0>
+    void once(Object* observer, Fn fn, LoopRef loop = {}) {
+        using Tuple = typename basic::FnTraits<std::decay_t<Fn>>::ArgsTuple;
+        once(S, observer, [fn](const Var& data) {
+            _call(fn, data, static_cast<Tuple*>(nullptr),
+                  std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+        }, loop);
+    }
+
     // --- disconnect ---
     void disconnect(SignalT signal, Object* observer);
     void disconnect(Object* observer);
@@ -163,6 +178,7 @@ protected:
     // Runtime-signal connect/trigger — prefer compile-time template versions above.
     // Protected so derived classes (e.g. Node::activate) can still use them directly.
     void connect(SignalT signal, Object* observer, const ActionT& action, LoopRef loop = {});
+    void once(SignalT signal, Object* observer, const ActionT& action, LoopRef loop = {});
     void trigger(SignalT signal, const Var& data = {});
 
 private:

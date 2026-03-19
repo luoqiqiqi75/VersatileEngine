@@ -39,22 +39,32 @@ public:
     };
 
     // --- value ---
-    bool hasValue() const;
     const Var& value() const;
+    bool hasValue() const;   // true if value is not NONE (Null)
 
     Node* set(const Var& v);
     Node* set(Var&& v);
 
-    template<typename T>
-    Node* set(const std::string& path, T&& t) { return ensure(path)->set(std::forward<T>(t)); }
+    template<typename T> Node* set(const std::string& path, T&& t) { ensure(path)->set(std::forward<T>(t)); return this; }
+    template<typename T> Node* set(int index, T&& t) { ensure(index)->set(std::forward<T>(t)); return this; }
+    template<typename T> Node* set(const std::string& name, int overlap, T&& t) { ensure(name, overlap)->set(std::forward<T>(t)); return this; }
 
-    template<typename T>
-    T get(const T& def = T{}) const { return hasValue() ? value().to<T>(def) : def; }
+    const Var& get() const { return value(); }
+    template<typename T> T get(const T& def = T{}) const { return value().to<T>(def); }
+    std::string get(const char* def) const { return value().to<std::string>(def); }
 
-    template<typename T>
-    T get(const std::string& path, const T& def = T{}) const {
+    // getAt — get value from child/descendant (separated from get to avoid T=string ambiguity)
+    template<typename T> T getAt(const std::string& path, const T& def = T{}) const {
         auto* c = resolve(path);
-        return c ? c->value().to<T>(def) : def;
+        return c ? c->get<T>(def) : def;
+    }
+    template<typename T> T getAt(int index, const T& def = T{}) const {
+        auto* c = child(index);
+        return c ? c->get<T>(def) : def;
+    }
+    template<typename T> T getAt(const std::string& name, int overlap, const T& def) const {
+        auto* c = child(name, overlap);
+        return c ? c->get<T>(def) : def;
     }
 
     bool update(const Var& v);
@@ -167,6 +177,8 @@ public:
     Node*       resolve(const std::string& path, bool use_shadow = true) const;
     std::string path(Node* ancestor = nullptr) const;
     Node*       ensure(const std::string& path);
+    Node*       ensure(int index);
+    Node*       ensure(const std::string& name, int overlap);
     bool        erase(const std::string& path, bool auto_delete = true);
 
     // --- flags (reuses Object::_flags, higher bits) ---

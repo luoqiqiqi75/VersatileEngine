@@ -42,15 +42,10 @@ add_subdirectory(core)
 # Test option — build core unit tests (pure C++, no dependencies beyond libve)
 # ==========================================================================
 option(VE_BUILD_TEST     "Build core unit tests (ve_test)"              ON)
-option(VE_BUILD_TERMINAL "Build interactive Node console (ve_terminal)" ON)
 option(VE_BUILD_EXAMPLE  "Build core example programs"                  ON)
 
 if(VE_BUILD_TEST)
     add_subdirectory(core/test)
-endif()
-
-if(VE_BUILD_TERMINAL)
-    add_subdirectory(core/terminal)
 endif()
 
 if(VE_BUILD_EXAMPLE)
@@ -62,14 +57,14 @@ endif()
 # own dependencies and returns early if not satisfied.
 # ==========================================================================
 option(VE_BUILD_QT  "Build cpp/qt  -> libveqt  (needs Qt5 or Qt6)"              ON)
-option(VE_BUILD_ROS "Build cpp/ros -> libveros  (needs catkin or ament_cmake)"   ON)
+option(VE_BUILD_DDS "Build cpp/ros -> libvedds  (needs FastDDS: fastrtps + fastcdr)" OFF)
 option(VE_BUILD_RTT "Build cpp/rtt -> libvertt  (pure C++ IMOL xcore)"           ON)
 
 if(VE_BUILD_QT)
     add_subdirectory(cpp/qt)
 endif()
 
-if(VE_BUILD_ROS)
+if(VE_BUILD_DDS)
     add_subdirectory(cpp/ros)
 endif()
 

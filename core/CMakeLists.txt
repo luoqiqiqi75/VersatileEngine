@@ -48,25 +48,20 @@ target_include_directories(${VE_CORE_LIBRARY} PRIVATE
 )
 
 # --- deps ---
-ve_find_package(yaml-cpp
-    GIT_REPO  https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG   0.8.0
-    OPTIONS
-        YAML_CPP_BUILD_TOOLS   OFF
-        YAML_CPP_BUILD_CONTRIB ON
-        YAML_BUILD_SHARED_LIBS OFF
-        YAML_CPP_INSTALL       OFF
-)
 ve_find_package(simdjson
     GIT_REPO  https://github.com/simdjson/simdjson.git
     GIT_TAG   v3.12.2
     OPTIONS
         SIMDJSON_BUILD_STATIC_LIB ON
 )
-target_link_libraries(${VE_CORE_LIBRARY} PUBLIC  yaml-cpp::yaml-cpp)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE simdjson::simdjson)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio2)
+
+# dynamic library loading (dlopen on Linux)
+if(NOT WIN32)
+    target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 message(STATUS "")

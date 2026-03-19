@@ -122,6 +122,26 @@ bool HttpServer::start()
             rep.fill_json(json::exportTree(target), http::status::ok);
         });
 
+    // POST /api/tree/* — import JSON subtree
+    _p->server.bind<http::verb::post>("/api/tree/*",
+        [this](http::web_request& req, http::web_response& rep) {
+            auto nodePath = strip_prefix(req.path(), "/api/tree");
+            Node* target = nodePath.empty() ? _p->root : _p->root->ensure(nodePath);
+            if (!target) {
+                rep.fill_json("{\"error\":\"cannot create node\"}", http::status::internal_server_error);
+                return;
+            }
+            std::string body(req.body());
+            if (body.empty()) {
+                rep.fill_json("{\"error\":\"empty body\"}", http::status::bad_request);
+                return;
+            }
+            if (json::importTree(target, body))
+                rep.fill_json("{\"ok\":true,\"path\":\"" + target->path(_p->root) + "\"}", http::status::ok);
+            else
+                rep.fill_json("{\"error\":\"invalid JSON\"}", http::status::bad_request);
+        });
+
     // GET /api/children/*
     _p->server.bind<http::verb::get>("/api/children/*",
         [this](http::web_request& req, http::web_response& rep) {

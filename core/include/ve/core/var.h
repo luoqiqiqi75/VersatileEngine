@@ -173,9 +173,10 @@ public:
         }
     }
 
-    // to<T>(def) — safe conversion: basic → direct, else → any_cast + string intermediate
+    // to<T>(def) — safe conversion: NONE → def, basic → direct, else → any_cast + string intermediate
     template<typename T>
     T to(const T& def = T{}) const {
+        if (_type == NONE) return def;
         using U = std::decay_t<T>;
         if constexpr (std::is_same_v<U, Var> || basic::Meta<U>::is_numeric
                       || basic::Meta<U>::is_string || std::is_pointer_v<U>) {

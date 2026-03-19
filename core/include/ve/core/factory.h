@@ -219,4 +219,20 @@ private:
     Dict<RetT> _cache;
 };
 
+// ============================================================================
+// ve::version — named version registry (Factory<int()>)
+// ============================================================================
+
+namespace version {
+
+using Manager = Factory<int()>;
+VE_API Manager& manager();
+VE_API int  number(const std::string& key);
+VE_API bool check(const std::string& key, int min_api);
+
+} // namespace version
+
 }
+
+#define VE_REGISTER_VERSION(Key, Ver) \
+    VE_AUTO_RUN(ve::version::manager().insertOne(#Key, [] () -> int { return Ver; });)

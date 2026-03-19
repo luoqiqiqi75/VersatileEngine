@@ -41,16 +41,26 @@ VE 的数据核心起源于 **imol**（`imol::ModuleObject`），最初基于 Qt
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  core/ (libve — 纯 C++17，零 Qt 依赖)                        │
-│  ├── ve::Object          对象基类（parent, int signal/slot） │
-│  ├── ve::Manager         对象容器（HashMap<name, Object*>）  │
-│  ├── ve::AnyData<T>      类型安全响应式数据（bind, YAML）    │
-│  ├── ve::DataManager     路径注册表（data::create/get/at）   │
+│  ├── ve::Var             16B Variant (10 种类型 + CUSTOM)    │
+│  ├── ve::Node            响应式数据树（Vector+Hash, Pool 池化）│
+│  │   ├── 信号冒泡        NODE_CHANGED / ACTIVATED / ADDED / REMOVED │
+│  │   ├── shadow/schema   原型链继承 + 结构化序列化          │
+│  │   └── 路径寻址        n("/a/b/c") / d("a.b.c") / ensure/resolve │
+│  ├── ve::Command         Step/Pipeline/Command 命令系统     │
+│  │   └── 20+ 内建命令    ls/get/set/add/rm/mv/mk/find/json/help... │
+│  ├── ve::Service         Terminal(TCP) + HTTP + WS + TCP Binary │
+│  ├── ve::Entry           Config 驱动应用生命周期 + Plugin    │
+│  ├── ve::Loop            Asio 事件循环 + LoopRef             │
+│  ├── ve::Object          对象基类（信号/槽, 线程安全）       │
 │  ├── ve::Module          模块生命周期（NONE→INIT→READY→DEINIT）│
-│  ├── ve::Factory<Sig>    工厂模式（Dict<name, function>）    │
+│  ├── ve::AnyData<T>      类型安全响应式数据（bind, YAML）    │
+│  ├── ve::Schema          JSON (simdjson) / Binary 序列化     │
+│  ├── ve::Pool<T>         固定大小对象池 + Pooled<T> CRTP     │
+│  ├── ve::Factory<Sig>    工厂模式 + 缓存                    │
 │  ├── ve::OrderedHashMap  Robin Hood + 插入顺序（Godot 移植） │
+│  ├── ve::SmallVector     内联缓冲 + 堆溢出                  │
 │  ├── ve::log             日志系统（spdlog 后端）             │
-│  ├── ve::impl::hash_*    哈希函数族（DJB2, MurmurHash3）    │
-│  └── ve::Node            数据树节点（placeholder, Phase 1）  │
+│  └── ve::impl::hash_*    哈希函数族（DJB2, MurmurHash3）    │
 │                                                             │
 │  cpp/qt/ (libveqt — Qt 适配层)                               │
 │  ├── imol::ModuleObject  Qt 数据树（别名 ve::Data）          │
@@ -284,148 +294,186 @@ ve::Object (纯C++)              imol::ModuleObject (Qt)
 
 ## 5. 重构方案
 
-### 5.1 核心值类型 —— `ve::Value`
+### 5.1 核心值类型 —— `ve::Var` ✅ 已实现
 
-替代 QVariant，覆盖跨语言交换所需的类型集合：
+替代 QVariant，仅 **16 字节**，覆盖跨语言交换所需的类型集合：
 
 ```cpp
 namespace ve {
 
-class Value {
+class Var {
 public:
     enum Type : uint8_t {
-        Null, Bool, Int, Double, String, Bytes, Array, Object
+        NONE, BOOL, INT, INT64, DOUBLE, STRING, BIN, LIST, DICT, POINTER, CUSTOM
     };
 
-    Value();                              // Null
-    Value(bool v);
-    Value(int64_t v);
-    Value(double v);
-    Value(const std::string& v);
-    Value(std::string&& v);
-    Value(const std::vector<uint8_t>& v); // 二进制
-    Value(std::vector<Value>&& v);        // 数组
-    Value(OrderedMap<std::string, Value>&& v); // 对象（有序，保留插入顺序）
+    Var();                                // NONE
+    Var(bool v);
+    Var(int v);
+    Var(int64_t v);
+    Var(double v);
+    Var(const std::string& v);
+    Var(std::string&& v);
+    Var(const std::vector<uint8_t>& v);   // BIN (二进制)
+    Var(std::vector<Var>&& v);            // LIST
+    Var(Dict<Var>&& v);                   // DICT
+    Var(void* v);                         // POINTER
 
+    // 类型查询
     Type type() const;
-    bool isNull() const;
+    bool isNone() const;
 
-    // 取值（类型不匹配返回默认值）
-    bool        toBool(bool def = false) const;
-    int64_t     toInt(int64_t def = 0) const;
-    double      toDouble(double def = 0.0) const;
-    std::string toString(const std::string& def = "") const;
+    // 取值 (类型安全转换)
+    template<class T> T to(T def = {}) const;
+    template<class T> static Var from(const T& v);
+
+    // 数值转换
+    bool        asBool() const;
+    int         asInt() const;
+    int64_t     asInt64() const;
+    double      asDouble() const;
+    std::string asString() const;
+
+    // LIST/DICT 操作
+    Var& operator[](int index);
+    Var& operator[](const std::string& key);
+    int  size() const;
+    void push(Var v);
+
+    // 比较 / swap / copy / move
+    bool operator==(const Var& other) const;
+    void swap(Var& other);
     // ...
 
-    // 比较
-    bool operator==(const Value& other) const;
-    bool operator!=(const Value& other) const;
-
 private:
-    Type _type;
-    std::variant<
-        std::monostate,                          // Null
-        bool,                                    // Bool
-        int64_t,                                 // Int
-        double,                                  // Double
-        std::string,                             // String
-        std::vector<uint8_t>,                    // Bytes
-        std::vector<Value>,                      // Array
-        OrderedMap<std::string, Value>           // Object（有序哈希表）
-    > _data;
+    // 仅 16 bytes: type(1) + padding(7) + union(8)
+    // 小类型 (bool/int/double/pointer) 内联存储
+    // 大类型 (string/bin/list/dict/custom) 通过堆指针
+};
+
+// Convert<T> 扩展点
+template<class T> struct Convert {
+    static std::string toString(const T& v);
+    static T fromString(const std::string& s);
+    static std::vector<uint8_t> toBin(const T& v);
+    static T fromBin(const std::vector<uint8_t>& b);
 };
 
 } // namespace ve
 ```
 
+**实际性能（MSVC 2022, x64 Release）：**
+- `sizeof(Var) == 16` — 比 QVariant (16-24 bytes) 更紧凑
+- `get<int>()` 仅 15ns — 内联存储，无堆分配
+- `set(Var(int))` 仅 0.37µs — 含信号触发
+- `set(Var(string))` 仅 0.54µs — 含堆分配
+
 **设计取舍：**
-- 不支持任意类型注册（QVariant 的 `Q_DECLARE_METATYPE` 能力）——这是有意为之，因为跨语言场景不需要
-- 如果 Qt 适配层需要存 QVariant，可以在 ve-qt 适配层做双向转换
-- Bytes 类型用于替代 QByteArray，支持点云等大块二进制数据的传输
+- CUSTOM 类型支持任意 C++ 类型（通过 `CustomData` 基类），比 QVariant 的 `Q_DECLARE_METATYPE` 更轻量
+- BIN 类型用于替代 QByteArray，支持点云等大块二进制数据的传输
+- LIST/DICT 支持嵌套，直接映射 JSON 结构
 
-### 5.2 核心节点 —— `ve::Node`
+### 5.2 核心节点 —— `ve::Node` ✅ 已实现
 
-从 ModuleObject 提炼，去 Qt 依赖：
+从 ModuleObject 提炼，去 Qt 依赖，**已完整实现并通过 535 个单元测试**：
 
 ```cpp
 namespace ve {
 
 class Node {
 public:
-    // ActivateType 保持和原 imol 一致
-    enum ActivateType { CHANGE, INSERT, REMOVE, REORDER };
+    enum Signal { NODE_CHANGED, NODE_ACTIVATED, NODE_ADDED, NODE_REMOVED };
+    enum Flag   { WATCHING = 1, SILENT = 2 };
+    using Nodes = std::vector<Node*>;
 
-    explicit Node(const std::string& name = "", Node* parent = nullptr);
+    explicit Node(const std::string& name = "");
     virtual ~Node();
 
     // --- 自身属性 ---
     const std::string& name() const;
-    bool isNull() const; // EmptyNode 返回 true
+    Node* parent(int level = 1) const;
 
-    // --- 值操作 ---
-    const Value& get() const;
-    const Value& get(const Value& default_value) const;
-    Node* set(const Value& value);
-    Node* set(const std::string& rpath, const Value& value);
-    void trigger(); // 不改值，仅发信号
+    // --- 值操作 (ve::Var) ---
+    const Var& value() const;
+    template<class T> T get(T def = {}) const;
+    void set(const Var& v);
+    void update(const Var& v);     // 仅在值变化时 set
 
-    // --- 树导航（保留 imol 的完整语义）---
-    Node* parent() const;              // p()
-    Node* child(const std::string& rname) const; // c()
-    Node* child(int index) const;
-    Node* sibling(int offset) const;   // b()
-    Node* relative(const std::string& rpath) const; // r()
-    std::string fullPath(Node* ancestor = nullptr) const;
+    // --- 树导航 ---
+    Node* child(const std::string& name, int index = 0) const;
+    Node* child(int global_index) const;
+    Node* childAt(const std::string& key) const;   // "name#N" / "#N"
+    Node* first() const;
+    Node* last() const;
+    Node* next() const;
+    Node* prev() const;
+    Node* sibling(int offset) const;
+    Node* resolve(const std::string& path, bool use_shadow = false) const;
+    Node* ensure(const std::string& path);
 
     // --- 子节点管理 ---
-    int childCount() const;
-    bool hasChild(const std::string& rname) const;
-    std::vector<std::string> childNames() const;
-    std::vector<Node*> children() const;
+    int count() const;
+    int count(const std::string& name) const;
+    int indexOf(Node* child, int guess = -1) const;
+    std::string keyOf(Node* child) const;
+    std::string path(Node* ancestor = nullptr) const;
 
     Node* insert(Node* child, int index = -1);
+    void  insert(Nodes& batch, int index = -1);
     Node* append(const std::string& name = "");
-    bool remove(Node* child, bool auto_delete = true);
-    bool remove(const std::string& rpath, bool auto_delete = true);
+    Node* take(Node* child);
+    bool  remove(Node* child);
+    bool  remove(const std::string& name, int index = 0);
+    void  clear(bool delete_children = true);
+    bool  erase(const std::string& path, bool delete_node = true);
 
-    // --- 信号 ---
-    // changed: 值变化
-    using ChangedCallback = std::function<void(const Value& new_val, const Value& old_val)>;
-    int onChanged(ChangedCallback cb);
-    void offChanged(int id);
-
-    // activated: 子树变化冒泡（需 watch=true）
-    using ActivatedCallback = std::function<void(Node* changed_node, ActivateType type)>;
-    int onActivated(ActivatedCallback cb);
-    void offActivated(int id);
-
-    // added/removed: 直接子节点增删
-    using ChildCallback = std::function<void(const std::string& rname)>;
-    int onAdded(ChildCallback cb);
-    int onRemoved(ChildCallback cb);
+    // --- 信号 (ve::Object 继承) ---
+    // NODE_CHANGED:   值变化 (Var new, Var old)
+    // NODE_ACTIVATED: 子树冒泡 (Var{path, type})
+    // NODE_ADDED:     子节点新增 (Var key)
+    // NODE_REMOVED:   子节点移除 (Var key)
 
     // --- 控制 ---
-    bool isQuiet() const;
-    void setQuiet(bool quiet, bool recursive = false);
-    bool isWatching() const;
-    void setWatching(bool watching, bool recursive = false);
+    void silent(bool s);
+    void watch(bool w);
+
+    // --- Shadow (原型链) ---
+    Node* shadow() const;
+    void setShadow(Node* proto);
 
     // --- 序列化 ---
-    // 核心层只做 Value 级别的序列化；JSON/XML/Binary 放在工具层或适配层
-    Value exportToValue() const;  // 子树 → 嵌套 Value
-    void importFromValue(const Value& v);  // 嵌套 Value → 子树
+    // schema::exportAs<json::Json>(node)  → JSON string
+    // schema::importAs<json::Json>(node, str)
+    // bin::exportTree(node) → binary
+    std::string dump() const;
+
+    // --- Iterator ---
+    Node** begin();    // Vector<Node*> 直接指针
+    Node** end();
+    // rbegin() / rend() 同理
 
 private:
-    struct Private;
-    std::unique_ptr<Private> _p;
+    struct Private;  // Pooled<Private>
 };
 
-// 全局访问器（保留 ve::d 的便捷性）
-Node* d(const std::string& path);
-Node* d(Node* root, const std::string& path);
+// 全局访问器
+Node* n(const std::string& slash_path);   // ve::n("/robot/arm")
+Node* d(const std::string& dot_path);     // ve::d("robot.arm")
+namespace node { Node* root(); }          // 全局根节点
 
 } // namespace ve
 ```
+
+**性能（MSVC 2022, x64 Release, 2026-03-18）：**
+
+| 操作 | ve::Node | imol::ModuleObject | 倍率 |
+|------|----------|-------------------|------|
+| child(index) | 0.012 µs | 7.10 µs | **590x** |
+| iterator 100k | 0.040 ms | 4.27 ms (next) | **135x** |
+| indexOf(global) | 0.020 µs | 0.844 µs | **42x** |
+| child(name) | 0.046 µs | 0.142 µs | **3.1x** |
+| clear 100k | 39.1 ms | 86.3 ms | **2.2x** |
+| resolve(path) | 29.7 ms/100k | 68.5 ms/100k | **2.3x** |
 
 ### 5.3 与现有 `ve::Object` 的关系
 
@@ -625,47 +673,73 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 - [x] 总结现有架构（本文档）
 - [x] CMake 现代化重构
-- [x] deps 组织（spdlog、asio2、yaml-cpp、pugixml、nlohmann/json）
+- [x] deps 组织（spdlog、asio2、yaml-cpp、pugixml、nlohmann/json、simdjson）
 - [x] base.h C++17 现代化（去 C++11 polyfill，使用 std::enable_if_t/void_t/if constexpr）
 - [x] hashfuncs.h / ordered_hashmap.h 从 Godot 移植
 - [x] AnyData<T> / DataManager / DataList / DataDict 数据层
-- [x] 单元测试框架 + 140 个测试用例全部通过（core/test/，自定义 ve_test.h）
-- [ ] log.cpp 去 Qt 依赖（QDir/QStandardPaths → std::filesystem）
+- [x] 单元测试框架（core/test/，自定义 ve_test.h）
+- [x] log.cpp 纯 C++ 实现（spdlog 后端）
 
-### Phase 0.5：历史代码整合（新增）
+### Phase 0.5：历史代码整合 ✅ 已完成
 
-> 详见 [phase0.5-consolidation.md](internal/plan/phase0.5-consolidation.md)
+- [x] xcore → `cpp/rtt/`（CommandObject、LoopObject、NetObject、XService）
+- [x] hemera → `cpp/ros/`（FastDDS Bridge、CommandService、DynTypes）
+- [x] mxhelper → `cpp/qt/` 增强（QuickNode、CBS、veTerminal）
 
-将散落在各历史项目中的优秀实现搬运回 VE 仓库，形成完整的适配层矩阵：
-- hemera → `cpp/ros1/`, `cpp/ros2/`（AnyData、DataDict、ROS 桥接、FastDDS）
-- xcore → `cpp/rtt/`（CommandObject、LoopObject、NetObject）
-- Bezier → `cpp/vtk/`（BezierModel DAG 管线、BezierType 桥接）
-- mxhelper → `cpp/qt/` 增强（QuickNode、gRPC Channel）
+### Phase 1：ve::Var + ve::Node ✅ 已完成
 
-### Phase 1：ve::Value + ve::Node
+- [x] 实现 `ve::Var`（16 bytes Variant，10 种类型 + CUSTOM，Convert<T> 框架）
+- [x] 实现 `ve::Node`（Vector+Hash，Pool 池化，同名 #N，shadow，schema）
+- [x] 保留 `ve::n("/path")` 和 `ve::d("dot.path")` 全局访问器
+- [x] 完整信号系统：NODE_CHANGED / NODE_ACTIVATED / NODE_ADDED / NODE_REMOVED
+- [x] 单元测试覆盖核心层（Node 相关 ~200 个测试）
+- [x] Benchmark：ve::Node 在所有维度击败或持平 imol::ModuleObject
 
-- [ ] 实现 `ve::OrderedMap`（有序哈希表，Phase 1 前置依赖）
-- [ ] 实现 `ve::Value`（纯 C++17，替代 QVariant 在核心层的角色）
-- [ ] 实现 `ve::Node`（从 ModuleObject 提炼，保留完整的树操作和信号语义）
-- [ ] 保留 `ve::d("path")` 全局访问器
-- [ ] 单元测试覆盖核心层
+### Phase 2：Command 系统 + JSON 序列化 ✅ 已完成
 
-### Phase 2：Signal 模板 & JSON 序列化
+- [x] `ve::Step` / `ve::Pipeline` / `ve::Command` 三级命令抽象
+- [x] `GlobalStepFactory` / `GlobalCommandFactory` 注册表
+- [x] 20+ 内建命令（ls/get/set/add/rm/mv/mk/find/erase/json/help...）
+- [x] POSIX 风格 flag 解析（-x, --long, -abc）
+- [x] JSON 序列化（simdjson 解析，json::stringify/parse/exportTree/importTree）
+- [x] Binary 序列化（bin::exportTree/importTree，CBS 兼容）
+- [x] Schema 系统（Field 列表 + 格式化 export/import）
 
-- [ ] `ve::Signal<Args...>` 通用信号模板
-- [ ] JSON 序列化（nlohmann/json，Value ↔ JSON，Node ↔ JSON）
+### Phase 3：Terminal + 服务层 ✅ 已完成
 
-### Phase 3：Terminal
+- [x] 纯 C++ Terminal REPL（TerminalSession + 命令执行 + Tab 补全）
+- [x] TCP Terminal Server（端口 5061，基于 asio2）
+- [x] HTTP Server（端口 8080，REST-like Node 访问）
+- [x] WebSocket Server（端口 8081，实时 Node 变更推送）
+- [x] TCP Binary Server（端口 5065，CBS 协议高效 IPC）
+- [x] SubscribeService（Node 变更订阅/取消/推送）
+- [x] DDS Bridge（cpp/ros/，FastDDS 桥接 Node↔DDS）
 
-- [ ] 纯 C++ REPL（数据树导航命令集）
-- [ ] TCP Server（基于 asio，远程调试）
+### Phase 4：应用生命周期 ✅ 已完成
 
-### Phase 4-7：生态（按需推进）
+- [x] `ve::Entry` — Config 驱动生命周期（NONE→SETUP→INIT→READY→RUNNING→SHUTDOWN）
+- [x] `ve::plugin` — 动态库加载（load/unload/loaded）
+- [x] `ve::version` — 版本注册和检查
+- [x] Module 拓扑排序 + 依赖管理
+- [x] `ve::Loop` — Asio 事件循环（EventLoop + main/pool + LoopRef）
+- [x] `ve::Pool<T>` — 对象池 + Pooled<T> CRTP + PoolPtr<T>
 
-- Phase 4：Qt 适配层（QNode 桥接、QVariant ↔ Value、QuickNode 移入）
-- Phase 5：服务层迁移（CBS/WebSocket 对接 ve::Node）
-- Phase 6：JS/Web 适配 & 命令系统
-- Phase 7：迁移与清理（imol → 外部历史模块）
+### 当前状态（2026-03-18）
+
+- **535 个单元测试** 全部通过（MSVC 19.44, x64 Release）
+- **性能全面超越 imol**：child(index) 590x, iterator 135x, indexOf 42x
+- **核心层完全脱 Qt**：libve 零 Qt 依赖，纯 C++17
+
+### 后续方向
+
+| 优先级 | 方向 | 说明 |
+|--------|------|------|
+| **P0** | Qt 适配层更新 | imol→ve::Node 桥接，QuickNode 适配新核心 |
+| **P1** | 示例程序 | 纯 C++ demo + Qt demo |
+| **P1** | 用户文档 | API 参考、Quick Start Guide |
+| **P2** | JS 适配层 | WebSocket 客户端库（React hooks） |
+| **P2** | 开源准备 | CI/CD、README 完善、贡献指南 |
+| **P3** | 外部验证 | 选择一个外部项目集成 VE |
 
 ---
 
@@ -688,6 +762,6 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 ---
 
-*文档版本: 1.2.0*
-*更新日期: 2026-03-05*
+*文档版本: 2.0.0*
+*更新日期: 2026-03-18*
 *Author: Thilo*

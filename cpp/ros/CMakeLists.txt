@@ -1,88 +1,58 @@
 # =============================================================================
-# cpp/ros/CMakeLists.txt
-# ROS module hub — builds a single libveros from all enabled sub-modules
-#
-# Self-checks: probes for catkin (ROS 1) or ament_cmake (ROS 2).
-# Returns early if neither is found.
+# cpp/ros/CMakeLists.txt — DDS adapter (FastDDS)
+# Builds libvedds: ve::dds namespace, Node-DDS bridge, Dynamic Types
+# No catkin/ament required — only FastDDS (fastrtps + fastcdr)
 # =============================================================================
 
-# --- Probe for ROS ---
-find_package(catkin QUIET)
-find_package(ament_cmake QUIET)
+find_package(fastrtps QUIET)
+find_package(fastcdr  QUIET)
 
-if(catkin_FOUND)
-    set(VE_ROS_FLAVOUR "ROS1")
+if(NOT fastrtps_FOUND OR NOT fastcdr_FOUND)
     message(STATUS "")
-    message(STATUS "[libveros]  catkin (ROS 1)")
-elseif(ament_cmake_FOUND)
-    set(VE_ROS_FLAVOUR "ROS2")
-    message(STATUS "")
-    message(STATUS "[libveros]  ament_cmake (ROS 2)")
-else()
-    message(STATUS "")
-    message(STATUS "[SKIP] libveros — neither catkin (ROS 1) nor ament_cmake (ROS 2) found")
-    message(STATUS "       Source your ROS setup.bash before running cmake to enable.")
+    message(STATUS "[SKIP] libvedds — fastrtps or fastcdr not found")
+    message(STATUS "       Install eProsima Fast DDS to enable.")
     message(STATUS "")
     return()
 endif()
 
-# --- Sub-module options ---
-option(VE_BUILD_ROS_CORE    "Build veRosBase (hemera compat, engine, math, data_service)"  ON)
-option(VE_BUILD_FASTDDS     "Build veFastDDS (Ros2FastDDSServer)"                          OFF)
+message(STATUS "")
+message(STATUS "[libvedds]  FastDDS (fastrtps ${fastrtps_VERSION}, fastcdr ${fastcdr_VERSION})")
 
 # --- Output library name ---
 if(WIN32)
-    set(VE_ROS_LIBRARY libveros)
+    set(VE_DDS_LIBRARY libvedds)
 else()
-    set(VE_ROS_LIBRARY veros)
+    set(VE_DDS_LIBRARY vedds)
 endif()
 
-# ==========================================================
-# Create the single shared library target
-# ==========================================================
-add_library(${VE_ROS_LIBRARY} SHARED)
-target_compile_features(${VE_ROS_LIBRARY} PUBLIC cxx_std_17)
-target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_LIBRARY)
+# --- Create shared library ---
+add_library(${VE_DDS_LIBRARY} SHARED)
+target_compile_features(${VE_DDS_LIBRARY} PUBLIC cxx_std_17)
+target_compile_definitions(${VE_DDS_LIBRARY} PRIVATE VE_LIBRARY)
 
-# Link libve core — provides ve/global.h, ve/core/base.h, ve/core/data.h, etc.
+# --- Link dependencies ---
 if(WIN32)
-    target_link_libraries(${VE_ROS_LIBRARY} PUBLIC libve)
+    target_link_libraries(${VE_DDS_LIBRARY} PUBLIC libve)
 else()
-    target_link_libraries(${VE_ROS_LIBRARY} PUBLIC ve)
+    target_link_libraries(${VE_DDS_LIBRARY} PUBLIC ve)
 endif()
 
-# --- Deps: Eigen3 (for math_service / eigen_yaml_convert) ---
-find_package(Eigen3 QUIET)
-if(Eigen3_FOUND)
-    target_link_libraries(${VE_ROS_LIBRARY} PUBLIC Eigen3::Eigen)
-    message(STATUS "  dep: Eigen3   [FOUND]")
-else()
-    message(WARNING "  dep: Eigen3   [NOT FOUND] — math features will not compile")
-endif()
+target_link_libraries(${VE_DDS_LIBRARY} PUBLIC fastrtps fastcdr)
 
-# --- Platform libs ---
-if(UNIX AND NOT APPLE)
-    target_link_libraries(${VE_ROS_LIBRARY} PRIVATE dl)
-endif()
+# yaml-cpp for CommandService YAML serialization
+ve_find_package(yaml-cpp
+    GIT_REPO  https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG   0.8.0
+    OPTIONS
+        YAML_CPP_BUILD_TOOLS   OFF
+        YAML_CPP_BUILD_CONTRIB ON
+        YAML_BUILD_SHARED_LIBS OFF
+        YAML_CPP_INSTALL       OFF
+)
+target_link_libraries(${VE_DDS_LIBRARY} PUBLIC yaml-cpp::yaml-cpp)
 
-# ==========================================================
-# Sub-modules
-# ==========================================================
-if(VE_BUILD_ROS_CORE)
-    add_subdirectory(veRosBase)
-    message(STATUS "  + veRosBase (common, engine, math, data_service)")
-endif()
+# --- Sub-modules ---
+add_subdirectory(veFastDDS)
 
-if(VE_BUILD_FASTDDS AND VE_BUILD_ROS_CORE)
-    find_package(fastrtps QUIET)
-    find_package(fastcdr QUIET)
-    if(fastrtps_FOUND AND fastcdr_FOUND)
-        target_link_libraries(${VE_ROS_LIBRARY} PUBLIC fastrtps fastcdr)
-        add_subdirectory(veFastDDS)
-        message(STATUS "  + veFastDDS")
-    else()
-        message(STATUS "  - veFastDDS  (fastrtps/fastcdr not found)")
-    endif()
-endif()
-
+message(STATUS "  + veFastDDS (Participant, Topic, Service, DynTypes, Bridge)")
 message(STATUS "")

@@ -71,8 +71,8 @@ VE_TEST(node_value_get_child_path) {
     Node root("root");
     auto* child = root.append("x");
     child->set(Var(7));
-    VE_ASSERT_EQ(root.get<int>("x"), 7);
-    VE_ASSERT_EQ(root.get<int>("nonexistent", -1), -1);
+    VE_ASSERT_EQ(root.getAt<int>("x"), 7);
+    VE_ASSERT_EQ(root.getAt<int>("nonexistent", -1), -1);
 }
 
 // ============================================================================
