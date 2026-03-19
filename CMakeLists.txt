@@ -14,8 +14,6 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 # --- CMake module path ---
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-include(PreventInBuildInstalls)
-include(PreventInSourceBuilds)
 include(${VE_NAMESPACE}_compile)
 include(${VE_NAMESPACE}_common)
 
@@ -32,6 +30,11 @@ include(${VE_NAMESPACE}_deps)
 
 message(STATUS "")
 message(STATUS "BUILD_SHARED_LIBS = ${BUILD_SHARED_LIBS}")
+
+# ==========================================================================
+# Install option (must be set before subdirs that use it)
+# ==========================================================================
+option(VE_INSTALL "Install VE library, headers and CMake config" OFF)
 
 # ==========================================================================
 # core/ — pure C++ base library -> libve
@@ -77,6 +80,13 @@ endif()
 # ==========================================================================
 if(VE_BUILD_EXAMPLE)
     add_subdirectory(cpp/example)
+endif()
+
+# ==========================================================================
+# Install (VE_INSTALL defaults OFF for add_subdirectory; set ON to install VE)
+# ==========================================================================
+if(VE_INSTALL)
+    include(cmake/ve_install.cmake)
 endif()
 
 message(STATUS "")

@@ -64,4 +64,18 @@ if(NOT WIN32)
     target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
+# --- Install (when VE_INSTALL is ON, see top-level ve_install.cmake) ---
+if(VE_INSTALL)
+    install(TARGETS ${VE_CORE_LIBRARY}
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        INCLUDES DESTINATION include
+    )
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
+endif()
+
 message(STATUS "")

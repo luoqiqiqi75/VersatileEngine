@@ -1,0 +1,22 @@
+# VersatileEngineConfig.cmake — created by ve_install.cmake for find_package(VersatileEngine)
+# Creates imported target VersatileEngine::ve. Requires simdjson.
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(simdjson REQUIRED)
+
+if(NOT TARGET VersatileEngine::ve)
+  add_library(VersatileEngine::ve SHARED IMPORTED GLOBAL)
+  set_target_properties(VersatileEngine::ve PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/@CMAKE_SHARED_LIBRARY_PREFIX@ve@CMAKE_SHARED_LIBRARY_SUFFIX@"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
+    INTERFACE_LINK_LIBRARIES "simdjson::simdjson"
+  )
+  if(UNIX AND NOT APPLE)
+    find_dependency(Threads REQUIRED)
+    set_target_properties(VersatileEngine::ve PROPERTIES
+      INTERFACE_LINK_LIBRARIES "simdjson::simdjson;Threads::Threads"
+    )
+  endif()
+endif()

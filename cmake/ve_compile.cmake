@@ -7,6 +7,26 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib" CACHE PATH "Library
 set(CMAKE_PDB_OUTPUT_DIRECTORY     "${CMAKE_BINARY_DIR}/bin" CACHE PATH "PDB (MSVC debug symbol) output dir.")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin" CACHE PATH "Executable/dll output dir.")
 
+# Disallow in-source build (configure in source dir)
+get_filename_component(_srcdir "${CMAKE_SOURCE_DIR}" REALPATH)
+get_filename_component(_bindir "${CMAKE_BINARY_DIR}" REALPATH)
+if("${_srcdir}" STREQUAL "${_bindir}")
+    message(FATAL_ERROR
+        "VersatileEngine: do not configure in the source directory.\n"
+        "Use a separate build dir, e.g.:  cmake -B build  &&  cmake --build build"
+    )
+endif()
+
+# Disallow install prefix equal to build tree
+get_filename_component(_prefix_real "${CMAKE_INSTALL_PREFIX}" REALPATH)
+if("${_prefix_real}" STREQUAL "${_bindir}" OR "${CMAKE_INSTALL_PREFIX}" STREQUAL "${CMAKE_BINARY_DIR}")
+    message(FATAL_ERROR
+        "CMAKE_INSTALL_PREFIX must not be the build tree.\n"
+        "  CMAKE_INSTALL_PREFIX = ${CMAKE_INSTALL_PREFIX}\n"
+        "  CMAKE_BINARY_DIR     = ${CMAKE_BINARY_DIR}"
+    )
+endif()
+
 if (MSVC)
     # 启用 UTF-8 编码
     add_compile_options(/utf-8)

@@ -13,9 +13,14 @@
 #
 # ve_find_package 查找顺序: 本地路径 → find_package → FetchContent
 # 本地路径在 cmake/_local.cmake 中配置 (gitignored)
+#
+# VE_DEPS_ROOT: 若调用方已设置 (CACHE)，则沿用；否则使用 VE 自身目录下的 deps，
+# 以便 add_subdirectory(VersatileEngine) 时 deps 仍指向 VE/deps。
 # =============================================================================
 
-set(VE_DEPS_ROOT "${CMAKE_SOURCE_DIR}/deps")
+if(NOT DEFINED VE_DEPS_ROOT)
+  set(VE_DEPS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/deps")
+endif()
 set(VE_DEPS_ASIO2_ROOT "${VE_DEPS_ROOT}/asio2")
 set(VE_DEPS_3RD  "${VE_DEPS_ASIO2_ROOT}/3rd")
 

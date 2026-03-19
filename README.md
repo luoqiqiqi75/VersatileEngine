@@ -146,12 +146,29 @@ set(VE_BUILD_QT   OFF CACHE BOOL "" FORCE)
 
 ### Integration
 
-As a subdirectory:
+**As a subdirectory** (default: no install; parent builds and links VE in-tree):
 
 ```cmake
 add_subdirectory(path/to/VersatileEngine)
-target_link_libraries(your_target PRIVATE VE_CORE_LIBRARY)
+target_link_libraries(your_target PRIVATE ve)  # and optionally vedds if VE_BUILD_DDS=ON
 ```
+
+**Install and use via find_package** (set `VE_INSTALL=ON` when building VE as top-level):
+
+```bash
+cd VersatileEngine && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DVE_INSTALL=ON
+cmake --build . && cmake --install .
+```
+
+Then in another project:
+
+```cmake
+find_package(VersatileEngine REQUIRED)
+target_link_libraries(myapp PRIVATE VersatileEngine::ve)
+```
+
+**`VE_INSTALL`** defaults to **OFF** (friendly to `add_subdirectory`). Set to ON when you want to install VE from a top-level build.
 
 ## Usage Examples
 
