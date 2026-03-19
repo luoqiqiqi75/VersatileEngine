@@ -178,11 +178,7 @@ cmake --build build_test --target ve_test --config Release
 
 ## 相关文档
 
-- [ARCHITECTURE.md](../ARCHITECTURE.md) — 整体架构与演进方向
-- [core-test-plan.md](../internal/test/core-test-plan.md) — 测试方案 (535 cases 详细设计)
-- [node-benchmark.md](../internal/test/node-benchmark.md) — ve::Node vs imol 性能对比
-- [node-benchmark-large.md](../internal/test/node-benchmark-large.md) — 大规模性能测试
-- [framework-comparison.md](../internal/analysis/framework-comparison.md) — 框架生态横向对比
+- [ARCHITECTURE.md](../ARCHITECTURE.md) - 整体架构与演进方向
 
 ---
 

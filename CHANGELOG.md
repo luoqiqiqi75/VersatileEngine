@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.0.0] - 2026-03
+
+### Pure C++17 Core Rewrite
+
+The core layer (`libve`) has been completely rewritten as **pure C++17 with zero Qt dependency**. All existing Qt-based functionality is preserved in the adapter layer (`cpp/qt/`).
+
+### Added
+
+#### ve::Var - 16-byte Variant
+- 10 value types + CUSTOM: NONE, BOOL, INT, INT64, DOUBLE, STRING, BIN, LIST, DICT, POINTER
+- `Convert<T>` extension point for custom type serialization (toString/fromString/toBin/fromBin)
+- Inline storage for small types (bool/int/double/pointer), heap pointer for large types
+- Full comparison, copy, move semantics
+
+#### ve::Node - Reactive Data Tree
+- Vector + Hash hybrid storage with Pool allocation
+- Signal system: NODE_CHANGED, NODE_ACTIVATED, NODE_ADDED, NODE_REMOVED
+- Subtree watching with signal bubbling (activated propagation)
+- Same-name children with `#N` indexing
+- Shadow (prototype chain) and Schema support
+- Global accessors: `ve::n("/slash/path")`, `ve::d("dot.path")`
+- Performance: child(index) 590x, iterator 135x, indexOf 42x faster than imol::ModuleObject
+
+#### Command System
+- `ve::Step` / `ve::Pipeline` / `ve::Command` three-level abstraction
+- 20+ built-in commands: ls, info, get, set, add, rm, mv, mk, find, erase, json, help, child, shadow, watch, iter, schema, cmd
+- POSIX-style flag parsing (-x, --long, -abc)
+
+#### Service Layer (pure C++, asio2-based)
+- Terminal REPL server (TCP port 5061) with tab completion
+- HTTP server (port 8080) with REST-like Node access
+- WebSocket server (port 8081) with real-time Node change push
+- TCP Binary server (port 5065) with CBS protocol for high-efficiency IPC
+- SubscribeService for Node change subscription
+
+#### Serialization
+- JSON: simdjson parse, stringify, exportTree, importTree
+- Binary: CBS-compatible exportTree/importTree, writeVar/readVar
+- Schema: field-list based structured export/import
+
+#### Entry & Lifecycle
+- `ve::Entry` - config-driven lifecycle (NONE -> SETUP -> INIT -> READY -> RUNNING -> SHUTDOWN)
+- `ve::Module` - module lifecycle with topological sort and dependency management
+- `ve::plugin` - dynamic library loading (load/unload/loaded)
+- `ve::Loop` - Asio event loop (EventLoop + main/pool + LoopRef)
+
+#### Infrastructure
+- `ve::Pool<T>` / `Pooled<T>` / `PoolPtr<T>` - object pool with CRTP
+- `ve::OrderedHashMap` - Robin Hood hashing with insertion order (Godot-derived)
+- `ve::SmallVector<T,N>` - inline buffer with heap overflow
+- `ve::Factory<Sig>` - generic factory pattern with caching
+- Custom test framework (`ve_test.h`) with 535 unit tests
+- Bundled dependencies: spdlog, asio2, fmt, cereal, yaml-cpp, pugixml, nlohmann/json
+
+#### Adapter Modules
+- `cpp/rtt/` - Pure C++ RTT adapter (veRttCore, XService)
+- `cpp/ros/` - DDS adapter with FastDDS bridge (veFastDDS)
+
+### Changed
+
+- Core layer no longer depends on Qt - pure C++17 with STL only
+- CMake modernized: `VE_BUILD_TEST`, `VE_BUILD_QT`, `VE_BUILD_DDS`, `VE_BUILD_RTT` options
+- Dependencies reorganized into `deps/` with proper CMake targets
+- `ve::Object` signal system rewritten with integer-based signals and flexible slot signatures
+- Logging migrated to spdlog (pure C++, no Qt dependency)
+
+---
+
 ## [1.0.0] - 2025
 
 ### First Independent Release of VersatileEngine
@@ -62,4 +130,5 @@ VE's core technology originates from the following projects:
 
 ---
 
+[2.0.0]: https://github.com/user/VersatileEngine/releases/tag/v2.0.0
 [1.0.0]: https://github.com/user/VersatileEngine/releases/tag/v1.0.0

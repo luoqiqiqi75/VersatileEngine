@@ -32,10 +32,10 @@ public:
     //   connect<S>(obs, [](string key) { ... })             — partial args OK
     //   connect<S>(obs, []() { ... })                       — just notification
     enum NodeSignal : SignalT {
-        NODE_CHANGED    = 0x0010,  // (Var new_val, Var old_val) — value changed via set()/update()
-        NODE_ADDED      = 0x0011,  // (string key, int overlap) — key of first added, overlap count (0 = single)
-        NODE_REMOVED    = 0x0012,  // (string key, int overlap) — key of removed, overlap count; clear: ("#0", count-1)
-        NODE_ACTIVATED  = 0x001f,  // (int signal, Node* source) — bubbles up the ancestor chain
+        NODE_CHANGED    = 0xFFFF'0010,  // (Var new_val, Var old_val) — value changed via set()/update()
+        NODE_ADDED      = 0xFFFF'0011,  // (string key, int overlap) — key of first added, overlap count (0 = single)
+        NODE_REMOVED    = 0xFFFF'0012,  // (string key, int overlap) — key of removed, overlap count; clear: ("#0", count-1)
+        NODE_ACTIVATED  = 0xFFFF'001F,  // (SignalT signal, Node* source) — bubbles up the ancestor chain
     };
 
     // --- value ---
@@ -196,7 +196,7 @@ public:
     // Triggers NODE_ACTIVATED on this node, then bubbles up to each watching ancestor.
     // SILENT on any node in the chain stops emission + bubbling at that node.
     // WATCHING on parent controls whether the bubble continues upward.
-    void activate(int signal, Node* source = nullptr);
+    void activate(SignalT signal, Node* source = nullptr);
 
     // --- debug ---
     std::string dump(int depth = 0) const;

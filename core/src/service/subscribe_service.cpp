@@ -52,7 +52,7 @@ void SubscribeService::start()
     _p->root->watchAll(true);
 
     _p->root->connect<Node::NODE_ACTIVATED>(
-        &_p->observer, [this](int signal, void* ptr) {
+        &_p->observer, [this](int64_t signal, void* ptr) {
             if (signal != Node::NODE_CHANGED || !ptr) return;
             if (_p->subCount.load(std::memory_order_relaxed) == 0) return;
             if (!_p->pushFn) return;

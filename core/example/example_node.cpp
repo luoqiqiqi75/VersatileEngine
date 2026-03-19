@@ -135,7 +135,7 @@ static void demo_signals()
     grandparent.watch(true);  // enable bubble reception
     parent->watch(true);
 
-    grandparent.connect<Node::NODE_ACTIVATED>(&observer, [](int signal, Node* source) {
+    grandparent.connect<Node::NODE_ACTIVATED>(&observer, [](int64_t signal, Node* source) {
         std::cout << "[BUBBLE@gp] signal=0x" << std::hex << signal << std::dec
                   << " from=" << source->name() << std::endl;
     });

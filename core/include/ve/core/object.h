@@ -68,7 +68,7 @@ struct VE_API Object : public ObjectData
     }
 
 public:
-    using SignalT = int;
+    using SignalT = int64_t;
     using ActionT = std::function<void(const Var&)>;
 
     using MutexT = std::recursive_mutex;
@@ -81,7 +81,7 @@ public:
     MutexT& mutex() const;
 
     enum ObjectSignal : SignalT {
-        OBJECT_DELETED = 0xffff  // () — emitted in destructor, no data
+        OBJECT_DELETED = static_cast<SignalT>(-1)  // all-F's — emitted in destructor, no data
     };
 
     enum ObjectFlag : int {

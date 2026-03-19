@@ -13,9 +13,9 @@
 
 namespace ve {
 
-enum DataSignal : int {
-    DATA_ABOUT_TO_CHANGE    = 0xff10,
-    DATA_CHANGED            = 0xff1f
+enum DataSignal : Object::SignalT {
+    DATA_ABOUT_TO_CHANGE    = 0xFFFF'FF10,
+    DATA_CHANGED            = 0xFFFF'FF1F
 };
 
 class VE_API AbstractData

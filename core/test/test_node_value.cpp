@@ -148,9 +148,9 @@ VE_TEST(node_signal_data_changed_bubbles) {
     root.watch(true);
     auto* child = root.append("child");
 
-    int sig = -1;
+    int64_t sig = -1;
     void* src = nullptr;
-    root.connect(Node::NODE_ACTIVATED, &root, [&](int s, void* p) {
+    root.connect(Node::NODE_ACTIVATED, &root, [&](int64_t s, void* p) {
         sig = s; src = p;
     });
 

@@ -638,7 +638,7 @@ bool Node::erase(const std::string& path, bool auto_delete)
 // Node — signal bubbling (activate)
 // ============================================================================
 
-void Node::activate(int signal, Node* source)
+void Node::activate(SignalT signal, Node* source)
 {
     if (isSilent()) return;  // silent: suppress emission + stop bubbling
 

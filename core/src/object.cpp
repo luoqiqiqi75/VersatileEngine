@@ -16,10 +16,10 @@ struct Object::Private
         Alive      alive;       // observer's alive token (captured at connect time)
         Alive      shotToken;   // per-connection token for oneShot (null = persistent)
     };
-    UnorderedHashMap<int, Vector<Connection>> connections;
+    UnorderedHashMap<SignalT, Vector<Connection>> connections;
 
 
-    void addConnection(int signal, Object* observer, const ActionT& action,
+    void addConnection(SignalT signal, Object* observer, const ActionT& action,
                         LoopRef loop = {}, Alive token = {}, bool oneShot = false)
     {
         Alive shot = oneShot ? Alive::create() : Alive{};
@@ -32,7 +32,7 @@ struct Object::Private
     }
 
     // remove all connections for observer from a signal (internal, already under lock)
-    void removeObserver(int signal, Object* observer)
+    void removeObserver(SignalT signal, Object* observer)
     {
         auto it = connections.find(signal);
         if (it == connections.end()) return;
@@ -63,14 +63,14 @@ Object::~Object()
 const std::string& Object::name() const { return _p->name; }
 std::recursive_mutex& Object::mutex() const { return _p->mtx; }
 
-bool Object::hasConnection(int signal)
+bool Object::hasConnection(SignalT signal)
 {
     LockT lk(_p->mtx);
     auto it = _p->connections.find(signal);
     return it != _p->connections.end() && !it->second.empty();
 }
 
-bool Object::hasConnection(int signal, Object* observer)
+bool Object::hasConnection(SignalT signal, Object* observer)
 {
     LockT lk(_p->mtx);
     auto it = _p->connections.find(signal);
@@ -80,21 +80,21 @@ bool Object::hasConnection(int signal, Object* observer)
     return false;
 }
 
-void Object::connect(int signal, Object* observer, const ActionT& action, LoopRef loop)
+void Object::connect(SignalT signal, Object* observer, const ActionT& action, LoopRef loop)
 {
     LockT lk(_p->mtx);
     _p->addConnection(signal, observer, action, std::move(loop),
                        observer ? observer->_p->alive : Alive{});
 }
 
-void Object::once(int signal, Object* observer, const ActionT& action, LoopRef loop)
+void Object::once(SignalT signal, Object* observer, const ActionT& action, LoopRef loop)
 {
     LockT lk(_p->mtx);
     _p->addConnection(signal, observer, action, std::move(loop),
                        observer ? observer->_p->alive : Alive{}, true);
 }
 
-void Object::disconnect(int signal, Object* observer)
+void Object::disconnect(SignalT signal, Object* observer)
 {
     LockT lk(_p->mtx);
     _p->removeObserver(signal, observer);
@@ -106,7 +106,7 @@ void Object::disconnect(Object* observer)
     _p->removeObserverAll(observer);
 }
 
-void Object::trigger(int signal, const Var& data /*= {}*/)
+void Object::trigger(SignalT signal, const Var& data /*= {}*/)
 {
     if (signal != OBJECT_DELETED && isSilent()) return;
 

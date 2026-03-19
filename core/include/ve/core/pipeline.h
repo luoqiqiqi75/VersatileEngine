@@ -30,8 +30,8 @@ public:
     enum State { IDLE, RUNNING, PAUSED, DONE, ERRORED };
 
     enum Signal : SignalT {
-        CMD_DONE  = 0x0030,
-        CMD_ERROR = 0x0031,
+        CMD_DONE  = 0xFFFF'0030,
+        CMD_ERROR = 0xFFFF'0031,
     };
 
     explicit Pipeline(const std::string& name = "");

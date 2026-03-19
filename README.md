@@ -12,13 +12,12 @@
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPLv3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/std/the-standard)
 [![CMake](https://img.shields.io/badge/CMake-3.15%2B-blue.svg)](https://cmake.org/)
-[![Qt](https://img.shields.io/badge/Qt-5%20%7C%206-green.svg)](https://www.qt.io/)
 
 ---
 
-> **Project Status: Core Layer Complete**
+> **v2.0 - Pure C++17 Core Complete**
 >
-> VersatileEngine has evolved over 10 years across multiple commercial projects. The core layer (`libve`) is now a **complete pure C++17 implementation** with 535 unit tests passing. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP), and Entry lifecycle. The existing Qt-based API is preserved as the adapter layer (`cpp/qt/`). Performance benchmarks show ve::Node outperforming the legacy Qt-based implementation (imol::ModuleObject) by up to 590x on indexed access.
+> The core layer (`libve`) is now a **pure C++17 implementation with zero Qt dependency**. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree with 535 unit tests), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP Binary), Module lifecycle, and Entry orchestration. Qt/ROS/RTT adapters are optional.
 
 ---
 
@@ -26,79 +25,80 @@
 
 VersatileEngine (**VE**) is a C++17 reactive data middleware framework that provides a **hierarchical, observable data tree** with cross-language/cross-process IPC capabilities.
 
-Core philosophy: **"Everything is a node"** — all data is organized in a global tree. Modules read/write data via paths and respond to changes via signals, communicating indirectly through data nodes rather than direct coupling.
+Core philosophy: **"Everything is a node"** - all data is organized in a global tree. Modules read/write data via paths and respond to changes via signals, communicating indirectly through data nodes rather than direct coupling.
 
 VE has been battle-tested in commercial projects across multiple domains:
 
 | Domain | Project | Period |
 |--------|---------|--------|
-| 🤖 Industrial Robotics | RobotAssist (ROKAE) | 2015–2017 |
-| 🦾 Humanoid Robotics | CyberOne, MozHMI (LCCR) | 2020–2024 |
-| 🏥 Medical Imaging | Bezier (Surgical Navigation) | 2022–2023 |
-| 🖥️ Embedded HMI | PDS-HMI (Inspection System) | 2023 |
-| 🌐 Web Frontend | MozHMI Web Console | 2024 |
-| 🔗 Multi-protocol | MozHMI (MovaX 2.0) | 2025–present |
+| Industrial Robotics | RobotAssist (ROKAE) | 2015-2017 |
+| Humanoid Robotics | CyberOne, MozHMI (LCCR) | 2020-2024 |
+| Medical Imaging | Bezier (Surgical Navigation) | 2022-2023 |
+| Embedded HMI | PDS-HMI (Inspection System) | 2023 |
+| Web Frontend | MozHMI Web Console | 2024 |
+| Multi-protocol | MozHMI (MovaX 2.0) | 2025-present |
 
 ## Features
 
-- **Reactive data tree** — `ve::Node` with `ve::Var` values, signal propagation (bubbling), and path addressing
-- **Rich signal system** — `NODE_CHANGED` (value), `NODE_ACTIVATED` (subtree bubbling), `NODE_ADDED`/`NODE_REMOVED` (child lifecycle)
-- **Command system** — `Step`/`Pipeline`/`Command` abstraction + 20+ built-in commands (`ls`/`get`/`set`/`json`/`find`/...)
-- **Service layer** — Terminal REPL (TCP), HTTP API, WebSocket push, TCP Binary (CBS protocol)
-- **Multiple serialization** — JSON (simdjson) / Binary (CBS) / Schema-based import/export
-- **Module lifecycle** — `NONE → INIT → READY → DEINIT`, plugin loading, topological sort
-- **Event loop** — Asio-based `EventLoop` + `LoopRef` for cross-thread dispatch
-- **IPC communication** — CBS binary protocol (C++↔C++), WebSocket JSON (C++↔JS), DDS bridge (FastDDS)
-- **Cross-platform** — Windows / Linux / macOS, with crash capture & diagnostics
-- **Built-in terminal** — runtime REPL for data tree inspection and manipulation via TCP/netcat
-- **High performance** — `child(index)` 590x faster, `iterator` 135x faster, `indexOf` 42x faster than Qt-based legacy (535 tests passing)
+- **Reactive data tree** - `ve::Node` with `ve::Var` values, signal propagation (bubbling), and path addressing
+- **Rich signal system** - `NODE_CHANGED` (value), `NODE_ACTIVATED` (subtree bubbling), `NODE_ADDED`/`NODE_REMOVED` (child lifecycle)
+- **Command system** - `Step`/`Pipeline`/`Command` abstraction + 20+ built-in commands (`ls`/`get`/`set`/`json`/`find`/...)
+- **Service layer** - Terminal REPL (TCP 5061), HTTP API (8080), WebSocket push (8081), TCP Binary CBS (5065)
+- **Multiple serialization** - JSON (simdjson) / Binary (CBS) / Schema-based import/export
+- **Module lifecycle** - `NONE -> INIT -> READY -> DEINIT`, plugin loading, topological sort
+- **Event loop** - Asio-based `EventLoop` + `LoopRef` for cross-thread dispatch
+- **IPC communication** - CBS binary protocol (C++<->C++), WebSocket JSON (C++<->JS), DDS bridge (FastDDS)
+- **Cross-platform** - Windows / Linux / macOS, with crash capture & diagnostics
+- **High performance** - `child(index)` 590x faster, `iterator` 135x faster, `indexOf` 42x faster than Qt-based legacy
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Adapter Layer                                    cpp/ js/ py/│
-│    cpp/qt/ (Qt/QML)  │  js/ (WebSocket/JS)  │  cpp/ros/ (ROS)│
-├──────────────────────────────────────────────────────────────┤
-│  Service Layer                                    service/    │
-│    CBS Binary IPC  │  WebSocket JSON  │  Command Server       │
-├──────────────────────────────────────────────────────────────┤
-│  Core Layer                                         core/     │
-│    ve::Object (base class)   │  ve::Factory (factory pattern) │
-│    ve::Node (planned)        │  Logging / Terminal / Rescue   │
-└──────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|  Adapter Layer                                   cpp/ js/ py/    |
+|    cpp/qt/ (Qt/QML)  |  js/ (WebSocket/JS)  |  cpp/ros/ (DDS)  |
++-----------------------------------------------------------------+
+|  Service Layer                                   core/service/   |
+|    Terminal (TCP)  |  HTTP  |  WebSocket  |  TCP Binary (CBS)   |
++-----------------------------------------------------------------+
+|  Core Layer                           core/ (pure C++17, no Qt) |
+|    ve::Node (data tree)    |  ve::Var (16B variant)             |
+|    ve::Command (20+ cmds)  |  ve::Module (lifecycle)            |
+|    ve::Object (signal/slot)|  ve::Entry (orchestration)         |
+|    ve::Loop (asio event)   |  ve::Factory / ve::Pool            |
++-----------------------------------------------------------------+
 ```
 
-### Data Tree Structure
+### Data Tree
 
-Each `ve::Data` node holds a name, value (QVariant), parent/child relationships, and signals:
+All data lives in a global tree. Each `ve::Node` holds a name, a `ve::Var` value, parent/child relationships, and signals:
 
 ```
-ve::d("robot")
-├── state
-│   ├── power     ← set(1) → emits changed signal
-│   └── mode
-├── config
-│   ├── speed
-│   └── tool
-└── value
-    └── joints
+ve::n("/robot")
++-- state
+|   +-- power     <-- set(Var(1)) -> emits NODE_CHANGED
+|   +-- mode
++-- config
+|   +-- speed
+|   +-- tool
++-- value
+    +-- joints
 ```
 
 ### Multi-endpoint Access
 
 ```
-                    ┌──────────────────┐
-                    │  ve::Data Tree    │
-                    └────────┬─────────┘
-                             │
-             ┌───────────────┼───────────────┐
-             │               │               │
-      ┌──────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
-      │  C++ Direct  │ │ QML Bridge │ │  WebSocket  │
-      │   ve::d()    │ │ QuickNode  │ │  veservice  │
-      └─────────────┘ └────────────┘ └─────────────┘
-       C++ Backend      Qt Quick UI     Web Frontend
+                    +------------------+
+                    |  ve::Node Tree   |
+                    +--------+---------+
+                             |
+             +---------------+---------------+
+             |               |               |
+      +------+------+ +-----+------+ +------+------+
+      |  C++ Direct  | | WebSocket  | |  Terminal   |
+      |  ve::n()     | | JSON push  | |  TCP REPL   |
+      +-------------+ +------------+ +-------------+
+       C++ Backend     Web Frontend    Debug / CLI
 ```
 
 ## Getting Started
@@ -107,9 +107,10 @@ ve::d("robot")
 
 - **Compiler**: C++17 capable (MSVC 2019+, GCC 7+, Clang 5+)
 - **CMake**: 3.15 or later
-- **Qt**: 5.12+ or 6.x (Core, Network, Widgets modules)
+- **Qt** (optional): 5.12+ or 6.x (only needed for `cpp/qt/` adapter modules)
+- **FastDDS** (optional): fastrtps + fastcdr (only needed for `cpp/ros/` DDS adapter)
 
-> Note: All third-party dependencies (asio2, asio, spdlog, cereal, fmt) are bundled in `deps/asio2/` and do not need separate installation.
+> All other dependencies (asio2, asio, spdlog, fmt, cereal, yaml-cpp, pugixml, nlohmann/json) are bundled in `deps/` and require no separate installation.
 
 ### Building
 
@@ -120,183 +121,237 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 # Build all
 cmake --build build --config Release
 
-# Build core library only
-cmake --build build --target VE_CORE_LIBRARY
-
-# Build service library only
-cmake --build build --target VE_SERVICE_LIBRARY
+# Build & run core tests only (no Qt / DDS required)
+cmake -B build_test -DVE_BUILD_TEST=ON -DVE_BUILD_QT=OFF -DVE_BUILD_DDS=OFF -DVE_BUILD_RTT=OFF
+cmake --build build_test --target ve_test --config Debug
+./build_test/bin/Debug/ve_test     # Windows
+./build_test/ve_test               # Linux
 ```
 
 ### CMake Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `BUILD_CORE` | `ON` | Build core library (ve::Data, ve::Module, etc.) |
-| `BUILD_SERVICE` | `ON` | Build service library (CBS, Command Server, etc.) |
-| `BUILD_MAIN` | `ON` | Build main example program |
-| `BUILD_SHARED_LIBS` | `ON` | Build shared libraries (OFF for static) |
-| `LOG_MIN_FILE_LEVEL` | unset | Minimum file logging level |
+| `VE_BUILD_TEST` | OFF | Build `core/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
+| `VE_BUILD_QT` | ON | Build `cpp/qt/` -> `libveqt` (needs Qt5/Qt6) |
+| `VE_BUILD_DDS` | OFF | Build `cpp/ros/` -> `libvedds` (needs FastDDS) |
+| `VE_BUILD_RTT` | ON | Build `cpp/rtt/` -> `libvertt` (pure C++) |
 
-### Integration
-
-As a find_package dependency:
+Local per-developer overrides go in `cmake/_local.cmake` (gitignored):
 
 ```cmake
-find_package(VersatileEngine REQUIRED)
-target_link_libraries(your_target PRIVATE VE::Core VE::Service)
+set(VE_BUILD_TEST ON CACHE BOOL "" FORCE)
+set(VE_BUILD_QT   OFF CACHE BOOL "" FORCE)
 ```
+
+### Integration
 
 As a subdirectory:
 
 ```cmake
 add_subdirectory(path/to/VersatileEngine)
-target_link_libraries(your_target PRIVATE VE_CORE_LIBRARY VE_SERVICE_LIBRARY)
+target_link_libraries(your_target PRIVATE VE_CORE_LIBRARY)
 ```
 
 ## Usage Examples
 
-> The following examples use the **Qt adapter layer** API (`cpp/qt/`), which provides `ve::Data`, `ve::d()`, `ve::Module` and Qt signal/slot integration. The core layer is being refactored toward a pure C++17 API (`ve::Node`, `ve::Value`).
-
-### Data Tree Operations
+### Data Tree Operations (Pure C++)
 
 ```cpp
-#include <veCommon>
+#include <ve/core/node.h>
 
-// Access nodes by path (auto-created)
-ve::d("robot.state.power")->set(nullptr, 1);
+// Access nodes by slash path (auto-created)
+auto* power = ve::n("/robot/state/power");
+power->set(ve::Var(1));
 
 // Read value
-int power = ve::d("robot.state.power")->var().toInt();
+int val = ve::n("/robot/state/power")->get<int>();
 
 // Listen for value changes
-connect(ve::d("robot.state.power"), &ve::Data::changed,
-    [](const QVariant& newVal, const QVariant& oldVal, void*) {
-        qDebug() << "Power changed:" << oldVal << "->" << newVal;
-    });
+power->connect(ve::Node::NODE_CHANGED, myObj, [](const ve::Var& args) {
+    // args is {new_value, old_value}
+});
 
 // Subtree watching (bubbling)
-ve::d("robot.state")->setWatching(true);
-connect(ve::d("robot.state"), &ve::Data::activated,
-    [](ve::Data* changed, int type, void*) {
-        qDebug() << "State subtree changed:" << changed->fullName();
-    });
+auto* state = ve::n("/robot/state");
+state->watch(true);
+state->connect(ve::Node::NODE_ACTIVATED, myObj, [](const ve::Var& args) {
+    // triggered when any descendant changes
+});
+
+// Dot-path accessor (alternative)
+auto* speed = ve::d("robot.config.speed");
+speed->set(ve::Var(1.5));
 ```
 
 ### Module Registration
 
 ```cpp
-#include <veModule>
+#include <ve/core/module.h>
 
-class MyModule : public ve::Module {
+class MyModule : public ve::Module
+{
 public:
-    void onInit() override {
-        // initialization logic
+    using Module::Module;
+
+    void init() override {
+        ve::n("/robot/state/power")->set(ve::Var(0));
     }
-    void onReady() override {
-        // module ready, start working
+
+    void ready() override {
+        // all modules initialized, start working
     }
-    void onDeinit() override {
+
+    void deinit() override {
         // cleanup
     }
 };
 
-VE_REGISTER_MODULE(MyModule, MyModule)
+VE_REGISTER_MODULE(my_module, MyModule)
 ```
 
 ### Application Entry Point
 
 ```cpp
-#include <QApplication>
-#include <veCommon>
+#include <ve/entry.h>
 
-int main(int argc, char *argv[]) {
-    ve::entry::setup("config.ini");
-    QApplication a(argc, argv);
+int main(int argc, char* argv[]) {
+    ve::entry::setup("config.yaml");
     ve::entry::init();
-
-    // ... application logic ...
-
-    int res = a.exec();
+    ve::entry::run();    // blocks on event loop
     ve::entry::deinit();
     return 0;
 }
+```
+
+### Terminal REPL
+
+Connect to the built-in terminal via TCP:
+
+```bash
+# netcat / telnet to port 5061
+nc localhost 5061
+
+ve> ls /robot
+state/
+config/
+value/
+
+ve> get /robot/state/power
+1
+
+ve> set /robot/state/power 0
+OK
 ```
 
 ## Project Structure
 
 ```
 VersatileEngine/
-├── core/                       # Core library (C++17, currently Qt-dependent)
-│   ├── include/ve/             # Public headers
-│   │   ├── global.h            # Global macros & export symbols (pure C++)
-│   │   └── core/               # Core API headers
-│   │       ├── base.h          # ve::Object / ve::Manager - base class & container
-│   │       ├── factory.h       # ve::Factory - generic factory pattern
-│   │       ├── log.h           # ve::log - spdlog-based logging system
-│   │       └── node.h          # ve::Node - (planned) pure C++ data tree node
-│   ├── src/                    # Implementation (includes imol legacy layer)
-│   └── platform/               # Platform-specific crash handling
-│       ├── win/                # Windows (SEH + StackWalk64)
-│       ├── linux/              # Linux (signal + backtrace)
-│       └── unsupported/        # Fallback stub
-├── service/                    # Service library (IPC layer)
-│   └── CMakeLists.txt
-├── cpp/                        # Language adapter implementations
-│   ├── qt/                     # Qt adapter layer
-│   │   ├── core/               # ve::Data, ve::Module, ve::d() (Qt/QObject-based)
-│   │   │   └── include/ve/     # Headers: data.h, module.h, common.h, terminal.h
-│   │   ├── service/            # CBS, CommandServer, XService (asio2-based)
-│   │   │   └── include/ve/     # Headers: compact_binary_service.h, command_server.h
-│   │   └── main/               # Qt example application
-│   ├── ros1/                   # ROS1 adapter (planned)
-│   ├── ros2/                   # ROS2 adapter (planned)
-│   └── vtk/                    # VTK adapter (planned)
-├── js/                         # JavaScript/TypeScript adapter (planned)
-├── py/                         # Python adapter (planned)
-├── deps/                       # Bundled third-party dependencies
-│   └── asio2/                  # asio2 2.9 (includes asio, spdlog, cereal, fmt)
-├── main/                       # Main example application
-├── cmake/                      # CMake utility scripts
-├── docs/                       # Documentation
-│   └── ARCHITECTURE.md         # Architecture overview & evolution plan
-├── AUTHORS                     # Authors
-├── LICENSE                     # LGPLv3 license
-├── CHANGELOG.md                # Version changelog
-├── CODE_OF_CONDUCT.md          # Code of conduct
-├── CONTRIBUTING.md             # Contribution guidelines
-├── SECURITY.md                 # Security policy
-└── CMakeLists.txt              # Top-level build configuration
++-- core/                       Pure C++17 core -> libve (shared library)
+|   +-- include/ve/             Public headers
+|   |   +-- global.h            Global macros (VE_API, VE_AUTO_RUN, ...)
+|   |   +-- core/               Core API headers
+|   |   |   +-- base.h          Object, Manager, containers, type traits
+|   |   |   +-- var.h           Var (16B variant, 10 types + CUSTOM)
+|   |   |   +-- node.h          Node (reactive data tree)
+|   |   |   +-- command.h       Command system (Step, Pipeline, Command)
+|   |   |   +-- data.h          AnyData<T>, DataManager
+|   |   |   +-- factory.h       Factory<Sig>, Pool<T>, Pooled<T>
+|   |   |   +-- module.h        Module lifecycle
+|   |   |   +-- loop.h          EventLoop, LoopRef
+|   |   |   +-- log.h           Logging (spdlog backend)
+|   |   |   +-- convert.h       Convert<T> extension point
+|   |   |   +-- rescue.h        Crash handler API
+|   |   |   +-- impl/           Hash functions, OrderedHashMap, JSON, Binary
+|   |   +-- service/            Terminal, HTTP, WebSocket, TCP Binary servers
+|   |   +-- entry.h             Entry lifecycle + plugin + version
+|   +-- src/                    Implementation files
+|   +-- platform/               Crash handlers: win/ linux/ unsupported/
+|   +-- test/                   535 unit tests (custom framework, pure C++)
+|
++-- cpp/qt/                     Qt adapter modules (optional, needs Qt5/6)
+|   +-- imol/                   Legacy data tree (imol::ModuleObject)
+|   +-- veQtBase/               Qt core utilities
+|   +-- veTerminal/             Terminal widget
+|   +-- veService/              IPC layer (CBS, XService)
+|   +-- veQml/                  QML bridge (QuickNode)
+|   +-- veExample/              Demo application
+|
++-- cpp/rtt/                    Pure C++ RTT adapter (xcore-derived)
+|   +-- veRttCore/              CommandObject, Procedure, CIP, LoopObject
+|   +-- XService/               XService server
+|
++-- cpp/ros/                    DDS adapter (optional, needs FastDDS)
+|   +-- veFastDDS/              Participant, Topic, Service, Bridge
+|
++-- deps/                       Bundled dependencies
+|   +-- asio2/                  asio2 + asio + spdlog + fmt + cereal
+|   +-- yaml-cpp/               yaml-cpp 0.9 (static)
+|   +-- pugixml/                pugixml 1.15 (static)
+|   +-- nlohmann/               nlohmann/json (header-only)
+|
++-- cmake/                      CMake utilities
++-- docs/                       Documentation
++-- js/                         JavaScript/TypeScript packages
++-- CMakeLists.txt              Top-level build configuration
 ```
 
-## API Quick Reference
+## Core API Quick Reference
 
-### Data Navigation
+### Node Navigation
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `ve::d("path")` | Global path accessor (auto-creates nodes) | `ve::d("robot.state.power")` |
-| `VE_D("path")` | Static-cached version (high performance) | `VE_D("robot.state.power")` |
-| `p(level)` | Navigate up N parent levels | `node->p(2)` |
-| `c(name)` | Get child by name | `node->c("power")` |
-| `c(index)` | Get child by index | `node->c(0)` |
-| `b(offset)` | Sibling node (positive=next, negative=prev) | `node->b(1)` |
-| `r("a.b.c")` | Relative path navigation | `node->r("state.power")` |
-| `fullName()` | Full path from root | `node->fullName()` |
+| `ve::n("/path")` | Global slash-path accessor (auto-creates) | `ve::n("/robot/state/power")` |
+| `ve::d("dot.path")` | Global dot-path accessor | `ve::d("robot.state.power")` |
+| `node::root()` | Global root node | `ve::node::root()` |
+| `parent(level)` | Navigate up N levels | `node->parent(2)` |
+| `child(name)` | Get child by name | `node->child("power")` |
+| `child(index)` | Get child by index | `node->child(0)` |
+| `sibling(offset)` | Sibling node (+/-) | `node->sibling(1)` |
+| `resolve(path)` | Relative path navigation | `node->resolve("state/power")` |
+| `ensure(path)` | Resolve, creating if needed | `node->ensure("state/power")` |
+| `path()` | Full path from root | `node->path()` |
 
-### Signals
+### Node Signals
 
 | Signal | Description |
 |--------|-------------|
-| `changed(newVar, oldVar, changer)` | Node's own value changed |
-| `activated(changedNode, type, changer)` | Any node in subtree changed (requires `watch=true`) |
-| `added(rname, changer)` | Direct child node added |
-| `removed(rname, changer)` | Direct child node removed |
-| `gonnaInsert(target, ref, changer)` | About to insert (interceptable) |
-| `gonnaRemove(target, ref, changer)` | About to remove (interceptable) |
+| `NODE_CHANGED` | Node's own value changed |
+| `NODE_ACTIVATED` | Any descendant changed (requires `watch(true)`) |
+| `NODE_ADDED` | Direct child node added |
+| `NODE_REMOVED` | Direct child node removed |
+
+### Var Types
+
+| Type | C++ | Size |
+|------|-----|------|
+| `NONE` | (empty) | 0 |
+| `BOOL` | `bool` | inline |
+| `INT` | `int` | inline |
+| `INT64` | `int64_t` | inline |
+| `DOUBLE` | `double` | inline |
+| `STRING` | `std::string` | heap ptr |
+| `BIN` | `std::vector<uint8_t>` | heap ptr |
+| `LIST` | `std::vector<Var>` | heap ptr |
+| `DICT` | `Dict<Var>` | heap ptr |
+| `POINTER` | `void*` | inline |
+| `CUSTOM` | `CustomData*` | heap ptr |
+
+### Service Endpoints
+
+| Service | Port | Protocol | Description |
+|---------|------|----------|-------------|
+| Terminal | 5061 | TCP text | REPL with tab completion |
+| HTTP | 8080 | HTTP | REST-like Node access |
+| WebSocket | 8081 | WS JSON | Real-time Node change push |
+| TCP Binary | 5065 | CBS | High-efficiency binary IPC |
 
 ## Documentation
 
 - [Architecture Overview & Evolution Plan](docs/ARCHITECTURE.md)
+- [Core Module Documentation](docs/core/README.md)
 
 ## License
 
@@ -306,4 +361,4 @@ This project is licensed under the [GNU Lesser General Public License v3.0](LICE
 
 See the [AUTHORS](AUTHORS) file.
 
-- **Thilo** — Creator and primary maintainer
+- **Thilo** - Creator and primary maintainer

@@ -191,3 +191,40 @@ VE_TEST(object_thread_mutex_external) {
 
     VE_ASSERT_EQ(sum.load(), 2000);
 }
+
+// --- SignalT compatibility: users should be able to use plain int as signals ---
+
+VE_TEST(object_signal_int_literal) {
+    Object src("src"); Object obs("obs");
+    int count = 0;
+    src.connect<42>(&obs, [&]() { count++; });
+    src.trigger<42>();
+    VE_ASSERT_EQ(count, 1);
+}
+
+VE_TEST(object_signal_enum_int) {
+    enum : int { MY_SIG = 100 };
+    Object src("src"); Object obs("obs");
+    int count = 0;
+    src.connect<MY_SIG>(&obs, [&]() { count++; });
+    src.trigger<MY_SIG>();
+    VE_ASSERT_EQ(count, 1);
+}
+
+VE_TEST(object_signal_constexpr_int) {
+    constexpr int SIG = 200;
+    Object src("src"); Object obs("obs");
+    int count = 0;
+    src.connect<SIG>(&obs, [&]() { count++; });
+    src.trigger<SIG>();
+    VE_ASSERT_EQ(count, 1);
+}
+
+VE_TEST(object_signal_runtime_int_connect) {
+    Object src("src"); Object obs("obs");
+    int count = 0;
+    int sig = 300;
+    src.connect(sig, &obs, [&]() { count++; });
+    src.trigger<300>();
+    VE_ASSERT_EQ(count, 1);
+}

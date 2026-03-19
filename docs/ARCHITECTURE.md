@@ -667,7 +667,7 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 ## 8. 实施路线
 
-> 详细分阶段计划见 [plan/README.md](internal/plan/README.md)
+> Phase 0-4 均已完成，详见下方各阶段描述。
 
 ### Phase 0：基础设施 ✅ 已完成
 

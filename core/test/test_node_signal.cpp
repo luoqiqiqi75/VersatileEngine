@@ -204,9 +204,9 @@ VE_TEST(node_signal_silent_suppresses_removed) {
 
 VE_TEST(node_signal_activate_fires_locally) {
     Node root("root");
-    int sig = -1;
+    int64_t sig = -1;
     void* src_ptr = nullptr;
-    root.connect(Node::NODE_ACTIVATED, &root, [&](int s, void* p) {
+    root.connect(Node::NODE_ACTIVATED, &root, [&](int64_t s, void* p) {
         sig = s; src_ptr = p;
     });
     root.activate(42, &root);
@@ -220,9 +220,9 @@ VE_TEST(node_signal_activate_bubbles_up) {
     root.watch(true);
     auto* child = root.append("child");
 
-    int root_sig = -1;
+    int64_t root_sig = -1;
     void* root_src = nullptr;
-    root.connect(Node::NODE_ACTIVATED, &root, [&](int s, void* p) {
+    root.connect(Node::NODE_ACTIVATED, &root, [&](int64_t s, void* p) {
         root_sig = s; root_src = p;
     });
 
@@ -289,7 +289,7 @@ VE_TEST(node_signal_insert_triggers_activate) {
     root.watch(true);
 
     int activated = 0;
-    root.connect(Node::NODE_ACTIVATED, &root, [&](int sig, void*) {
+    root.connect(Node::NODE_ACTIVATED, &root, [&](int64_t sig, void*) {
         if (sig == Node::NODE_ADDED) ++activated;
     });
 
@@ -303,7 +303,7 @@ VE_TEST(node_signal_remove_triggers_activate) {
     auto* c = root.append("test");
 
     int activated = 0;
-    root.connect(Node::NODE_ACTIVATED, &root, [&](int sig, void*) {
+    root.connect(Node::NODE_ACTIVATED, &root, [&](int64_t sig, void*) {
         if (sig == Node::NODE_REMOVED) ++activated;
     });
 

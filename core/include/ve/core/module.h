@@ -25,9 +25,9 @@
 
 namespace ve {
 
-enum ModuleSignal : int {
-    MODULE_STATE_ABOUT_TO_CHANGE    = 0xffe0,
-    MODULE_STATE_CHANGED            = 0xffe1
+enum ModuleSignal : Object::SignalT {
+    MODULE_STATE_ABOUT_TO_CHANGE    = 0xFFFF'FFE0,
+    MODULE_STATE_CHANGED            = 0xFFFF'FFE1
 };
 
 class VE_API Module : public Object

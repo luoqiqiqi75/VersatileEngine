@@ -35,8 +35,10 @@ Thank you for your interest in VersatileEngine! We welcome contributions of all 
 
 - C++17 compiler (MSVC 2019+, GCC 7+, Clang 5+)
 - CMake 3.15+
-- Qt 5.12+ or Qt 6.x
-- spdlog
+- Qt 5.12+ or 6.x (optional, only for `cpp/qt/` adapter modules)
+- FastDDS (optional, only for `cpp/ros/` DDS adapter)
+
+> All other dependencies (spdlog, asio2, fmt, yaml-cpp, pugixml, etc.) are bundled in `deps/`.
 
 ### Building
 
@@ -46,15 +48,21 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 
 # Build
 cmake --build build --config Debug
+
+# Build & run core tests only (no Qt / DDS needed)
+cmake -B build_test -DVE_BUILD_TEST=ON -DVE_BUILD_QT=OFF -DVE_BUILD_DDS=OFF -DVE_BUILD_RTT=OFF
+cmake --build build_test --target ve_test --config Debug
 ```
 
 ### Project Layout
 
-- `core/` — Core library: data tree and module system
-- `service/` — Service layer: CBS binary protocol and command server
-- `main/` — Example application
-- `cmake/` — CMake utility scripts
-- `docs/` — Documentation
+- `core/` - Core library (pure C++17): data tree, command system, service layer, module lifecycle
+- `cpp/qt/` - Qt adapter layer (optional)
+- `cpp/rtt/` - RTT adapter (pure C++)
+- `cpp/ros/` - DDS adapter (optional, needs FastDDS)
+- `deps/` - Bundled third-party dependencies
+- `cmake/` - CMake utility scripts
+- `docs/` - Documentation
 
 ## Code Conventions
 
@@ -83,21 +91,23 @@ cmake --build build --config Debug
 - 缩进：4 空格，无 tab
 - 行宽：不强制限制，合理即可
 - 单行函数：getter/setter 等 trivial 函数写在一行
-- 循环体只有一行时不加花括号
+- `for`/`while`/`do` 循环体**必须**使用花括号，即使只有一行
+- `if`/`else`：单行可以不加花括号，但多行必须加
 
 ```cpp
-// good — 单行 trivial 函数
+// good - single-line trivial functions
 Node* Node::parent() const { return _p->parent; }
 Node* Node::prev() const { return sibling(-1); }
-Node* Node::append(Node* c) { return c ? append(c->name(), c) : nullptr; }
 
-// good — 短 early return
+// good - short early return
 if (!child) return false;
-for (char c : name) if (c == '#' || c == '/') return false;
 
-// good — 单行循环体
-for (auto& kv : _p->ch)
-    for (auto* n : kv.value) out.push_back(n);
+// good - loops always use braces
+for (auto& kv : _p->ch) {
+    for (auto* n : kv.value) {
+        out.push_back(n);
+    }
+}
 ```
 
 ### Brace Style
