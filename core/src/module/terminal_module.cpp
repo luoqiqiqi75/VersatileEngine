@@ -25,6 +25,8 @@ protected:
         server_ = std::make_unique<Terminal>(node::root(), port);
         if (server_->start()) {
             veLogI << "[ve.service.terminal] started on port " << server_->port();
+            node()->ensure("runtime/port")->set(Var(static_cast<int64_t>(server_->port())));
+            node()->ensure("runtime/listening")->set(Var(true));
         } else {
             veLogE << "[ve.service.terminal] failed to start on port " << port;
         }
@@ -32,7 +34,13 @@ protected:
 
     void deinit() override
     {
-        if (server_) { server_->stop(); server_.reset(); }
+        if (server_) {
+            server_->stop();
+            server_.reset();
+        }
+        if (Node* ln = node()->resolve("runtime/listening")) {
+            ln->set(Var(false));
+        }
     }
 };
 

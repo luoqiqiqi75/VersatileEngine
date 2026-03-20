@@ -185,27 +185,22 @@ static void demo_schema_json()
 }
 
 // ---------------------------------------------------------------------------
-// 5. Global data tree: ve::n() and ve::d()
+// 5. Global data tree: ve::n()
 // ---------------------------------------------------------------------------
 static void demo_global_tree()
 {
     print("Global Data Tree");
 
-    // ve::n() uses slash path, creates nodes in the global root
     n("app/version")->set(Var("2.0.0"));
     n("app/debug")->set(Var(true));
     n("device/serial")->set(Var("SN-12345"));
+    n("device/status")->set(Var("online"));
 
-    // ve::d() uses dot path (Data-compatible)
-    d("device.status")->set(Var("online"));
+    std::cout << "app/version:    " << n("app/version")->get<std::string>() << std::endl;
+    std::cout << "app/debug:      " << n("app/debug")->get<bool>() << std::endl;
+    std::cout << "device/serial:  " << n("device/serial")->get<std::string>() << std::endl;
+    std::cout << "device/status:  " << n("device/status")->get<std::string>() << std::endl;
 
-    // read back
-    std::cout << "app/version:   " << n("app/version")->get<std::string>() << std::endl;
-    std::cout << "app/debug:     " << n("app/debug")->get<bool>() << std::endl;
-    std::cout << "device.serial: " << d("device.serial")->get<std::string>() << std::endl;
-    std::cout << "device.status: " << d("device.status")->get<std::string>() << std::endl;
-
-    // dump the global root
     std::cout << "\nGlobal tree:\n" << node::root()->dump() << std::endl;
 }
 

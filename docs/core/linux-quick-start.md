@@ -85,7 +85,7 @@ void init() {
 ### 2. 在线打印当前线程堆栈
 ```cpp
 // 触发 dump
-ve::d(dataObject, "dump")->set(nullptr, true);
+dataObject->ensure("dump")->set(ve::Var(true));
 
 // 输出位置：
 // 1. qCritical() 日志

@@ -31,6 +31,10 @@
 # --- 共享/静态库 ---
 # set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+# --- Release 也生成调试符号（崩溃栈/定位源码行）---
+# 默认 OFF；与 mxhelper cmake/compile.cmake 的 FORCE_DEBUG_INFO 行为一致（MSVC: /Zi + 链接 /DEBUG；GCC/Clang: -g）
+# set(VE_FORCE_DEBUG_INFO ON CACHE BOOL "" FORCE)
+
 # =============================================================================
 # 本地三方库路径
 # =============================================================================

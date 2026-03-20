@@ -196,8 +196,8 @@ state->connect(ve::Node::NODE_ACTIVATED, myObj, [](const ve::Var& args) {
     // triggered when any descendant changes
 });
 
-// Dot-path accessor (alternative)
-auto* speed = ve::d("robot.config.speed");
+// Slash-path accessor (shorthand)
+auto* speed = ve::n("robot/config/speed");
 speed->set(ve::Var(1.5));
 ```
 
@@ -320,8 +320,7 @@ VersatileEngine/
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `ve::n("/path")` | Global slash-path accessor (auto-creates) | `ve::n("/robot/state/power")` |
-| `ve::d("dot.path")` | Global dot-path accessor | `ve::d("robot.state.power")` |
+| `ve::n("path")` | Global slash-path accessor (auto-creates) | `ve::n("robot/state/power")` |
 | `node::root()` | Global root node | `ve::node::root()` |
 | `parent(level)` | Navigate up N levels | `node->parent(2)` |
 | `child(name)` | Get child by name | `node->child("power")` |
@@ -369,6 +368,7 @@ VersatileEngine/
 
 - [Architecture Overview & Evolution Plan](docs/ARCHITECTURE.md)
 - [Core Module Documentation](docs/core/README.md)
+- [Debug any VE process via core HTTP + curl (PowerShell: `curl.exe`)](docs/local-http-curl-debug.md)
 
 ## License
 

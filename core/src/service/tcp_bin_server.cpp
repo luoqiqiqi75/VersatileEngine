@@ -8,6 +8,7 @@
 
 #include "ve/service/tcp_bin_server.h"
 #include "ve/service/subscribe_service.h"
+#include "ve/service/tcp_bin_frame.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
@@ -24,54 +25,19 @@
 
 #include <mutex>
 #include <unordered_map>
-#include <cstring>
 
 namespace ve {
-
-// ============================================================================
-// Frame constants
-// ============================================================================
-
-static constexpr uint8_t FLAG_REQUEST  = 0x00;
-static constexpr uint8_t FLAG_RESPONSE = 0x40;
-static constexpr uint8_t FLAG_NOTIFY   = 0x80;
-static constexpr uint8_t FLAG_ERROR    = 0xC0;
-static constexpr uint8_t FLAG_TYPE_MASK= 0xC0;
-
-static constexpr size_t FRAME_HEADER_SIZE = 5;
-
-// ============================================================================
-// Frame encoding helpers
-// ============================================================================
-
-static Bytes encodeFrame(uint8_t flag, const Var& payload)
-{
-    Bytes body;
-    bin::writeVar(payload, body);
-
-    Bytes frame;
-    frame.reserve(FRAME_HEADER_SIZE + body.size());
-    frame.push_back(flag);
-
-    uint32_t len = static_cast<uint32_t>(body.size());
-    frame.push_back(static_cast<uint8_t>(len));
-    frame.push_back(static_cast<uint8_t>(len >> 8));
-    frame.push_back(static_cast<uint8_t>(len >> 16));
-    frame.push_back(static_cast<uint8_t>(len >> 24));
-
-    frame.insert(frame.end(), body.begin(), body.end());
-    return frame;
-}
 
 static Bytes makeResponse(int64_t id, int code, const Var& data)
 {
     Var::DictV dict;
     dict["id"] = Var(id);
     dict["code"] = Var(static_cast<int64_t>(code));
-    if (!data.isNull())
+    if (!data.isNull()) {
         dict["data"] = data;
-    uint8_t flag = (code < 0) ? FLAG_ERROR : FLAG_RESPONSE;
-    return encodeFrame(flag, Var(std::move(dict)));
+    }
+    uint8_t flag = (code < 0) ? tcp_bin::FLAG_ERROR : tcp_bin::FLAG_RESPONSE;
+    return tcp_bin::encodeFrame(flag, Var(std::move(dict)));
 }
 
 static Bytes makeNotify(const std::string& path, const Var& value)
@@ -79,7 +45,7 @@ static Bytes makeNotify(const std::string& path, const Var& value)
     Var::DictV dict;
     dict["path"] = Var(path);
     dict["value"] = value;
-    return encodeFrame(FLAG_NOTIFY, Var(std::move(dict)));
+    return tcp_bin::encodeFrame(tcp_bin::FLAG_NOTIFY, Var(std::move(dict)));
 }
 
 // ============================================================================
@@ -113,27 +79,13 @@ struct TcpBinServer::Private
         if (!cs) return;
 
         auto& buf = cs->recvBuf;
-        while (buf.size() >= FRAME_HEADER_SIZE) {
-            uint8_t flag = buf[0];
-            uint32_t len = static_cast<uint32_t>(buf[1])
-                         | (static_cast<uint32_t>(buf[2]) << 8)
-                         | (static_cast<uint32_t>(buf[3]) << 16)
-                         | (static_cast<uint32_t>(buf[4]) << 24);
-
-            if (buf.size() < FRAME_HEADER_SIZE + len)
-                break;
-
-            const uint8_t* payload = buf.data() + FRAME_HEADER_SIZE;
-            const uint8_t* payEnd  = payload + len;
-
-            Var msg = bin::readVar(payload, payEnd);
-
-            buf.erase(buf.begin(), buf.begin() + FRAME_HEADER_SIZE + len);
-
-            uint8_t msgType = flag & FLAG_TYPE_MASK;
-            if (msgType != FLAG_REQUEST)
+        Var msg;
+        uint8_t flag = 0;
+        while (tcp_bin::tryPopFrame(buf, flag, msg)) {
+            uint8_t msgType = static_cast<uint8_t>(flag & tcp_bin::FLAG_TYPE_MASK);
+            if (msgType != tcp_bin::FLAG_REQUEST) {
                 continue;
-
+            }
             handleRequest(connKey, session_ptr, msg);
         }
     }

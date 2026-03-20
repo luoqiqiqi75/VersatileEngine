@@ -111,7 +111,7 @@ setupRescue(dataObject);
 ### 2. 在线打印堆栈
 ```cpp
 // 触发 dump 信号
-ve::d(dataObject, "dump")->set(nullptr, true);
+dataObject->ensure("dump")->set(ve::Var(true));
 
 // 结果会输出到：
 // 1. qCritical() 日志
@@ -121,7 +121,7 @@ ve::d(dataObject, "dump")->set(nullptr, true);
 ### 3. 导出数据
 ```cpp
 // 触发 export 信号
-ve::d(dataObject, "export")->set(nullptr, true);
+dataObject->ensure("export")->set(ve::Var(true));
 // 会将数据导出到 root.bin 文件
 ```
 
@@ -224,7 +224,7 @@ int x = 1 / 0;
 ### 测试在线堆栈打印
 ```cpp
 void testStackTrace() {
-    ve::d(dataObject, "dump")->set(nullptr, true);
+    dataObject->ensure("dump")->set(ve::Var(true));
 }
 ```
 

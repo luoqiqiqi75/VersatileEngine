@@ -14,16 +14,16 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 # --- CMake module path ---
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-include(${VE_NAMESPACE}_compile)
-include(${VE_NAMESPACE}_common)
-
-# --- Local overrides (gitignored, per-developer) ---
+# --- Local overrides (gitignored, per-developer) — before ve_compile so e.g. VE_FORCE_DEBUG_INFO applies ---
 file(GLOB VE_LOCAL_CMAKE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/_*.cmake")
 foreach(VE_LOCAL_CMAKE_FILE ${VE_LOCAL_CMAKE_FILES})
     include(${VE_LOCAL_CMAKE_FILE})
     get_filename_component(_fname ${VE_LOCAL_CMAKE_FILE} NAME)
     message(STATUS "Loaded local config: cmake/${_fname}")
 endforeach()
+
+include(${VE_NAMESPACE}_compile)
+include(${VE_NAMESPACE}_common)
 
 # --- Bundled dependencies (header-only, always available) ---
 include(${VE_NAMESPACE}_deps)
@@ -60,7 +60,7 @@ endif()
 # own dependencies and returns early if not satisfied.
 # ==========================================================================
 option(VE_BUILD_QT  "Build cpp/qt  -> libveqt  (needs Qt5 or Qt6)"              ON)
-option(VE_BUILD_DDS "Build cpp/ros -> libvedds  (needs FastDDS: fastrtps + fastcdr)" OFF)
+option(VE_BUILD_DDS "Build cpp/ros -> libvedds  (needs FastDDS: fastrtps + fastcdr)" ON)
 option(VE_BUILD_RTT "Build cpp/rtt -> libvertt  (pure C++ IMOL xcore)"           ON)
 
 if(VE_BUILD_QT)
@@ -73,13 +73,6 @@ endif()
 
 if(VE_BUILD_RTT)
     add_subdirectory(cpp/rtt)
-endif()
-
-# ==========================================================================
-# Full-stack examples (after all libraries, links available targets)
-# ==========================================================================
-if(VE_BUILD_EXAMPLE)
-    add_subdirectory(cpp/example)
 endif()
 
 # ==========================================================================

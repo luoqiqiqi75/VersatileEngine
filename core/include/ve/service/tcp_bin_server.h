@@ -9,7 +9,7 @@
 // Payload = Var::Dict { "op": string, "path": string, "args": list/null, "id": int }
 // Response = Var::Dict { "id": int, "code": int, "data": any }
 //
-// Pure C++ replacement for the old Qt-dependent CBS.
+// Pure C++ replacement for the old Qt CBS module. Peer client: tcp_bin_client.h (TcpBinClient).
 #pragma once
 
 #include "ve/global.h"

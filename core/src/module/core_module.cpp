@@ -7,7 +7,7 @@
 #include "ve/core/module.h"
 #include "ve/core/log.h"
 #include "ve/core/command.h"
-#include "ve/service/rescue.h"
+#include "ve/core/rescue.h"
 
 namespace ve {
 

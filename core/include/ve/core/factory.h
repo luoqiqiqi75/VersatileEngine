@@ -28,7 +28,7 @@ class Pool
         Slot* next;
     };
     struct Block {
-        Slot   slots[BlockCap];
+        Slot   cells[BlockCap];
         Block* next = nullptr;
     };
 
@@ -52,7 +52,7 @@ public:
             _head = b;
             _used = 0;
         }
-        return &_head->slots[_used++];
+        return &_head->cells[_used++];
     }
 
     void dealloc(void* p)

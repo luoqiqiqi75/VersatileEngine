@@ -727,13 +727,6 @@ Node* n(const std::string& path)
     return node::root()->ensure(path);
 }
 
-Node* d(const std::string& dot_path)
-{
-    std::string slash_path(dot_path);
-    std::replace(slash_path.begin(), slash_path.end(), '.', '/');
-    return node::root()->ensure(slash_path);
-}
-
 // ============================================================================
 // Node — debug
 // ============================================================================

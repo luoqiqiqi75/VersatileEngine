@@ -64,8 +64,7 @@ VE 的数据核心起源于 **imol**（`imol::ModuleObject`），最初基于 Qt
 │                                                             │
 │  cpp/qt/ (libveqt — Qt 适配层)                               │
 │  ├── imol::ModuleObject  Qt 数据树（别名 ve::Data）          │
-│  ├── ve::d("path")       全局路径访问器（自动创建节点）       │
-│  ├── VE_D("path")        静态缓存访问器（高性能）            │
+│  ├── ve::n("path")       全局路径访问器（自动创建节点）       │
 │  └── imol::*             原始实现（状态机、命令、日志等）     │
 │                                                             │
 │  service/                                                   │
@@ -137,8 +136,8 @@ ModuleObject
             │               │               │
      ┌──────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
      │   C++ 直接   │ │  QML 桥接  │ │  JS WebSocket│
-     │   ve::d()    │ │  QuickNode │ │  veservice.js│
-     │   VE_D()     │ │  VEData {} │ │  get/set/sub │
+     │   ve::n()    │ │  QuickNode │ │  veservice.js│
+     │              │ │  VEData {} │ │  get/set/sub │
      └─────────────┘ └────────────┘ └──────────────┘
 
      C++ 后端模块      Qt Quick UI      Web 前端 (React等)
@@ -457,8 +456,7 @@ private:
 };
 
 // 全局访问器
-Node* n(const std::string& slash_path);   // ve::n("/robot/arm")
-Node* d(const std::string& dot_path);     // ve::d("robot.arm")
+Node* n(const std::string& slash_path);   // ve::n("robot/arm")
 namespace node { Node* root(); }          // 全局根节点
 
 } // namespace ve
@@ -642,7 +640,7 @@ class Node {
 
 ```cpp
 // 左臂碰撞等级链接到全局安全状态
-ve::d("movax.robot.mu.LeftArm.state.collision")->link("safety", "movax.robot.global.state.safety");
+ve::n("movax/robot/mu/LeftArm/state/collision")->link("safety", "movax/robot/global/state/safety");
 
 // JS 端也可以
 leftArm.child("state.collision").link("safety", veTree.child("movax.robot.global.state.safety"));
@@ -654,11 +652,11 @@ leftArm.child("state.collision").link("safety", veTree.child("movax.robot.global
 
 ```cpp
 // 伪代码
-ve::d("robot.status.summary")->compute([](Node* self) {
-    auto power = ve::d("robot.global.state.power")->get().toInt();
-    auto safety = ve::d("robot.global.state.safety")->get().toInt();
+ve::n("robot/status/summary")->compute([](Node* self) {
+    auto power = ve::n("robot/global/state/power")->get().toInt();
+    auto safety = ve::n("robot/global/state/safety")->get().toInt();
     return Value(power > 0 && safety == 0 ? "ready" : "not_ready");
-}, {"robot.global.state.power", "robot.global.state.safety"}); // 依赖列表
+}, {"robot/global/state/power", "robot/global/state/safety"}); // 依赖列表
 ```
 
 这个可以放到后续版本，先把核心的 Tree + Link 做稳。
@@ -690,7 +688,7 @@ ve::d("robot.status.summary")->compute([](Node* self) {
 
 - [x] 实现 `ve::Var`（16 bytes Variant，10 种类型 + CUSTOM，Convert<T> 框架）
 - [x] 实现 `ve::Node`（Vector+Hash，Pool 池化，同名 #N，shadow，schema）
-- [x] 保留 `ve::n("/path")` 和 `ve::d("dot.path")` 全局访问器
+- [x] 保留 `ve::n("path")` 全局访问器
 - [x] 完整信号系统：NODE_CHANGED / NODE_ACTIVATED / NODE_ADDED / NODE_REMOVED
 - [x] 单元测试覆盖核心层（Node 相关 ~200 个测试）
 - [x] Benchmark：ve::Node 在所有维度击败或持平 imol::ModuleObject

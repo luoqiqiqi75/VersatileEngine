@@ -1,20 +1,22 @@
 # =============================================================================
 # cpp/rtt/CMakeLists.txt
 # RTT module hub — builds a single libvertt from veRttCore + XService
+# Self-checks: probes for Orocos RTT, returns early if not found.
 # =============================================================================
+
+# --- Required: Orocos RTT ---
+find_package(OROCOS-RTT QUIET)
+if(NOT OROCOS-RTT_FOUND)
+    message(STATUS "")
+    message(STATUS "[SKIP] libvertt — Orocos RTT not found")
+    message(STATUS "       Install Orocos RTT to enable.")
+    message(STATUS "")
+    return()
+endif()
 
 message(STATUS "")
 message(STATUS "[libvertt]  pure C++ (no Qt)")
-
-# --- Optional: Orocos RTT ---
-find_package(OROCOS-RTT QUIET)
-if(OROCOS-RTT_FOUND)
-    message(STATUS "  dep: Orocos RTT ${OROCOS-RTT_VERSION} [FOUND]")
-    set(_VE_RTT_HAS_OROCOS TRUE)
-else()
-    message(STATUS "  dep: Orocos RTT [NOT FOUND] — rtt_loop backend disabled")
-    set(_VE_RTT_HAS_OROCOS FALSE)
-endif()
+message(STATUS "  dep: Orocos RTT ${OROCOS-RTT_VERSION} [FOUND]")
 
 # --- Optional: evpp ---
 find_package(evpp QUIET)
@@ -56,11 +58,10 @@ ve_find_package(nlohmann_json
 target_link_libraries(${VE_RTT_LIBRARY} PUBLIC nlohmann_json::nlohmann_json)
 
 # --- Conditional compile definitions ---
-if(_VE_RTT_HAS_OROCOS)
-    target_compile_definitions(${VE_RTT_LIBRARY} PUBLIC IMOL_HAS_OROCOS_RTT)
-    target_link_libraries(${VE_RTT_LIBRARY} PUBLIC ${OROCOS-RTT_LIBRARIES})
-    target_include_directories(${VE_RTT_LIBRARY} PUBLIC ${OROCOS-RTT_INCLUDE_DIRS})
-endif()
+target_compile_definitions(${VE_RTT_LIBRARY} PUBLIC IMOL_HAS_OROCOS_RTT)
+target_link_libraries(${VE_RTT_LIBRARY} PUBLIC ${OROCOS-RTT_LIBRARIES})
+target_include_directories(${VE_RTT_LIBRARY} PUBLIC ${OROCOS-RTT_INCLUDE_DIRS})
+
 if(_VE_RTT_HAS_EVPP)
     target_compile_definitions(${VE_RTT_LIBRARY} PUBLIC IMOL_HAS_EVPP)
 endif()

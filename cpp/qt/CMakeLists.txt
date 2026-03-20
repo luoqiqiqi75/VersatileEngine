@@ -1,6 +1,7 @@
 # =============================================================================
 # cpp/qt/CMakeLists.txt
-# Qt module hub — builds a single libveqt from all enabled sub-modules
+# Qt adapter — builds a single libveqt from include/ + src/, plus optional
+# example executables under example/.
 #
 # Self-checks: probes for Qt5/Qt6, returns early if not found.
 # =============================================================================
@@ -26,14 +27,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# --- Sub-module options ---
-option(VE_BUILD_QT_IMOL      "Build imol data tree"                   ON)
-option(VE_BUILD_QT_TERMINAL  "Build veTerminal (widget + TCP server)" ON)
-option(VE_BUILD_QT_BASE      "Build veQtBase (ve::Data, ve::entry)"   ON)
-option(VE_BUILD_QT_SERVICE   "Build veService (networking)"           ON)
-option(VE_BUILD_QT_QML       "Build veQml (QML bridge)"               OFF)
-option(VE_BUILD_QT_EXAMPLE   "Build veExample (test executable)"      ON)
-option(VE_BUILD_QT_BENCH     "Build veBench (ModuleObject benchmark)" ON)
+# --- Build options ---
+option(VE_BUILD_QT_QML     "Build QML bridge (needs Qt Qml)"              ON)
+option(VE_BUILD_QT_BROWSER "Build veQtBrowser (WebView browser)"          ON)
+option(VE_BUILD_QT_EXAMPLE "Build veExample (test executable)"            ON)
+option(VE_BUILD_QT_BENCH   "Build veBench (ModuleObject benchmark)"       ON)
 
 # --- Output library name ---
 if(WIN32)
@@ -43,13 +41,11 @@ else()
 endif()
 
 # ==========================================================
-# Create the single shared library target (empty)
-# Sub-modules add sources via target_sources()
+# Create the single shared library target
 # ==========================================================
 add_library(${VE_QT_LIBRARY} SHARED)
 
-# Single DLL export — everything uses VE_API from ve/global.h
-target_compile_definitions(${VE_QT_LIBRARY} PRIVATE VE_LIBRARY)
+target_compile_definitions(${VE_QT_LIBRARY} PRIVATE VE_LIBRARY VE_QT_HAS_IMOL=1)
 
 # Qt link
 ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC  "Core;Network")
@@ -59,37 +55,41 @@ ve_target_link_qt(${VE_QT_LIBRARY} PRIVATE "Widgets")
 target_link_libraries(${VE_QT_LIBRARY} PUBLIC libve)
 
 # ==========================================================
-# Sub-modules
+# Public headers — single unified include/
 # ==========================================================
-if(VE_BUILD_QT_IMOL)
-    add_subdirectory(imol)
-    message(STATUS "  + imol")
-endif()
+target_include_directories(${VE_QT_LIBRARY} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
-if(VE_BUILD_QT_TERMINAL)
-    add_subdirectory(veTerminal)
-    message(STATUS "  + veTerminal")
-endif()
+# ==========================================================
+# Library sources
+# ==========================================================
+file(GLOB_RECURSE _IMOL_SRC     src/imol/*.cpp)
+file(GLOB_RECURSE _BASE_SRC     src/base/*.cpp)
+file(GLOB_RECURSE _TERMINAL_SRC src/terminal/*.cpp src/terminal/*.h src/terminal/*.ui)
+file(GLOB_RECURSE _SERVICE_SRC  src/service/*.cpp  src/service/*.h)
+file(GLOB_RECURSE _RES          res/*.qrc)
+file(GLOB_RECURSE _INCLUDES     include/*.h)
 
-if(VE_BUILD_QT_BASE)
-    add_subdirectory(veQtBase)
-    message(STATUS "  + veQtBase")
-endif()
+target_sources(${VE_QT_LIBRARY} PRIVATE
+    ${_IMOL_SRC} ${_BASE_SRC} ${_TERMINAL_SRC} ${_SERVICE_SRC}
+    ${_RES} ${_INCLUDES}
+)
 
-if(VE_BUILD_QT_SERVICE)
-    add_subdirectory(veService)
-    message(STATUS "  + veService")
-endif()
+# PRIVATE: internal src headers, AUTOUIC output
+target_include_directories(${VE_QT_LIBRARY} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/terminal
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/service
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
 
-if(VE_BUILD_QT_QML)
-    find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS Qml)
-    if(Qt${QT_VERSION_MAJOR}Qml_FOUND)
-        ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC "Qml")
-        add_subdirectory(veQml)
-        message(STATUS "  + veQml")
-    else()
-        message(STATUS "  - veQml  (Qt${QT_VERSION_MAJOR}::Qml not found)")
-    endif()
+set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/src/terminal)
+
+# deps: asio2 for service layer
+target_link_libraries(${VE_QT_LIBRARY} PRIVATE ve_dep_asio2)
+
+if(MSVC)
+    target_compile_options(${VE_QT_LIBRARY} PRIVATE /bigobj)
 endif()
 
 # --- Platform libs ---
@@ -97,15 +97,34 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     target_link_libraries(${VE_QT_LIBRARY} PRIVATE dl)
 endif()
 
-# --- Example executable ---
+# ==========================================================
+# QML bridge (conditional)
+# ==========================================================
+if(VE_BUILD_QT_QML OR VE_BUILD_QT_BROWSER)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Qml)
+    ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC "Qml")
+    file(GLOB_RECURSE _QML_SRC src/qml/*.cpp)
+    file(GLOB_RECURSE _QML_HDR include/ve/qt/qml/*.h)
+    target_sources(${VE_QT_LIBRARY} PRIVATE ${_QML_SRC} ${_QML_HDR})
+    message(STATUS "  + QML bridge")
+endif()
+
+# ==========================================================
+# Example executables
+# ==========================================================
+if(VE_BUILD_QT_BROWSER)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Quick WebView)
+    add_subdirectory(example/browser)
+    message(STATUS "  + veQtBrowser (executable)")
+endif()
+
 if(VE_BUILD_QT_EXAMPLE)
-    add_subdirectory(veExample)
+    add_subdirectory(example/demo)
     message(STATUS "  + veExample (executable)")
 endif()
 
-# --- Benchmark executable ---
 if(VE_BUILD_QT_BENCH)
-    add_subdirectory(veBench)
+    add_subdirectory(example/bench)
     message(STATUS "  + veBench (benchmark)")
 endif()
 

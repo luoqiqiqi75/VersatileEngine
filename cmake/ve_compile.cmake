@@ -69,7 +69,7 @@ else ()
             message(STATUS "Force debug info enabled: added -g flag for stack trace source location")
         endif()
     else()
-        message(STATUS "Debug info disabled (set FORCE_DEBUG_INFO=ON in cmake/_custom.cmake to enable)")
+        message(STATUS "Debug info disabled (set VE_FORCE_DEBUG_INFO=ON in cmake/_local.cmake to enable)")
     endif()
 endif ()
 

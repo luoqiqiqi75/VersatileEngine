@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>veQtBrowser</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e; color: #eee;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 40px 20px;
+  }
+  h1 { font-size: 2rem; margin-bottom: 8px; color: #e94560; }
+  .subtitle { color: #888; margin-bottom: 32px; }
+  .card {
+    background: #16213e; border-radius: 12px; padding: 24px;
+    width: 100%; max-width: 600px; margin-bottom: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.3);
+  }
+  .card h2 { font-size: 1rem; color: #e94560; margin-bottom: 12px; }
+  #status { color: #0f3460; font-weight: 600; }
+  #status.online { color: #4ecca3; }
+  #status.offline { color: #e94560; }
+  .node-list { list-style: none; }
+  .node-list li {
+    padding: 6px 0; border-bottom: 1px solid #1a1a2e;
+    display: flex; justify-content: space-between;
+  }
+  .node-list li:last-child { border-bottom: none; }
+  .key { color: #4ecca3; } .val { color: #ccc; }
+  button {
+    background: #e94560; color: #fff; border: none;
+    padding: 10px 20px; border-radius: 8px; cursor: pointer;
+    font-size: 0.9rem; margin-right: 8px; margin-top: 8px;
+  }
+  button:hover { opacity: 0.85; }
+  #log {
+    background: #0f3460; border-radius: 8px; padding: 12px;
+    font-family: monospace; font-size: 0.85rem; color: #aaa;
+    max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+    margin-top: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>VersatileEngine Browser</h1>
+<p class="subtitle">ve::Node tree - live data viewer</p>
+
+<div class="card">
+  <h2>Connection</h2>
+  <p>WebSocket: <span id="status" class="offline">Disconnected</span></p>
+</div>
+
+<div class="card">
+  <h2>Node Tree</h2>
+  <ul id="nodeList" class="node-list">
+    <li><em style="color:#666">Connect to load nodes...</em></li>
+  </ul>
+  <button onclick="refreshTree()">Refresh</button>
+  <button onclick="testSet()">Set Test Value</button>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+function log(msg) {
+  var el = document.getElementById('log');
+  el.textContent += new Date().toLocaleTimeString() + '  ' + msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+function updateStatus(online) {
+  var el = document.getElementById('status');
+  el.textContent = online ? 'Connected' : 'Disconnected';
+  el.className = online ? 'online' : 'offline';
+}
+
+function renderNodes(data) {
+  var ul = document.getElementById('nodeList');
+  ul.innerHTML = '';
+  if (!data || typeof data !== 'object') {
+    ul.innerHTML = '<li><em style="color:#666">No data</em></li>';
+    return;
+  }
+  function flatten(obj, prefix) {
+    for (var k in obj) {
+      var path = prefix ? prefix + '/' + k : k;
+      if (obj[k] !== null && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
+        flatten(obj[k], path);
+      } else {
+        var li = document.createElement('li');
+        li.innerHTML = '<span class="key">' + path + '</span><span class="val">' + JSON.stringify(obj[k]) + '</span>';
+        ul.appendChild(li);
+      }
+    }
+  }
+  flatten(data, '');
+  if (ul.children.length === 0) {
+    ul.innerHTML = '<li><em style="color:#666">Empty tree</em></li>';
+  }
+}
+
+function refreshTree() {
+  if (typeof veService === 'undefined' || !veService.isConnected) {
+    log('Not connected');
+    return;
+  }
+  veService.get('').then(function(data) {
+    log('Tree loaded');
+    renderNodes(data);
+  }).catch(function(err) {
+    log('Error: ' + err.message);
+  });
+}
+
+function testSet() {
+  if (typeof veService === 'undefined' || !veService.isConnected) {
+    log('Not connected');
+    return;
+  }
+  var ts = new Date().toISOString();
+  veService.set('browser/test', ts);
+  log('Set browser/test = ' + ts);
+  setTimeout(refreshTree, 300);
+}
+
+function veServiceCallback(svc) {
+  log('veService connected');
+  updateStatus(true);
+  refreshTree();
+}
+</script>
+
+</body>
+</html>

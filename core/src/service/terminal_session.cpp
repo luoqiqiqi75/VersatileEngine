@@ -191,8 +191,8 @@ std::string TerminalSession::execute(const std::string& line)
         return s.output;
     }
     if (cmd == "n") {
-        if (args.size() < 2) { s.print("usage: n <dot.path>\n"); return s.output; }
-        auto* target = ve::d(args[1]);
+        if (args.size() < 2) { s.print("usage: n <slash/path>\n"); return s.output; }
+        auto* target = ve::n(args[1]);
         if (target) {
             s.root = ve::node::root();
             s.cur = target;

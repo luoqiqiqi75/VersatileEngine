@@ -1,4 +1,4 @@
-#include "ve/service/rescue.h"
+#include "ve/core/rescue.h"
 
 #include "StackWalker/interface.h"
 

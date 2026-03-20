@@ -1,3 +1,3 @@
-#include "ve/service/rescue.h"
+#include "ve/core/rescue.h"
 
 void setupRescue() {}

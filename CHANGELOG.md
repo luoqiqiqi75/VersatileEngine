@@ -27,7 +27,7 @@ The core layer (`libve`) has been completely rewritten as **pure C++17 with zero
 - Subtree watching with signal bubbling (activated propagation)
 - Same-name children with `#N` indexing
 - Shadow (prototype chain) and Schema support
-- Global accessors: `ve::n("/slash/path")`, `ve::d("dot.path")`
+- Global accessor: `ve::n("slash/path")`
 - Performance: child(index) 590x, iterator 135x, indexOf 42x faster than imol::ModuleObject
 
 #### Command System
@@ -89,8 +89,7 @@ VE was extracted from the internal project (imol) and released as an open-source
   - Tree navigation API: `p()` / `c()` / `b()` / `r()` / `fullName()`
   - Serialization: JSON / XML / Binary / QVariant
   - Quiet mode (signal suppression) and subtree watching
-- `ve::d("path")` global path accessor with auto-creation
-- `VE_D("path")` static-cached accessor for high-frequency access
+- `ve::n("path")` global path accessor with auto-creation
 - `ve::Module` — module lifecycle management (NONE → INIT → READY → DEINIT)
 - `VE_REGISTER_MODULE` macro — module registration and factory creation
 - `ve::Object` / `ve::Manager` — pure C++ base object class and container
