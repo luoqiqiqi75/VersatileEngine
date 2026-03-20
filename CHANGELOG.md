@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Pure C++17 Core Rewrite
 
-The core layer (`libve`) has been completely rewritten as **pure C++17 with zero Qt dependency**. All existing Qt-based functionality is preserved in the adapter layer (`cpp/qt/`).
+The core layer (`libve`) has been completely rewritten as **pure C++17 with zero Qt dependency**. All existing Qt-based functionality is preserved in the Qt ecosystem layer (`qt/`).
 
 ### Added
 
@@ -62,8 +62,8 @@ The core layer (`libve`) has been completely rewritten as **pure C++17 with zero
 - Bundled dependencies: spdlog, asio2, fmt, cereal, yaml-cpp, pugixml, nlohmann/json
 
 #### Adapter Modules
-- `cpp/rtt/` - Pure C++ RTT adapter (veRttCore, XService)
-- `cpp/ros/` - DDS adapter with FastDDS bridge (veFastDDS)
+- `rtt/` - Pure C++ RTT adapter (veRttCore, XService)
+- `ros/` - DDS adapter with FastDDS bridge (veFastDDS)
 
 ### Changed
 

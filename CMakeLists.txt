@@ -37,42 +37,41 @@ message(STATUS "BUILD_SHARED_LIBS = ${BUILD_SHARED_LIBS}")
 option(VE_INSTALL "Install VE library, headers and CMake config" OFF)
 
 # ==========================================================================
-# core/ — pure C++ base library -> libve
+# ve/ - pure C++ base library -> libve
 # ==========================================================================
-add_subdirectory(core)
+add_subdirectory(ve)
 
 # ==========================================================================
-# Test option — build core unit tests (pure C++, no dependencies beyond libve)
+# Test option - build core unit tests (pure C++, no dependencies beyond libve)
 # ==========================================================================
 option(VE_BUILD_TEST     "Build core unit tests (ve_test)"              ON)
-option(VE_BUILD_EXAMPLE  "Build core example programs"                  ON)
+option(VE_BUILD_EXAMPLE  "Build example module DLLs"                    ON)
 
 if(VE_BUILD_TEST)
-    add_subdirectory(core/test)
+    add_subdirectory(ve/test)
 endif()
 
-if(VE_BUILD_EXAMPLE)
-    add_subdirectory(core/example)
-endif()
+# ve.exe entry process + module DLLs (example, etc.)
+add_subdirectory(ve/program)
 
 # ==========================================================================
-# Module options — all default ON; each module's CMakeLists.txt checks its
+# Module options - all default ON; each module's CMakeLists.txt checks its
 # own dependencies and returns early if not satisfied.
 # ==========================================================================
-option(VE_BUILD_QT  "Build cpp/qt  -> libveqt  (needs Qt5 or Qt6)"              ON)
-option(VE_BUILD_DDS "Build cpp/ros -> libvedds  (needs FastDDS: fastrtps + fastcdr)" ON)
-option(VE_BUILD_RTT "Build cpp/rtt -> libvertt  (pure C++ IMOL xcore)"           ON)
+option(VE_BUILD_QT  "Build qt/  -> libveqt  (needs Qt5 or Qt6)"                    ON)
+option(VE_BUILD_DDS "Build ros/ -> libvedds  (needs FastDDS: fastrtps + fastcdr)"   ON)
+option(VE_BUILD_RTT "Build rtt/ -> libvertt  (pure C++ IMOL xcore)"                ON)
 
 if(VE_BUILD_QT)
-    add_subdirectory(cpp/qt)
+    add_subdirectory(qt)
 endif()
 
 if(VE_BUILD_DDS)
-    add_subdirectory(cpp/ros)
+    add_subdirectory(ros)
 endif()
 
 if(VE_BUILD_RTT)
-    add_subdirectory(cpp/rtt)
+    add_subdirectory(rtt)
 endif()
 
 # ==========================================================================

@@ -35,8 +35,8 @@ Thank you for your interest in VersatileEngine! We welcome contributions of all 
 
 - C++17 compiler (MSVC 2019+, GCC 7+, Clang 5+)
 - CMake 3.15+
-- Qt 5.12+ or 6.x (optional, only for `cpp/qt/` adapter modules)
-- FastDDS (optional, only for `cpp/ros/` DDS adapter)
+- Qt 5.12+ or 6.x (optional, only for `qt/` modules)
+- FastDDS (optional, only for `ros/` DDS adapter)
 
 > All other dependencies (spdlog, asio2, fmt, yaml-cpp, pugixml, etc.) are bundled in `deps/`.
 
@@ -56,10 +56,10 @@ cmake --build build_test --target ve_test --config Debug
 
 ### Project Layout
 
-- `core/` - Core library (pure C++17): data tree, command system, service layer, module lifecycle
-- `cpp/qt/` - Qt adapter layer (optional)
-- `cpp/rtt/` - RTT adapter (pure C++)
-- `cpp/ros/` - DDS adapter (optional, needs FastDDS)
+- `ve/` - VE framework (pure C++17 + JS): data tree, command system, service layer, module lifecycle
+- `qt/` - VE + Qt ecosystem (optional)
+- `rtt/` - VE + RTT (pure C++)
+- `ros/` - VE + ROS/DDS (optional, needs FastDDS)
 - `deps/` - Bundled third-party dependencies
 - `cmake/` - CMake utility scripts
 - `docs/` - Documentation
@@ -172,8 +172,8 @@ Node* Node::parent() const { return _p->parent; }
 
 - Public headers: `{component}/include/ve/{component}/`
 - Implementation: `{component}/src/`
-- Platform-specific: `core/platform/{win,linux,unsupported}/`
-- Qt adapter headers: `cpp/qt/{module}/include/`
+- Platform-specific: `ve/platform/{win,linux,unsupported}/`
+- Qt headers: `qt/include/ve/qt/`
 
 ### Header Files (.h)
 

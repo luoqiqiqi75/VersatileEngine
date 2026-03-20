@@ -1,6 +1,6 @@
 # VE 框架联调：用 core HTTP 服务读节点（给后续 AI 的说明）
 
-本文站在 **`core` 服务层** 说明如何调试 VersatileEngine，**不依赖**具体宿主是 `veQtBrowser`、测试程序还是自研 `main`。HTTP 由 **`ve::HttpModule`（`ve.service.http`）** 拉起 **`ve::HttpServer`**（`core/include/ve/service/http_server.h`，实现于 `core/src/service/http_server.cpp`），与 Qt 无必然关系。
+本文站在 **`ve` 服务层** 说明如何调试 VersatileEngine，**不依赖**具体宿主是 `veQtBrowser`、测试程序还是自研 `main`。HTTP 由 **`ve::HttpModule`（`ve.service.http`）** 拉起 **`ve::HttpServer`**（`ve/include/ve/service/http_server.h`，实现于 `ve/src/service/http_server.cpp`），与 Qt 无必然关系。
 
 ## 给 AI 的排查原则
 
@@ -55,7 +55,7 @@ curl.exe -s http://127.0.0.1:8080/api/node/ve/entry/module/ve.service.http/confi
 
 ## 与 Terminal / WebSocket 的关系（同属 core 服务模块）
 
-- **`ve.service.terminal`**：`core/src/module/terminal_module.cpp`，默认 TCP **5061**，REPL 调命令与扫树（与 HTTP 互补）。
+- **`ve.service.terminal`**：`ve/src/module/terminal_module.cpp`，默认 TCP **5061**，REPL 调命令与扫树（与 HTTP 互补）。
 - **`ve.service.ws`**：默认 **8081**，推送用，不是 curl 场景。
 
 二者是否启用由 **`ve/entry/module/<key>/enabled`** 与注册模块决定；仍可通过 **`/api/tree/ve/entry/module`** 看当前树里有哪些模块配置。
@@ -70,6 +70,6 @@ curl.exe -s http://127.0.0.1:8080/api/node/ve/entry/module/ve.service.http/confi
 
 ## 实现索引（便于 AI 下钻代码）
 
-- `core/src/service/http_server.cpp` — 路由与静态文件
-- `core/src/module/http_module.cpp` — 从 `ve/entry/module/ve.service.http/config` 读端口与 `static_root`
-- `core/src/module/terminal_module.cpp` / `ws_module.cpp` — 另两条通道
+- `ve/src/service/http_server.cpp` - 路由与静态文件
+- `ve/src/module/http_module.cpp` - 从 `ve/entry/module/ve.service.http/config` 读端口与 `static_root`
+- `ve/src/module/terminal_module.cpp` / `ws_module.cpp` - 另两条通道

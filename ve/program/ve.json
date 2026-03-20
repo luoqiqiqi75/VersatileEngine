@@ -1,0 +1,16 @@
+{
+  "ve": {
+    "entry": {
+      "verbose": false,
+      "plugins": []
+    },
+    "core": {
+      "config": {
+        "log": { "level": "info" }
+      }
+    },
+    "service": {
+      "terminal": { "config": { "port": 5061 } }
+    }
+  }
+}

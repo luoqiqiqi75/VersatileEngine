@@ -40,7 +40,7 @@ VE 的数据核心起源于 **imol**（`imol::ModuleObject`），最初基于 Qt
 │                         ve 项目结构                          │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  core/ (libve — 纯 C++17，零 Qt 依赖)                        │
+│  ve/ (libve - 纯 C++17，零 Qt 依赖)                          │
 │  ├── ve::Var             16B Variant (10 种类型 + CUSTOM)    │
 │  ├── ve::Node            响应式数据树（Vector+Hash, Pool 池化）│
 │  │   ├── 信号冒泡        NODE_CHANGED / ACTIVATED / ADDED / REMOVED │
@@ -62,7 +62,7 @@ VE 的数据核心起源于 **imol**（`imol::ModuleObject`），最初基于 Qt
 │  ├── ve::log             日志系统（spdlog 后端）             │
 │  └── ve::impl::hash_*    哈希函数族（DJB2, MurmurHash3）    │
 │                                                             │
-│  cpp/qt/ (libveqt — Qt 适配层)                               │
+│  qt/ (libveqt - Qt 适配层)                                   │
 │  ├── imol::ModuleObject  Qt 数据树（别名 ve::Data）          │
 │  ├── ve::n("path")       全局路径访问器（自动创建节点）       │
 │  └── imol::*             原始实现（状态机、命令、日志等）     │
@@ -675,14 +675,14 @@ ve::n("robot/status/summary")->compute([](Node* self) {
 - [x] base.h C++17 现代化（去 C++11 polyfill，使用 std::enable_if_t/void_t/if constexpr）
 - [x] hashfuncs.h / ordered_hashmap.h 从 Godot 移植
 - [x] AnyData<T> / DataManager / DataList / DataDict 数据层
-- [x] 单元测试框架（core/test/，自定义 ve_test.h）
+- [x] 单元测试框架（ve/test/，自定义 ve_test.h）
 - [x] log.cpp 纯 C++ 实现（spdlog 后端）
 
 ### Phase 0.5：历史代码整合 ✅ 已完成
 
-- [x] xcore → `cpp/rtt/`（CommandObject、LoopObject、NetObject、XService）
-- [x] hemera → `cpp/ros/`（FastDDS Bridge、CommandService、DynTypes）
-- [x] mxhelper → `cpp/qt/` 增强（QuickNode、CBS、veTerminal）
+- [x] xcore -> `rtt/`（CommandObject、LoopObject、NetObject、XService）
+- [x] hemera -> `ros/`（FastDDS Bridge、CommandService、DynTypes）
+- [x] mxhelper -> `qt/` 增强（QuickNode、CBS、veTerminal）
 
 ### Phase 1：ve::Var + ve::Node ✅ 已完成
 
@@ -711,7 +711,7 @@ ve::n("robot/status/summary")->compute([](Node* self) {
 - [x] WebSocket Server（端口 8081，实时 Node 变更推送）
 - [x] TCP Binary Server（端口 5065，CBS 协议高效 IPC）
 - [x] SubscribeService（Node 变更订阅/取消/推送）
-- [x] DDS Bridge（cpp/ros/，FastDDS 桥接 Node↔DDS）
+- [x] DDS Bridge（ros/，FastDDS 桥接 Node<->DDS）
 
 ### Phase 4：应用生命周期 ✅ 已完成
 

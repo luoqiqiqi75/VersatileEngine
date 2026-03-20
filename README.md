@@ -55,13 +55,13 @@ VE has been battle-tested in commercial projects across multiple domains:
 
 ```
 +-----------------------------------------------------------------+
-|  Adapter Layer                                   cpp/ js/ py/    |
-|    cpp/qt/ (Qt/QML)  |  js/ (WebSocket/JS)  |  cpp/ros/ (DDS)  |
+|  Ecosystem Layer                              qt/ ros/ rtt/      |
+|    qt/ (Qt/QML)  |  ve/js/ (WebSocket/JS)  |  ros/ (DDS)       |
 +-----------------------------------------------------------------+
-|  Service Layer                                   core/service/   |
+|  Service Layer                                   ve/service/     |
 |    Terminal (TCP)  |  HTTP  |  WebSocket  |  TCP Binary (CBS)   |
 +-----------------------------------------------------------------+
-|  Core Layer                           core/ (pure C++17, no Qt) |
+|  Core Layer                              ve/ (pure C++17, no Qt) |
 |    ve::Node (data tree)    |  ve::Var (16B variant)             |
 |    ve::Command (20+ cmds)  |  ve::Module (lifecycle)            |
 |    ve::Object (signal/slot)|  ve::Entry (orchestration)         |
@@ -107,8 +107,8 @@ ve::n("/robot")
 
 - **Compiler**: C++17 capable (MSVC 2019+, GCC 7+, Clang 5+)
 - **CMake**: 3.15 or later
-- **Qt** (optional): 5.12+ or 6.x (only needed for `cpp/qt/` adapter modules)
-- **FastDDS** (optional): fastrtps + fastcdr (only needed for `cpp/ros/` DDS adapter)
+- **Qt** (optional): 5.12+ or 6.x (only needed for `qt/` modules)
+- **FastDDS** (optional): fastrtps + fastcdr (only needed for `ros/` DDS adapter)
 
 > All other dependencies (asio2, asio, spdlog, fmt, cereal, yaml-cpp, pugixml, nlohmann/json) are bundled in `deps/` and require no separate installation.
 
@@ -132,10 +132,10 @@ cmake --build build_test --target ve_test --config Debug
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `VE_BUILD_TEST` | OFF | Build `core/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
-| `VE_BUILD_QT` | ON | Build `cpp/qt/` -> `libveqt` (needs Qt5/Qt6) |
-| `VE_BUILD_DDS` | OFF | Build `cpp/ros/` -> `libvedds` (needs FastDDS) |
-| `VE_BUILD_RTT` | ON | Build `cpp/rtt/` -> `libvertt` (pure C++) |
+| `VE_BUILD_TEST` | OFF | Build `ve/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
+| `VE_BUILD_QT` | ON | Build `qt/` -> `libveqt` (needs Qt5/Qt6) |
+| `VE_BUILD_DDS` | OFF | Build `ros/` -> `libvedds` (needs FastDDS) |
+| `VE_BUILD_RTT` | ON | Build `rtt/` -> `libvertt` (pure C++) |
 
 Local per-developer overrides go in `cmake/_local.cmake` (gitignored):
 
@@ -265,7 +265,7 @@ OK
 
 ```
 VersatileEngine/
-+-- core/                       Pure C++17 core -> libve (shared library)
++-- ve/                         VE framework (pure C++17 core -> libve + JS)
 |   +-- include/ve/             Public headers
 |   |   +-- global.h            Global macros (VE_API, VE_AUTO_RUN, ...)
 |   |   +-- core/               Core API headers
@@ -286,20 +286,26 @@ VersatileEngine/
 |   +-- src/                    Implementation files
 |   +-- platform/               Crash handlers: win/ linux/ unsupported/
 |   +-- test/                   535 unit tests (custom framework, pure C++)
+|   +-- example/                C++ usage examples
+|   +-- js/                     JavaScript deliverables
+|   |   +-- veservice.js        Standalone vanilla WS client
+|   |   +-- ve-sdk/             TypeScript SDK (HTTP + WS)
+|   |   +-- ve-app/             React admin UI (Node inspector)
+|   +-- program/                Ready-to-use processes (future: ve_entry)
 |
-+-- cpp/qt/                     Qt adapter modules (optional, needs Qt5/6)
-|   +-- imol/                   Legacy data tree (imol::ModuleObject)
-|   +-- veQtBase/               Qt core utilities
-|   +-- veTerminal/             Terminal widget
-|   +-- veService/              IPC layer (CBS, XService)
-|   +-- veQml/                  QML bridge (QuickNode)
-|   +-- veExample/              Demo application
++-- qt/                         VE + Qt ecosystem (optional, needs Qt5/6)
+|   +-- include/ve/qt/          Qt-specific public headers
+|   +-- src/                    base/, terminal/, service/, qml/
+|   +-- program/
+|   |   +-- browser/            veQtBrowser (integrated WebView process)
+|   +-- example/
+|       +-- demo/               veExample demo application
 |
-+-- cpp/rtt/                    Pure C++ RTT adapter (xcore-derived)
++-- rtt/                        VE + RTT (pure C++, xcore-derived)
 |   +-- veRttCore/              CommandObject, Procedure, CIP, LoopObject
 |   +-- XService/               XService server
 |
-+-- cpp/ros/                    DDS adapter (optional, needs FastDDS)
++-- ros/                        VE + ROS/DDS (optional, needs FastDDS)
 |   +-- veFastDDS/              Participant, Topic, Service, Bridge
 |
 +-- deps/                       Bundled dependencies
@@ -310,7 +316,6 @@ VersatileEngine/
 |
 +-- cmake/                      CMake utilities
 +-- docs/                       Documentation
-+-- js/                         JavaScript/TypeScript packages
 +-- CMakeLists.txt              Top-level build configuration
 ```
 
