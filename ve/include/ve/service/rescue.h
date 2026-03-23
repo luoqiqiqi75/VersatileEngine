@@ -1,3 +1,12 @@
-// rescue.h — compatibility redirect (moved to ve/core/rescue.h)
+// rescue.h — crash handler (ve::service)
 #pragma once
-#include "ve/core/rescue.h"
+
+#include "ve/global.h"
+
+namespace ve {
+namespace service {
+
+VE_API void setupRescue();
+
+} // namespace service
+} // namespace ve

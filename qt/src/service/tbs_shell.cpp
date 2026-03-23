@@ -1,8 +1,8 @@
-// tbs_shell.cpp — imol terminal hooks for ve::TcpBinClient (TBS transport)
+// tbs_shell.cpp — imol terminal hooks for ve::service::BinTcpClient (TBS transport)
 #include "ve/core/module.h"
 #include "ve/core/var.h"
 #include "ve/core/impl/json.h"
-#include "ve/service/tcp_bin_client.h"
+#include "ve/service/bin_service.h"
 
 #include "imol/commandmanager.h"
 
@@ -15,7 +15,7 @@ namespace ve::service {
 
 namespace shell_internal {
 
-std::unique_ptr<TcpBinClient> g_client;
+std::unique_ptr<BinTcpClient> g_client;
 
 class TbsClientShellCommand : public imol::BaseCommand
 {
@@ -49,7 +49,7 @@ protected:
                 }
             }
             if (!g_client) {
-                g_client = std::make_unique<TcpBinClient>();
+                g_client = std::make_unique<BinTcpClient>();
             }
             const bool ok = g_client->connect(host, port);
             output(ok ? QStringLiteral("<tbs.client> connected")

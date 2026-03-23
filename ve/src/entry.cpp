@@ -130,17 +130,14 @@ void setup(const Options& options)
         }
     }
 
-    if (auto* vn = n("ve/entry")->find("verbose")) {
-        if (vn->getBool(false)) {
-            g.options.verbose = true;
-        }
-    }
-    if (options.verbose) {
-        g.options.verbose = true;
+    if (n("ve/entry")->get("verbose").toBool(options.verbose)) g.options.verbose = true;
+    if (options.terminal) {
+        n("ve/service/terminal/enabled")->set(Var(true));
+        n("ve/service/terminal/config/stdio/enabled")->set(Var(true));
     }
 
     g.state = SETUP;
-    veLogI << "[ve::entry] setup complete";
+    if (g.options.verbose) veLogI << "[ve::entry] setup complete";
 }
 
 void setup(Node* config_node)
@@ -153,12 +150,10 @@ void setup(Node* config_node)
         schema::importAs<schema::Json>(root, exported);
     }
 
-    if (auto* vn = n("ve/entry")->find("verbose")) {
-        g.options.verbose = vn->getBool(false);
-    }
+    g.options.verbose = n("ve/entry")->get("verbose").toBool(false);
 
     g.state = SETUP;
-    veLogI << "[ve::entry] setup complete (from node)";
+    if (g.options.verbose) veLogI << "[ve::entry] setup complete (from node)";
 }
 
 // --- init ------------------------------------------------------------------
@@ -169,18 +164,16 @@ static void loadPlugins()
     if (!plugins_node || plugins_node->count() == 0) return;
 
     for (auto* pn : *plugins_node) {
-        auto* path_n = pn->find("path");
-        if (!path_n) continue;
+        std::string path = pn->get("path").toString();
+        if (path.empty()) {
+            continue;
+        }
 
-        std::string path = path_n->getString();
-        if (path.empty()) continue;
+        if (!pn->get("enabled").toBool(true)) {
+            continue;
+        }
 
-        bool enabled = pn->find("enabled")
-            ? pn->find("enabled")->getBool(true) : true;
-        if (!enabled) continue;
-
-        int min_api = pn->find("min_api")
-            ? pn->find("min_api")->getInt(0) : 0;
+        int min_api = pn->get("min_api").toInt(0);
 
         if (!plugin::load(path)) {
             veLogE << "[ve::entry] Plugin load failed: " << path;
@@ -188,8 +181,10 @@ static void loadPlugins()
         }
 
         if (min_api > 0) {
-            std::string pname = pn->find("name")
-                ? pn->find("name")->getString() : path;
+            std::string pname = pn->get("name").toString();
+            if (pname.empty()) {
+                pname = path;
+            }
             if (!version::check(pname, min_api)) {
                 veLogE << "[ve::entry] Plugin " << pname
                        << " version check failed (min_api=" << min_api << ")";
@@ -212,10 +207,11 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
 
         Node* mn = node::root()->find(keyToPath(key));
         if (mn) {
-            auto* en = mn->find("enabled");
-            if (en) enabled = en->getBool(true);
-            auto* pn = mn->find("priority");
-            if (pn) priority = pn->getInt(priority);
+            enabled = mn->get("enabled").toBool(true);
+            priority = mn->get("priority").toInt(priority);
+        } else if (key.rfind("ve.service.", 0) == 0) {
+            // Network service modules are opt-in: require a matching subtree in config (e.g. ve.json).
+            enabled = false;
         }
 
         if (!enabled) continue;
@@ -382,6 +378,10 @@ void init()
         slot.instance->exeState<Module::INIT>();
     }
 
+    if (verbose) {
+        veLogI << "[ve::entry] " << g.modules.size() << " modules initialized";
+    }
+
     // ready(): reverse order (children first, parents last)
     for (int i = (int)g.modules.size() - 1; i >= 0; --i) {
         auto& slot = g.modules[i];
@@ -395,7 +395,7 @@ void init()
     g.state = READY;
 
     if (verbose) {
-        veLogI << "[ve::entry] init complete (" << g.modules.size() << " modules)";
+        veLogI << "[ve::entry] " << g.modules.size() << " modules ready";
     }
 }
 

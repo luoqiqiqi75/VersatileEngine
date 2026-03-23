@@ -1,4 +1,4 @@
-// tcp_bin_server.cpp — TcpBinServer: binary TCP IPC transport
+// tcp_bin_server.cpp — ve::service::BinTcpServer
 //
 // Frame:  [flag:1][len:4 LE][payload]
 // Flag:   bits[7:6] = 00 request, 01 response, 10 notify, 11 error
@@ -6,9 +6,8 @@
 //
 // Uses command::call() for stateless ops and SubscribeService for push.
 
-#include "ve/service/tcp_bin_server.h"
-#include "ve/service/subscribe_service.h"
-#include "ve/service/tcp_bin_frame.h"
+#include "ve/service/bin_service.h"
+#include "subscribe_service.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
@@ -27,6 +26,7 @@
 #include <unordered_map>
 
 namespace ve {
+namespace service {
 
 static Bytes makeResponse(int64_t id, int code, const Var& data)
 {
@@ -36,8 +36,8 @@ static Bytes makeResponse(int64_t id, int code, const Var& data)
     if (!data.isNull()) {
         dict["data"] = data;
     }
-    uint8_t flag = (code < 0) ? tcp_bin::FLAG_ERROR : tcp_bin::FLAG_RESPONSE;
-    return tcp_bin::encodeFrame(flag, Var(std::move(dict)));
+    uint8_t flag = (code < 0) ? bin::FLAG_ERROR : bin::FLAG_RESPONSE;
+    return bin::encodeFrame(flag, Var(std::move(dict)));
 }
 
 static Bytes makeNotify(const std::string& path, const Var& value)
@@ -45,14 +45,14 @@ static Bytes makeNotify(const std::string& path, const Var& value)
     Var::DictV dict;
     dict["path"] = Var(path);
     dict["value"] = value;
-    return tcp_bin::encodeFrame(tcp_bin::FLAG_NOTIFY, Var(std::move(dict)));
+    return bin::encodeFrame(bin::FLAG_NOTIFY, Var(std::move(dict)));
 }
 
 // ============================================================================
 // Private
 // ============================================================================
 
-struct TcpBinServer::Private
+struct BinTcpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 5065;
@@ -81,9 +81,9 @@ struct TcpBinServer::Private
         auto& buf = cs->recvBuf;
         Var msg;
         uint8_t flag = 0;
-        while (tcp_bin::tryPopFrame(buf, flag, msg)) {
-            uint8_t msgType = static_cast<uint8_t>(flag & tcp_bin::FLAG_TYPE_MASK);
-            if (msgType != tcp_bin::FLAG_REQUEST) {
+        while (bin::tryPopFrame(buf, flag, msg)) {
+            uint8_t msgType = static_cast<uint8_t>(flag & bin::FLAG_TYPE_MASK);
+            if (msgType != bin::FLAG_REQUEST) {
                 continue;
             }
             handleRequest(connKey, session_ptr, msg);
@@ -136,22 +136,22 @@ struct TcpBinServer::Private
 };
 
 // ============================================================================
-// TcpBinServer
+// BinTcpServer
 // ============================================================================
 
-TcpBinServer::TcpBinServer(Node* root, uint16_t port)
+BinTcpServer::BinTcpServer(Node* root, uint16_t port)
     : _p(std::make_unique<Private>())
 {
     _p->root = root;
     _p->port = port;
 }
 
-TcpBinServer::~TcpBinServer()
+BinTcpServer::~BinTcpServer()
 {
     stop();
 }
 
-bool TcpBinServer::start()
+bool BinTcpServer::start()
 {
     _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
     _p->subscribeSvc->setPushCallback(
@@ -205,13 +205,13 @@ bool TcpBinServer::start()
 
     bool ok = _p->server.start("0.0.0.0", _p->port);
     if (ok)
-        veLogIs("TcpBinServer started on port", _p->port);
+        veLogIs("BinTcpServer started on port", _p->port);
     else
-        veLogEs("TcpBinServer failed to start on port", _p->port);
+        veLogEs("BinTcpServer failed to start on port", _p->port);
     return ok;
 }
 
-void TcpBinServer::stop()
+void BinTcpServer::stop()
 {
     if (_p->subscribeSvc) {
         _p->subscribeSvc->stop();
@@ -222,19 +222,20 @@ void TcpBinServer::stop()
     _p->connections.clear();
 }
 
-bool TcpBinServer::isRunning() const
+bool BinTcpServer::isRunning() const
 {
     return _p->server.is_started();
 }
 
-int TcpBinServer::connectionCount() const
+int BinTcpServer::connectionCount() const
 {
     return _p->connCount.load(std::memory_order_relaxed);
 }
 
-uint16_t TcpBinServer::port() const
+uint16_t BinTcpServer::port() const
 {
     return _p->port;
 }
 
+} // namespace service
 } // namespace ve

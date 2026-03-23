@@ -2,13 +2,13 @@
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
-#include "ve/service/http_server.h"
+#include "ve/service/node_service.h"
 
 namespace ve {
 
 class HttpModule : public Module
 {
-    std::unique_ptr<HttpServer> server_;
+    std::unique_ptr<service::NodeHttpServer> server_;
 
 public:
     explicit HttpModule(const std::string& name) : Module(name) {}
@@ -19,23 +19,17 @@ protected:
         uint16_t port = static_cast<uint16_t>(
             node()->at("config/port")->getInt(8080));
 
-        server_ = std::make_unique<HttpServer>(node::root(), port);
+        server_ = std::make_unique<service::NodeHttpServer>(node::root(), port);
 
-        if (auto* srn = node()->find("config/static_root")) {
-            std::string staticRoot = srn->getString();
-            if (!staticRoot.empty()) {
-                server_->setStaticRoot(staticRoot);
-                veLogI << "[ve.service.http] static root: " << staticRoot;
-            }
+        std::string staticRoot = node()->get("config/static_root").toString();
+        if (!staticRoot.empty()) {
+            server_->setStaticRoot(staticRoot);
+            veLogI << "[ve.service.http] static root: " << staticRoot;
         }
 
-        if (Node* dfn = node()->find("config/default_file")) {
-            if (dfn->hasValue()) {
-                std::string df = dfn->getString("");
-                if (!df.empty()) {
-                    server_->setDefaultFile(df);
-                }
-            }
+        std::string df = node()->get("config/default_file").toString();
+        if (!df.empty()) {
+            server_->setDefaultFile(df);
         }
 
         if (server_->start()) {
@@ -53,9 +47,7 @@ protected:
             server_->stop();
             server_.reset();
         }
-        if (Node* ln = node()->find("runtime/listening")) {
-            ln->set(Var(false));
-        }
+        node()->at("runtime/listening")->set(Var(false));
     }
 };
 

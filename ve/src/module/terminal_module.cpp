@@ -2,27 +2,44 @@
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
-#include "ve/service/terminal.h"
+#include "ve/core/loop.h"
+#include "ve/service/terminal_service.h"
 
 namespace ve {
 
 class TerminalModule : public Module
 {
-    std::unique_ptr<Terminal> server_;
+    std::unique_ptr<service::TerminalReplServer> server_;
+    std::unique_ptr<service::TerminalStdioClient> stdio_;
 
 public:
     explicit TerminalModule(const std::string& name) : Module(name)
     {
-        // node()->at("config/port")->set(Var(5061));
     }
 
 protected:
     void ready() override
     {
-        uint16_t port = static_cast<uint16_t>(
-            node()->at("config/port")->getInt(5061));
+        bool stdio_enabled = node()->at("config/stdio/enabled")->getBool(false);
+        if (stdio_enabled) {
+            stdio_ = std::make_unique<service::TerminalStdioClient>(node::root());
+            loop::setMainRunner(
+                [this]() -> int { return stdio_ ? stdio_->run() : 0; },
+                [this](int) {
+                    if (stdio_) {
+                        stdio_->requestStop();
+                    }
+                }
+            );
+            node()->at("runtime/stdio")->set(Var(true));
+            veLogI << "[ve.service.terminal] stdio REPL enabled";
+        } else {
+            node()->at("runtime/stdio")->set(Var(false));
+        }
 
-        server_ = std::make_unique<Terminal>(node::root(), port);
+        uint16_t port = static_cast<uint16_t>(node()->at("config/port")->getInt(5061));
+
+        server_ = std::make_unique<service::TerminalReplServer>(node::root(), port);
         if (server_->start()) {
             veLogI << "[ve.service.terminal] started on port " << server_->port();
             node()->at("runtime/port")->set(Var(static_cast<int64_t>(server_->port())));
@@ -34,13 +51,17 @@ protected:
 
     void deinit() override
     {
+        if (stdio_) {
+            stdio_->requestStop();
+            stdio_.reset();
+        }
+        node()->at("runtime/stdio")->set(Var(false));
+
         if (server_) {
             server_->stop();
             server_.reset();
         }
-        if (Node* ln = node()->find("runtime/listening")) {
-            ln->set(Var(false));
-        }
+        node()->at("runtime/listening")->set(Var(false));
     }
 };
 

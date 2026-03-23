@@ -4,15 +4,16 @@
 // Node-operation commands dispatch to command::call() via the flags-based system.
 // No I/O — execute() returns output text as a string.
 
-#include "ve/service/terminal_session.h"
+#include "terminal_session.h"
 #include "ve/core/command.h"
 #include "ve/core/impl/json.h"
-#include "../terminal_util.h"
+#include "terminal_util.h"
 
 #include <sstream>
 #include <algorithm>
 
 namespace ve {
+namespace service {
 
 using detail::isInt;
 using detail::nodeSummary;
@@ -283,7 +284,7 @@ std::string TerminalSession::execute(const std::string& line)
         if (!content.isNull())
             s.print(content.toString());
     } else {
-        s.print(r.toString() + "\n");
+        s.print(Var(r).toString() + "\n");
     }
 
     return s.output;
@@ -320,4 +321,5 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
 Node* TerminalSession::root() const { return _p->root; }
 Node* TerminalSession::current() const { return _p->cur; }
 
+} // namespace service
 } // namespace ve

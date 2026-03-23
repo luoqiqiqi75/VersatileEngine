@@ -2,13 +2,13 @@
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
-#include "ve/service/ws_server.h"
+#include "ve/service/node_service.h"
 
 namespace ve {
 
 class WsModule : public Module
 {
-    std::unique_ptr<WsServer> server_;
+    std::unique_ptr<service::NodeWsServer> server_;
 
 public:
     explicit WsModule(const std::string& name) : Module(name)
@@ -22,7 +22,7 @@ protected:
         uint16_t port = static_cast<uint16_t>(
             node()->at("config/port")->getInt(8081));
 
-        server_ = std::make_unique<WsServer>(node::root(), port);
+        server_ = std::make_unique<service::NodeWsServer>(node::root(), port);
         if (server_->start()) {
             veLogI << "[ve.service.ws] started on port " << port;
             node()->at("runtime/port")->set(Var(static_cast<int64_t>(port)));
@@ -38,9 +38,7 @@ protected:
             server_->stop();
             server_.reset();
         }
-        if (Node* ln = node()->find("runtime/listening")) {
-            ln->set(Var(false));
-        }
+        node()->at("runtime/listening")->set(Var(false));
     }
 };
 

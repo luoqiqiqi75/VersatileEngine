@@ -3,7 +3,7 @@
 // Watches root for signal bubbling, matches changed paths against per-session
 // subscriptions, and invokes the Transport-provided push callback.
 
-#include "ve/service/subscribe_service.h"
+#include "subscribe_service.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/impl/json.h"
@@ -14,6 +14,7 @@
 #include <atomic>
 
 namespace ve {
+namespace service {
 
 static bool matchSubscription(const std::string& changedPath, const std::string& subPath)
 {
@@ -59,7 +60,7 @@ void SubscribeService::start()
 
             auto* source = static_cast<Node*>(ptr);
             std::string changedPath = source->path(_p->root);
-            Var value = source->value();
+            Var value = source->get();
 
             std::lock_guard<std::mutex> lock(_p->mtx);
             for (auto& [sessionId, subs] : _p->sessions) {
@@ -109,4 +110,5 @@ void SubscribeService::setPushCallback(PushFn fn)
     _p->pushFn = std::move(fn);
 }
 
+} // namespace service
 } // namespace ve

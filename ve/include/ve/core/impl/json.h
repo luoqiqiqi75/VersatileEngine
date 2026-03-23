@@ -3,6 +3,11 @@
 // ----------------------------------------------------------------------------
 // Internal API. Used by service layer (terminal, http, ws).
 // Parse side uses simdjson on-demand; stringify is pure C++.
+//
+// Node export (exportTree): leaf nodes use Var JSON; non-leaf shape is decided by the first child:
+//   - no children: serialize node value (or null if Var is NONE / isNull()).
+//   - first child has a non-empty name: JSON object (named keys, optional "_value", "" for anonymous children).
+//   - first child has an empty name: JSON array (children in order, names ignored).
 // ----------------------------------------------------------------------------
 #pragma once
 
@@ -14,7 +19,7 @@ namespace ve {
 
 class Node;
 
-namespace json {
+namespace impl::json {
 
 // Var <-> JSON string
 VE_API std::string stringify(const Var& v);

@@ -103,12 +103,9 @@ VE_API Strings     keys();
 VE_API std::string help(const std::string& key);
 
 // Convenience registration: wraps GlobalStepFactory + stores help text.
-// Designed for terminal builtin commands.
+// Used by REPL-style steps (e.g. TCP Terminal builtins register via command::reg).
 VE_API void reg(const std::string& key, Step::StepFn fn,
                 const std::string& help = "");
-
-// Built-in terminal commands
-VE_API void initBuiltins();
 
 } // namespace command
 

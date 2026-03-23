@@ -1,13 +1,14 @@
-#include "ve/service/tcp_bin_frame.h"
+#include "ve/service/bin_service.h"
 #include "ve/core/impl/bin.h"
 
 namespace ve {
-namespace tcp_bin {
+namespace service {
+namespace bin {
 
 Bytes encodeFrame(uint8_t flag, const Var& payload)
 {
     Bytes body;
-    bin::writeVar(payload, body);
+    ve::impl::bin::writeVar(payload, body);
 
     Bytes frame;
     frame.reserve(FRAME_HEADER_SIZE + body.size());
@@ -40,11 +41,12 @@ bool tryPopFrame(Bytes& buf, uint8_t& flag, Var& outVar)
 
     const uint8_t* payload = buf.data() + FRAME_HEADER_SIZE;
     const uint8_t* payEnd  = payload + len;
-    outVar = bin::readVar(payload, payEnd);
+    outVar = ve::impl::bin::readVar(payload, payEnd);
 
     buf.erase(buf.begin(), buf.begin() + FRAME_HEADER_SIZE + len);
     return true;
 }
 
-} // namespace tcp_bin
+} // namespace bin_tcp
+} // namespace service
 } // namespace ve

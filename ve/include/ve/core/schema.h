@@ -40,7 +40,7 @@ struct VE_API Schema
     static std::shared_ptr<Schema> create(std::initializer_list<SchemaField> f)
     { return std::make_shared<Schema>(f); }
 
-    int fieldCount() const { return (int)fields.size(); }
+    int fieldCount() const { return static_cast<int>(fields.size()); }
     void build(Node* node) const;
 };
 

@@ -594,4 +594,31 @@ struct Alive : std::shared_ptr<std::atomic<bool>>
     void kill()       { if (*this) get()->store(false, std::memory_order_release); }
 };
 
+template<typename T>
+struct ResultT : std::pair<int, T>
+{
+    using BaseT = std::pair<int, T>;
+
+    enum Code : int {
+        SUCCESS =  0,
+        FAIL    = -1,
+        ACCEPT  =  1,
+    };
+
+    using BaseT::BaseT;
+    ResultT(bool ok, int err = FAIL) : BaseT(ok ? SUCCESS : err, {}) {}
+
+    int        code() const { return BaseT::first; }
+    const T&   content() const { return BaseT::second; }
+
+    bool isSuccess()  const { return BaseT::first == 0; }
+    bool isError()    const { return BaseT::first < 0; }
+    bool isAccepted() const { return BaseT::first > 0; }
+
+    ResultT& setContent(const T& v) { BaseT::second = v; return *this; }
+    ResultT& setContent(T&& v)      { BaseT::second = std::move(v); return *this; }
+
+    explicit operator bool() const { return isSuccess(); }
+};
+
 }

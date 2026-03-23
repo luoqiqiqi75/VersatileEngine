@@ -8,10 +8,23 @@
 
 #pragma once
 
-#include "result.h"
 #include "loop.h"
+#include "var.h"
 
 namespace ve {
+
+using Result = ResultT<Var>;
+
+namespace convert {
+template<> inline bool parse(const Result& r, std::string& s)
+{
+    if (r.isSuccess()) s = "success";
+    if (r.isAccepted()) s = "accepted";
+    s = "error(" + std::to_string(r.code()) + ")";
+    if (!r.content().isNull()) s += ": " + r.content().toString();
+    return true;
+}
+}
 
 class VE_API Step
 {

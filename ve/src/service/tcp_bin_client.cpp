@@ -1,5 +1,4 @@
-#include "ve/service/tcp_bin_client.h"
-#include "ve/service/tcp_bin_frame.h"
+#include "ve/service/bin_service.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -13,8 +12,9 @@
 #include <string>
 
 namespace ve {
+namespace service {
 
-struct TcpBinClient::Private
+struct BinTcpClient::Private
 {
     asio2::tcp_client client;
 
@@ -39,12 +39,12 @@ struct TcpBinClient::Private
 
         Var msg;
         uint8_t flag = 0;
-        while (tcp_bin::tryPopFrame(recvBuf, flag, msg)) {
-            uint8_t ty = static_cast<uint8_t>(flag & tcp_bin::FLAG_TYPE_MASK);
-            if (ty == tcp_bin::FLAG_NOTIFY) {
+        while (bin::tryPopFrame(recvBuf, flag, msg)) {
+            uint8_t ty = static_cast<uint8_t>(flag & bin::FLAG_TYPE_MASK);
+            if (ty == bin::FLAG_NOTIFY) {
                 continue;
             }
-            if (ty != tcp_bin::FLAG_RESPONSE && ty != tcp_bin::FLAG_ERROR) {
+            if (ty != bin::FLAG_RESPONSE && ty != bin::FLAG_ERROR) {
                 continue;
             }
             if (!msg.isDict()) {
@@ -77,16 +77,16 @@ struct TcpBinClient::Private
     }
 };
 
-TcpBinClient::TcpBinClient()
+BinTcpClient::BinTcpClient()
     : _p(std::make_unique<Private>())
 {}
 
-TcpBinClient::~TcpBinClient()
+BinTcpClient::~BinTcpClient()
 {
     disconnect();
 }
 
-bool TcpBinClient::connect(const std::string& host, uint16_t port)
+bool BinTcpClient::connect(const std::string& host, uint16_t port)
 {
     disconnect();
 
@@ -104,7 +104,7 @@ bool TcpBinClient::connect(const std::string& host, uint16_t port)
     return ok;
 }
 
-void TcpBinClient::disconnect()
+void BinTcpClient::disconnect()
 {
     if (_p->client.is_started()) {
         _p->client.stop();
@@ -119,12 +119,12 @@ void TcpBinClient::disconnect()
     _p->waitCv.notify_all();
 }
 
-bool TcpBinClient::isConnected() const
+bool BinTcpClient::isConnected() const
 {
     return _p->connected.load(std::memory_order_relaxed) && _p->client.is_started();
 }
 
-bool TcpBinClient::call(Var request, Var& outResponse, int timeoutMs)
+bool BinTcpClient::call(Var request, Var& outResponse, int timeoutMs)
 {
     std::lock_guard<std::mutex> serial(_p->callMtx);
     if (!isConnected()) {
@@ -144,7 +144,7 @@ bool TcpBinClient::call(Var request, Var& outResponse, int timeoutMs)
         dict["id"] = Var(id);
     }
 
-    Bytes frame = tcp_bin::encodeFrame(tcp_bin::FLAG_REQUEST, req);
+    Bytes frame = bin::encodeFrame(bin::FLAG_REQUEST, req);
     std::string packet(reinterpret_cast<const char*>(frame.data()), frame.size());
 
     {
@@ -172,4 +172,5 @@ bool TcpBinClient::call(Var request, Var& outResponse, int timeoutMs)
     return true;
 }
 
+} // namespace service
 } // namespace ve

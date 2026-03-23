@@ -7,7 +7,7 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
-#include "ve/core/convert.h"
+#include "convert.h"
 
 namespace ve {
 

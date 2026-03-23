@@ -2,13 +2,13 @@
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
-#include "ve/service/tcp_bin_server.h"
+#include "ve/service/bin_service.h"
 
 namespace ve {
 
 class TcpBinModule : public Module
 {
-    std::unique_ptr<TcpBinServer> server_;
+    std::unique_ptr<service::BinTcpServer> server_;
 
 public:
     explicit TcpBinModule(const std::string& name) : Module(name)
@@ -22,7 +22,7 @@ protected:
         uint16_t port = static_cast<uint16_t>(
             node()->at("config/port")->getInt(5065));
 
-        server_ = std::make_unique<TcpBinServer>(node::root(), port);
+        server_ = std::make_unique<service::BinTcpServer>(node::root(), port);
         if (server_->start()) {
             veLogI << "[ve.service.tcp_bin] started on port " << port;
         } else {

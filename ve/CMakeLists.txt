@@ -2,7 +2,7 @@
 # ve/CMakeLists.txt - pure C++ base library -> libve
 #
 # Provides: ve/global.h (VE_API), ve/core/base.h (Object, Manager),
-#           ve/core/data.h (AnyData, YAML), ve/core/log.h,
+#           ve/core/log.h,
 #           ve/core/factory.h, platform/ (rescue, StackWalker)
 # =============================================================================
 
@@ -48,13 +48,7 @@ target_include_directories(${VE_CORE_LIBRARY} PRIVATE
 )
 
 # --- deps ---
-ve_find_package(simdjson
-    GIT_REPO  https://github.com/simdjson/simdjson.git
-    GIT_TAG   v3.12.2
-    OPTIONS
-        SIMDJSON_BUILD_STATIC_LIB ON
-)
-target_link_libraries(${VE_CORE_LIBRARY} PRIVATE simdjson::simdjson)
+target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_simdjson)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio2)

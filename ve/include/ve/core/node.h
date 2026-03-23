@@ -39,17 +39,8 @@ public:
     };
 
     // --- value ---
-    const Var& value() const;
-    bool hasValue() const;   // true if value is not NONE (Null)
-
-    Node* set(const Var& v);
-    Node* set(Var&& v);
-
-    template<typename T> Node* set(const std::string& path, T&& t) { at(path)->set(std::forward<T>(t)); return this; }
-    template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
-    template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
-
     const Var& get() const { return value(); }
+    const Var& get(const std::string& path, const Var& def = Var()) const { if (auto n = find(path)) return n->value(); return def; }
 
     template<typename T> T getAs(const T& def = T{}) const { return value().to<T>(def); }
 
@@ -58,6 +49,13 @@ public:
     int64_t     getInt64(int64_t def = -1) const { return value().toInt64(def); }
     double      getDouble(double def = 0.0) const { return value().toDouble(def); }
     std::string getString(const std::string& def = "") const { return value().toString(def); }
+
+    Node* set(const Var& v);
+    Node* set(Var&& v);
+
+    template<typename T> Node* set(const std::string& path, T&& t) { at(path)->set(std::forward<T>(t)); return this; }
+    template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
+    template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
 
     bool update(const Var& v);
 
@@ -192,6 +190,9 @@ public:
 
     // --- debug ---
     std::string dump(int depth = 0) const;
+
+protected:
+    const Var& value() const;
 
 private:
     VE_DECLARE_POOL_PRIVATE

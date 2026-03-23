@@ -49,7 +49,7 @@ Bridge::~Bridge()
 
 void Bridge::expose(const std::string& node_path, const std::string& topic)
 {
-    auto* n = _p->root->resolve(node_path, false);
+    auto* n = _p->root->find(node_path, false);
     if (!n) {
         veLogEs("ve::dds::Bridge", "expose: node not found:", node_path);
         return;
@@ -89,11 +89,8 @@ void Bridge::expose(const std::string& node_path, const std::string& topic)
 
 void Bridge::subscribe(const std::string& topic, const std::string& node_path)
 {
-    auto* n = _p->root->ensure(node_path);
-    if (!n) {
-        veLogEs("ve::dds::Bridge", "subscribe: cannot ensure node:", node_path);
-        return;
-    }
+    // at() creates the path if missing (same role as legacy ensure())
+    Node* n = _p->root->at(node_path);
 
     BridgeEntry entry;
     entry.node_path = node_path;

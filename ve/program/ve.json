@@ -10,7 +10,22 @@
       }
     },
     "service": {
-      "terminal": { "config": { "port": 5061 } }
+      "terminal": {
+        "enabled": true,
+        "config": { "port": 5061 }
+      },
+      "http": {
+        "enabled": false,
+        "config": { "port": 8080 }
+      },
+      "ws": {
+        "enabled": false,
+        "config": { "port": 8081 }
+      },
+      "tcp_bin": {
+        "enabled": false,
+        "config": { "port": 5065 }
+      }
     }
   }
 }

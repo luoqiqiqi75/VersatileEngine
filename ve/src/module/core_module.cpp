@@ -1,13 +1,11 @@
 // core_module.cpp - ve::CoreModule (ve.core)
 //
-// System module: log configuration, crash handler (rescue), builtin commands.
+// System module: log configuration, crash handler (rescue).
 //   constructor: rescue + log config (from JSON defaults)
-//   init():      register builtin commands (so other modules can extend)
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
-#include "ve/core/command.h"
-#include "ve/core/rescue.h"
+#include "ve/service/rescue.h"
 
 namespace ve {
 
@@ -18,33 +16,27 @@ public:
     {
         auto* n = node();
 
-        bool rescue = true;
-        if (auto* rn = n->find("config/rescue/enabled")) {
-            rescue = rn->getBool(true);
-        }
-        if (rescue) setupRescue();
-
-        if (auto* log_n = n->find("config/log")) {
-            if (auto* level_n = log_n->find("level")) {
-                std::string lvl = level_n->getString();
-                if      (lvl == "debug") log::setLevel(LogLevel::Debug);
-                else if (lvl == "info")  log::setLevel(LogLevel::Info);
-                else if (lvl == "warn")  log::setLevel(LogLevel::Waring);
-                else if (lvl == "error") log::setLevel(LogLevel::Error);
-            }
-            if (auto* app_n = log_n->find("app")) {
-                log::setAppName(app_n->getString());
-            }
-            if (auto* dir_n = log_n->find("dir")) {
-                log::setLogDir(dir_n->getString());
+        { // rescue
+            if (n->get("config/rescue/enabled").toBool(true)) {
+                service::setupRescue();
             }
         }
-    }
 
-protected:
-    void init() override
-    {
-        command::initBuiltins();
+        { // log
+            std::string lvl = n->get("config/log/level").toString("info");
+            if (lvl[0] == 'd') {
+                log::setLevel(LogLevel::Debug);
+            } else if (lvl[0] == 'w') {
+                log::setLevel(LogLevel::Waring);
+            } else if (lvl[0] == 'e') {
+                log::setLevel(LogLevel::Error);
+            } else {
+                log::setLevel(LogLevel::Info);
+            }
+
+            log::setAppName(n->get("config/log/app").toString("ve"));
+            log::setLogDir(n->get("config/log/dir").toString("."));
+        }
     }
 };
 

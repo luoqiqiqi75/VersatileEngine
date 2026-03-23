@@ -1,4 +1,4 @@
-#include "ve/core/rescue.h"
+#include "ve/service/rescue.h"
 
 #include <execinfo.h>
 #include <signal.h>
@@ -253,6 +253,9 @@ static void CrashSignalHandler(int sig, siginfo_t* info, void* /*context*/)
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
+namespace ve {
+namespace service {
+
 void setupRescue()
 {
     struct sigaction sa;
@@ -267,3 +270,6 @@ void setupRescue()
     sigaction(SIGILL,  &sa, nullptr);
     sigaction(SIGBUS,  &sa, nullptr);
 }
+
+} // namespace service
+} // namespace ve

@@ -1,7 +1,7 @@
 #include "ve/qt/tbs_qt.h"
 
 #include "ve/qt/var_qt.h"
-#include "ve/service/tcp_bin_frame.h"
+#include "ve/service/bin_service.h"
 #include "ve/core/impl/bin.h"
 
 #include <QByteArray>
@@ -12,7 +12,7 @@ namespace ve::qt::tbs {
 
 QByteArray encodeFrame(uint8_t flag, const QVariant& payload)
 {
-    Bytes b = ve::tcp_bin::encodeFrame(flag, qVariantToVar(payload));
+    Bytes b = ve::service::bin::encodeFrame(flag, qVariantToVar(payload));
     return QByteArray(reinterpret_cast<const char*>(b.data()), int(b.size()));
 }
 
