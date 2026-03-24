@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -c \"VE_TEST\\(\" ve/test/*.cpp)",
+      "Bash(ls:*)"
+    ]
+  }
+}

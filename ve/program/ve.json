@@ -12,7 +12,11 @@
     "service": {
       "terminal": {
         "enabled": true,
-        "config": { "port": 5061 }
+        "config": {
+          "port": 5061,
+          "stdio": { "enabled": false },
+          "tcp": { "server_line_echo": false }
+        }
       },
       "http": {
         "enabled": false,

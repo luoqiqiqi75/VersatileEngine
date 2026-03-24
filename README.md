@@ -15,9 +15,9 @@
 
 ---
 
-> **v2.0 - Pure C++17 Core Complete**
+> **v2.0 - Pure C++17 Core**
 >
-> The core layer (`libve`) is now a **pure C++17 implementation with zero Qt dependency**. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree with 535 unit tests), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP Binary), Module lifecycle, and Entry orchestration. Qt/ROS/RTT adapters are optional.
+> The core layer (`libve`) is a **pure C++17 implementation with zero Qt dependency**. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree with 513 unit tests), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP Binary), Module lifecycle, and Entry orchestration. Qt/ROS/RTT adapters are optional.
 
 ---
 
@@ -110,7 +110,7 @@ ve::n("/robot")
 - **Qt** (optional): 5.12+ or 6.x (only needed for `qt/` modules)
 - **FastDDS** (optional): fastrtps + fastcdr (only needed for `ros/` DDS adapter)
 
-> All other dependencies (asio2, asio, spdlog, fmt, cereal, yaml-cpp, pugixml, nlohmann/json) are bundled in `deps/` and require no separate installation.
+> All other dependencies (asio2, asio, spdlog, fmt, cereal, simdjson) are bundled in `deps/` and require no separate installation.
 
 ### Building
 
@@ -132,10 +132,12 @@ cmake --build build_test --target ve_test --config Debug
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `VE_BUILD_TEST` | OFF | Build `ve/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
+| `VE_BUILD_TEST` | ON | Build `ve/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
+| `VE_BUILD_EXAMPLE` | ON | Build example module DLLs (ve_example, etc.) |
 | `VE_BUILD_QT` | ON | Build `qt/` -> `libveqt` (needs Qt5/Qt6) |
-| `VE_BUILD_DDS` | OFF | Build `ros/` -> `libvedds` (needs FastDDS) |
+| `VE_BUILD_DDS` | ON | Build `ros/` -> `libvedds` (needs FastDDS) |
 | `VE_BUILD_RTT` | ON | Build `rtt/` -> `libvertt` (pure C++) |
+| `VE_INSTALL` | OFF | Install VE library, headers and CMake config |
 
 Local per-developer overrides go in `cmake/_local.cmake` (gitignored):
 
@@ -233,11 +235,21 @@ VE_REGISTER_MODULE(my_module, MyModule)
 #include <ve/entry.h>
 
 int main(int argc, char* argv[]) {
-    ve::entry::setup("config.yaml");
+    return ve::entry::exec(argc, argv);
+}
+```
+
+Or step-by-step:
+
+```cpp
+#include <ve/entry.h>
+
+int main(int argc, char* argv[]) {
+    ve::entry::setup("ve.json");
     ve::entry::init();
-    ve::entry::run();    // blocks on event loop
+    int code = ve::entry::run();    // blocks on event loop
     ve::entry::deinit();
-    return 0;
+    return code;
 }
 ```
 
@@ -268,38 +280,45 @@ VersatileEngine/
 +-- ve/                         VE framework (pure C++17 core -> libve + JS)
 |   +-- include/ve/             Public headers
 |   |   +-- global.h            Global macros (VE_API, VE_AUTO_RUN, ...)
+|   |   +-- entry.h             Entry lifecycle (setup/init/run/deinit), plugin, version
 |   |   +-- core/               Core API headers
-|   |   |   +-- base.h          Object, Manager, containers, type traits
+|   |   |   +-- base.h          Containers, type traits, KVAccessor, Manager
+|   |   |   +-- object.h        Object (signal/slot, thread-safe, parent/child)
 |   |   |   +-- var.h           Var (16B variant, 10 types + CUSTOM)
 |   |   |   +-- node.h          Node (reactive data tree)
-|   |   |   +-- command.h       Command system (Step, Pipeline, Command)
-|   |   |   +-- data.h          AnyData<T>, DataManager
+|   |   |   +-- schema.h        Schema definition + Node serialization
+|   |   |   +-- step.h          Step - single execution unit
+|   |   |   +-- pipeline.h      Pipeline - state machine for Step chains
+|   |   |   +-- command.h       Command system (named Step sequences + built-in commands)
 |   |   |   +-- factory.h       Factory<Sig>, Pool<T>, Pooled<T>
 |   |   |   +-- module.h        Module lifecycle
 |   |   |   +-- loop.h          EventLoop, LoopRef
-|   |   |   +-- log.h           Logging (spdlog backend)
 |   |   |   +-- convert.h       Convert<T> extension point
-|   |   |   +-- rescue.h        Crash handler API
-|   |   |   +-- impl/           Hash functions, OrderedHashMap, JSON, Binary
-|   |   +-- service/            Terminal, HTTP, WebSocket, TCP Binary servers
-|   |   +-- entry.h             Entry lifecycle + plugin + version
+|   |   |   +-- log.h           Logging (spdlog backend)
+|   |   |   +-- impl/           Hash functions, OrderedHashMap, SmallVector, JSON, Binary
+|   |   +-- service/            Terminal, HTTP, Binary TCP services, crash handler
 |   +-- src/                    Implementation files
+|   |   +-- core/               Core implementations
+|   |   +-- module/             Internal modules (core, terminal, http, ws, tcp_bin)
+|   |   +-- service/            Service implementations
 |   +-- platform/               Crash handlers: win/ linux/ unsupported/
-|   +-- test/                   535 unit tests (custom framework, pure C++)
-|   +-- example/                C++ usage examples
+|   +-- test/                   513 unit tests (custom framework, pure C++)
 |   +-- js/                     JavaScript deliverables
 |   |   +-- veservice.js        Standalone vanilla WS client
 |   |   +-- ve-sdk/             TypeScript SDK (HTTP + WS)
 |   |   +-- ve-app/             React admin UI (Node inspector)
-|   +-- program/                Ready-to-use processes (future: ve_entry)
+|   +-- program/                ve.exe entry process + module DLLs
+|       +-- main.cpp            int main() { return ve::entry::exec(argc, argv); }
+|       +-- ve.json             Default configuration
+|       +-- example/            ve_example.dll (ExampleModule)
 |
 +-- qt/                         VE + Qt ecosystem (optional, needs Qt5/6)
-|   +-- include/ve/qt/          Qt-specific public headers
+|   +-- include/
+|   |   +-- ve/qt/              Qt-specific public headers (qt_entry, var_qt, node_qobject, qml/, ...)
+|   |   +-- imol/               Legacy IMOL headers (compat layer)
 |   +-- src/                    base/, terminal/, service/, qml/
 |   +-- program/
-|   |   +-- browser/            veQtBrowser (integrated WebView process)
-|   +-- example/
-|       +-- demo/               veExample demo application
+|       +-- browser/            veqtbrowser.dll (BrowserModule)
 |
 +-- rtt/                        VE + RTT (pure C++, xcore-derived)
 |   +-- veRttCore/              CommandObject, Procedure, CIP, LoopObject
@@ -307,12 +326,11 @@ VersatileEngine/
 |
 +-- ros/                        VE + ROS/DDS (optional, needs FastDDS)
 |   +-- veFastDDS/              Participant, Topic, Service, Bridge
+|   +-- veRos/                  ROS integration: command_service, data, ros_module
 |
 +-- deps/                       Bundled dependencies
 |   +-- asio2/                  asio2 + asio + spdlog + fmt + cereal
-|   +-- yaml-cpp/               yaml-cpp 0.9 (static)
-|   +-- pugixml/                pugixml 1.15 (static)
-|   +-- nlohmann/               nlohmann/json (header-only)
+|   +-- simdjson/               simdjson (high-performance JSON parser)
 |
 +-- cmake/                      CMake utilities
 +-- docs/                       Documentation
@@ -365,7 +383,7 @@ VersatileEngine/
 | Service | Port | Protocol | Description |
 |---------|------|----------|-------------|
 | Terminal | 5061 | TCP text | REPL with tab completion |
-| HTTP | 8080 | HTTP | REST-like Node access |
+| HTTP | 8080 | HTTP | REST-like Node access + static files |
 | WebSocket | 8081 | WS JSON | Real-time Node change push |
 | TCP Binary | 5065 | CBS | High-efficiency binary IPC |
 

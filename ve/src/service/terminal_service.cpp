@@ -34,18 +34,18 @@ static const char* banner()
 {
     return
         "\r\n"
-        "   .                 .                        \r\n"
-        "  / \\               / \\                       \r\n"
-        "  \\  \\             /  /-----------.           \r\n"
-        "   \\  \\           /  /  o----------'          \r\n"
-        "    \\  \\         /  / \\  \\                    \r\n"
-        "     \\  \\       /  /   \\  \\                   \r\n"
-        "      .  o     o  .     .  \\_______.-.        \r\n"
-        "       \\  \\   /  /       \\  ,-------`-'       \r\n"
-        "        \\  \\ /  /         \\  \\                \r\n"
-        "         \\  v  /           \\  \\               \r\n"
-        "          \\   /             \\  `----------.   \r\n"
-        "           `-'               `-------------'  \r\n"
+        R"(   .                 .                      )" "\r\n"
+        R"(  / \               / \                     )""\r\n"
+        R"(  \  \             /  /---------.           )""\r\n"
+        R"(   \  \           /  / ,---------'          )""\r\n"
+        R"(    \  \         /  A  \                    )""\r\n"
+        R"(     \  \       /  / \  \                   )""\r\n"
+        R"(      .  o     o  .   .  \_______.-.        )""\r\n"
+        R"(       \  \   /  /     \  o-------`-'       )""\r\n"
+        R"(        \  \ /  /       \  \                )""\r\n"
+        R"(         \  v  /         \  \               )""\r\n"
+        R"(          \   /           \  `----------.   )""\r\n"
+        R"(           `-'             `-------------'  )""\r\n"
         "\r\n";
 }
 
@@ -77,6 +77,9 @@ struct ConnectionState {
     int escState = 0;
     int iacState = 0;
     bool prevCR  = false;
+    /// false: nc-style local echo; server redraws input with CR + EL (ANSI).
+    /// true: raw telnet; server echoes keys (ve/service/terminal/config/tcp/server_line_echo).
+    bool server_line_echo = false;
 };
 
 // ============================================================================
@@ -86,6 +89,9 @@ struct ConnectionState {
 struct TerminalStdioClient::Private
 {
     Node* root = nullptr;
+    std::unique_ptr<TerminalSession> session;
+    bool banner_printed = false;
+    bool io_prepared = false;
     std::atomic<bool> stop_requested{false};
 };
 
@@ -130,8 +136,12 @@ bool TerminalReplServer::start()
         auto key = session_ptr->hash_key();
         auto cs = std::make_unique<ConnectionState>();
         cs->session = std::make_unique<TerminalSession>(_p->root);
+        if (Node* tcp_cfg = _p->root->find("ve/service/terminal/config/tcp")) {
+            cs->server_line_echo = tcp_cfg->get("server_line_echo").toBool(false);
+        }
 
-        std::string welcome = std::string(banner()) + std::string(title()) + cs->session->prompt();
+        std::string welcome =
+            std::string(banner()) + std::string(title()) + "\r\n" + cs->session->prompt();
 
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
@@ -161,6 +171,57 @@ bool TerminalReplServer::start()
             }
             session_ptr->async_send(out);
         };
+        auto sendPromptNewLine = [&session_ptr, cs] {
+            session_ptr->async_send(std::string("\r\n") + cs->session->prompt());
+        };
+        auto redrawInputLine = [&session_ptr, cs] {
+            // nc local-echo: redraw one logical input line with CR + EL. ANSI EL is widely supported.
+            constexpr const char* kClearToEol = "\x1b[K";
+            session_ptr->async_send(std::string("\r") + cs->session->prompt() + cs->lineBuf + kClearToEol);
+        };
+        auto applyTabsToLine = [cs](std::string& line, std::string& listOut) -> bool {
+            bool hadTab = false;
+            std::string cur;
+            cur.reserve(line.size() + 16);
+
+            for (char ch : line) {
+                if (ch != '\t') {
+                    cur.push_back(ch);
+                    continue;
+                }
+
+                hadTab = true;
+                auto matches = cs->session->complete(cur);
+                if (matches.empty()) {
+                    continue;
+                }
+
+                size_t wordStart = cur.find_last_of(' ');
+                std::string prefix = (wordStart == std::string::npos) ? cur : cur.substr(wordStart + 1);
+                std::string common = commonPrefix(matches);
+
+                if (common.size() > prefix.size()) {
+                    cur += common.substr(prefix.size());
+                    if (matches.size() == 1) {
+                        cur.push_back(' ');
+                    }
+                }
+
+                if (matches.size() > 1) {
+                    listOut += "\r\n";
+                    for (auto& m : matches) {
+                        listOut += "  " + m;
+                    }
+                    listOut += "\r\n";
+                }
+            }
+
+            if (!hadTab) {
+                return false;
+            }
+            line = std::move(cur);
+            return true;
+        };
 
         for (uint8_t ch : data) {
             // --- Telnet IAC filter ---
@@ -172,29 +233,45 @@ bool TerminalReplServer::start()
             if (cs->iacState == 2) { cs->iacState = 0; continue; }
             if (ch == 0xFF) { cs->iacState = 1; continue; }
 
-            // --- ESC sequence filter ---
-            if (cs->escState == 1) {
-                cs->escState = (ch == '[') ? 2 : 0;
-                continue;
-            }
+            // --- ESC / CSI: drop well-known sequences; lone ESC does not eat the next key ---
             if (cs->escState == 2) {
                 cs->escState = 0;
                 continue;
             }
-            if (ch == 0x1B) { cs->escState = 1; continue; }
+            if (cs->escState == 1) {
+                if (ch == '[') {
+                    cs->escState = 2;
+                    continue;
+                }
+                cs->escState = 0;
+            }
+            if (ch == 0x1B) {
+                cs->escState = 1;
+                continue;
+            }
 
             // --- Line editing ---
             if (ch == '\n' && cs->prevCR) { cs->prevCR = false; continue; }
             cs->prevCR = (ch == '\r');
 
             if (ch == '\r' || ch == '\n') {
-                session_ptr->async_send("\r\n");
                 if (cs->lineBuf.empty()) {
-                    session_ptr->async_send(cs->session->prompt());
+                    sendPromptNewLine();
                     continue;
                 }
                 std::string line = std::move(cs->lineBuf);
                 cs->lineBuf.clear();
+
+                std::string tabList;
+                if (applyTabsToLine(line, tabList)) {
+                    cs->lineBuf = std::move(line);
+                    if (!tabList.empty()) {
+                        session_ptr->async_send(tabList);
+                    }
+                    redrawInputLine();
+                    continue;
+                }
+
                 std::string result = cs->session->execute(line);
 
                 if (!result.empty() && result[0] == '\x04') {
@@ -202,22 +279,38 @@ bool TerminalReplServer::start()
                     session_ptr->stop();
                     return;
                 }
-                if (!result.empty()) sendText(result);
-                session_ptr->async_send(cs->session->prompt());
+                if (!result.empty()) {
+                    sendText(result);
+                    if (result.back() != '\n') {
+                        session_ptr->async_send("\r\n");
+                    }
+                }
+                sendPromptNewLine();
             } else if (ch == 0x7F || ch == 0x08) {
                 if (!cs->lineBuf.empty()) {
                     cs->lineBuf.pop_back();
-                    session_ptr->async_send("\b \b");
+                    if (cs->server_line_echo) {
+                        session_ptr->async_send("\b \b");
+                    } else {
+                        redrawInputLine();
+                    }
                 }
             } else if (ch == 0x03) {
                 cs->lineBuf.clear();
-                session_ptr->async_send("^C\r\n" + cs->session->prompt());
+                session_ptr->async_send("^C\r\n");
+                sendPromptNewLine();
             } else if (ch == 0x15) {
-                std::string erase;
-                for (size_t i = 0; i < cs->lineBuf.size(); ++i)
-                    erase += "\b \b";
+                if (cs->server_line_echo) {
+                    std::string erase;
+                    for (size_t i = 0; i < cs->lineBuf.size(); ++i) {
+                        erase += "\b \b";
+                    }
+                    session_ptr->async_send(erase);
+                }
                 cs->lineBuf.clear();
-                session_ptr->async_send(erase);
+                if (!cs->server_line_echo) {
+                    redrawInputLine();
+                }
             } else if (ch == 0x09) {
                 // --- Tab completion via TerminalSession ---
                 auto matches = cs->session->complete(cs->lineBuf);
@@ -230,20 +323,36 @@ bool TerminalReplServer::start()
                 if (common.size() > prefix.size()) {
                     std::string suffix = common.substr(prefix.size());
                     cs->lineBuf += suffix;
-                    session_ptr->async_send(suffix);
+                    if (cs->server_line_echo) {
+                        session_ptr->async_send(suffix);
+                    }
                     if (matches.size() == 1) {
                         cs->lineBuf += ' ';
-                        session_ptr->async_send(" ");
+                        if (cs->server_line_echo) {
+                            session_ptr->async_send(" ");
+                        }
                     }
-                } else if (matches.size() > 1) {
+                }
+                if (matches.size() > 1) {
                     std::string list = "\r\n";
-                    for (auto& m : matches) list += "  " + m;
-                    list += "\r\n" + cs->session->prompt() + cs->lineBuf;
+                    for (auto& m : matches) {
+                        list += "  " + m;
+                    }
+                    list += "\r\n";
                     session_ptr->async_send(list);
+                }
+                if (cs->server_line_echo) {
+                    session_ptr->async_send(cs->session->prompt() + cs->lineBuf);
+                } else {
+                    redrawInputLine();
                 }
             } else if (ch >= 0x20 && ch < 0x7F) {
                 cs->lineBuf += static_cast<char>(ch);
-                session_ptr->async_send(std::string(1, static_cast<char>(ch)));
+                if (cs->server_line_echo) {
+                    session_ptr->async_send(std::string(1, static_cast<char>(ch)));
+                } else {
+                    redrawInputLine();
+                }
             }
         }
     });
@@ -311,40 +420,48 @@ TerminalStdioClient::~TerminalStdioClient() = default;
 
 int TerminalStdioClient::run()
 {
-    terminalBuiltinsEnsureRegistered();
-
-    TerminalSession session(_p->root);
-
-    std::cout << banner();
-    std::cout << title();
-    std::cout << session.prompt() << std::flush;
-
-    std::string line;
-    while (!_p->stop_requested.load(std::memory_order_relaxed) && std::getline(std::cin, line)) {
-        std::string result = session.execute(line);
-        if (!result.empty() && result[0] == '\x04') {
-            std::cout << "bye\n";
-            return 0;
-        }
-
-        if (!result.empty()) {
-            std::cout << result;
-            if (result.back() != '\n') {
-                std::cout << '\n';
-            }
-        }
-        std::cout << session.prompt() << std::flush;
-    }
-
     if (_p->stop_requested.load(std::memory_order_relaxed)) {
         return 0;
     }
-    if (!std::cin.eof()) {
-        return 1;
+
+    if (!_p->session) {
+        terminalBuiltinsEnsureRegistered();
+        _p->session = std::make_unique<TerminalSession>(_p->root);
+    }
+    if (!_p->io_prepared) {
+        std::cin.tie(nullptr);
+        _p->io_prepared = true;
+    }
+    if (!_p->banner_printed) {
+        std::cout << banner();
+        std::cout << title();
+        std::cout << '\n' << _p->session->prompt() << std::flush;
+        _p->banner_printed = true;
     }
 
-    std::cout << '\n';
-    return 0;
+    std::string line;
+    if (!std::getline(std::cin, line)) {
+        if (std::cin.eof()) {
+            std::cout << '\n';
+            return 0;
+        }
+        return -1;
+    }
+
+    std::string result = _p->session->execute(line);
+    if (!result.empty() && result[0] == '\x04') {
+        std::cout << "bye\n";
+        return 0;
+    }
+
+    if (!result.empty()) {
+        std::cout << result;
+        if (result.back() != '\n') {
+            std::cout << '\n';
+        }
+    }
+    std::cout << '\n' << _p->session->prompt() << std::flush;
+    return 1;
 }
 
 void TerminalStdioClient::requestStop()
