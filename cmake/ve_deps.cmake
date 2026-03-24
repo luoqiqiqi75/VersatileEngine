@@ -65,6 +65,14 @@ set(_VE_DEPS_SIMDJSON_SAVE_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
 set(BUILD_SHARED_LIBS OFF)
 set(SIMDJSON_BUILD_STATIC_LIB OFF CACHE BOOL "simdjson: main target is static; skip simdjson_static" FORCE)
 add_subdirectory("${VE_DEPS_SIMDJSON_ROOT}" "${CMAKE_BINARY_DIR}/_deps/simdjson")
+# libsimdjson.a is linked into libve.so; without PIC, aarch64 ld fails with
+# R_AARCH64_ADR_PREL_PG_HI21 ... recompile with -fPIC
+if(TARGET simdjson)
+  set_target_properties(simdjson PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+if(TARGET simdjson_static)
+  set_target_properties(simdjson_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 set(BUILD_SHARED_LIBS "${_VE_DEPS_SIMDJSON_SAVE_BUILD_SHARED_LIBS}")
 unset(_VE_DEPS_SIMDJSON_SAVE_BUILD_SHARED_LIBS)
 
