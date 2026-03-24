@@ -9,6 +9,20 @@
         "log": { "level": "info" }
       }
     },
+    "client": {
+      "terminal": {
+        "stdio": {
+          "enabled": false
+        },
+        "tcp": {
+          "enabled": false,
+          "config": {
+            "host": "127.0.0.1",
+            "port": 5061
+          }
+        }
+      }
+    },
     "server": {
       "priority": 50,
       "node": {

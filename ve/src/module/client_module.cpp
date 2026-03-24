@@ -19,6 +19,12 @@ private:
 void ClientModule::ready()
 {
     bool stdio_enabled = node()->at("terminal/stdio/enabled")->getBool(false);
+    bool remote_enabled = node()->at("terminal/tcp/enabled")->getBool(false);
+    if (stdio_enabled && remote_enabled) {
+        veLogE << "[ve/client] stdio terminal and remote terminal are both enabled; remote terminal wins";
+        stdio_enabled = false;
+    }
+
     if (stdio_enabled) {
         stdio_ = std::make_unique<service::TerminalStdioClient>(node::root());
         loop::setMainRunner(
@@ -55,4 +61,4 @@ void ClientModule::deinit()
 
 }
 
-VE_REGISTER_PRIORITY_MODULE(ve.client, ve::ClientModule, 75)
+VE_REGISTER_PRIORITY_MODULE(ve.client, ve::ClientModule, 40)

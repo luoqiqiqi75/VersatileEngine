@@ -10,7 +10,9 @@
 #include <fstream>
 #include <algorithm>
 #include <condition_variable>
+#include <iostream>
 #include <queue>
+#include <string_view>
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -67,6 +69,36 @@ bool endsWith(const std::string& s, const std::string& suffix)
     if (suffix.size() > s.size()) return false;
     return std::equal(suffix.rbegin(), suffix.rend(), s.rbegin(),
         [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+}
+
+bool parseHostPort(std::string_view input, std::string& host, int& port)
+{
+    if (input.empty()) {
+        return false;
+    }
+
+    std::string value(input);
+    size_t colon = value.rfind(':');
+    if (colon == std::string::npos) {
+        host = value;
+        return !host.empty();
+    }
+
+    std::string maybe_port = value.substr(colon + 1);
+    if (maybe_port.empty()) {
+        return false;
+    }
+    if (!std::all_of(maybe_port.begin(), maybe_port.end(), [](char ch) { return ch >= '0' && ch <= '9'; })) {
+        host = value;
+        return !host.empty();
+    }
+
+    host = value.substr(0, colon);
+    if (host.empty()) {
+        return false;
+    }
+    port = std::stoi(maybe_port);
+    return port > 0 && port <= 65535;
 }
 
 std::string keyToPath(const std::string& key)
@@ -133,6 +165,11 @@ void setup(const Options& options)
     if (n("ve/entry")->get("verbose").toBool(options.verbose)) g.options.verbose = true;
     if (options.terminal) {
         n("ve/client/terminal/stdio/enabled")->set(Var(true));
+    }
+    if (options.remote_terminal) {
+        n("ve/client/terminal/tcp/enabled")->set(Var(true));
+        n("ve/client/terminal/tcp/config/host")->set(Var(options.remote_host));
+        n("ve/client/terminal/tcp/config/port")->set(Var(options.remote_port));
     }
 
     g.state = SETUP;
@@ -232,6 +269,8 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
         if (mn) {
             enabled = mn->get("enabled").toBool(true);
             priority = mn->get("priority").toInt(priority);
+        } else if (key == "ve.client.terminal.tcp") {
+            enabled = false;
         } else if (key.rfind("ve.service.", 0) == 0) {
             // Network service modules are opt-in: require a matching subtree in config (e.g. ve.json).
             enabled = false;
@@ -494,8 +533,41 @@ int exec(int argc, char** argv)
             opts.config_file = argv[++i];
         } else if (arg == "--verbose" || arg == "-v") {
             opts.verbose = true;
-        } else if (arg == "--terminal" || arg == "-t") {
+        } else if (arg == "--terminal" || arg == "--local-terminal" || arg == "-t") {
             opts.terminal = true;
+        } else if (arg == "--remote" || arg == "--remote-terminal" || arg == "-r") {
+            opts.remote_terminal = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                std::string host = opts.remote_host;
+                int port = opts.remote_port;
+                if (!parseHostPort(argv[i + 1], host, port)) {
+                    std::cerr << "Invalid remote endpoint: " << argv[i + 1] << '\n';
+                    return 2;
+                }
+                opts.remote_host = std::move(host);
+                opts.remote_port = port;
+                ++i;
+            }
+        } else if (arg.rfind("--remote=", 0) == 0) {
+            opts.remote_terminal = true;
+            std::string host = opts.remote_host;
+            int port = opts.remote_port;
+            if (!parseHostPort(arg.substr(9), host, port)) {
+                std::cerr << "Invalid remote endpoint: " << arg.substr(9) << '\n';
+                return 2;
+            }
+            opts.remote_host = std::move(host);
+            opts.remote_port = port;
+        } else if (arg.rfind("--remote-terminal=", 0) == 0) {
+            opts.remote_terminal = true;
+            std::string host = opts.remote_host;
+            int port = opts.remote_port;
+            if (!parseHostPort(arg.substr(18), host, port)) {
+                std::cerr << "Invalid remote endpoint: " << arg.substr(18) << '\n';
+                return 2;
+            }
+            opts.remote_host = std::move(host);
+            opts.remote_port = port;
         } else if (arg.rfind("--set=", 0) == 0) {
             std::string kv = arg.substr(6);
             auto eq = kv.find('=');
@@ -511,6 +583,11 @@ int exec(int argc, char** argv)
                 opts.config_file = arg;
             }
         }
+    }
+
+    if (opts.terminal && opts.remote_terminal) {
+        std::cerr << "Local terminal (-t/--terminal) and remote terminal (-r/--remote) are mutually exclusive.\n";
+        return 2;
     }
 
     if (opts.config_file.empty()) {

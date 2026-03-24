@@ -46,5 +46,25 @@ private:
     VE_DECLARE_UNIQUE_PRIVATE
 };
 
+class VE_API TerminalTcpClient
+{
+public:
+    explicit TerminalTcpClient(const std::string& host = "127.0.0.1", uint16_t port = 5061);
+    ~TerminalTcpClient();
+
+    // Connect to the remote terminal, forward local console input, and block
+    // until disconnect / EOF / requestStop. Returns a process-style exit code.
+    int  run();
+    void requestStop();
+
+    bool isConnected() const;
+    const std::string& host() const;
+    uint16_t port() const;
+    std::string lastError() const;
+
+private:
+    VE_DECLARE_UNIQUE_PRIVATE
+};
+
 } // namespace service
 } // namespace ve

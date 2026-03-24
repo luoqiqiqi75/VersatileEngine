@@ -13,6 +13,7 @@
 #ifdef _MSC_VER
 #pragma warning(push, 0)
 #endif
+#include <asio2/tcp/tcp_client.hpp>
 #include <asio2/tcp/tcp_server.hpp>
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -22,15 +23,18 @@
 #  include <conio.h>
 #  include <windows.h>
 #else
+#  include <sys/select.h>
 #  include <termios.h>
 #  include <unistd.h>
 #endif
 
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <unordered_map>
 #include <atomic>
 #include <iostream>
+#include <thread>
 
 namespace ve {
 namespace service {
@@ -216,6 +220,48 @@ struct TerminalStdioClient::Private
     bool console_prepared = false;
     bool raw_console = false;
     std::atomic<bool> stop_requested{false};
+
+#ifdef _WIN32
+    HANDLE stdin_handle = INVALID_HANDLE_VALUE;
+    HANDLE stdout_handle = INVALID_HANDLE_VALUE;
+    DWORD stdin_mode = 0;
+    DWORD stdout_mode = 0;
+    bool restore_stdin_mode = false;
+    bool restore_stdout_mode = false;
+#else
+    termios stdin_mode{};
+    bool restore_stdin_mode = false;
+#endif
+
+    ~Private()
+    {
+#ifdef _WIN32
+        if (restore_stdin_mode && stdin_handle != INVALID_HANDLE_VALUE) {
+            SetConsoleMode(stdin_handle, stdin_mode);
+        }
+        if (restore_stdout_mode && stdout_handle != INVALID_HANDLE_VALUE) {
+            SetConsoleMode(stdout_handle, stdout_mode);
+        }
+#else
+        if (restore_stdin_mode) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &stdin_mode);
+        }
+#endif
+    }
+};
+
+struct TerminalTcpClient::Private
+{
+    std::string host = "127.0.0.1";
+    uint16_t port = 5061;
+    asio2::tcp_client client;
+    std::atomic<bool> connected{false};
+    std::atomic<bool> stop_requested{false};
+    std::atomic<bool> console_prepared{false};
+    std::atomic<bool> raw_console{false};
+    std::string last_error;
+    std::mutex io_mtx;
+    mutable std::mutex state_mtx;
 
 #ifdef _WIN32
     HANDLE stdin_handle = INVALID_HANDLE_VALUE;
@@ -589,6 +635,79 @@ static TerminalKeyEvent readStdioKey()
 #endif
 }
 
+static bool pollStdioKey(TerminalKeyEvent& out_event, int timeout_ms)
+{
+#ifdef _WIN32
+    const int step_ms = 20;
+    int waited = 0;
+    while (waited < timeout_ms) {
+        if (_kbhit()) {
+            out_event = readStdioKey();
+            return out_event.key != TerminalKey::NONE;
+        }
+        ::Sleep(step_ms);
+        waited += step_ms;
+    }
+    return false;
+#else
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(STDIN_FILENO, &rfds);
+
+    timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int rc = ::select(STDIN_FILENO + 1, &rfds, nullptr, nullptr, &tv);
+    if (rc <= 0 || !FD_ISSET(STDIN_FILENO, &rfds)) {
+        return false;
+    }
+
+    out_event = readStdioKey();
+    return out_event.key != TerminalKey::NONE;
+#endif
+}
+
+static std::string keyEventToBytes(const TerminalKeyEvent& ev)
+{
+    switch (ev.key) {
+        case TerminalKey::CHARACTER:
+            if (ev.ch >= 0x20 && ev.ch < 0x7f) {
+                return std::string(1, ev.ch);
+            }
+            return {};
+        case TerminalKey::ENTER:
+            return "\r";
+        case TerminalKey::BACKSPACE:
+            return "\b";
+        case TerminalKey::TAB:
+            return "\t";
+        case TerminalKey::CTRL_C:
+            return std::string(1, '\x03');
+        case TerminalKey::CTRL_U:
+            return std::string(1, '\x15');
+        case TerminalKey::EOF_KEY:
+            return std::string(1, '\x04');
+        case TerminalKey::LEFT:
+            return "\x1b[D";
+        case TerminalKey::RIGHT:
+            return "\x1b[C";
+        case TerminalKey::UP:
+            return "\x1b[A";
+        case TerminalKey::DOWN:
+            return "\x1b[B";
+        case TerminalKey::DELETE_KEY:
+            return "\x1b[3~";
+        case TerminalKey::HOME:
+            return "\x1b[H";
+        case TerminalKey::END:
+            return "\x1b[F";
+        case TerminalKey::NONE:
+            return {};
+    }
+    return {};
+}
+
 template<typename State>
 static int runCookedStdioRoundtrip(State& state)
 {
@@ -672,6 +791,123 @@ int TerminalStdioClient::run()
 void TerminalStdioClient::requestStop()
 {
     _p->stop_requested.store(true, std::memory_order_relaxed);
+}
+
+// ============================================================================
+// TerminalTcpClient
+// ============================================================================
+
+TerminalTcpClient::TerminalTcpClient(const std::string& host, uint16_t port)
+    : _p(std::make_unique<Private>())
+{
+    _p->host = host;
+    _p->port = port;
+}
+
+TerminalTcpClient::~TerminalTcpClient()
+{
+    requestStop();
+}
+
+int TerminalTcpClient::run()
+{
+    _p->stop_requested.store(false, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(_p->state_mtx);
+        _p->last_error.clear();
+    }
+    _p->connected.store(false, std::memory_order_relaxed);
+
+    if (!_p->console_prepared.load(std::memory_order_relaxed)) {
+        std::cin.tie(nullptr);
+        _p->raw_console.store(prepareStdioConsole(*_p), std::memory_order_relaxed);
+        _p->console_prepared.store(true, std::memory_order_relaxed);
+    }
+
+    _p->client.bind_recv([this](std::string_view data) {
+        std::lock_guard<std::mutex> lock(_p->io_mtx);
+        std::cout.write(data.data(), static_cast<std::streamsize>(data.size()));
+        std::cout.flush();
+    });
+    _p->client.bind_disconnect([this]() {
+        _p->connected.store(false, std::memory_order_relaxed);
+        if (!_p->stop_requested.load(std::memory_order_relaxed)) {
+            std::lock_guard<std::mutex> lock(_p->state_mtx);
+            _p->last_error = asio2::get_last_error_msg();
+        }
+    });
+
+    if (!_p->client.start(_p->host, std::to_string(static_cast<int>(_p->port)))) {
+        {
+            std::lock_guard<std::mutex> lock(_p->state_mtx);
+            _p->last_error = asio2::get_last_error_msg();
+            if (_p->last_error.empty()) {
+                _p->last_error = "connect failed";
+            }
+        }
+        veLogE << "[ve/client/terminal/tcp] connect failed: " << _p->host
+               << ":" << _p->port << " (" << lastError() << ")";
+        return 1;
+    }
+
+    _p->connected.store(true, std::memory_order_relaxed);
+    _p->client.send(std::string("\xFF\xFD\x01", 3));
+
+    if (_p->raw_console.load(std::memory_order_relaxed)) {
+        while (!_p->stop_requested.load(std::memory_order_relaxed)
+            && _p->connected.load(std::memory_order_relaxed)) {
+            TerminalKeyEvent ev;
+            if (!pollStdioKey(ev, 50)) {
+                continue;
+            }
+            std::string bytes = keyEventToBytes(ev);
+            if (!bytes.empty() && _p->connected.load(std::memory_order_relaxed)) {
+                _p->client.send(bytes);
+            }
+        }
+    } else {
+        std::string line;
+        while (!_p->stop_requested.load(std::memory_order_relaxed)
+            && _p->connected.load(std::memory_order_relaxed)
+            && std::getline(std::cin, line)) {
+            _p->client.send(line + "\r");
+        }
+    }
+
+    if (_p->client.is_started()) {
+        _p->client.stop();
+    }
+    _p->connected.store(false, std::memory_order_relaxed);
+    return 0;
+}
+
+void TerminalTcpClient::requestStop()
+{
+    _p->stop_requested.store(true, std::memory_order_relaxed);
+    if (_p->client.is_started()) {
+        _p->client.stop();
+    }
+}
+
+bool TerminalTcpClient::isConnected() const
+{
+    return _p->connected.load(std::memory_order_relaxed) && _p->client.is_started();
+}
+
+const std::string& TerminalTcpClient::host() const
+{
+    return _p->host;
+}
+
+uint16_t TerminalTcpClient::port() const
+{
+    return _p->port;
+}
+
+std::string TerminalTcpClient::lastError() const
+{
+    std::lock_guard<std::mutex> lock(_p->state_mtx);
+    return _p->last_error;
 }
 
 } // namespace service
