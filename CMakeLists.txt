@@ -46,6 +46,7 @@ add_subdirectory(ve)
 # ==========================================================================
 option(VE_BUILD_TEST     "Build core unit tests (ve_test)"              ON)
 option(VE_BUILD_EXAMPLE  "Build example module DLLs"                    ON)
+option(VE_BUILD_MCP      "Build standalone MCP bridge executable"        ON)
 
 if(VE_BUILD_TEST)
     add_subdirectory(ve/test)

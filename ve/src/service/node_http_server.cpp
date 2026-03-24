@@ -15,6 +15,7 @@
 #endif
 
 #include <chrono>
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -337,9 +338,40 @@ bool NodeHttpServer::start()
         });
 
     // POST /api/cmd/* — execute a named command via command::call()
+    _p->server.bind<http::verb::get>("/api/cmd",
+        [this](http::web_request& req, http::web_response& rep) {
+            auto cmds = command::keys();
+            std::sort(cmds.begin(), cmds.end());
+            cmds.erase(std::unique(cmds.begin(), cmds.end()), cmds.end());
+
+            std::string json = "{\"commands\":[";
+            for (size_t i = 0; i < cmds.size(); ++i) {
+                const auto& key = cmds[i];
+                if (i > 0) {
+                    json += ",";
+                }
+                std::string help = command::help(key);
+                json += "{\"name\":" + impl::json::stringify(Var(key))
+                      + ",\"help\":" + impl::json::stringify(Var(help)) + "}";
+            }
+            json += "]}";
+            rep.fill_json(std::move(json), http::status::ok);
+        });
+
+    // POST /api/cmd/* — execute a named command via command::call()
     _p->server.bind<http::verb::post>("/api/cmd/*",
         [this](http::web_request& req, http::web_response& rep) {
-            auto cmdKey = strip_prefix(req.path(), "/api/cmd");
+            std::string bodyStr(req.body());
+            Var bodyParsed = bodyStr.empty() ? Var() : impl::json::parse(bodyStr);
+
+            std::string cmdKey = strip_prefix(req.path(), "/api/cmd");
+            // Some transports may pass a wildcard path unexpectedly; allow body.cmd fallback.
+            if (bodyParsed.isDict()) {
+                auto& dict = bodyParsed.toDict();
+                if ((cmdKey.empty() || cmdKey.front() == '{') && dict.has("cmd")) {
+                    cmdKey = dict["cmd"].toString();
+                }
+            }
             if (cmdKey.empty()) {
                 rep.fill_json("{\"error\":\"command key required\"}", http::status::bad_request);
                 return;
@@ -349,15 +381,13 @@ bool NodeHttpServer::start()
                 return;
             }
 
-            std::string bodyStr(req.body());
-            Var bodyParsed = bodyStr.empty() ? Var() : impl::json::parse(bodyStr);
-
             int64_t reqId = 0;
             Var cmdBody;
             if (bodyParsed.isDict()) {
                 auto& dict = bodyParsed.toDict();
                 if (dict.has("id"))   reqId   = dict["id"].toInt64();
                 if (dict.has("body")) cmdBody = dict["body"];
+                else if (dict.has("args")) cmdBody = dict["args"];
                 else                  cmdBody = bodyParsed;
             } else {
                 cmdBody = bodyParsed;

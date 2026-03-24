@@ -392,6 +392,7 @@ VersatileEngine/
 - [Architecture Overview & Evolution Plan](docs/ARCHITECTURE.md)
 - [Core Module Documentation](docs/core/README.md)
 - [Debug any VE process via core HTTP + curl (PowerShell: `curl.exe`)](docs/local-http-curl-debug.md)
+- [Cursor MCP Quick Start (VE tools in Cursor)](docs/cursor-mcp-usage.md)
 
 ## License
 

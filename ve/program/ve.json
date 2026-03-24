@@ -9,7 +9,7 @@
         "log": { "level": "info" }
       }
     },
-    "service": {
+    "server": {
       "terminal": {
         "enabled": true,
         "config": {
@@ -19,7 +19,7 @@
         }
       },
       "http": {
-        "enabled": false,
+        "enabled": true,
         "config": { "port": 8080 }
       },
       "ws": {
