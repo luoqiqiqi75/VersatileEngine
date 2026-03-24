@@ -10,25 +10,28 @@
       }
     },
     "server": {
-      "terminal": {
-        "enabled": true,
-        "config": {
-          "port": 5061,
-          "stdio": { "enabled": false },
-          "tcp": { "server_line_echo": false }
+      "priority": 50,
+      "node": {
+        "http": {
+          "enable": true,
+          "config": { "port": 8080 }
+        },
+        "ws": {
+          "enable": false,
+          "config": { "port": 8081 }
         }
       },
-      "http": {
-        "enabled": true,
-        "config": { "port": 8080 }
+      "terminal": {
+        "repl": {
+          "enable": true,
+          "config": { "port": 5061 }
+        }
       },
-      "ws": {
-        "enabled": false,
-        "config": { "port": 8081 }
-      },
-      "tcp_bin": {
-        "enabled": false,
-        "config": { "port": 5065 }
+      "bin": {
+        "tcp": {
+          "enable": false,
+          "config": { "port": 5065 }
+        }
       }
     }
   }

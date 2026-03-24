@@ -23,7 +23,7 @@ bool decodePayload(const QByteArray& body, QVariant& out)
     }
     const uint8_t* p = reinterpret_cast<const uint8_t*>(body.constData());
     const uint8_t* e = p + body.size();
-    Var v = bin::readVar(p, e);
+    Var v = impl::bin::readVar(p, e);
     if (p != e) {
         return false;
     }
@@ -35,7 +35,7 @@ void writeFrame(QDataStream& ds, uint8_t flag, const QVariant& payload)
 {
     Var v = qVariantToVar(payload);
     Bytes body;
-    bin::writeVar(v, body);
+    impl::bin::writeVar(v, body);
     ds.setByteOrder(QDataStream::LittleEndian);
     ds << quint8(flag) << quint32(static_cast<quint32>(body.size()));
     if (!body.empty()) {

@@ -158,37 +158,61 @@ void setup(Node* config_node)
 
 // --- init ------------------------------------------------------------------
 
+static void tryLoadOnePluginSpec(Node* spec_node)
+{
+    Node* path_node = spec_node->find("path");
+    if (!path_node) {
+        return;
+    }
+    std::string path = path_node->getString("");
+    if (path.empty()) {
+        return;
+    }
+
+    if (!spec_node->get("enabled").toBool(true)) {
+        return;
+    }
+
+    int min_api = spec_node->get("min_api").toInt(0);
+
+    if (!plugin::load(path)) {
+        veLogE << "[ve::entry] Plugin load failed: " << path;
+        return;
+    }
+
+    if (min_api > 0) {
+        std::string pname;
+        if (Node* name_node = spec_node->find("name")) {
+            pname = name_node->getString("");
+        }
+        if (pname.empty()) {
+            pname = path;
+        }
+        if (!version::check(pname, min_api)) {
+            veLogE << "[ve::entry] Plugin " << pname
+                   << " version check failed (min_api=" << min_api << ")";
+        }
+    }
+}
+
 static void loadPlugins()
 {
-    Node* plugins_node = n("ve/entry")->find("plugins");
-    if (!plugins_node || plugins_node->count() == 0) return;
+    Node* entry_node = node::root()->find("ve/entry");
+    if (!entry_node) {
+        return;
+    }
+    Node* plugins_root = entry_node->find("plugins");
+    if (!plugins_root) {
+        return;
+    }
 
-    for (auto* pn : *plugins_node) {
-        std::string path = pn->get("path").toString();
-        if (path.empty()) {
-            continue;
-        }
-
-        if (!pn->get("enabled").toBool(true)) {
-            continue;
-        }
-
-        int min_api = pn->get("min_api").toInt(0);
-
-        if (!plugin::load(path)) {
-            veLogE << "[ve::entry] Plugin load failed: " << path;
-            continue;
-        }
-
-        if (min_api > 0) {
-            std::string pname = pn->get("name").toString();
-            if (pname.empty()) {
-                pname = path;
-            }
-            if (!version::check(pname, min_api)) {
-                veLogE << "[ve::entry] Plugin " << pname
-                       << " version check failed (min_api=" << min_api << ")";
-            }
+    if (plugins_root->find("path")) {
+        // "plugins": { "path": "...", "enabled": true, ... }
+        tryLoadOnePluginSpec(plugins_root);
+    } else {
+        // "plugins": [ { ... }, { ... } ] -> plugins/#0, plugins/#1, ...
+        for (Node* pn : plugins_root->children()) {
+            tryLoadOnePluginSpec(pn);
         }
     }
 }
@@ -530,17 +554,46 @@ static Vector<Info>& pluginList()
     return list;
 }
 
+#ifdef _WIN32
+static std::string dirnameOfHostExe()
+{
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    if (!n || n >= MAX_PATH) {
+        return {};
+    }
+    std::string p(buf, buf + n);
+    size_t slash = p.find_last_of("\\/");
+    if (slash == std::string::npos) {
+        return {};
+    }
+    return p.substr(0, slash);
+}
+#endif
+
 bool load(const std::string& path)
 {
     void* handle = nullptr;
 
 #ifdef _WIN32
-    handle = (void*)LoadLibraryA(path.c_str());
-    if (!handle) {
+    HMODULE mod = LoadLibraryA(path.c_str());
+    DWORD err = mod ? 0 : GetLastError();
+    if (!mod && path.find_first_of("/\\") == std::string::npos) {
+        std::string dir = dirnameOfHostExe();
+        if (!dir.empty()) {
+            std::string full = dir + '\\' + path;
+            mod = LoadLibraryA(full.c_str());
+            if (mod) {
+                err = 0;
+            }
+        }
+    }
+    if (!mod) {
         veLogE << "[ve::plugin] LoadLibrary failed: " << path
-               << " (error " << GetLastError() << ")";
+               << " (error " << err << ")";
         return false;
     }
+    handle = (void*)mod;
 #else
     handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {

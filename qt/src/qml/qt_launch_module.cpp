@@ -2,6 +2,7 @@
 #include "ve/core/loop.h"
 #include "ve/core/module.h"
 #include "ve/core/node.h"
+#include "ve/qt/qml/qml_register.h"
 
 #include <QQmlApplicationEngine>
 #include <QUrl>
@@ -50,6 +51,7 @@ private:
         }
 
         engine_ = new QQmlApplicationEngine();
+        ve::registerQuickNodeQml();
         engine_->load(QUrl(QString::fromStdString(main_qml)));
 
         if (engine_->rootObjects().isEmpty()) {

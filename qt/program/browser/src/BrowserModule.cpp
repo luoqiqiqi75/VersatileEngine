@@ -42,16 +42,17 @@ QString readQrcFile(const QString& qrcPath)
 
 VE_REGISTER_MODULE(browser, BrowserModule)
 
-BrowserModule::BrowserModule(const std::string& name) : Module(name) {}
+BrowserModule::BrowserModule(const std::string& name) : Module(name)
+{
+    QtWebView::initialize();
+}
 
 void BrowserModule::init()
 {
-    QtWebView::initialize();
-
     std::string staticRoot = node()->find("config/static_root")->getString("");
     if (!staticRoot.empty()) {
         staticRoot = resolveRelativePath(staticRoot);
-        auto* httpCfg = ve::n("ve/service/http/config");
+        auto* httpCfg = ve::n("ve/server/node/http/config");
         if (httpCfg) {
             httpCfg->at("static_root")->set(ve::Var(staticRoot));
             veLogI << "[browser] static_root -> " << staticRoot;
@@ -61,7 +62,7 @@ void BrowserModule::init()
 
     int httpPort = node()->find("config/http_port")->getInt(0);
     if (httpPort > 0) {
-        auto* httpCfg = ve::n("ve/service/http/config");
+        auto* httpCfg = ve::n("ve/server/node/http/config");
         if (httpCfg) {
             httpCfg->at("port")->set(ve::Var(httpPort));
         }
@@ -69,7 +70,7 @@ void BrowserModule::init()
 
     int wsPort = node()->find("config/ws_port")->getInt(0);
     if (wsPort > 0) {
-        auto* wsCfg = ve::n("ve/service/ws/config");
+        auto* wsCfg = ve::n("ve/server/node/ws/config");
         if (wsCfg) {
             wsCfg->at("port")->set(ve::Var(wsPort));
         }
@@ -82,27 +83,18 @@ void BrowserModule::ready()
     if (hp <= 0) {
         hp = 8080;
     }
-    if (ve::Node* hr = ve::node::root()->find("ve/service/http/runtime/port")) {
-        if (hr->hasValue()) {
-            hp = hr->getInt(hp);
-        }
-    }
+    hp = ve::n("ve/server/node/http/runtime/port")->getInt(hp);
 
     int wp = node()->find("config/ws_port")->getInt(8081);
     if (wp <= 0) {
         wp = 8081;
     }
-    if (ve::Node* wr = ve::node::root()->find("ve/service/ws/runtime/port")) {
-        if (wr->hasValue()) {
-            wp = wr->getInt(wp);
-        }
-    }
+    wp = ve::n("ve/server/node/ws/runtime/port")->getInt(wp);
 
     const std::string home = std::string("http://127.0.0.1:") + std::to_string(hp) + "/";
     node()->at("runtime/home_url")->set(ve::Var(home));
     veLogI << "[browser] ready  home_url=" << home;
 
-    // Read veservice.js from QRC, bake in WS URL, store in node tree for QML injection
     QString jsSrc = readQrcFile(QStringLiteral(":/js/veservice.js"));
     if (!jsSrc.isEmpty()) {
         QString preamble = QStringLiteral("var _ve_ws_url = \"ws://127.0.0.1:%1\";\n").arg(wp);

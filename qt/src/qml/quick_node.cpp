@@ -126,7 +126,7 @@ QVariant QuickNode::value() const
     if (!_p->n) {
         return {};
     }
-    return qt::varToQVariant(_p->n->value());
+    return qt::varToQVariant(_p->n->get());
 }
 
 void QuickNode::setValue(const QVariant& value)
@@ -138,8 +138,8 @@ void QuickNode::setValue(const QVariant& value)
 
 void QuickNode::trigger()
 {
-    if (_p->n && _p->n->hasValue()) {
-        emit changed(qt::varToQVariant(_p->n->value()));
+    if (_p->n) {
+        emit changed(qt::varToQVariant(_p->n->get()));
     }
 }
 
@@ -178,7 +178,7 @@ QVariant QuickNode::toVar(const QString& subPath) const
     if (!child) {
         return {};
     }
-    return qt::varToQVariant(child->value());
+    return qt::varToQVariant(child->get());
 }
 
 void QuickNode::fromProperties(QObject* obj)
@@ -208,7 +208,7 @@ void QuickNode::toProperties(QObject* obj) const
         if (nm.empty()) {
             continue;
         }
-        obj->setProperty(nm.c_str(), qt::varToQVariant(child->value()));
+        obj->setProperty(nm.c_str(), qt::varToQVariant(child->get()));
     }
 }
 
@@ -263,7 +263,7 @@ QVariant QuickRootNode::get(const QString& path) const
     if (!child) {
         return {};
     }
-    return qt::varToQVariant(child->value());
+    return qt::varToQVariant(child->get());
 }
 
 QVariant QuickRootNode::get(const QString& path, const QVariant& default_var) const
@@ -272,10 +272,10 @@ QVariant QuickRootNode::get(const QString& path, const QVariant& default_var) co
         return default_var;
     }
     Node* child = _p->n->find(toUtf8(path));
-    if (!child || !child->hasValue()) {
+    if (!child || child->get().isNull()) {
         return default_var;
     }
-    return qt::varToQVariant(child->value());
+    return qt::varToQVariant(child->get());
 }
 
 void QuickRootNode::set(const QString& path, const QVariant& var) const
@@ -292,8 +292,8 @@ void QuickRootNode::trigger(const QString& path) const
         return;
     }
     Node* child = _p->n->find(toUtf8(path));
-    if (child && child->hasValue()) {
-        child->set(child->value());
+    if (child) {
+        child->set(child->get());
     }
 }
 

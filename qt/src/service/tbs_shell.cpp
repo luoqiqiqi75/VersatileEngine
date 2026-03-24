@@ -90,7 +90,7 @@ protected:
                 error(QStringLiteral("tbs.client call failed or timed out"));
                 return;
             }
-            output(QString::fromStdString(json::stringify(resp)));
+            output(QString::fromStdString(impl::json::stringify(resp)));
             return;
         }
         error(QStringLiteral("unknown tbs.client subcommand"));

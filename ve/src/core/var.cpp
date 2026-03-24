@@ -171,7 +171,7 @@ std::string Var::toString(const std::string& def) const {
         oss << _storage._pointer;
         return oss.str();
     } else if (_type == NONE) {
-        return "null";
+        return def;
     } else if (_type == BIN) {
         const auto& bytes = *_storage._bin;
         std::ostringstream oss;

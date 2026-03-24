@@ -117,7 +117,13 @@ template<typename T> inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> i
 VE_API std::ostream& operator<< (std::ostream& os, ve::Module::State s);
 
 #define VE_REGISTER_MODULE(Key, Class, ...) \
-    VE_AUTO_RUN(ve::registerModule<Class>(#Key, 100, __VA_ARGS__);)
+    namespace { int PRIVATE_VE_AUTO_RUN_FUNC() { \
+        ve::registerModule<Class>(#Key, 100, ## __VA_ARGS__); \
+        return 0; \
+    } int PRIVATE_VE_AUTO_RUN_VAR = PRIVATE_VE_AUTO_RUN_FUNC(); /* NOLINT */ }
 
 #define VE_REGISTER_PRIORITY_MODULE(Key, Class, ...) \
-    VE_AUTO_RUN(ve::registerModule<Class>(#Key, __VA_ARGS__);)
+    namespace { int PRIVATE_VE_AUTO_RUN_FUNC() { \
+        ve::registerModule<Class>(#Key, __VA_ARGS__); \
+        return 0; \
+    } int PRIVATE_VE_AUTO_RUN_VAR = PRIVATE_VE_AUTO_RUN_FUNC(); /* NOLINT */ }

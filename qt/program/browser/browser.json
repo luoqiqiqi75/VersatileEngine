@@ -3,8 +3,8 @@
     "entry": {
       "verbose": false,
       "plugins": [
-        { "path": "libveqt" },
-        { "path": "libveqtbrowser" }
+        { "path": "libveqt.dll" },
+        { "path": "veqtbrowser.dll" }
       ]
     },
     "core": {
@@ -12,10 +12,45 @@
       "config": {
         "log": {
           "level": "info",
-          "app": "veQtBrowser"
+          "app": "ve"
         },
         "rescue": {
           "enabled": true
+        }
+      }
+    },
+    "server": {
+      "priority": 50,
+      "node": {
+        "http": {
+          "enable": true,
+          "config": {
+            "port": 8080,
+            "static_root": "./webapp",
+            "default_file": "index.html"
+          }
+        },
+        "ws": {
+          "enable": true,
+          "config": {
+            "port": 8081
+          }
+        }
+      },
+      "terminal": {
+        "repl": {
+          "enable": true,
+          "config": {
+            "port": 5061
+          }
+        }
+      },
+      "bin": {
+        "tcp": {
+          "enable": false,
+          "config": {
+            "port": 5065
+          }
         }
       }
     },
@@ -32,18 +67,19 @@
           "bridge_imol_log_signals": true,
           "bridge_imol_log_export": true
         }
+      },
+      "launch": {
+        "priority": 6,
+        "config": {
+          "type": "qml",
+          "main_qml": "qrc:/qml/Main.qml"
+        }
       }
-    },
-    "service": {
-      "http": { "config": { "port": 8080 } },
-      "ws": { "config": { "port": 8081 } },
-      "terminal": { "config": { "port": 5061 } },
-      "tcp_bin": { "enabled": false }
     }
   },
   "browser": {
     "config": {
-      "static_root": "./web/",
+      "static_root": "./webapp",
       "http_port": 8080,
       "ws_port": 8081
     }

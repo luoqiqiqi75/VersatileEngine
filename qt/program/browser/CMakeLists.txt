@@ -2,9 +2,10 @@
 # qt/program/browser/CMakeLists.txt - veqtbrowser module DLL
 # =============================================================================
 #
-# VE_QT_BROWSER_DEPLOY_WEBAPP (default ON): POST_BUILD copies webapp/ + veservice.js next to the DLL.
+# Loaded by ve.exe via ve/entry/plugins. QML is started by ve.qt.launch (libveqt).
+# VE_QT_BROWSER_DEPLOY_WEBAPP (default ON): POST_BUILD copies res/webapp + veservice.js next to the DLL.
 
-option(VE_QT_BROWSER_DEPLOY_WEBAPP "Copy built-in webapp/ next to veqtbrowser on each build" ON)
+option(VE_QT_BROWSER_DEPLOY_WEBAPP "Copy built-in res/webapp/ next to veqtbrowser on each build" ON)
 
 set(_BROWSER_SOURCES
     src/BrowserModule.cpp
@@ -12,7 +13,7 @@ set(_BROWSER_SOURCES
     res/browser.qrc
 )
 
-file(GLOB_RECURSE _BROWSER_QML qml/*.qml)
+file(GLOB_RECURSE _BROWSER_QML res/qml/*.qml)
 
 add_library(veqtbrowser SHARED ${_BROWSER_SOURCES} ${_BROWSER_QML})
 
@@ -28,7 +29,7 @@ if(VE_QT_BROWSER_DEPLOY_WEBAPP)
             ${CMAKE_CURRENT_SOURCE_DIR}/browser.json
             $<TARGET_FILE_DIR:veqtbrowser>/browser.json
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/webapp
+            ${CMAKE_CURRENT_SOURCE_DIR}/res/webapp
             $<TARGET_FILE_DIR:veqtbrowser>/webapp
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/ve/js/veservice.js

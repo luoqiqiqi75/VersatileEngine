@@ -277,9 +277,12 @@ static void domToNode(simdjson::ondemand::value val, Node* node)
 
             auto ct = child_val.type().value();
             if (ct == simdjson::ondemand::json_type::array) {
+                // JSON object keys are unique: one child named `key`, array elements as
+                // anonymous children underneath (e.g. plugins/#0/path, not plugins#0/path).
+                auto* container = node->append(key);
                 for (auto elem : child_val.get_array()) {
-                    auto* c = node->append(key, node->count(key));
-                    domToNode(elem.value(), c);
+                    auto* slot = container->append();
+                    domToNode(elem.value(), slot);
                 }
             } else {
                 auto* c = node->append(key);

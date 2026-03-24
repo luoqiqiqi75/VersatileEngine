@@ -1,7 +1,7 @@
 <RCC>
     <qresource prefix="/">
-        <file alias="qml/Main.qml">../qml/Main.qml</file>
-        <file alias="qml/BrowserView.qml">../qml/BrowserView.qml</file>
+        <file alias="qml/Main.qml">qml/Main.qml</file>
+        <file alias="qml/BrowserView.qml">qml/BrowserView.qml</file>
         <file alias="js/veservice.js">../../../../ve/js/veservice.js</file>
     </qresource>
 </RCC>
