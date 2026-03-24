@@ -35,8 +35,8 @@ struct VE_API TerminalStdioClient
     explicit TerminalStdioClient(Node* root = nullptr);
     ~TerminalStdioClient();
 
-    // Process one stdin command roundtrip (non-blocking tick):
-    //   1 => continue
+    // Run the stdio REPL:
+    //   1 => continue pumping (fallback cooked stdin mode)
     //   0 => stop (quit/exit/EOF/requestStop)
     //  -1 => I/O error
     int  run();

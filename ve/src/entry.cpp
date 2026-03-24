@@ -132,8 +132,7 @@ void setup(const Options& options)
 
     if (n("ve/entry")->get("verbose").toBool(options.verbose)) g.options.verbose = true;
     if (options.terminal) {
-        n("ve/service/terminal/enabled")->set(Var(true));
-        n("ve/service/terminal/config/stdio/enabled")->set(Var(true));
+        n("ve/client/terminal/stdio/enabled")->set(Var(true));
     }
 
     g.state = SETUP;

@@ -70,7 +70,7 @@ enum State : int {
 struct Options {
     std::string config_file;
     bool verbose      = false;
-    // Request terminal stdio mode via ve/service/terminal/config/stdio/enabled.
+    // Request terminal stdio mode via ve/client/terminal/stdio/enabled.
     bool terminal     = false;
     int  pool_threads = 4;
     int    argc = 0;

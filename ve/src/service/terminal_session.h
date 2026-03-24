@@ -20,6 +20,7 @@ public:
     std::string execute(const std::string& line);
     std::string prompt() const;
     std::vector<std::string> complete(const std::string& partial);
+    const std::vector<std::string>& history() const;
 
     Node* root() const;
     Node* current() const;

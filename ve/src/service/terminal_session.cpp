@@ -31,17 +31,6 @@ static std::vector<std::string> split(const std::string& s)
     return tokens;
 }
 
-static std::string commonPrefix(const std::vector<std::string>& v) {
-    if (v.empty()) return {};
-    std::string p = v[0];
-    for (size_t i = 1; i < v.size(); ++i) {
-        size_t j = 0;
-        while (j < p.size() && j < v[i].size() && p[j] == v[i][j]) ++j;
-        p.resize(j);
-    }
-    return p;
-}
-
 static const std::vector<std::string>& sessionCommandNames()
 {
     static std::vector<std::string> names = {
@@ -60,6 +49,67 @@ static std::vector<std::string> allCommandNames()
     std::sort(names.begin(), names.end());
     names.erase(std::unique(names.begin(), names.end()), names.end());
     return names;
+}
+
+static std::vector<std::string> completeNodePath(Node* root, Node* cur, const std::string& token)
+{
+    if (!root || !cur) {
+        return {};
+    }
+
+    bool absolute = !token.empty() && token[0] == '/';
+    size_t slash = token.find_last_of('/');
+    std::string parentPath;
+    std::string leafPrefix;
+
+    if (slash == std::string::npos) {
+        leafPrefix = token;
+    } else {
+        parentPath = token.substr(0, slash);
+        leafPrefix = token.substr(slash + 1);
+    }
+
+    Node* base = absolute ? root : cur;
+    if (!parentPath.empty()) {
+        if (absolute) {
+            std::string rel = parentPath;
+            if (!rel.empty() && rel[0] == '/') {
+                rel.erase(rel.begin());
+            }
+            base = rel.empty() ? root : root->find(rel, false);
+        } else {
+            base = cur->find(parentPath, false);
+        }
+    }
+    if (!base) {
+        return {};
+    }
+
+    std::string displayPrefix;
+    if (slash != std::string::npos) {
+        displayPrefix = token.substr(0, slash + 1);
+    } else if (absolute) {
+        displayPrefix = "/";
+    }
+
+    std::vector<std::string> matches;
+    for (const auto& name : base->childNames()) {
+        if (name.size() < leafPrefix.size()) {
+            continue;
+        }
+        if (name.compare(0, leafPrefix.size(), leafPrefix) != 0) {
+            continue;
+        }
+
+        std::string candidate = displayPrefix + name;
+        if (Node* child = base->child(name, 0)) {
+            if (child->count() > 0) {
+                candidate.push_back('/');
+            }
+        }
+        matches.push_back(std::move(candidate));
+    }
+    return matches;
 }
 
 // ============================================================================
@@ -302,21 +352,18 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
     bool completingCmd = (wordStart == std::string::npos);
     std::string prefix = completingCmd ? partial : partial.substr(wordStart + 1);
 
-    std::vector<std::string> matches;
     if (completingCmd) {
+        std::vector<std::string> matches;
         for (auto& name : allCommandNames())
             if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0)
                 matches.push_back(name);
+        return matches;
     } else {
-        if (_p->cur) {
-            for (auto& name : _p->cur->childNames())
-                if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0)
-                    matches.push_back(name);
-        }
+        return completeNodePath(_p->root, _p->cur, prefix);
     }
-
-    return matches;
 }
+
+const std::vector<std::string>& TerminalSession::history() const { return _p->history; }
 
 Node* TerminalSession::root() const { return _p->root; }
 Node* TerminalSession::current() const { return _p->cur; }

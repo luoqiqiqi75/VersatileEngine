@@ -38,7 +38,7 @@ void ClientModule::ready()
             }
         );
         node()->at("terminal/stdio/runtime/stdio")->set(Var(true));
-        veLogI << "[ve.service.terminal] stdio REPL enabled";
+        veLogI << "[ve/client/terminal/stdio] stdio REPL enabled";
     } else {
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
     }
