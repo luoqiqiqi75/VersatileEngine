@@ -136,6 +136,7 @@ public:
                 resetHistoryBrowse();
                 clearLine();
                 out.output = "^C\n";
+                prefixOutputIfControlled(out.output);
                 out.prompt_on_new_line = true;
                 return out;
 
@@ -209,6 +210,15 @@ public:
     }
 
 private:
+    // CONTROLLED mode keeps prompt+input on one terminal row (\r redraw). Any printed
+    // output must start with a newline so it does not append to that row (e.g. ls).
+    void prefixOutputIfControlled(std::string& text) const
+    {
+        if (mode_ == Mode::CONTROLLED && !text.empty() && text.front() != '\n') {
+            text.insert(text.begin(), '\n');
+        }
+    }
+
     static std::string commonPrefix(const std::vector<std::string>& items)
     {
         if (items.empty()) {
@@ -389,6 +399,7 @@ private:
         std::string result = session_ ? session_->execute(line) : std::string{};
         if (!result.empty() && result[0] == '\x04') {
             out.output = "bye\n";
+            prefixOutputIfControlled(out.output);
             out.disconnect = true;
             return out;
         }
@@ -398,6 +409,7 @@ private:
             if (out.output.back() != '\n') {
                 out.output.push_back('\n');
             }
+            prefixOutputIfControlled(out.output);
         }
 
         out.prompt_on_new_line = true;

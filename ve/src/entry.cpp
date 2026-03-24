@@ -8,11 +8,8 @@
 #include "ve/core/log.h"
 
 #include <fstream>
-#include <algorithm>
-#include <condition_variable>
 #include <iostream>
 #include <queue>
-#include <string_view>
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -20,6 +17,8 @@
 #else
 #  include <dlfcn.h>
 #endif
+
+#define VE_MIN_API 0
 
 namespace ve {
 
@@ -69,6 +68,14 @@ bool endsWith(const std::string& s, const std::string& suffix)
     if (suffix.size() > s.size()) return false;
     return std::equal(suffix.rbegin(), suffix.rend(), s.rbegin(),
         [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+}
+
+/// Avoid treating the next argv after `-r` as host:port when it is clearly a config or plugin path
+/// (e.g. `ve.exe -r ve.json` must still load ve.json as config).
+bool looksLikeConfigOrPluginArg(std::string_view arg)
+{
+    std::string s(arg);
+    return endsWith(s, ".json") || endsWith(s, ".dll") || endsWith(s, ".so") || endsWith(s, ".dylib");
 }
 
 bool parseHostPort(std::string_view input, std::string& host, int& port)
@@ -216,7 +223,7 @@ static void tryLoadOnePluginSpec(Node* spec_node)
         return;
     }
 
-    if (min_api > 0) {
+    if (min_api > VE_MIN_API) {
         std::string pname;
         if (Node* name_node = spec_node->find("name")) {
             pname = name_node->getString("");
@@ -269,8 +276,6 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
         if (mn) {
             enabled = mn->get("enabled").toBool(true);
             priority = mn->get("priority").toInt(priority);
-        } else if (key == "ve.client.terminal.tcp") {
-            enabled = false;
         } else if (key.rfind("ve.service.", 0) == 0) {
             // Network service modules are opt-in: require a matching subtree in config (e.g. ve.json).
             enabled = false;
@@ -538,15 +543,18 @@ int exec(int argc, char** argv)
         } else if (arg == "--remote" || arg == "--remote-terminal" || arg == "-r") {
             opts.remote_terminal = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
-                std::string host = opts.remote_host;
-                int port = opts.remote_port;
-                if (!parseHostPort(argv[i + 1], host, port)) {
-                    std::cerr << "Invalid remote endpoint: " << argv[i + 1] << '\n';
-                    return 2;
+                const char* next = argv[i + 1];
+                if (!looksLikeConfigOrPluginArg(next)) {
+                    std::string host = opts.remote_host;
+                    int port = opts.remote_port;
+                    if (!parseHostPort(next, host, port)) {
+                        std::cerr << "Invalid remote endpoint: " << next << '\n';
+                        return 2;
+                    }
+                    opts.remote_host = std::move(host);
+                    opts.remote_port = port;
+                    ++i;
                 }
-                opts.remote_host = std::move(host);
-                opts.remote_port = port;
-                ++i;
             }
         } else if (arg.rfind("--remote=", 0) == 0) {
             opts.remote_terminal = true;

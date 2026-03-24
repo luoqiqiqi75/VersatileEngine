@@ -47,6 +47,7 @@ public:
     using Module::Module;
 
 private:
+    void init() override;
     void ready() override;
     void deinit() override;
 };
@@ -73,6 +74,13 @@ template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server,
     }
 }
 
+void ServerModule::init() {
+    const bool terminal_client_stdio = n("ve/client/terminal/stdio/enabled")->getBool(false);
+    const bool terminal_client_tcp = n("ve/client/terminal/tcp/enabled")->getBool(false);
+    if (terminal_client_stdio || terminal_client_tcp) {
+        n("ve/server/terminal/repl/enable")->set(false);
+    }
+}
 
 void ServerModule::ready() {
     if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 8080);
