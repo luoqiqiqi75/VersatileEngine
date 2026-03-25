@@ -60,25 +60,6 @@ struct CopyMatchState
     std::unordered_set<Node*> matched;
 };
 
-static Node* _cloneSubtree(const Node* src)
-{
-    if (!src) return nullptr;
-
-    auto* clone = new Node(src->name());
-    if (!src->get().isNull())
-        clone->update(src->get());
-
-    auto src_children = src->children();
-    if (!src_children.empty()) {
-        Node::Nodes batch;
-        batch.reserve(src_children.size());
-        for (const auto* src_child : src_children)
-            batch.push_back(_cloneSubtree(src_child));
-        clone->insert(batch);
-    }
-    return clone;
-}
-
 static void _bucket_children(const Node::Nodes& children, CopyMatchState& state)
 {
     for (auto* child : children) {
@@ -501,33 +482,36 @@ void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto
     CopyMatchState copy_state;
     _bucket_children(dst_children, copy_state);
 
-    Nodes pending_nodes;
-    pending_nodes.reserve(src_children.size());
+    Vector<const Node*> pending_sources;
+    if (auto_insert) pending_sources.reserve(src_children.size());
+
+    auto flush_pending_before = [&](Node* anchor) {
+        if (pending_sources.empty()) return;
+        for (const auto* pending_src : pending_sources) {
+            auto* inserted = new Node(pending_src->name());
+            int insert_index = anchor ? indexOf(anchor) : count();
+            if (insert_index < 0) insert_index = count();
+            if (!insert(inserted, insert_index)) {
+                delete inserted;
+                continue;
+            }
+            inserted->copy(pending_src, auto_insert, auto_remove, auto_update);
+        }
+        pending_sources.clear();
+    };
 
     for (const auto* src_child : src_children) {
         auto* match = _take_copy_match(src_child, copy_state);
         if (!match) {
-            if (auto_insert)
-                pending_nodes.push_back(_cloneSubtree(src_child));
+            if (auto_insert) pending_sources.push_back(src_child);
             continue;
         }
 
-        if (!pending_nodes.empty()) {
-            for (auto* pending : pending_nodes) {
-                int insert_index = indexOf(match);
-                if (insert_index < 0) insert_index = count();
-                insert(pending, insert_index);
-            }
-            pending_nodes.clear();
-        }
-
+        flush_pending_before(match);
         match->copy(src_child, auto_insert, auto_remove, auto_update);
     }
 
-    if (auto_insert) {
-        for (auto* pending : pending_nodes)
-            insert(pending);
-    }
+    flush_pending_before(nullptr);
 
     if (auto_update) update(other->get());
     else             set(other->get());

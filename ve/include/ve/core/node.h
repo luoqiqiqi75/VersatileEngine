@@ -112,7 +112,9 @@ public:
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
-    // Sync this node from another node. Existing children are reused when possible.
+    // Sync this node from another node using key/path semantics.
+    // Named-sibling insertion order is not part of copy semantics; same-name overlap
+    // order and anonymous occurrence are matched when reusing children.
     // Default value sync uses set() so copy always emits NODE_CHANGED.
     // auto_update=true switches to update() to suppress unchanged value signals.
     void  copy(const Node* other, bool auto_insert = true, bool auto_remove = false, bool auto_update = false);
