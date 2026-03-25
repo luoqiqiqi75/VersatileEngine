@@ -60,12 +60,6 @@ struct CopyMatchState
     std::unordered_set<Node*> matched;
 };
 
-struct PendingInsertBatch
-{
-    Node*      anchor = nullptr;
-    Node::Nodes nodes;
-};
-
 static Node* _cloneSubtree(const Node* src)
 {
     if (!src) return nullptr;
@@ -483,75 +477,60 @@ void Node::clear(bool auto_delete)
     }
 }
 
-void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto_replace)
+void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto_update)
 {
     if (!other || other == this) return;
 
-    const Var& other_value = other->get();
-    if (auto_replace && !(get().isNull() && other_value.isNull()))
-        update(other_value);
-
     auto src_children = other->children();
-    if (src_children.empty()) {
-        if (auto_remove) clear();
-        return;
-    }
-
     auto dst_children = children();
-    if (dst_children.empty()) {
-        if (!auto_insert) return;
 
-        Nodes batch;
-        batch.reserve(src_children.size());
+    if (auto_remove && !dst_children.empty()) {
+        CopyMatchState remove_state;
+        _bucket_children(dst_children, remove_state);
         for (const auto* src_child : src_children)
-            batch.push_back(_cloneSubtree(src_child));
-        insert(batch);
-        return;
+            (void)_take_copy_match(src_child, remove_state);
+
+        for (int i = dst_children.sizeAsInt() - 1; i >= 0; --i) {
+            auto* dst_child = dst_children[i];
+            if (remove_state.matched.count(dst_child) == 0)
+                remove(dst_child);
+        }
     }
 
-    CopyMatchState match_state;
-    _bucket_children(dst_children, match_state);
+    dst_children = children();
+    CopyMatchState copy_state;
+    _bucket_children(dst_children, copy_state);
 
-    Vector<PendingInsertBatch> pending_batches;
     Nodes pending_nodes;
     pending_nodes.reserve(src_children.size());
 
     for (const auto* src_child : src_children) {
-        auto* match = _take_copy_match(src_child, match_state);
-        if (match) {
-            if (!pending_nodes.empty()) {
-                PendingInsertBatch batch;
-                batch.anchor = match;
-                batch.nodes = std::move(pending_nodes);
-                pending_batches.push_back(std::move(batch));
-                pending_nodes = {};
-            }
-            match->copy(src_child, auto_insert, auto_remove, auto_replace);
+        auto* match = _take_copy_match(src_child, copy_state);
+        if (!match) {
+            if (auto_insert)
+                pending_nodes.push_back(_cloneSubtree(src_child));
             continue;
         }
 
-        if (auto_insert) pending_nodes.push_back(_cloneSubtree(src_child));
+        if (!pending_nodes.empty()) {
+            for (auto* pending : pending_nodes) {
+                int insert_index = indexOf(match);
+                if (insert_index < 0) insert_index = count();
+                insert(pending, insert_index);
+            }
+            pending_nodes.clear();
+        }
+
+        match->copy(src_child, auto_insert, auto_remove, auto_update);
     }
 
-    if (!pending_nodes.empty()) {
-        PendingInsertBatch batch;
-        batch.nodes = std::move(pending_nodes);
-        pending_batches.push_back(std::move(batch));
+    if (auto_insert) {
+        for (auto* pending : pending_nodes)
+            insert(pending);
     }
 
-    for (auto& batch : pending_batches) {
-        if (batch.nodes.empty()) continue;
-        int index = batch.anchor ? indexOf(batch.anchor) : count();
-        if (index < 0) index = count();
-        insert(batch.nodes, index);
-    }
-
-    if (!auto_remove) return;
-
-    for (auto* dst_child : dst_children) {
-        if (match_state.matched.count(dst_child) == 0)
-            remove(dst_child);
-    }
+    if (auto_update) update(other->get());
+    else             set(other->get());
 }
 
 // ============================================================================
@@ -844,7 +823,7 @@ Node* Node::set(Var&& v)
 
 bool Node::update(const Var& v)
 {
-    if (_p->value && *_p->value == v) return false;
+    if (value() == v) return false;
     set(v);
     return true;
 }

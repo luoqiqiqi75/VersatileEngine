@@ -12,6 +12,7 @@ struct Pipeline::Private
     State           state = IDLE;
     int             stepIndex = -1;
     Var             input;
+    Result          lastResult = Result::SUCCESS;
     ResultHandler   handler;
 };
 
@@ -49,6 +50,7 @@ Result Pipeline::start(const Var& input)
     _p->state = RUNNING;
     _p->input = input;
     _p->stepIndex = 0;
+    _p->lastResult = Result::SUCCESS;
 
     _p->queue.clear();
     for (auto& s : _p->steps)
@@ -56,18 +58,17 @@ Result Pipeline::start(const Var& input)
 
     if (_p->queue.empty()) {
         complete(DONE, CMD_DONE, Result::SUCCESS);
-        return Result::SUCCESS;
+        return _p->lastResult;
     }
 
     runNext();
 
     if (_p->state == ERRORED) {
-        auto* r = _p->input.customPtr<Result>();
-        return r ? *r : Result::FAIL;
+        return _p->lastResult;
     }
     if (_p->state == RUNNING || _p->state == PAUSED)
         return Result::ACCEPT;
-    return Result::SUCCESS;
+    return _p->lastResult;
 }
 
 void Pipeline::pause()
@@ -179,10 +180,12 @@ void Pipeline::handleResult(const Result& result)
 void Pipeline::complete(State finalState, SignalT signal, const Result& result)
 {
     _p->state = finalState;
+    _p->lastResult = result;
     _p->queue.clear();
 
-    trigger<CMD_DONE>(Var::custom(result));
-    if (signal == CMD_ERROR)
+    if (signal == CMD_DONE)
+        trigger<CMD_DONE>(Var::custom(result));
+    else if (signal == CMD_ERROR)
         trigger<CMD_ERROR>(Var::custom(result));
 
     if (_p->handler)

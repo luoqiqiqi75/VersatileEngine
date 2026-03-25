@@ -438,7 +438,6 @@ VE_TEST(node_schema_json_import_merge_preserves_identity) {
     schema::ImportOptions options;
     options.auto_insert = true;
     options.auto_remove = false;
-    options.auto_replace = true;
 
     VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"keep\":2,\"add\":3}", options));
     VE_ASSERT_EQ(root.child("keep"), keep);
@@ -461,22 +460,28 @@ VE_TEST(node_schema_json_import_auto_remove) {
     VE_ASSERT_EQ(root.child("keep")->getInt(), 5);
 }
 
-VE_TEST(node_schema_json_import_auto_replace_false) {
+VE_TEST(node_schema_json_import_auto_update_suppresses_equal_signal) {
     Node root("root");
     root.set(9);
     Node* keep = root.append("keep");
     keep->set(1);
 
-    schema::ImportOptions options;
-    options.auto_replace = false;
+    int root_changed = 0;
+    int keep_changed = 0;
+    root.connect<Node::NODE_CHANGED>(&root, [&](const Var&, const Var&) { ++root_changed; });
+    keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++keep_changed; });
 
-    VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"_value\":5,\"keep\":2,\"add\":3}", options));
+    schema::ImportOptions options;
+    options.auto_update = true;
+
+    VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"_value\":9,\"keep\":1}", options));
     VE_ASSERT_EQ(root.getInt(), 9);
     VE_ASSERT_EQ(keep->getInt(), 1);
-    VE_ASSERT_EQ(root.child("add")->getInt(), 3);
+    VE_ASSERT_EQ(root_changed, 0);
+    VE_ASSERT_EQ(keep_changed, 0);
 }
 
-VE_TEST(node_schema_json_import_signal_order_current_before_children) {
+VE_TEST(node_schema_json_import_signal_order_children_before_current) {
     Node root("root");
     Vector<std::string> events;
 
@@ -491,8 +496,8 @@ VE_TEST(node_schema_json_import_signal_order_current_before_children) {
     VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"child\":2,\"_value\":1}", options));
 
     VE_ASSERT_EQ(events.sizeAsInt(), 2);
-    VE_ASSERT_EQ(events[0], "changed");
-    VE_ASSERT_EQ(events[1], "added:child");
+    VE_ASSERT_EQ(events[0], "added:child");
+    VE_ASSERT_EQ(events[1], "changed");
 }
 
 VE_TEST(node_schema_json_export_auto_ignore) {

@@ -432,6 +432,23 @@ VE_TEST(node_copy_preserves_extra_children_when_auto_remove_false) {
     VE_ASSERT(dst.has(extra));
 }
 
+VE_TEST(node_copy_auto_insert_false_does_not_add_missing_children) {
+    Node src("src");
+    src.append("keep")->set(7);
+    src.append("add")->set(3);
+
+    Node dst("dst");
+    Node* keep = dst.append("keep");
+    keep->set(-1);
+
+    dst.copy(&src, false, false);
+
+    VE_ASSERT_EQ(dst.count(), 1);
+    VE_ASSERT_EQ(dst.child("keep"), keep);
+    VE_ASSERT_EQ(keep->getInt(), 7);
+    VE_ASSERT(!dst.has("add"));
+}
+
 VE_TEST(node_copy_removes_extra_children_when_auto_remove_true) {
     Node src("src");
     src.append("keep")->set(7);
@@ -490,22 +507,50 @@ VE_TEST(node_copy_matches_anonymous_children_by_occurrence) {
     VE_ASSERT_EQ(anon1->getInt(), 3);
 }
 
-VE_TEST(node_copy_preserves_existing_values_when_auto_replace_false) {
+VE_TEST(node_copy_default_set_emits_changed_even_if_equal) {
     Node src("src");
     src.set(9);
     src.append("keep")->set(7);
-    src.append("add")->set(3);
 
     Node dst("dst");
-    dst.set(1);
+    dst.set(9);
     Node* keep = dst.append("keep");
-    keep->set(2);
+    keep->set(7);
 
-    dst.copy(&src, true, false, false);
+    int root_changed = 0;
+    int keep_changed = 0;
+    dst.connect<Node::NODE_CHANGED>(&dst, [&](const Var&, const Var&) { ++root_changed; });
+    keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++keep_changed; });
 
-    VE_ASSERT_EQ(dst.getInt(), 1);
-    VE_ASSERT_EQ(keep->getInt(), 2);
-    VE_ASSERT_EQ(dst.child("add")->getInt(), 3);
+    dst.copy(&src);
+
+    VE_ASSERT_EQ(root_changed, 1);
+    VE_ASSERT_EQ(keep_changed, 1);
+    VE_ASSERT_EQ(dst.getInt(), 9);
+    VE_ASSERT_EQ(keep->getInt(), 7);
+}
+
+VE_TEST(node_copy_auto_update_suppresses_equal_value_signal) {
+    Node src("src");
+    src.set(9);
+    src.append("keep")->set(7);
+
+    Node dst("dst");
+    dst.set(9);
+    Node* keep = dst.append("keep");
+    keep->set(7);
+
+    int root_changed = 0;
+    int keep_changed = 0;
+    dst.connect<Node::NODE_CHANGED>(&dst, [&](const Var&, const Var&) { ++root_changed; });
+    keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++keep_changed; });
+
+    dst.copy(&src, true, false, true);
+
+    VE_ASSERT_EQ(root_changed, 0);
+    VE_ASSERT_EQ(keep_changed, 0);
+    VE_ASSERT_EQ(dst.getInt(), 9);
+    VE_ASSERT_EQ(keep->getInt(), 7);
 }
 
 // ============================================================================

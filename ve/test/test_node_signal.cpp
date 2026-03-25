@@ -330,16 +330,19 @@ VE_TEST(node_signal_copy_triggers_added_and_removed) {
     std::string removed_key;
     int added_overlap = -1;
     int removed_overlap = -1;
+    Vector<std::string> events;
 
     dst.connect(Node::NODE_ADDED, &dst, [&](const std::string& key, int overlap) {
         ++added;
         added_key = key;
         added_overlap = overlap;
+        events.push_back("added:" + key);
     });
     dst.connect(Node::NODE_REMOVED, &dst, [&](const std::string& key, int overlap) {
         ++removed;
         removed_key = key;
         removed_overlap = overlap;
+        events.push_back("removed:" + key);
     });
 
     dst.copy(&src, true, true);
@@ -350,6 +353,9 @@ VE_TEST(node_signal_copy_triggers_added_and_removed) {
     VE_ASSERT_EQ(removed, 1);
     VE_ASSERT_EQ(removed_key, "extra");
     VE_ASSERT_EQ(removed_overlap, 0);
+    VE_ASSERT_EQ(events.sizeAsInt(), 2);
+    VE_ASSERT_EQ(events[0], "removed:extra");
+    VE_ASSERT_EQ(events[1], "added:head");
 }
 
 VE_TEST(node_signal_multiple_inserts_fires) {

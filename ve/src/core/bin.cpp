@@ -283,7 +283,7 @@ static void readNode(const uint8_t*& ptr, const uint8_t* end, Node* node)
         if (!ptr || !canRead(ptr, end, nameLen)) { ptr = nullptr; return; }
         std::string name(reinterpret_cast<const char*>(ptr), nameLen);
         ptr += nameLen;
-        auto* c = node->append(name, name.empty() ? 0 : node->count(name));
+        auto* c = node->append(name);
         readNode(ptr, end, c);
         if (!ptr) return;
     }
@@ -322,7 +322,7 @@ bool importTree(Node* node, const uint8_t* data, size_t len, const schema::Impor
     readNode(ptr, end, &parsed);
     if (!ptr || ptr > end) return false;
 
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_replace);
+    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
     return true;
 }
 

@@ -5,7 +5,7 @@
 message(STATUS "")
 message(STATUS "[ve_test]  core unit tests")
 
-file(GLOB_RECURSE _TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+file(GLOB_RECURSE _TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 
 add_executable(ve_test ${_TEST_SOURCES})
 

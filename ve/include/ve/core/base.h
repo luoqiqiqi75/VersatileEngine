@@ -606,6 +606,8 @@ struct ResultT : std::pair<int, T>
     };
 
     using BaseT::BaseT;
+    ResultT(Code code) : BaseT(static_cast<int>(code), {}) {}
+    ResultT(int code) : BaseT(code, {}) {}
     ResultT(bool ok, int err = FAIL) : BaseT(ok ? SUCCESS : err, {}) {}
 
     int        code() const { return BaseT::first; }

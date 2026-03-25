@@ -11,6 +11,7 @@ namespace ve::impl::json {
 // ============================================================================
 // Stringify helpers (pure C++)
 // ============================================================================
+static void nodeToJsonImpl(const Node* node, std::string& out, const schema::ExportOptions& options, int depth);
 
 static void escape(const std::string& s, std::string& out)
 {
@@ -176,23 +177,10 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const schema::Exp
 
     for (auto& nm : names) {
         auto& group = named_groups[nm];
-        int cnt = group.sizeAsInt();
         out += pad1 + "\"";
         escape(nm, out);
         out += "\": ";
-        if (cnt == 1) {
-            nodeToJsonImpl(group[0], out, options, depth + 1);
-        } else {
-            out += "[\n";
-            std::string pad2((depth + 2) * indent, ' ');
-            for (int i = 0; i < cnt; ++i) {
-                out += pad2;
-                nodeToJsonImpl(group[i], out, options, depth + 2);
-                if (i + 1 < cnt) out += ",";
-                out += "\n";
-            }
-            out += pad1 + "]";
-        }
+        nodeToJsonImpl(group[0], out, options, depth + 1);
         if (++fieldIdx < totalFields) out += ",";
         out += "\n";
     }
@@ -281,43 +269,79 @@ static Var domToVar(simdjson::ondemand::value val)
     }
 }
 
+static void domToNode(simdjson::ondemand::value val, Node* node);
+
+static void resetNodeContent(Node* node)
+{
+    if (!node) return;
+    node->clear();
+    node->set(Var());
+}
+
+static void clearAnonymousChildren(Node* node)
+{
+    if (!node) return;
+    for (int i = node->count() - 1; i >= 0; --i) {
+        auto* child = node->child(i);
+        if (child && child->name().empty())
+            node->remove(child);
+    }
+}
+
+static Node* ensureSchemaChild(Node* node, const std::string& key)
+{
+    if (!node) return nullptr;
+
+    while (node->count(key) > 1)
+        node->remove(key, node->count(key) - 1);
+
+    if (auto* child = node->child(key)) {
+        resetNodeContent(child);
+        return child;
+    }
+    return node->append(key);
+}
+
+static void importObjectField(Node* node, const std::string& key, simdjson::ondemand::value child_val)
+{
+    if (key == "_value") {
+        node->set(domToVar(child_val));
+        return;
+    }
+
+    if (key.empty()) {
+        clearAnonymousChildren(node);
+        auto ct = child_val.type().value();
+        if (ct == simdjson::ondemand::json_type::array) {
+            for (auto elem : child_val.get_array()) {
+                auto* c = node->append();
+                domToNode(elem.value(), c);
+            }
+        }
+        return;
+    }
+
+    auto* c = ensureSchemaChild(node, key);
+    if (!c) return;
+
+    auto ct = child_val.type().value();
+    if (ct == simdjson::ondemand::json_type::array) {
+        for (auto elem : child_val.get_array()) {
+            auto* slot = c->append();
+            domToNode(elem.value(), slot);
+        }
+        return;
+    }
+
+    domToNode(child_val, c);
+}
+
 static void domToNode(simdjson::ondemand::value val, Node* node)
 {
     auto t = val.type().value();
     if (t == simdjson::ondemand::json_type::object) {
         for (auto field : val.get_object()) {
-            std::string key(field.unescaped_key().value());
-            simdjson::ondemand::value child_val = field.value();
-
-            if (key == "_value") {
-                node->set(domToVar(child_val));
-                continue;
-            }
-
-            if (key.empty()) {
-                auto ct = child_val.type().value();
-                if (ct == simdjson::ondemand::json_type::array) {
-                    for (auto elem : child_val.get_array()) {
-                        auto* c = node->append();
-                        domToNode(elem.value(), c);
-                    }
-                }
-                continue;
-            }
-
-            auto ct = child_val.type().value();
-            if (ct == simdjson::ondemand::json_type::array) {
-                // JSON object keys are unique: one child named `key`, array elements as
-                // anonymous children underneath (e.g. plugins/#0/path, not plugins#0/path).
-                auto* container = node->append(key);
-                for (auto elem : child_val.get_array()) {
-                    auto* slot = container->append();
-                    domToNode(elem.value(), slot);
-                }
-            } else {
-                auto* c = node->append(key);
-                domToNode(child_val, c);
-            }
+            importObjectField(node, std::string(field.unescaped_key().value()), field.value());
         }
     } else if (t == simdjson::ondemand::json_type::array) {
         for (auto elem : val.get_array()) {
@@ -381,7 +405,7 @@ bool importTree(Node* node, const std::string& json, const schema::ImportOptions
 
     Node parsed("json_import");
     domToNode(val, &parsed);
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_replace);
+    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
     return true;
 }
 

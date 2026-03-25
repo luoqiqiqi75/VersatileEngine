@@ -6,10 +6,10 @@
 //
 // Compare with ve/test/test_node_bench.cpp — tags: "copy:", "schema: json", "schema: bin".
 // API differences vs ve::Node::copy / schema import:
-//   • copyFrom(context, other, auto_insert, auto_remove) has no auto_replace; ve::Node::copy has
-//     auto_replace as third flag (merge semantics differ when values should not be overwritten).
-//   • importFromJson / importFromBin use (auto_insert, auto_replace, auto_remove); match ve
-//     ImportOptions when comparing roundtrip times.
+//   • copyFrom(context, other, auto_insert, auto_remove) has no auto_update; ve::Node::copy has
+//     auto_update as third flag (false=set always emit changed, true=update suppress unchanged signals).
+//   • importFromJson / importFromBin use (auto_insert, auto_replace, auto_remove); ve uses
+//     (auto_insert, auto_remove, auto_update), so roundtrip comparisons should align semantics manually.
 //   • Duplicate child names are not supported here; wide trees use unique "n"+i keys only.
 //
 // API mapping (ve::Node → imol::ModuleObject):

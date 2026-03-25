@@ -7,7 +7,11 @@
 // Format tags: schema::Json, schema::Bin
 // Customization point: schema::SchemaTraits<Format>
 // ImportOptions drive merge-style import.
+// auto_update=false => set() always emits changed on copied nodes.
+// auto_update=true  => update() suppresses unchanged value signals.
 // ExportOptions drive formatting and hidden-node filtering.
+// Json is schema-oriented and ignores repeated named siblings.
+// Bin preserves the full tree, including repeated names and order.
 // ----------------------------------------------------------------------------
 #pragma once
 
@@ -56,7 +60,7 @@ struct Bin  {};
 struct ImportOptions {
     bool auto_insert  = true;
     bool auto_remove  = false;
-    bool auto_replace = true;
+    bool auto_update  = false;
 };
 
 struct ExportOptions {

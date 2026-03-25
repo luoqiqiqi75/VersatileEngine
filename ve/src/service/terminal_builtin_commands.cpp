@@ -1,8 +1,8 @@
 // terminal_builtin_commands.cpp — TCP Terminal REPL commands (command::reg)
 //
 // Hybrid command style (Linux-inspired):
-//   Tier 1 (high-freq): ls  info  get  set  add  rm  mv  mk  find  erase  json  help
-//   Tier 2 (subcommands): child  shadow  watch  iter  schema  cmd
+//   Tier 1 (high-freq): ls  info  get  set  add  rm  mv  cp  mk  find  erase  json  help
+//   Tier 2 (subcommands): child  shadow  watch  schema  cmd
 //
 // Flags: -x (POSIX short), --long (GNU long), -abc (combined shorts)
 //
@@ -350,6 +350,36 @@ void terminalBuiltinsEnsureRegistered()
     }, "mv [dest] <src> [--at INDEX]  reparent node");
 
     // =================================================================
+    // cp [dest] [src] [-r|--remove] [-u|--update] [-I|--no-insert]
+    // =================================================================
+    reg("cp", [](const Var& input) -> Result {
+        auto f = parseFlags(input);
+        RESOLVE_OR_FAIL(0);
+
+        auto srcPath = f.pos(1);
+        if (srcPath.empty()) RET_FAIL("usage: cp [dest] <src> [-r|--remove] [-u|--update] [-I|--no-insert]");
+
+        auto* src = ve::node::root()->find(srcPath, false);
+        if (!src) RET_FAIL("not found: " + srcPath);
+        if (src == target) RET_FAIL("cannot copy node onto itself");
+        if (src->isAncestorOf(target) || target->isAncestorOf(src))
+            RET_FAIL("cannot copy between overlapping subtrees");
+
+        bool autoInsert = !f.has("no-insert", 'I');
+        bool autoRemove = f.has("remove", 'r');
+        bool autoUpdate = f.has("update", 'u');
+        target->copy(src, autoInsert, autoRemove, autoUpdate);
+
+        auto* root = ve::node::root();
+        std::string out = "copied ";
+        out += "/" + src->path(root) + " -> /" + target->path(root);
+        out += "  (insert:" + std::string(autoInsert ? "on" : "off");
+        out += ", remove:" + std::string(autoRemove ? "on" : "off");
+        out += ", update:" + std::string(autoUpdate ? "on" : "off") + ")\n";
+        RET_OK(out);
+    }, "cp [dest] <src> [-r|--remove] [-u|--update] [-I|--no-insert]  copy subtree into target");
+
+    // =================================================================
     // mk [path] <subpath>
     // =================================================================
     reg("mk", [](const Var& input) -> Result {
@@ -542,34 +572,6 @@ void terminalBuiltinsEnsureRegistered()
         target->watch(!off);
         RET_OK("WATCHING = " + std::string(!off ? "on" : "off") + "\n");
     }, "watch [path] [--off] [--all] [--silent]  watch/silent flags");
-
-    // =================================================================
-    // iter [path] [-r|--reverse]
-    // =================================================================
-    reg("iter", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        bool rev = f.has("reverse", 'r');
-        std::string out;
-        if (rev) {
-            int total = target->count();
-            int i = total;
-            for (auto it = target->rbegin(); it != target->rend(); ++it) {
-                auto* c = *it;
-                auto nm = c->name().empty() ? "(anon)" : c->name();
-                out += "  [" + std::to_string(--i) + "] " + nm + "\n";
-            }
-            if (total == 0) out += "  (empty)\n";
-        } else {
-            int i = 0;
-            for (auto* c : *target) {
-                auto nm = c->name().empty() ? "(anon)" : c->name();
-                out += "  [" + std::to_string(i++) + "] " + nm + "\n";
-            }
-            if (i == 0) out += "  (empty)\n";
-        }
-        RET_OK(out);
-    }, "iter [path] [-r|--reverse]  iterate children");
 
     // =================================================================
     // schema [path] <field1> [field2 ...]
