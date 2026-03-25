@@ -61,18 +61,19 @@ static inline void writeBin(Bytes& buf, const Bytes& b)
 
 static inline bool canRead(const uint8_t* ptr, const uint8_t* end, size_t n)
 {
+    if (!ptr || !end) return false;
     return (end - ptr) >= static_cast<ptrdiff_t>(n);
 }
 
 static inline uint8_t readU8(const uint8_t*& ptr, const uint8_t* end)
 {
-    if (!canRead(ptr, end, 1)) return 0;
+    if (!canRead(ptr, end, 1)) { ptr = nullptr; return 0; }
     return *ptr++;
 }
 
 static inline uint16_t readU16(const uint8_t*& ptr, const uint8_t* end)
 {
-    if (!canRead(ptr, end, 2)) return 0;
+    if (!canRead(ptr, end, 2)) { ptr = nullptr; return 0; }
     uint16_t v = static_cast<uint16_t>(ptr[0]) | (static_cast<uint16_t>(ptr[1]) << 8);
     ptr += 2;
     return v;
@@ -80,7 +81,7 @@ static inline uint16_t readU16(const uint8_t*& ptr, const uint8_t* end)
 
 static inline uint32_t readU32(const uint8_t*& ptr, const uint8_t* end)
 {
-    if (!canRead(ptr, end, 4)) return 0;
+    if (!canRead(ptr, end, 4)) { ptr = nullptr; return 0; }
     uint32_t v = static_cast<uint32_t>(ptr[0])
                | (static_cast<uint32_t>(ptr[1]) << 8)
                | (static_cast<uint32_t>(ptr[2]) << 16)
@@ -91,7 +92,7 @@ static inline uint32_t readU32(const uint8_t*& ptr, const uint8_t* end)
 
 static inline int64_t readI64(const uint8_t*& ptr, const uint8_t* end)
 {
-    if (!canRead(ptr, end, 8)) return 0;
+    if (!canRead(ptr, end, 8)) { ptr = nullptr; return 0; }
     uint64_t u = 0;
     for (int i = 0; i < 8; ++i)
         u |= static_cast<uint64_t>(ptr[i]) << (i * 8);
@@ -103,7 +104,7 @@ static inline int64_t readI64(const uint8_t*& ptr, const uint8_t* end)
 
 static inline double readF64(const uint8_t*& ptr, const uint8_t* end)
 {
-    if (!canRead(ptr, end, 8)) return 0.0;
+    if (!canRead(ptr, end, 8)) { ptr = nullptr; return 0.0; }
     uint64_t u = 0;
     for (int i = 0; i < 8; ++i)
         u |= static_cast<uint64_t>(ptr[i]) << (i * 8);
@@ -116,7 +117,7 @@ static inline double readF64(const uint8_t*& ptr, const uint8_t* end)
 static inline std::string readStr(const uint8_t*& ptr, const uint8_t* end)
 {
     uint32_t len = readU32(ptr, end);
-    if (!canRead(ptr, end, len)) { ptr = end; return ""; }
+    if (!canRead(ptr, end, len)) { ptr = nullptr; return ""; }
     std::string s(reinterpret_cast<const char*>(ptr), len);
     ptr += len;
     return s;
@@ -125,7 +126,7 @@ static inline std::string readStr(const uint8_t*& ptr, const uint8_t* end)
 static inline Bytes readBytesRaw(const uint8_t*& ptr, const uint8_t* end)
 {
     uint32_t len = readU32(ptr, end);
-    if (!canRead(ptr, end, len)) { ptr = end; return {}; }
+    if (!canRead(ptr, end, len)) { ptr = nullptr; return {}; }
     Bytes b(ptr, ptr + len);
     ptr += len;
     return b;
@@ -198,7 +199,7 @@ void writeVar(const Var& v, Bytes& buf)
 
 Var readVar(const uint8_t*& ptr, const uint8_t* end)
 {
-    if (ptr >= end) return Var();
+    if (!ptr || ptr >= end) return Var();
     uint8_t tag = readU8(ptr, end);
 
     switch (tag) {
@@ -240,16 +241,30 @@ Var readVar(const uint8_t*& ptr, const uint8_t* end)
 // Node tree serialization
 // ============================================================================
 
-static void writeNode(const Node* node, Bytes& buf)
+static bool isIgnoredChild(const Node* child, const schema::ExportOptions& options)
+{
+    return options.auto_ignore
+        && child
+        && !child->name().empty()
+        && child->name()[0] == '_';
+}
+
+static void writeNode(const Node* node, Bytes& buf, const schema::ExportOptions& options)
 {
     writeVar(node->get(), buf);
 
     // children
-    writeU32(buf, static_cast<uint32_t>(node->count()));
+    uint32_t visible_count = 0;
+    for (auto* child : *node) {
+        if (!isIgnoredChild(child, options))
+            ++visible_count;
+    }
+    writeU32(buf, visible_count);
     for (auto* c : *node) {
+        if (isIgnoredChild(c, options)) continue;
         writeU16(buf, static_cast<uint16_t>(c->name().size()));
         buf.insert(buf.end(), c->name().begin(), c->name().end());
-        writeNode(c, buf);
+        writeNode(c, buf, options);
     }
 }
 
@@ -262,24 +277,29 @@ static void readNode(const uint8_t*& ptr, const uint8_t* end, Node* node)
 
     // children
     uint32_t count = readU32(ptr, end);
+    if (!ptr) return;
     for (uint32_t i = 0; i < count; ++i) {
         uint16_t nameLen = readU16(ptr, end);
-        std::string name;
-        if (canRead(ptr, end, nameLen)) {
-            name.assign(reinterpret_cast<const char*>(ptr), nameLen);
-            ptr += nameLen;
-        }
+        if (!ptr || !canRead(ptr, end, nameLen)) { ptr = nullptr; return; }
+        std::string name(reinterpret_cast<const char*>(ptr), nameLen);
+        ptr += nameLen;
         auto* c = node->append(name, name.empty() ? 0 : node->count(name));
         readNode(ptr, end, c);
+        if (!ptr) return;
     }
 }
 
 Bytes exportTree(const Node* node)
 {
+    return exportTree(node, schema::ExportOptions{});
+}
+
+Bytes exportTree(const Node* node, const schema::ExportOptions& options)
+{
     if (!node) return {};
     Bytes buf;
     buf.reserve(1024);
-    writeNode(node, buf);
+    writeNode(node, buf, options);
     return buf;
 }
 
@@ -289,7 +309,21 @@ bool importTree(Node* node, const uint8_t* data, size_t len)
     const uint8_t* ptr = data;
     const uint8_t* end = data + len;
     readNode(ptr, end, node);
-    return ptr <= end;
+    return ptr != nullptr && ptr <= end;
+}
+
+bool importTree(Node* node, const uint8_t* data, size_t len, const schema::ImportOptions& options)
+{
+    if (!node || !data || len == 0) return false;
+    const uint8_t* ptr = data;
+    const uint8_t* end = data + len;
+
+    Node parsed("bin_import");
+    readNode(ptr, end, &parsed);
+    if (!ptr || ptr > end) return false;
+
+    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_replace);
+    return true;
 }
 
 } // namespace ve::bin

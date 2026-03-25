@@ -6,6 +6,8 @@
 //
 // Format tags: schema::Json, schema::Bin
 // Customization point: schema::SchemaTraits<Format>
+// ImportOptions drive merge-style import.
+// ExportOptions drive formatting and hidden-node filtering.
 // ----------------------------------------------------------------------------
 #pragma once
 
@@ -51,6 +53,17 @@ namespace schema {
 struct Json {};
 struct Bin  {};
 
+struct ImportOptions {
+    bool auto_insert  = true;
+    bool auto_remove  = false;
+    bool auto_replace = true;
+};
+
+struct ExportOptions {
+    int  indent      = 2;
+    bool auto_ignore = false;
+};
+
 // --- SchemaTraits (customization point) ------------------------------------
 // Specialize for each format tag to provide exportNode / importNode.
 
@@ -61,14 +74,18 @@ template<>
 struct SchemaTraits<Json>
 {
     VE_API static std::string exportNode(const Node* node, int indent = 2);
+    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool        importNode(Node* node, const std::string& data);
+    VE_API static bool        importNode(Node* node, const std::string& data, const ImportOptions& options);
 };
 
 template<>
 struct SchemaTraits<Bin>
 {
     VE_API static Bytes exportNode(const Node* node);
+    VE_API static Bytes exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len);
+    VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len, const ImportOptions& options);
 };
 
 // --- Convenience functions -------------------------------------------------

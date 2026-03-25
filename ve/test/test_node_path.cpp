@@ -427,6 +427,106 @@ VE_TEST(node_schema_shared) {
     VE_ASSERT(n1.child("sub") != n2.child("sub"));
 }
 
+VE_TEST(node_schema_json_import_merge_preserves_identity) {
+    Node root("root");
+    Node* keep = root.append("keep");
+    keep->set(1);
+
+    int changed = 0;
+    keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++changed; });
+
+    schema::ImportOptions options;
+    options.auto_insert = true;
+    options.auto_remove = false;
+    options.auto_replace = true;
+
+    VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"keep\":2,\"add\":3}", options));
+    VE_ASSERT_EQ(root.child("keep"), keep);
+    VE_ASSERT_EQ(keep->getInt(), 2);
+    VE_ASSERT_EQ(root.child("add")->getInt(), 3);
+    VE_ASSERT_EQ(changed, 1);
+}
+
+VE_TEST(node_schema_json_import_auto_remove) {
+    Node root("root");
+    root.append("keep")->set(1);
+    root.append("extra")->set(2);
+
+    schema::ImportOptions options;
+    options.auto_remove = true;
+
+    VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"keep\":5}", options));
+    VE_ASSERT_EQ(root.count(), 1);
+    VE_ASSERT(root.child("extra") == nullptr);
+    VE_ASSERT_EQ(root.child("keep")->getInt(), 5);
+}
+
+VE_TEST(node_schema_json_import_auto_replace_false) {
+    Node root("root");
+    root.set(9);
+    Node* keep = root.append("keep");
+    keep->set(1);
+
+    schema::ImportOptions options;
+    options.auto_replace = false;
+
+    VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"_value\":5,\"keep\":2,\"add\":3}", options));
+    VE_ASSERT_EQ(root.getInt(), 9);
+    VE_ASSERT_EQ(keep->getInt(), 1);
+    VE_ASSERT_EQ(root.child("add")->getInt(), 3);
+}
+
+VE_TEST(node_schema_json_import_signal_order_current_before_children) {
+    Node root("root");
+    Vector<std::string> events;
+
+    root.connect<Node::NODE_CHANGED>(&root, [&](const Var&, const Var&) {
+        events.push_back("changed");
+    });
+    root.connect<Node::NODE_ADDED>(&root, [&](const std::string& key, int) {
+        events.push_back("added:" + key);
+    });
+
+    schema::ImportOptions options;
+    VE_ASSERT(schema::importAs<schema::Json>(&root, "{\"child\":2,\"_value\":1}", options));
+
+    VE_ASSERT_EQ(events.sizeAsInt(), 2);
+    VE_ASSERT_EQ(events[0], "changed");
+    VE_ASSERT_EQ(events[1], "added:child");
+}
+
+VE_TEST(node_schema_json_export_auto_ignore) {
+    Node root("root");
+    root.append("public")->set(1);
+    root.append("_internal")->set(2);
+
+    schema::ExportOptions options;
+    options.auto_ignore = true;
+
+    std::string json = schema::exportAs<schema::Json>(&root, options);
+    VE_ASSERT(json.find("\"public\"") != std::string::npos);
+    VE_ASSERT(json.find("\"_internal\"") == std::string::npos);
+}
+
+VE_TEST(node_schema_bin_roundtrip_auto_ignore) {
+    Node src("src");
+    src.append("public")->set(1);
+    src.append("_internal")->set(2);
+
+    schema::ExportOptions export_options;
+    export_options.auto_ignore = true;
+
+    auto bytes = schema::exportAs<schema::Bin>(&src, export_options);
+
+    Node dst("dst");
+    schema::ImportOptions import_options;
+    import_options.auto_remove = true;
+
+    VE_ASSERT(schema::importAs<schema::Bin>(&dst, bytes.data(), bytes.size(), import_options));
+    VE_ASSERT(dst.child("public") != nullptr);
+    VE_ASSERT(dst.child("_internal") == nullptr);
+}
+
 // ============================================================================
 // Static root
 // ============================================================================

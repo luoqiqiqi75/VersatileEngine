@@ -281,7 +281,7 @@ docs: update README architecture section
 
 - Each PR should focus on a single concern
 - Ensure the code compiles successfully
-- Update relevant documentation (e.g. README or ARCHITECTURE.md for API changes)
+- Update relevant documentation (for example `README.md`, `docs/DESIGN.md`, or `docs/CORE.md` for API changes)
 - Explain the purpose and impact in the PR description
 - Reference related Issues: `Fixes #123`
 

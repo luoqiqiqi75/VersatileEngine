@@ -670,7 +670,7 @@ void terminalBuiltinsEnsureRegistered()
     }, "help [command]  show help");
 
     // =================================================================
-    // Aliases for backward compatibility
+    // Command aliases
     // =================================================================
 
     reg("tree", [](const Var& input) -> Result {

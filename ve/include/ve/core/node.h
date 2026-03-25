@@ -112,6 +112,8 @@ public:
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
+    // Sync this node from another node. Existing children are reused when possible.
+    void  copy(const Node* other, bool auto_insert = true, bool auto_remove = false, bool auto_replace = true);
 
     // -- key (key = name | name#N | #N) ---
     //  parseKey: "name" → (name,-1)  "name#N" → (name,N)  "#N" → ("",N)

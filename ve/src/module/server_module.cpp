@@ -16,13 +16,11 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
 
     server = std::make_unique<T>(node::root(), port);
 
-    if (server->start()) {
+    if (server->start()) { // self logging
         n->set("runtime/port", port);
         n->set("runtime/listening", true);
-        veLogI << "[" << n->path() << "] started on port " << port;
     } else {
         n->set("runtime/listening", false);
-        veLogE << "[" << n->path() << "] failed to start on port " << port;
     }
 }
 template<typename T> void closeServer(std::unique_ptr<T>& server, Node* n)
@@ -59,7 +57,10 @@ template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server,
     server = std::make_unique<service::NodeHttpServer>(node::root(), port);
 
     std::string static_root = n->get("config/static_root").toString();
-    if (!static_root.empty()) server->setStaticRoot(static_root);
+    if (!static_root.empty()) {
+        veLogD << "[ve/service/node/http] static root: " << static_root;
+        server->setStaticRoot(static_root);
+    }
 
     std::string default_file = n->get("config/default_file").toString();
     if (!default_file.empty()) server->setDefaultFile(default_file);
@@ -67,10 +68,8 @@ template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server,
     if (server->start()) {
         n->set("runtime/port", port);
         n->set("runtime/listening", true);
-        veLogI << "[ve/service/node/http] static root: " << static_root << " started on port " << port;
     } else {
         n->set("runtime/listening", false);
-        veLogE << "[ve/service/node/http] failed to start on port " << port;
     }
 }
 

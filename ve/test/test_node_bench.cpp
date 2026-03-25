@@ -1,10 +1,20 @@
 // test_node_bench.cpp — stress tests, complex structures, benchmarks
+//
+// Optional large JSON roundtrip: configure with -DVE_NODE_BENCH_LARGE=ON (see ve/test/CMakeLists.txt).
+// ASan: configure with -DCMAKE_CXX_FLAGS="-fsanitize=address" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address".
+// Fuzzing importTree/simdjson is not part of this target; use a dedicated harness if needed.
+//
 #include "ve_test.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/convert.h"
 #include "ve/core/log.h"
+#include "ve/core/schema.h"
 #include <chrono>
+
+#ifndef VE_NODE_BENCH_LARGE
+#define VE_NODE_BENCH_LARGE 0
+#endif
 
 using namespace ve;
 
@@ -106,12 +116,12 @@ VE_TEST(node_complex_robot) {
     veLogI << "=== Robot tree ===\n" << robot.dump();
 
     VE_ASSERT_EQ(robot.count(), 1);
-    VE_ASSERT(robot.resolve("base_link/visual") != nullptr);
-    VE_ASSERT(robot.resolve("base_link/joint/link/joint/link/visual") != nullptr);
+    VE_ASSERT(robot.find("base_link/visual") != nullptr);
+    VE_ASSERT(robot.find("base_link/joint/link/joint/link/visual") != nullptr);
 
     auto p = l2->path(&robot);
     veLogI << "l2 path: " << p;
-    VE_ASSERT_EQ(robot.resolve(p), l2);
+    VE_ASSERT_EQ(robot.find(p), l2);
 }
 
 VE_TEST(node_complex_xml_list) {
@@ -134,11 +144,11 @@ VE_TEST(node_complex_xml_list) {
     VE_ASSERT_EQ(items->count("item"), 20);
     VE_ASSERT_EQ(items->child("item", 5)->count(), 3);
 
-    auto* v10 = config.resolve("items/item#10/value");
+    auto* v10 = config.find("items/item#10/value");
     VE_ASSERT(v10 != nullptr);
     VE_ASSERT_EQ(v10->name(), "value");
 
-    auto* v25 = config.ensure("items/item#25/extra");
+    auto* v25 = config.at("items/item#25/extra");
     VE_ASSERT(v25 != nullptr);
     VE_ASSERT_EQ(items->count("item"), 26);
 
@@ -156,7 +166,7 @@ VE_TEST(node_complex_deep_tree) {
     VE_ASSERT(cur->parent(100) == nullptr);
 
     auto p = cur->path(&root);
-    VE_ASSERT_EQ(root.resolve(p), cur);
+    VE_ASSERT_EQ(root.find(p), cur);
     VE_ASSERT(root.isAncestorOf(cur));
     VE_ASSERT(!cur->isAncestorOf(&root));
 
@@ -184,10 +194,10 @@ VE_TEST(node_complex_shadow_mixed) {
     VE_ASSERT(inst.child("gps") != nullptr);
     VE_ASSERT(inst.child("lidar") == nullptr);   // not local
 
-    // resolve() uses shadow fallback
-    VE_ASSERT(inst.resolve("lidar") == proto.child("lidar"));
-    VE_ASSERT(inst.resolve("imu") == proto.child("imu"));
-    VE_ASSERT(inst.resolve("nonexistent") == nullptr);
+    // find() uses shadow fallback
+    VE_ASSERT(inst.find("lidar") == proto.child("lidar"));
+    VE_ASSERT(inst.find("imu") == proto.child("imu"));
+    VE_ASSERT(inst.find("nonexistent") == nullptr);
 
     // count("") = count() = total local children (camera + gps + 5 anon = 7)
     VE_ASSERT_EQ(inst.count(), 7);
@@ -205,7 +215,7 @@ VE_TEST(node_complex_wide_tree) {
     VE_ASSERT(root.child("g999", 2) != nullptr);
     VE_ASSERT(root.child("g999", 3) == nullptr);
 
-    auto* target = root.resolve("g500#1");
+    auto* target = root.find("g500#1");
     VE_ASSERT(target != nullptr);
     VE_ASSERT_EQ(target->name(), "g500");
 
@@ -219,18 +229,18 @@ VE_TEST(node_complex_wide_tree) {
 VE_TEST(node_complex_ensure_erase) {
     Node root("root");
 
-    auto* leaf = root.ensure("a/b/c/d/e/f");
+    auto* leaf = root.at("a/b/c/d/e/f");
     VE_ASSERT(leaf != nullptr);
     VE_ASSERT_EQ(leaf->name(), "f");
     VE_ASSERT_EQ(leaf->path(&root), "a/b/c/d/e/f");
 
     VE_ASSERT(root.erase("a/b/c/d/e/f"));
-    VE_ASSERT(root.resolve("a/b/c/d/e/f") == nullptr);
-    VE_ASSERT(root.resolve("a/b/c/d/e") != nullptr);
+    VE_ASSERT(root.find("a/b/c/d/e/f") == nullptr);
+    VE_ASSERT(root.find("a/b/c/d/e") != nullptr);
 
-    auto* leaf2 = root.ensure("a/b/c/d/e/f");
+    auto* leaf2 = root.at("a/b/c/d/e/f");
     VE_ASSERT(leaf2 != nullptr);
-    VE_ASSERT_EQ(root.resolve("a/b/c/d/e/f"), leaf2);
+    VE_ASSERT_EQ(root.find("a/b/c/d/e/f"), leaf2);
 
     veLogI << "ensure/erase roundtrip OK";
 }
@@ -431,10 +441,10 @@ VE_TEST(node_bench_resolve_path) {
 
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
-        (void)root.resolve(p);
-    BENCH_END("resolve 10-deep path x100k");
+        (void)root.find(p);
+    BENCH_END("find 10-deep path x100k");
 
-    VE_ASSERT_EQ(root.resolve(p), cur);
+    VE_ASSERT_EQ(root.find(p), cur);
 }
 
 VE_TEST(node_bench_resolve_path_deep) {
@@ -447,10 +457,10 @@ VE_TEST(node_bench_resolve_path_deep) {
 
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
-        (void)root.resolve(p);
-    BENCH_END("resolve 50-deep path x100k");
+        (void)root.find(p);
+    BENCH_END("find 50-deep path x100k");
 
-    VE_ASSERT_EQ(root.resolve(p), cur);
+    VE_ASSERT_EQ(root.find(p), cur);
 }
 
 VE_TEST(node_bench_indexOf_global) {
@@ -611,12 +621,12 @@ VE_TEST(node_bench_ensure_deep) {
     BENCH_BEGIN;
     for (int i = 0; i < 1000; ++i) {
         std::string p = "a/b/c/d/e/f" + std::to_string(i);
-        root.ensure(p);
+        root.at(p);
     }
     BENCH_END("ensure 1k deep paths");
 
     // a/b/c/d/e should exist, with 1000 different f* children
-    auto* e = root.resolve("a/b/c/d/e");
+    auto* e = root.find("a/b/c/d/e");
     VE_ASSERT(e != nullptr);
     VE_ASSERT_EQ(e->count(), 1000);
 }
@@ -627,11 +637,11 @@ VE_TEST(node_bench_ensure_10k_deep) {
     BENCH_BEGIN;
     for (int i = 0; i < 10000; ++i) {
         std::string p = "a/b/c/d/e/f" + std::to_string(i);
-        root.ensure(p);
+        root.at(p);
     }
     BENCH_END("ensure 10k deep paths");
 
-    auto* e = root.resolve("a/b/c/d/e");
+    auto* e = root.find("a/b/c/d/e");
     VE_ASSERT(e != nullptr);
     VE_ASSERT_EQ(e->count(), 10000);
 }
@@ -889,7 +899,7 @@ VE_TEST(node_bench_json_dict_10k) {
     }
     BENCH_END("json dict 10k (insert+set int)");
     VE_ASSERT_EQ(root.count(), 10000);
-    VE_ASSERT_EQ(root.child("k5000")->get<int>(), 5000);
+    VE_ASSERT_EQ(root.child("k5000")->getInt(), 5000);
 }
 
 VE_TEST(node_bench_json_dict_100k) {
@@ -938,7 +948,7 @@ VE_TEST(node_bench_json_array_10k) {
         root.append("")->set(Var(i));
     BENCH_END("json array 10k (insert+set int)");
     VE_ASSERT_EQ(root.count(), 10000);
-    VE_ASSERT_EQ(root.child(5000)->get<int>(), 5000);
+    VE_ASSERT_EQ(root.child(5000)->getInt(), 5000);
 }
 
 VE_TEST(node_bench_json_array_100k) {
@@ -962,7 +972,7 @@ VE_TEST(node_bench_set_int_100k) {
     int idx = 0;
     for (auto* n : root) n->set(Var(idx++));
     BENCH_END("set 100k values (int)");
-    VE_ASSERT_EQ(root.child(50000)->get<int>(), 50000);
+    VE_ASSERT_EQ(root.child(50000)->getInt(), 50000);
 }
 
 VE_TEST(node_bench_set_string_100k) {
@@ -997,7 +1007,7 @@ VE_TEST(node_bench_read_int_100k) {
 
     BENCH_BEGIN;
     long long sum = 0;
-    for (auto* n : root) sum += n->get<int>();
+    for (auto* n : root) sum += n->getInt();
     BENCH_END("read 100k int values");
     VE_ASSERT_EQ(sum, (long long)100000 * 99999 / 2);
 }
@@ -1010,7 +1020,7 @@ VE_TEST(node_bench_read_string_100k) {
 
     BENCH_BEGIN;
     int total_len = 0;
-    for (auto* n : root) total_len += (int)n->get<std::string>().size();
+    for (auto* n : root) total_len += (int)n->getString().size();
     BENCH_END("read 100k string values");
     VE_ASSERT(total_len > 0);
 }
@@ -1027,7 +1037,7 @@ VE_TEST(node_bench_update_int_100k) {
     int idx = 0;
     for (auto* n : root) { n->update(Var(idx + 100000)); ++idx; }
     BENCH_END("update 100k values (all changed)");
-    VE_ASSERT_EQ(root.child(0)->get<int>(), 100000);
+    VE_ASSERT_EQ(root.child(0)->getInt(), 100000);
 }
 
 // --- Realistic JSON: array of objects ---
@@ -1046,7 +1056,7 @@ VE_TEST(node_bench_json_aoo_1k) {
     }
     BENCH_END("json array-of-objects 1k x4 fields");
     VE_ASSERT_EQ(root.count(), 1000);
-    VE_ASSERT_EQ(root.child(500)->child("id")->get<int>(), 500);
+    VE_ASSERT_EQ(root.child(500)->child("id")->getInt(), 500);
 }
 
 VE_TEST(node_bench_json_aoo_10k) {
@@ -1094,7 +1104,7 @@ VE_TEST(node_bench_json_lifecycle_dict_10k) {
         root.silent(true);
         for (int i = 0; i < 10000; ++i)
             root.append("k" + std::to_string(i))->set(Var("value_" + std::to_string(i)));
-        for (auto* n : root) (void)n->get<std::string>();
+        for (auto* n : root) (void)n->getString();
     }
     BENCH_END("json dict 10k lifecycle (build+read+destroy) x10");
 }
@@ -1112,11 +1122,104 @@ VE_TEST(node_bench_json_lifecycle_aoo_1k) {
             obj->append("score")->set(Var(i * 0.5));
         }
         for (auto* obj : root) {
-            (void)obj->child("id")->get<int>();
-            (void)obj->child("name")->get<std::string>();
-            (void)obj->child("email")->get<std::string>();
-            (void)obj->child("score")->get<double>();
+            (void)obj->child("id")->getInt();
+            (void)obj->child("name")->getString();
+            (void)obj->child("email")->getString();
+            (void)obj->child("score")->getDouble();
         }
     }
     BENCH_END("json aoo 1k lifecycle (build+read+destroy) x10");
 }
+
+// ============================================================================
+// Benchmarks — copy + schema Json/Bin (compare with qt/example/bench veBench)
+// ============================================================================
+
+static void buildWideNamedTree(Node& root, int n)
+{
+    root.silent(true);
+    for (int i = 0; i < n; ++i)
+        root.append("n" + std::to_string(i))->set(i);
+}
+
+VE_TEST(node_bench_copy_wide_10k) {
+    Node src("src");
+    buildWideNamedTree(src, 10000);
+    Node dst("dst");
+    dst.silent(true);
+
+    BENCH_BEGIN;
+    dst.copy(&src, true, false, true);
+    BENCH_END("copy: wide 10k named children");
+
+    VE_ASSERT_EQ(dst.count(), 10000);
+    VE_ASSERT_EQ(dst.child("n5000")->getInt(), 5000);
+}
+
+VE_TEST(node_bench_copy_wide_100k) {
+    Node src("src");
+    buildWideNamedTree(src, 100000);
+    Node dst("dst");
+    dst.silent(true);
+
+    BENCH_BEGIN;
+    dst.copy(&src, true, false, true);
+    BENCH_END("copy: wide 100k named children");
+
+    VE_ASSERT_EQ(dst.count(), 100000);
+}
+
+VE_TEST(node_bench_schema_json_roundtrip_10k) {
+    Node src("src");
+    buildWideNamedTree(src, 10000);
+
+    schema::ExportOptions ex;
+    ex.indent = 0;
+
+    BENCH_BEGIN;
+    std::string json = schema::exportAs<schema::Json>(&src, ex);
+    Node        dst("dst");
+    dst.silent(true);
+    schema::ImportOptions im;
+    VE_ASSERT(schema::importAs<schema::Json>(&dst, json, im));
+    BENCH_END("schema: json export+import merge 10k wide");
+
+    VE_ASSERT_EQ(dst.count(), 10000);
+}
+
+VE_TEST(node_bench_schema_bin_roundtrip_10k) {
+    Node src("src");
+    buildWideNamedTree(src, 10000);
+
+    schema::ExportOptions ex;
+
+    BENCH_BEGIN;
+    Bytes       bytes = schema::exportAs<schema::Bin>(&src, ex);
+    Node        dst("dst");
+    dst.silent(true);
+    schema::ImportOptions im;
+    VE_ASSERT(schema::importAs<schema::Bin>(&dst, bytes.data(), bytes.size(), im));
+    BENCH_END("schema: bin export+import merge 10k wide");
+
+    VE_ASSERT_EQ(dst.count(), 10000);
+}
+
+#if VE_NODE_BENCH_LARGE
+VE_TEST(node_bench_schema_json_roundtrip_100k) {
+    Node src("src");
+    buildWideNamedTree(src, 100000);
+
+    schema::ExportOptions ex;
+    ex.indent = 0;
+
+    BENCH_BEGIN;
+    std::string json = schema::exportAs<schema::Json>(&src, ex);
+    Node        dst("dst");
+    dst.silent(true);
+    schema::ImportOptions im;
+    VE_ASSERT(schema::importAs<schema::Json>(&dst, json, im));
+    BENCH_END("schema: json export+import merge 100k wide (VE_NODE_BENCH_LARGE)");
+
+    VE_ASSERT_EQ(dst.count(), 100000);
+}
+#endif

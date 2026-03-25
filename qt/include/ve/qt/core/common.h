@@ -1,8 +1,8 @@
 // ----------------------------------------------------------------------------
 // common.h — Qt helpers (ve only: global QObject, qwidget factory, version)
 // ----------------------------------------------------------------------------
-// imol ModuleObject tree: include "ve/qt/imol_legacy.h" explicitly in legacy code.
-// VE lifecycle: ve/entry.h + ve/qt/qt_entry.h
+// IMOL tree helpers live in "ve/qt/imol_legacy.h" when that bridge is needed.
+// VE lifecycle entry points are declared in ve/entry.h and ve/qt/qt_entry.h.
 // ----------------------------------------------------------------------------
 
 #pragma once

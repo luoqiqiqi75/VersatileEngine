@@ -70,9 +70,9 @@ enum State : int {
 struct Options {
     std::string config_file;
     bool verbose      = false;
-    // Request terminal stdio mode via ve/client/terminal/stdio/enabled.
+    // Enable the local stdio terminal via ve/client/terminal/stdio/enabled.
     bool terminal     = false;
-    // Request remote terminal client via ve/client/terminal/tcp/enabled.
+    // Enable the remote terminal client via ve/client/terminal/tcp/enabled.
     bool remote_terminal = false;
     std::string remote_host = "127.0.0.1";
     int remote_port = 5061;
@@ -81,18 +81,18 @@ struct Options {
     char** argv = nullptr;
 };
 
-// Phase 1 - Load configuration into node::root()
+// Load configuration into node::root().
 VE_API void setup(const std::string& config_file);
 VE_API void setup(const Options& options);
 VE_API void setup(Node* config_node);
 
-// Phase 2 - Load plugins -> create modules -> INIT -> READY
+// Load plugins, create modules, and complete initialization.
 VE_API void init();
 
-// Phase 3 - Block on main event loop (loop::run) until quit
+// Enter the main loop and block until quit is requested.
 VE_API int  run();
 
-// Phase 4 - DEINIT modules (reverse order) -> cleanup
+// Deinitialize modules in reverse order and release runtime state.
 VE_API void deinit();
 
 // Request run() to return via loop::quit()

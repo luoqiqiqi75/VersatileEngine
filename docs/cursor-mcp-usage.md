@@ -44,9 +44,10 @@ npm run build
 {
   "mcpServers": {
     "ve": {
-      "command": "node",
+      "command": "npx",
       "args": [
-        "D:/workspace/github/VersatileEngine/ve/js/ve-mcp/dist/index.js"
+        "tsx",
+        "D:/workspace/github/VersatileEngine/ve/js/ve-mcp/src/index.ts"
       ],
       "env": {
         "VE_HTTP_BASE": "http://127.0.0.1:8080"
@@ -86,6 +87,6 @@ Cursor 配置可改为直接启动 `ve_mcp.exe`（并传入 `--config`）。
   - 先用 `/api/cmd` 看当前命令清单。
   - 确认命令名大小写与参数结构。
 - **Cursor 提示 MCP server 启动失败**
-  - 检查 `node` 路径与 `dist/index.js` 绝对路径。
-  - 在终端先手动运行 `node dist/index.js` 看报错。
+  - 检查 `npx`、`tsx` 与 `src/index.ts` 路径。
+  - 在终端先手动运行 `npx tsx src/index.ts` 看报错。
 

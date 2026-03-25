@@ -315,6 +315,43 @@ VE_TEST(node_signal_remove_triggers_activate) {
 // Multiple signals — connect count tracking
 // ============================================================================
 
+VE_TEST(node_signal_copy_triggers_added_and_removed) {
+    Node src("src");
+    src.append("head");
+    src.append("tail");
+
+    Node dst("dst");
+    dst.append("tail");
+    dst.append("extra");
+
+    int added = 0;
+    int removed = 0;
+    std::string added_key;
+    std::string removed_key;
+    int added_overlap = -1;
+    int removed_overlap = -1;
+
+    dst.connect(Node::NODE_ADDED, &dst, [&](const std::string& key, int overlap) {
+        ++added;
+        added_key = key;
+        added_overlap = overlap;
+    });
+    dst.connect(Node::NODE_REMOVED, &dst, [&](const std::string& key, int overlap) {
+        ++removed;
+        removed_key = key;
+        removed_overlap = overlap;
+    });
+
+    dst.copy(&src, true, true);
+
+    VE_ASSERT_EQ(added, 1);
+    VE_ASSERT_EQ(added_key, "head");
+    VE_ASSERT_EQ(added_overlap, 0);
+    VE_ASSERT_EQ(removed, 1);
+    VE_ASSERT_EQ(removed_key, "extra");
+    VE_ASSERT_EQ(removed_overlap, 0);
+}
+
 VE_TEST(node_signal_multiple_inserts_fires) {
     Node root("root");
     int fires = 0;

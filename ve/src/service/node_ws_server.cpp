@@ -3,7 +3,7 @@
 // Dual-mode protocol:
 //   1. MozHelper text: {channel}:{fn}:{info}:{key}:{param}
 //      Functions: g (get), s (set), t (trigger), w (watch), c (command)
-//   2. JSON (backward compat): {"cmd":"get","path":"...","value":"...","id":"..."}
+//   2. JSON request objects: {"cmd":"get","path":"...","value":"...","id":"..."}
 //
 // Auto-detection: message starting with '{' -> JSON, otherwise -> text protocol.
 
@@ -30,7 +30,7 @@ namespace ve {
 namespace service {
 
 // ============================================================================
-// Text Protocol Parser (MozHelper compatible)
+// Text protocol parser
 // ============================================================================
 
 struct MozLine
@@ -67,7 +67,7 @@ static MozLine parseMozLine(const std::string& raw)
 }
 
 // ============================================================================
-// JSON Protocol Parser (backward compat)
+// JSON protocol parser
 // ============================================================================
 
 struct JsonCommand
@@ -232,7 +232,7 @@ struct NodeWsServer::Private
         }
     }
 
-    // --- JSON protocol handlers (backward compat) ---
+    // --- JSON protocol handlers ---
 
     template<typename SP>
     void jsonMessage(SP& sp, uint64_t sid, const std::string& msg) {

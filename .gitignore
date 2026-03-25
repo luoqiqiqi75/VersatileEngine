@@ -1153,6 +1153,7 @@ docs/internal/
 # node_modules/ 已在上方 VisualStudio 区覆盖（line ~945）
 # ------------------------------------------------------------
 js/packages/*/dist/
+ve/js/*/dist/
 js/.vite/
 js/packages/*/.vite/
 *.tsbuildinfo

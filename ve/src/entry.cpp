@@ -161,7 +161,7 @@ void setup(const Options& options)
         if (!content.empty()) {
             if (!schema::importAs<schema::Json>(root, content)) {
                 veLogE << "[ve::entry] Failed to parse config: " << options.config_file;
-            } else {
+            } else if (g.options.verbose) {
                 veLogI << "[ve::entry] Config loaded: " << options.config_file;
             }
         } else {

@@ -116,3 +116,6 @@ if(VE_BUILD_QT_BROWSER)
 endif()
 
 message(STATUS "")
+
+add_subdirectory(example/bench)
+add_subdirectory(example/demo)

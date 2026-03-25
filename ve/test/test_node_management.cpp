@@ -374,6 +374,141 @@ VE_TEST(node_clear_no_delete) {
 }
 
 // ============================================================================
+// Copy
+// ============================================================================
+
+VE_TEST(node_copy_into_empty_tree) {
+    Node src("src");
+    src.set(42);
+    src.append("config")->set("fast");
+    src.append("item")->set(10);
+    src.append("item")->set(20);
+    src.append("")->set(30);
+
+    Node dst("dst");
+    dst.copy(&src);
+
+    VE_ASSERT_EQ(dst.getInt(), 42);
+    VE_ASSERT_EQ(dst.count(), 4);
+    VE_ASSERT_EQ(dst.child("config")->getString(), "fast");
+    VE_ASSERT_EQ(dst.child("item", 0)->getInt(), 10);
+    VE_ASSERT_EQ(dst.child("item", 1)->getInt(), 20);
+    VE_ASSERT_EQ(dst.child(3)->getInt(), 30);
+    VE_ASSERT(dst.child("config") != src.child("config"));
+    VE_ASSERT(dst.child("item", 0) != src.child("item", 0));
+}
+
+VE_TEST(node_copy_inserts_before_matched_anchor) {
+    Node src("src");
+    src.append("head")->set(1);
+    src.append("tail")->set(2);
+
+    Node dst("dst");
+    Node* tail = dst.append("tail");
+    tail->set(-1);
+
+    dst.copy(&src);
+
+    VE_ASSERT_EQ(dst.count(), 2);
+    VE_ASSERT_EQ(dst.child(0)->name(), "head");
+    VE_ASSERT_EQ(dst.child(1), tail);
+    VE_ASSERT_EQ(tail->getInt(), 2);
+}
+
+VE_TEST(node_copy_preserves_extra_children_when_auto_remove_false) {
+    Node src("src");
+    src.append("keep")->set(7);
+
+    Node dst("dst");
+    Node* extra = dst.append("extra");
+    Node* keep  = dst.append("keep");
+    keep->set(-1);
+
+    dst.copy(&src, true, false);
+
+    VE_ASSERT_EQ(dst.count(), 2);
+    VE_ASSERT_EQ(dst.child("keep"), keep);
+    VE_ASSERT_EQ(keep->getInt(), 7);
+    VE_ASSERT(dst.has(extra));
+}
+
+VE_TEST(node_copy_removes_extra_children_when_auto_remove_true) {
+    Node src("src");
+    src.append("keep")->set(7);
+
+    Node dst("dst");
+    dst.append("extra")->set(99);
+    Node* keep = dst.append("keep");
+    keep->set(-1);
+
+    dst.copy(&src, true, true);
+
+    VE_ASSERT_EQ(dst.count(), 1);
+    VE_ASSERT_EQ(dst.child("keep"), keep);
+    VE_ASSERT_EQ(keep->getInt(), 7);
+    VE_ASSERT(!dst.has("extra"));
+}
+
+VE_TEST(node_copy_matches_duplicate_names_by_overlap) {
+    Node src("src");
+    src.append("item")->set(10);
+    src.append("item")->set(20);
+
+    Node dst("dst");
+    Node* first  = dst.append("item");
+    Node* second = dst.append("item");
+    dst.append("item")->set(99);
+
+    dst.copy(&src, true, true);
+
+    VE_ASSERT_EQ(dst.count("item"), 2);
+    VE_ASSERT_EQ(dst.child("item", 0), first);
+    VE_ASSERT_EQ(dst.child("item", 1), second);
+    VE_ASSERT_EQ(first->getInt(), 10);
+    VE_ASSERT_EQ(second->getInt(), 20);
+}
+
+VE_TEST(node_copy_matches_anonymous_children_by_occurrence) {
+    Node src("src");
+    src.append("")->set(1);
+    src.append("named")->set(2);
+    src.append("")->set(3);
+
+    Node dst("dst");
+    Node* anon0 = dst.append("");
+    dst.append("named")->set(-1);
+    Node* anon1 = dst.append("");
+    dst.append("")->set(99);
+
+    dst.copy(&src, true, true);
+
+    VE_ASSERT_EQ(dst.count(), 3);
+    VE_ASSERT_EQ(dst.child(0), anon0);
+    VE_ASSERT_EQ(dst.child(2), anon1);
+    VE_ASSERT_EQ(anon0->getInt(), 1);
+    VE_ASSERT_EQ(dst.child("named")->getInt(), 2);
+    VE_ASSERT_EQ(anon1->getInt(), 3);
+}
+
+VE_TEST(node_copy_preserves_existing_values_when_auto_replace_false) {
+    Node src("src");
+    src.set(9);
+    src.append("keep")->set(7);
+    src.append("add")->set(3);
+
+    Node dst("dst");
+    dst.set(1);
+    Node* keep = dst.append("keep");
+    keep->set(2);
+
+    dst.copy(&src, true, false, false);
+
+    VE_ASSERT_EQ(dst.getInt(), 1);
+    VE_ASSERT_EQ(keep->getInt(), 2);
+    VE_ASSERT_EQ(dst.child("add")->getInt(), 3);
+}
+
+// ============================================================================
 // Destructor
 // ============================================================================
 

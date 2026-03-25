@@ -1,4 +1,4 @@
-# Versatile Engine
+# VersatileEngine
 
 ```
  /\   /\ ___
@@ -7,7 +7,7 @@
    \_/  |___|  VersatileEngine
 ```
 
-**Cross-domain, cross-language, cross-platform reactive data middleware**
+**A reactive data tree and glue layer for C++ systems**
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPLv3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/std/the-standard)
@@ -15,41 +15,85 @@
 
 ---
 
-> **v2.0 - Pure C++17 Core**
->
-> The core layer (`libve`) is a **pure C++17 implementation with zero Qt dependency**. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree with 513 unit tests), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP Binary), Module lifecycle, and Entry orchestration. Qt/ROS/RTT adapters are optional.
+VersatileEngine (**VE**) is a pure C++17 core plus a set of adapters and services built around one idea:
+**the running system should expose a single observable node tree instead of a pile of private state and ad hoc glue code**.
 
----
+VE is not meant to replace Qt, ROS, DDS, web stacks, or your application framework.
+It is meant to connect them through one inspectable model.
 
-## Introduction
+Detailed design lineage is in [docs/HISTORY.md](docs/HISTORY.md).
 
-VersatileEngine (**VE**) is a C++17 reactive data middleware framework that provides a **hierarchical, observable data tree** with cross-language/cross-process IPC capabilities.
+## Why VE
 
-Core philosophy: **"Everything is a node"** - all data is organized in a global tree. Modules read/write data via paths and respond to changes via signals, communicating indirectly through data nodes rather than direct coupling.
+- **Data tree as system bus**: `ve::Node` is both state storage and observation surface.
+- **Glue layer, not forced rewrite**: adapters translate existing systems into the node tree instead of imposing a new business framework.
+- **Same model for local and remote access**: C++, Terminal, HTTP, WebSocket, binary IPC, and DDS all talk to the same tree.
+- **Runtime-first debugging**: production processes can be inspected with terminal commands, HTTP, or WebSocket without custom debug tooling.
 
-VE has been battle-tested in commercial projects across multiple domains:
+## Architecture
 
-| Domain | Project | Period |
-|--------|---------|--------|
-| Industrial Robotics | RobotAssist (ROKAE) | 2015-2017 |
-| Humanoid Robotics | CyberOne, MozHMI (LCCR) | 2020-2024 |
-| Medical Imaging | Bezier (Surgical Navigation) | 2022-2023 |
-| Embedded HMI | PDS-HMI (Inspection System) | 2023 |
-| Web Frontend | MozHMI Web Console | 2024 |
-| Multi-protocol | MozHMI (MovaX 2.0) | 2025-present |
+```
++-----------------------------------------------------------------+
+|  Programs and Adapters                           qt/ ros/ rtt/   |
+|  Qt and QML | DDS and ROS | RTT and xcore | JS and tools        |
++-----------------------------------------------------------------+
+|  Service Layer                                   ve/service/     |
+|  Terminal REPL | HTTP API | WebSocket push | TCP Binary IPC     |
++-----------------------------------------------------------------+
+|  Core Layer                              ve/ (pure C++17)       |
+|  Node | Var | Object | Command | Module | Entry | Loop          |
++-----------------------------------------------------------------+
+```
 
-## Features
+## Distinctive Ideas
 
-- **Reactive data tree** - `ve::Node` with `ve::Var` values, signal propagation (bubbling), and path addressing
-- **Rich signal system** - `NODE_CHANGED` (value), `NODE_ACTIVATED` (subtree bubbling), `NODE_ADDED`/`NODE_REMOVED` (child lifecycle)
-- **Command system** - `Step`/`Pipeline`/`Command` abstraction + 20+ built-in commands (`ls`/`get`/`set`/`json`/`find`/...)
-- **Service layer** - Terminal REPL (TCP 5061), HTTP API (8080), WebSocket push (8081), TCP Binary CBS (5065)
-- **Multiple serialization** - JSON (simdjson) / Binary (CBS) / Schema-based import/export
-- **Module lifecycle** - `NONE -> INIT -> READY -> DEINIT`, plugin loading, topological sort
-- **Event loop** - Asio-based `EventLoop` + `LoopRef` for cross-thread dispatch
-- **IPC communication** - CBS binary protocol (C++<->C++), WebSocket JSON (C++<->JS), DDS bridge (FastDDS)
-- **Cross-platform** - Windows / Linux / macOS, with crash capture & diagnostics
-- **High performance** - `child(index)` 590x faster, `iterator` 135x faster, `indexOf` 42x faster than Qt-based legacy
+### Data Tree as Bus
+
+All durable runtime state lives in a hierarchical tree. A node has:
+
+- a name
+- a value (`ve::Var`)
+- ordered children
+- change, add, remove, and bubble signals
+
+Modules do not need direct references to each other when they can agree on paths such as `ve/robot/state/power` or `browser/session/current`.
+
+### Glue Layer Instead of Framework Rewrite
+
+VE works best when each technology keeps doing what it is good at:
+
+- **Core C++** owns domain logic and deterministic runtime behavior.
+- **Qt and QML** own native desktop or embedded UI concerns.
+- **ROS and DDS** own robotics transport and distributed topics.
+- **Web clients** consume the same state through HTTP or WebSocket.
+
+The VE layer exists to map those worlds into one shared tree and one consistent set of commands.
+
+### One Runtime, Many Surfaces
+
+The same process can expose:
+
+- direct in-process C++ access through `ve::n()`
+- terminal debugging on TCP port `5061`
+- HTTP node inspection on port `8080`
+- WebSocket subscriptions on port `8081`
+- binary IPC on port `5065`
+
+That is the practical payoff of the architecture: the tree is not only a model, it is the runtime control surface.
+
+### Minimal Application Shape
+
+The smallest VE application is a normal `main()` plus configuration:
+
+```cpp
+#include <ve/entry.h>
+
+int main(int argc, char* argv[]) {
+    return ve::entry::exec(argc, argv);
+}
+```
+
+`ve::entry` loads configuration into the node tree, loads plugins, creates modules, enters the main loop, and shuts everything down in reverse order.
 
 ## Architecture
 
@@ -315,7 +359,7 @@ VersatileEngine/
 +-- qt/                         VE + Qt ecosystem (optional, needs Qt5/6)
 |   +-- include/
 |   |   +-- ve/qt/              Qt-specific public headers (qt_entry, var_qt, node_qobject, qml/, ...)
-|   |   +-- imol/               Legacy IMOL headers (compat layer)
+|   |   +-- imol/               IMOL data tree API and bridge headers
 |   +-- src/                    base/, terminal/, service/, qml/
 |   +-- program/
 |       +-- browser/            veqtbrowser.dll (BrowserModule)
@@ -343,14 +387,15 @@ VersatileEngine/
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `ve::n("path")` | Global slash-path accessor (auto-creates) | `ve::n("robot/state/power")` |
+| `ve::n("path")` | Global slash-path accessor that creates missing nodes | `ve::n("robot/state/power")` |
 | `node::root()` | Global root node | `ve::node::root()` |
+| `find(path)` | Read-only path lookup | `node->find("state/power")` |
+| `at(path)` | Path lookup with creation | `node->at("state/power")` |
+| `child(name, overlap)` | Get named child by overlap index | `node->child("item", 1)` |
+| `child(index)` | Get child by insertion order index | `node->child(0)` |
 | `parent(level)` | Navigate up N levels | `node->parent(2)` |
-| `child(name)` | Get child by name | `node->child("power")` |
-| `child(index)` | Get child by index | `node->child(0)` |
-| `sibling(offset)` | Sibling node (+/-) | `node->sibling(1)` |
-| `resolve(path)` | Relative path navigation | `node->resolve("state/power")` |
-| `ensure(path)` | Resolve, creating if needed | `node->ensure("state/power")` |
+| `sibling(offset)` | Navigate to neighbor node | `node->sibling(1)` |
+| `copy(other)` | Sync value and subtree from another node | `node->copy(template_node)` |
 | `path()` | Full path from root | `node->path()` |
 
 ### Node Signals
@@ -389,10 +434,12 @@ VersatileEngine/
 
 ## Documentation
 
-- [Architecture Overview & Evolution Plan](docs/ARCHITECTURE.md)
-- [Core Module Documentation](docs/core/README.md)
-- [Debug any VE process via core HTTP + curl (PowerShell: `curl.exe`)](docs/local-http-curl-debug.md)
-- [Cursor MCP Quick Start (VE tools in Cursor)](docs/cursor-mcp-usage.md)
+- [Design Guide](docs/DESIGN.md)
+- [Core API Guide](docs/CORE.md)
+- [Coding Style](docs/CODING_STYLE.md)
+- [History and Design Lineage](docs/HISTORY.md)
+- [HTTP and curl Debugging](docs/local-http-curl-debug.md)
+- [Cursor MCP Quick Start](docs/cursor-mcp-usage.md)
 
 ## License
 

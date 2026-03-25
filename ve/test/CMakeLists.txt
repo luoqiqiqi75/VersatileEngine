@@ -11,6 +11,11 @@ add_executable(ve_test ${_TEST_SOURCES})
 
 target_include_directories(ve_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+option(VE_NODE_BENCH_LARGE "Enable extra-large JSON roundtrip benchmarks in ve_test (slow)" ON)
+if(VE_NODE_BENCH_LARGE)
+    target_compile_definitions(ve_test PRIVATE VE_NODE_BENCH_LARGE=1)
+endif()
+
 target_link_libraries(ve_test PRIVATE ${VE_CORE_LIBRARY})
 
 if(UNIX)

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <string_view>
+#include <unordered_set>
 
 #include "ve/core/log.h"
 
@@ -47,6 +48,75 @@ struct Node::Private
         children = nullptr;
     }
 };
+
+namespace {
+
+struct CopyMatchState
+{
+    Hash<SmallVector<Node*>> named_children;
+    Node::Nodes              anonymous_children;
+    Hash<int>                named_cursor;
+    int                      anonymous_cursor = 0;
+    std::unordered_set<Node*> matched;
+};
+
+struct PendingInsertBatch
+{
+    Node*      anchor = nullptr;
+    Node::Nodes nodes;
+};
+
+static Node* _cloneSubtree(const Node* src)
+{
+    if (!src) return nullptr;
+
+    auto* clone = new Node(src->name());
+    if (!src->get().isNull())
+        clone->update(src->get());
+
+    auto src_children = src->children();
+    if (!src_children.empty()) {
+        Node::Nodes batch;
+        batch.reserve(src_children.size());
+        for (const auto* src_child : src_children)
+            batch.push_back(_cloneSubtree(src_child));
+        clone->insert(batch);
+    }
+    return clone;
+}
+
+static void _bucket_children(const Node::Nodes& children, CopyMatchState& state)
+{
+    for (auto* child : children) {
+        if (!child) continue;
+        if (child->name().empty()) state.anonymous_children.push_back(child);
+        else                       state.named_children[child->name()].push_back(child);
+    }
+}
+
+static Node* _take_copy_match(const Node* src_child, CopyMatchState& state)
+{
+    if (!src_child) return nullptr;
+
+    if (src_child->name().empty()) {
+        while (state.anonymous_cursor < state.anonymous_children.sizeAsInt()) {
+            auto* match = state.anonymous_children[state.anonymous_cursor++];
+            if (state.matched.insert(match).second) return match;
+        }
+        return nullptr;
+    }
+
+    int& cursor = state.named_cursor[src_child->name()];
+    if (auto* bucket = state.named_children.ptr(src_child->name())) {
+        while (cursor < bucket->sizeAsInt()) {
+            auto* match = (*bucket)[cursor++];
+            if (state.matched.insert(match).second) return match;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
 
 // ============================================================================
 // Node — construction / static
@@ -410,6 +480,77 @@ void Node::clear(bool auto_delete)
     if (cnt > 0) {
         trigger<NODE_REMOVED>(std::string("#0"), cnt - 1);
         activate(NODE_REMOVED, this);
+    }
+}
+
+void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto_replace)
+{
+    if (!other || other == this) return;
+
+    const Var& other_value = other->get();
+    if (auto_replace && !(get().isNull() && other_value.isNull()))
+        update(other_value);
+
+    auto src_children = other->children();
+    if (src_children.empty()) {
+        if (auto_remove) clear();
+        return;
+    }
+
+    auto dst_children = children();
+    if (dst_children.empty()) {
+        if (!auto_insert) return;
+
+        Nodes batch;
+        batch.reserve(src_children.size());
+        for (const auto* src_child : src_children)
+            batch.push_back(_cloneSubtree(src_child));
+        insert(batch);
+        return;
+    }
+
+    CopyMatchState match_state;
+    _bucket_children(dst_children, match_state);
+
+    Vector<PendingInsertBatch> pending_batches;
+    Nodes pending_nodes;
+    pending_nodes.reserve(src_children.size());
+
+    for (const auto* src_child : src_children) {
+        auto* match = _take_copy_match(src_child, match_state);
+        if (match) {
+            if (!pending_nodes.empty()) {
+                PendingInsertBatch batch;
+                batch.anchor = match;
+                batch.nodes = std::move(pending_nodes);
+                pending_batches.push_back(std::move(batch));
+                pending_nodes = {};
+            }
+            match->copy(src_child, auto_insert, auto_remove, auto_replace);
+            continue;
+        }
+
+        if (auto_insert) pending_nodes.push_back(_cloneSubtree(src_child));
+    }
+
+    if (!pending_nodes.empty()) {
+        PendingInsertBatch batch;
+        batch.nodes = std::move(pending_nodes);
+        pending_batches.push_back(std::move(batch));
+    }
+
+    for (auto& batch : pending_batches) {
+        if (batch.nodes.empty()) continue;
+        int index = batch.anchor ? indexOf(batch.anchor) : count();
+        if (index < 0) index = count();
+        insert(batch.nodes, index);
+    }
+
+    if (!auto_remove) return;
+
+    for (auto* dst_child : dst_children) {
+        if (match_state.matched.count(dst_child) == 0)
+            remove(dst_child);
     }
 }
 

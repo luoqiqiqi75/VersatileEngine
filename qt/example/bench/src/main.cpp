@@ -4,6 +4,14 @@
 // Mirrors core/test/test_node_bench.cpp so that results can be compared
 // side-by-side with ve::Node benchmarks.
 //
+// Compare with ve/test/test_node_bench.cpp — tags: "copy:", "schema: json", "schema: bin".
+// API differences vs ve::Node::copy / schema import:
+//   • copyFrom(context, other, auto_insert, auto_remove) has no auto_replace; ve::Node::copy has
+//     auto_replace as third flag (merge semantics differ when values should not be overwritten).
+//   • importFromJson / importFromBin use (auto_insert, auto_replace, auto_remove); match ve
+//     ImportOptions when comparing roundtrip times.
+//   • Duplicate child names are not supported here; wide trees use unique "n"+i keys only.
+//
 // API mapping (ve::Node → imol::ModuleObject):
 //   Node("name")             →  ModuleObject("name")
 //   node.append("x")         →  mobj->append(ctx, "x")
@@ -753,6 +761,76 @@ static void bench_xml_import()
 }
 
 // ============================================================================
+// Copy + JSON + Bin in-memory (mirrors ve_node_bench schema benchmarks)
+// ============================================================================
+
+static void bench_copy_wide_10k()
+{
+    ModuleObject src("src");
+    src.quiet(true);
+    for (int i = 0; i < 10000; ++i) {
+        auto* c = src.append(&src, "n" + QString::number(i));
+        c->set(QVariant(i));
+    }
+    ModuleObject dst("dst");
+    dst.quiet(true);
+    BENCH_BEGIN;
+    dst.copyFrom(&dst, &src, true, false);
+    BENCH_END("module: copyFrom wide 10k");
+    ASSERT_EQ(dst.cmobjCount(), 10000);
+}
+
+static void bench_copy_wide_100k()
+{
+    ModuleObject src("src");
+    src.quiet(true);
+    for (int i = 0; i < 100000; ++i) {
+        auto* c = src.append(&src, "n" + QString::number(i));
+        c->set(QVariant(i));
+    }
+    ModuleObject dst("dst");
+    dst.quiet(true);
+    BENCH_BEGIN;
+    dst.copyFrom(&dst, &src, true, false);
+    BENCH_END("module: copyFrom wide 100k");
+    ASSERT_EQ(dst.cmobjCount(), 100000);
+}
+
+static void bench_json_roundtrip_10k()
+{
+    ModuleObject src("src");
+    src.quiet(true);
+    for (int i = 0; i < 10000; ++i) {
+        auto* c = src.append(&src, "n" + QString::number(i));
+        c->set(QVariant(i));
+    }
+    BENCH_BEGIN;
+    QJsonValue jv = src.exportToJson(false);
+    ModuleObject dst("dst");
+    dst.quiet(true);
+    dst.importFromJson(&dst, jv, true, true, false);
+    BENCH_END("module: json export+import 10k wide");
+    ASSERT_EQ(dst.cmobjCount(), 10000);
+}
+
+static void bench_bin_roundtrip_10k()
+{
+    ModuleObject src("src");
+    src.quiet(true);
+    for (int i = 0; i < 10000; ++i) {
+        auto* c = src.append(&src, "n" + QString::number(i));
+        c->set(QVariant(i));
+    }
+    BENCH_BEGIN;
+    QByteArray bin = src.exportToBin(false);
+    ModuleObject dst("dst");
+    dst.quiet(true);
+    dst.importFromBin(&dst, bin, true, true, false);
+    BENCH_END("module: bin export+import 10k wide");
+    ASSERT_EQ(dst.cmobjCount(), 10000);
+}
+
+// ============================================================================
 // JSON import benchmark (file path from argv[1] or default "d:/a.json")
 // ============================================================================
 
@@ -902,6 +980,14 @@ int main(int argc, char *argv[])
     qDebug() << "==================== XML serialization ====================";
     RUN_TEST(bench_xml_export);
     RUN_TEST(bench_xml_import);
+
+    // --- Copy / JSON / Bin (mirror ve::Node schema benches) ---
+    qDebug() << "";
+    qDebug() << "==================== Copy + JSON + Bin (in-memory) ====================";
+    RUN_TEST(bench_copy_wide_10k);
+    RUN_TEST(bench_copy_wide_100k);
+    RUN_TEST(bench_json_roundtrip_10k);
+    RUN_TEST(bench_bin_roundtrip_10k);
 
     // --- JSON file import ---
     if (!g_json_path.isEmpty()) {

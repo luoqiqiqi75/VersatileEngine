@@ -97,12 +97,28 @@ static void varToJson(const Var& v, std::string& out)
     }
 }
 
-static void nodeToJsonImpl(const Node* node, std::string& out, int indent, int depth)
+static bool isIgnoredChild(const Node* child, const schema::ExportOptions& options)
 {
+    return options.auto_ignore
+        && child
+        && !child->name().empty()
+        && child->name()[0] == '_';
+}
+
+static void nodeToJsonImpl(const Node* node, std::string& out, const schema::ExportOptions& options, int depth)
+{
+    const int indent = options.indent;
     std::string pad(depth * indent, ' ');
     std::string pad1((depth + 1) * indent, ' ');
 
-    const int nch = node->count();
+    Vector<const Node*> visible_children;
+    visible_children.reserve(node->count());
+    for (auto* child : *node) {
+        if (!isIgnoredChild(child, options))
+            visible_children.push_back(child);
+    }
+
+    const int nch = visible_children.sizeAsInt();
     if (nch == 0) {
         if (!node->get().isNull()) {
             varToJson(node->get(), out);
@@ -113,12 +129,12 @@ static void nodeToJsonImpl(const Node* node, std::string& out, int indent, int d
     }
 
     // First child has empty name => JSON array (all children as ordered elements).
-    if (node->child(0)->name().empty()) {
+    if (visible_children[0]->name().empty()) {
         out += "[\n";
         int i = 0;
-        for (auto* c : *node) {
+        for (auto* c : visible_children) {
             out += pad1;
-            nodeToJsonImpl(c, out, indent, depth + 1);
+            nodeToJsonImpl(c, out, options, depth + 1);
             if (++i < nch) {
                 out += ",";
             }
@@ -130,14 +146,23 @@ static void nodeToJsonImpl(const Node* node, std::string& out, int indent, int d
 
     const bool hasVal = !node->get().isNull();
     out += "{\n";
-    auto names = node->childNames();
-
-    int anonCnt = 0;
-    for (auto* c : *node) {
-        if (c->name().empty()) {
-            ++anonCnt;
+    Strings names;
+    Hash<Vector<const Node*>> named_groups;
+    Vector<const Node*> anonymous_children;
+    Hash<char> seen;
+    for (auto* child : visible_children) {
+        if (child->name().empty()) {
+            anonymous_children.push_back(child);
+            continue;
         }
+        if (!seen.count(child->name())) {
+            seen[child->name()] = 0;
+            names.push_back(child->name());
+        }
+        named_groups[child->name()].push_back(child);
     }
+
+    const int anonCnt = anonymous_children.sizeAsInt();
 
     int fieldIdx = 0;
     int totalFields = (int)names.size() + (anonCnt > 0 ? 1 : 0) + (hasVal ? 1 : 0);
@@ -150,18 +175,19 @@ static void nodeToJsonImpl(const Node* node, std::string& out, int indent, int d
     }
 
     for (auto& nm : names) {
-        int cnt = node->count(nm);
+        auto& group = named_groups[nm];
+        int cnt = group.sizeAsInt();
         out += pad1 + "\"";
         escape(nm, out);
         out += "\": ";
         if (cnt == 1) {
-            nodeToJsonImpl(node->child(nm, 0), out, indent, depth + 1);
+            nodeToJsonImpl(group[0], out, options, depth + 1);
         } else {
             out += "[\n";
             std::string pad2((depth + 2) * indent, ' ');
             for (int i = 0; i < cnt; ++i) {
                 out += pad2;
-                nodeToJsonImpl(node->child(nm, i), out, indent, depth + 2);
+                nodeToJsonImpl(group[i], out, options, depth + 2);
                 if (i + 1 < cnt) out += ",";
                 out += "\n";
             }
@@ -174,14 +200,11 @@ static void nodeToJsonImpl(const Node* node, std::string& out, int indent, int d
     if (anonCnt > 0) {
         out += pad1 + "\"\": [\n";
         std::string pad2((depth + 2) * indent, ' ');
-        int i = 0;
-        for (auto* c : *node) {
-            if (c->name().empty()) {
-                out += pad2;
-                nodeToJsonImpl(c, out, indent, depth + 2);
-                if (++i < anonCnt) out += ",";
-                out += "\n";
-            }
+        for (int i = 0; i < anonCnt; ++i) {
+            out += pad2;
+            nodeToJsonImpl(anonymous_children[i], out, options, depth + 2);
+            if (i + 1 < anonCnt) out += ",";
+            out += "\n";
         }
         out += pad1 + "]\n";
     }
@@ -202,10 +225,17 @@ std::string stringify(const Var& v)
 
 std::string exportTree(const Node* node, int indent)
 {
+    schema::ExportOptions options;
+    options.indent = indent;
+    return exportTree(node, options);
+}
+
+std::string exportTree(const Node* node, const schema::ExportOptions& options)
+{
     if (!node) return "null";
     std::string out;
     out.reserve(256);
-    nodeToJsonImpl(node, out, indent, 0);
+    nodeToJsonImpl(node, out, options, 0);
     out += "\n";
     return out;
 }
@@ -333,6 +363,25 @@ bool importTree(Node* node, const std::string& json)
     if (err) return false;
 
     domToNode(val, node);
+    return true;
+}
+
+bool importTree(Node* node, const std::string& json, const schema::ImportOptions& options)
+{
+    if (!node || json.empty()) return false;
+
+    simdjson::ondemand::parser parser;
+    simdjson::padded_string padded(json);
+    auto doc = parser.iterate(padded);
+    if (doc.error()) return false;
+
+    simdjson::ondemand::value val;
+    auto err = doc.get_value().get(val);
+    if (err) return false;
+
+    Node parsed("json_import");
+    domToNode(val, &parsed);
+    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_replace);
     return true;
 }
 

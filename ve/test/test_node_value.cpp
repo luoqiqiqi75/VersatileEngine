@@ -6,50 +6,45 @@
 using namespace ve;
 
 // ============================================================================
-// Node::hasValue / value / set / get
+// Node value / set / get (non-null means has value)
 // ============================================================================
 
 VE_TEST(node_value_default_no_value) {
     Node n("test");
-    VE_ASSERT(!n.hasValue());
-    VE_ASSERT(n.value().isNull());
+    VE_ASSERT(n.get().isNull());
 }
 
 VE_TEST(node_value_set_int) {
     Node n("test");
     n.set(Var(42));
-    VE_ASSERT(n.hasValue());
-    VE_ASSERT_EQ(n.value().toInt(), 42);
+    VE_ASSERT_EQ(n.get().toInt(), 42);
 }
 
 VE_TEST(node_value_set_string) {
     Node n("test");
     n.set(Var("hello"));
-    VE_ASSERT(n.hasValue());
-    VE_ASSERT_EQ(n.value().toString(), "hello");
+    VE_ASSERT_EQ(n.get().toString(), "hello");
 }
 
 VE_TEST(node_value_set_double) {
     Node n("test");
     n.set(Var(3.14));
-    VE_ASSERT(n.hasValue());
-    VE_ASSERT_NEAR(n.value().toDouble(), 3.14, 0.001);
+    VE_ASSERT_NEAR(n.get().toDouble(), 3.14, 0.001);
 }
 
 VE_TEST(node_value_set_overwrites) {
     Node n("test");
     n.set(Var(1));
-    VE_ASSERT_EQ(n.value().toInt(), 1);
+    VE_ASSERT_EQ(n.get().toInt(), 1);
     n.set(Var(2));
-    VE_ASSERT_EQ(n.value().toInt(), 2);
+    VE_ASSERT_EQ(n.get().toInt(), 2);
 }
 
 VE_TEST(node_value_set_rvalue) {
     Node n("test");
     Var v(99);
     n.set(std::move(v));
-    VE_ASSERT(n.hasValue());
-    VE_ASSERT_EQ(n.value().toInt(), 99);
+    VE_ASSERT_EQ(n.get().toInt(), 99);
 }
 
 VE_TEST(node_value_get_typed) {
@@ -90,11 +85,11 @@ VE_TEST(node_value_update_changes) {
     Node n("test");
     bool changed = n.update(Var(1));
     VE_ASSERT(changed);
-    VE_ASSERT_EQ(n.value().toInt(), 1);
+    VE_ASSERT_EQ(n.get().toInt(), 1);
 
     changed = n.update(Var(2));
     VE_ASSERT(changed);
-    VE_ASSERT_EQ(n.value().toInt(), 2);
+    VE_ASSERT_EQ(n.get().toInt(), 2);
 }
 
 VE_TEST(node_value_update_no_change) {

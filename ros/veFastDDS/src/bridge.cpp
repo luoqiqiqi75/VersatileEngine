@@ -89,7 +89,7 @@ void Bridge::expose(const std::string& node_path, const std::string& topic)
 
 void Bridge::subscribe(const std::string& topic, const std::string& node_path)
 {
-    // at() creates the path if missing (same role as legacy ensure())
+    // at() creates the path if missing before the DDS subscriber is attached.
     Node* n = _p->root->at(node_path);
 
     BridgeEntry entry;
