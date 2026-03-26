@@ -176,4 +176,5 @@ That is the shape that survived repeated use in robotics, HMI, medical, and web-
 
 ## Recent Changes (2026)
 
-- **Node copy + XML support**: Optimized `Node::copy()` for clarity (kept duplicate-name matching and full signals). Added `schema::Xml` (pugixml) with `SchemaTraits<Xml>`. Attributes stored as `Dict` in `Var` value; text under `"#text"`. Dict CRUD emits only `NODE_CHANGED` (no `NODE_ADDED`/`NODE_REMOVED`). See `ve/src/core/impl/xml.*`, `schema.h`, and `node.h` docs. Updated `ve/CMakeLists.txt` with `ve_find_package(pugixml)`.
+- **Node copy + XML support**: Optimized `Node::copy()` for clarity (kept duplicate-name matching and full signals). Added `schema::Xml` (pugixml) with `SchemaTraits<Xml>`. Attributes are stored as `@attr` child nodes, text content as node value. Implemented robust HTML fallback parsing to handle unclosed tags and scripts.
+- **Var schema**: Added `schema::Var` with `SchemaTraits<Var>` to support exporting/importing a `Node` tree directly to/from a `ve::Var` (Dict/List structure), similar to IMOL's `importFromVariant` / `exportToVariant`.

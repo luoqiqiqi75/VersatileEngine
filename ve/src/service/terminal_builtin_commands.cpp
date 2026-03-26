@@ -1,8 +1,8 @@
 // terminal_builtin_commands.cpp — TCP Terminal REPL commands (command::reg)
 //
 // Hybrid command style (Linux-inspired):
-//   Tier 1 (high-freq): ls  info  get  set  add  rm  mv  cp  mk  find  erase  json  help
-//   Tier 2 (subcommands): child  shadow  watch  schema  cmd
+//   Tier 1 (high-freq): ls  get  set  mk  rm  mv  cp  help
+//   Tier 2 (subcommands): schema  shadow
 //
 // Flags: -x (POSIX short), --long (GNU long), -abc (combined shorts)
 //
@@ -150,9 +150,32 @@ void terminalBuiltinsEnsureRegistered()
             RET_OK(out);
         }
 
+        bool detailed = f.has("long", 'l');
+
+        if (detailed) {
+            auto nm = target->name().empty() ? "(anon)" : target->name();
+            auto* root = ve::node::root();
+            std::string out;
+            out += "  name:      " + nm + "\n";
+            out += "  path:      /" + target->path(root) + "\n";
+            out += "  parent:    " + std::string(target->parent() ? nodeSummary(target->parent()) : "(none)") + "\n";
+            out += "  children:  " + std::to_string(target->count()) + "\n";
+            out += "  empty:     " + std::string(target->empty() ? "yes" : "no") + "\n";
+            out += "  shadow:    " + std::string(target->shadow() ? nodeSummary(target->shadow()) : "(none)") + "\n";
+            if (!target->get().isNull()) {
+                auto& v = target->get();
+                out += "  value:     " + varPreview(v) + "\n";
+                out += "  type:      " + std::string(varTypeName(v.type())) + "\n";
+            } else {
+                out += "  value:     (none)\n";
+            }
+            out += "  watching:  " + std::string(target->isWatching() ? "yes" : "no") + "\n";
+            out += "  silent:    " + std::string(target->isSilent() ? "yes" : "no") + "\n";
+            RET_OK(out);
+        }
+
         int total = target->count();
         if (total == 0) RET_OK("  (empty)\n");
-        bool detailed = f.has("long", 'l');
         std::string out;
         for (int i = 0; i < total; ++i) {
             auto* c = target->child(i);
@@ -162,54 +185,11 @@ void terminalBuiltinsEnsureRegistered()
             if (k != nm && k != "(anon)") out += "  (key: " + k + ")";
             if (!c->get().isNull())
                 out += "  = " + varPreview(c->get());
-            if (detailed) {
-                out += "  (" + std::string(varTypeName(c->get().type())) + ")";
-                out += "  children:" + std::to_string(c->count());
-            }
             out += "\n";
         }
         out += "  (" + std::to_string(total) + " total)\n";
         RET_OK(out);
     }, "ls [path] [-t|--tree] [-l|--long] [-n|--names]  list children");
-
-    // =================================================================
-    // info [path]
-    // =================================================================
-    reg("info", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        auto nm = target->name().empty() ? "(anon)" : target->name();
-        auto* root = ve::node::root();
-        std::string out;
-        out += "  name:      " + nm + "\n";
-        out += "  path:      /" + target->path(root) + "\n";
-        out += "  parent:    " + std::string(target->parent() ? nodeSummary(target->parent()) : "(none)") + "\n";
-        out += "  children:  " + std::to_string(target->count()) + "\n";
-        out += "  empty:     " + std::string(target->empty() ? "yes" : "no") + "\n";
-        out += "  shadow:    " + std::string(target->shadow() ? nodeSummary(target->shadow()) : "(none)") + "\n";
-        if (!target->get().isNull()) {
-            auto& v = target->get();
-            out += "  value:     " + varPreview(v) + "\n";
-            out += "  type:      " + std::string(varTypeName(v.type())) + "\n";
-        } else {
-            out += "  value:     (none)\n";
-        }
-        out += "  watching:  " + std::string(target->isWatching() ? "yes" : "no") + "\n";
-        out += "  silent:    " + std::string(target->isSilent() ? "yes" : "no") + "\n";
-        if (target->parent()) {
-            out += "  indexOf:   " + std::to_string(target->parent()->indexOf(target)) + "\n";
-            out += "  keyOf:     " + target->parent()->keyOf(target) + "\n";
-        }
-        auto* fi = target->first();
-        auto* la = target->last();
-        auto* pr = target->prev();
-        auto* ne = target->next();
-        out += "  first:     " + nodeSummary(fi) + "\n";
-        out += "  last:      " + nodeSummary(la) + "\n";
-        out += "  prev:      " + std::string(pr ? nodeSummary(pr) : "(none)") + "\n";
-        out += "  next:      " + std::string(ne ? nodeSummary(ne) : "(none)") + "\n";
-        RET_OK(out);
-    }, "info [path]  show node details");
 
     // =================================================================
     // get [path] [-t|--type]
@@ -247,12 +227,23 @@ void terminalBuiltinsEnsureRegistered()
     }, "set [path] <value> [--null]  set or clear value");
 
     // =================================================================
-    // add [path] [name] [-o|--overlap N] [-a|--anon] [--at INDEX]
+    // mk [path] <name|subpath> [-o N] [-a] [--at IDX]
     // =================================================================
-    reg("add", [](const Var& input) -> Result {
+    reg("mk", [](const Var& input) -> Result {
         auto f = parseFlags(input);
         RESOLVE_OR_FAIL(0);
 
+        auto path = f.pos(1);
+        if (path.empty()) RET_FAIL("usage: mk [path] <name|subpath> [-o N] [-a] [--at IDX]");
+
+        // If path contains '/', treat as subpath (ensure nodes along path)
+        if (path.find('/') != std::string::npos) {
+            auto* n = target->at(path);
+            if (n) RET_OK("created: /" + n->path(ve::node::root()) + "\n");
+            RET_FAIL("failed");
+        }
+
+        // Otherwise treat as child name (append/insert)
         auto ovStr = f.get("overlap", 'o', "0");
         int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
 
@@ -265,22 +256,19 @@ void terminalBuiltinsEnsureRegistered()
             RET_FAIL("failed");
         }
 
-        auto name = f.pos(1);
-        if (name.empty()) RET_FAIL("usage: add [path] <name> [-o N] [-a|--anon] [--at INDEX]");
-
         if (hasAt) {
             int idx = std::stoi(atStr);
-            auto* c = new Node(name);
+            auto* c = new Node(path);
             if (target->insert(c, idx))
-                RET_OK("inserted '" + name + "' at [" + std::to_string(idx) + "]\n");
+                RET_OK("inserted '" + path + "' at [" + std::to_string(idx) + "]\n");
             delete c;
             RET_FAIL("insert failed (index " + std::to_string(idx) + ", count " + std::to_string(target->count()) + ")");
         }
 
-        auto* n = target->append(name, overlap);
-        if (n) RET_OK("appended " + std::to_string(1 + overlap) + " '" + name + "' -> last: " + target->keyOf(n) + "\n");
+        auto* n = target->append(path, overlap);
+        if (n) RET_OK("appended " + std::to_string(1 + overlap) + " '" + path + "' -> last: " + target->keyOf(n) + "\n");
         RET_FAIL("failed");
-    }, "add [path] <name> [-o N] [-a] [--at IDX]  append/insert child");
+    }, "mk [path] <name|subpath> [-o N] [-a] [--at IDX]  create child or ensure path");
 
     // =================================================================
     // rm [path] [target] [-i|--index IDX] [-n|--name NAME [-o N]]
@@ -328,228 +316,110 @@ void terminalBuiltinsEnsureRegistered()
     }, "rm [path] [target] [-i IDX] [-n NAME] [--all] [-c]  remove child(ren)");
 
     // =================================================================
-    // mv [dest] [src] [--at INDEX]
+    // mv <src> [dest] [--at INDEX]
     // =================================================================
     reg("mv", [](const Var& input) -> Result {
         auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        auto srcPath = f.pos(1);
-        if (srcPath.empty()) RET_FAIL("usage: mv [dest] <src> [--at INDEX]");
+        auto srcPath = f.pos(0);
+        if (srcPath.empty()) RET_FAIL("usage: mv <src> [dest] [--at INDEX]");
+
         auto* src = ve::node::root()->find(srcPath, false);
         if (!src) RET_FAIL("not found: " + srcPath);
-        if (src == target) RET_FAIL("cannot move node into itself");
+
+        auto destPath = f.pos(1);
+        auto* dest = destPath.empty() ? ve::node::root() : ve::node::root()->find(destPath, false);
+        if (!dest) RET_FAIL("dest not found: " + destPath);
+        if (src == dest) RET_FAIL("cannot move node into itself");
+
         auto* root = ve::node::root();
         auto atStr = f.get("at");
         if (f.has("at") && isInt(atStr)) {
             int idx = std::stoi(atStr);
-            if (target->insert(src, idx))
+            if (dest->insert(src, idx))
                 RET_OK("moved to [" + std::to_string(idx) + "] " + src->path(root) + "\n");
             RET_FAIL("insert at index " + std::to_string(idx) + " failed");
         }
-        target->insert(src);
+        dest->insert(src);
         RET_OK("moved to " + src->path(root) + "\n");
-    }, "mv [dest] <src> [--at INDEX]  reparent node");
+    }, "mv <src> [dest] [--at INDEX]  reparent node");
 
     // =================================================================
-    // cp [dest] [src] [-r|--remove] [-u|--update] [-I|--no-insert]
+    // cp <src> [dest] [-r|--remove] [-u|--update] [-I|--no-insert]
     // =================================================================
     reg("cp", [](const Var& input) -> Result {
         auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-
-        auto srcPath = f.pos(1);
-        if (srcPath.empty()) RET_FAIL("usage: cp [dest] <src> [-r|--remove] [-u|--update] [-I|--no-insert]");
+        auto srcPath = f.pos(0);
+        if (srcPath.empty()) RET_FAIL("usage: cp <src> [dest] [-r|--remove] [-u|--update] [-I|--no-insert]");
 
         auto* src = ve::node::root()->find(srcPath, false);
         if (!src) RET_FAIL("not found: " + srcPath);
-        if (src == target) RET_FAIL("cannot copy node onto itself");
-        if (src->isAncestorOf(target) || target->isAncestorOf(src))
+
+        auto destPath = f.pos(1);
+        auto* dest = destPath.empty() ? ve::node::root() : ve::node::root()->find(destPath, false);
+        if (!dest) RET_FAIL("dest not found: " + destPath);
+        if (src == dest) RET_FAIL("cannot copy node onto itself");
+        if (src->isAncestorOf(dest) || dest->isAncestorOf(src))
             RET_FAIL("cannot copy between overlapping subtrees");
 
         bool autoInsert = !f.has("no-insert", 'I');
         bool autoRemove = f.has("remove", 'r');
         bool autoUpdate = f.has("update", 'u');
-        target->copy(src, autoInsert, autoRemove, autoUpdate);
+        dest->copy(src, autoInsert, autoRemove, autoUpdate);
 
         auto* root = ve::node::root();
         std::string out = "copied ";
-        out += "/" + src->path(root) + " -> /" + target->path(root);
+        out += "/" + src->path(root) + " -> /" + dest->path(root);
         out += "  (insert:" + std::string(autoInsert ? "on" : "off");
         out += ", remove:" + std::string(autoRemove ? "on" : "off");
         out += ", update:" + std::string(autoUpdate ? "on" : "off") + ")\n";
         RET_OK(out);
-    }, "cp [dest] <src> [-r|--remove] [-u|--update] [-I|--no-insert]  copy subtree into target");
+    }, "cp <src> [dest] [-r|--remove] [-u|--update] [-I|--no-insert]  copy subtree");
 
     // =================================================================
-    // mk [path] <subpath>
+    // schema <format> [path] [-o FILE] [-i FILE]
     // =================================================================
-    reg("mk", [](const Var& input) -> Result {
+    reg("schema", [](const Var& input) -> Result {
         auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        auto path = f.pos(1);
-        if (path.empty()) RET_FAIL("usage: mk <path>");
-        auto* n = target->at(path);
-        if (n) RET_OK("created: /" + n->path(ve::node::root()) + "\n");
-        RET_FAIL("failed");
-    }, "mk [path] <subpath>  ensure nodes along path");
+        auto format = f.pos(0);
 
-    // =================================================================
-    // find [path] [subpath] [-S|--no-shadow]
-    // =================================================================
-    reg("find", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        auto path = f.pos(1);
-        if (path.empty()) RET_FAIL("usage: find [path] <subpath> [-S|--no-shadow]");
-        bool useShadow = !f.has("no-shadow", 'S');
-        auto* n = target->find(path, useShadow);
-        if (n) RET_OK("found: /" + n->path(ve::node::root()) + "\n");
-        RET_FAIL(useShadow ? "not found" : "not found (without shadow)");
-    }, "find [path] <subpath> [-S|--no-shadow]  resolve path");
+        if (format.empty() || (format != "json" && format != "xml" && format != "var"))
+            RET_FAIL("usage: schema <json|xml|var> [path] [-o FILE] [-i FILE]");
 
-    // =================================================================
-    // erase [path] <subpath>
-    // =================================================================
-    reg("erase", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        auto path = f.pos(1);
-        if (path.empty()) RET_FAIL("usage: erase <path>");
-        if (target->erase(path)) RET_OK("erased\n");
-        RET_FAIL("failed (not found or is root)");
-    }, "erase [path] <subpath>  erase at path");
+        RESOLVE_OR_FAIL(1);
 
-    // =================================================================
-    // json [path] [-o|--output FILE] [--import FILE]
-    // xml  [path] [-o|--output FILE] [--import FILE]  (new: pugixml + Dict attrs)
-    // =================================================================
-    reg("json", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-
-        auto importFile = f.get("import");
-        if (f.has("import")) {
-            if (importFile.empty()) RET_FAIL("usage: json --import <file>");
+        auto importFile = f.get("import", 'i');
+        if (f.has("import", 'i')) {
+            if (importFile.empty()) RET_FAIL("usage: schema " + format + " -i <file>");
             std::ifstream ifs(importFile);
             if (!ifs.is_open()) RET_FAIL("cannot read: " + importFile);
             std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-            if (impl::json::importTree(target, content))
-                RET_OK("imported from " + importFile + "\n");
-            RET_FAIL("import failed (invalid JSON)");
+
+            bool ok = false;
+            if (format == "json") ok = impl::json::importTree(target, content);
+            else if (format == "xml") ok = impl::xml::importTree(target, content);
+
+            if (ok) RET_OK("imported from " + importFile + "\n");
+            RET_FAIL("import failed (invalid " + format + ")");
         }
 
-        std::string js = impl::json::exportTree(target);
+        std::string result;
+        if (format == "json") result = impl::json::exportTree(target);
+        else if (format == "xml") result = impl::xml::exportTree(target);
+        else if (format == "var") {
+            auto v = schema::exportAs<schema::VarS>(target);
+            result = impl::json::stringify(v) + "\n";
+        }
 
         auto outFile = f.get("output", 'o');
         if (f.has("output", 'o') && !outFile.empty()) {
             std::ofstream ofs(outFile);
             if (!ofs.is_open()) RET_FAIL("cannot write: " + outFile);
-            ofs << js;
+            ofs << result;
             RET_OK("saved to " + outFile + "\n");
         }
 
-        RET_OK(js);
-    }, "json [path] [-o FILE] [--import FILE]  export/import JSON");
-
-    reg("xml", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-
-        auto importFile = f.get("import");
-        if (f.has("import")) {
-            if (importFile.empty()) RET_FAIL("usage: xml --import <file>");
-            std::ifstream ifs(importFile);
-            if (!ifs.is_open()) RET_FAIL("cannot read: " + importFile);
-            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-            if (impl::xml::importTree(target, content))
-                RET_OK("imported from " + importFile + "\n");
-            RET_FAIL("import failed (invalid XML)");
-        }
-
-        std::string x = impl::xml::exportTree(target);
-
-        auto outFile = f.get("output", 'o');
-        if (f.has("output", 'o') && !outFile.empty()) {
-            std::ofstream ofs(outFile);
-            if (!ofs.is_open()) RET_FAIL("cannot write: " + outFile);
-            ofs << x;
-            RET_OK("saved to " + outFile + "\n");
-        }
-
-        RET_OK(x);
-    }, "xml [path] [-o FILE] [--import FILE]  export/import XML (attrs as Dict)");
-
-    // =================================================================
-    // child [path] [idx|name] [-o N] [--has NAME] [--count [NAME]]
-    //       [--key CHILD] [--index CHILD] [--at KEY]
-    // =================================================================
-    reg("child", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-
-        if (f.has("has")) {
-            auto arg = f.get("has");
-            if (arg.empty()) RET_FAIL("usage: child --has <name|index>");
-            if (isInt(arg)) {
-                int idx = std::stoi(arg);
-                RET_OK(std::string(target->has(idx) ? "true" : "false") + "\n");
-            }
-            auto ovStr = f.get("overlap", 'o', "0");
-            int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
-            RET_OK(std::string(target->has(arg, overlap) ? "true" : "false") + "\n");
-        }
-
-        if (f.has("count")) {
-            auto name = f.get("count");
-            if (!name.empty())
-                RET_OK("count(\"" + name + "\") = " + std::to_string(target->count(name)) + "\n");
-            RET_OK("count() = " + std::to_string(target->count()) + "\n");
-        }
-
-        if (f.has("key")) {
-            auto childPath = f.get("key");
-            if (childPath.empty()) RET_FAIL("usage: child --key <child_path>");
-            auto* c = target->find(childPath);
-            if (!c) RET_FAIL("not found: " + childPath);
-            if (c->parent() == target)
-                RET_OK("keyOf = " + target->keyOf(c) + "\n");
-            if (c->parent())
-                RET_OK("keyOf (in parent) = " + c->parent()->keyOf(c) + "\n");
-            RET_FAIL("(no parent)");
-        }
-
-        if (f.has("index")) {
-            auto childPath = f.get("index");
-            if (childPath.empty()) RET_FAIL("usage: child --index <child_path>");
-            auto* c = target->find(childPath);
-            if (!c) RET_FAIL("not found: " + childPath);
-            int idx = target->indexOf(c);
-            if (idx >= 0) RET_OK("indexOf = " + std::to_string(idx) + "\n");
-            RET_FAIL("not a direct child of target node");
-        }
-
-        if (f.has("at")) {
-            auto key = f.get("at");
-            if (key.empty()) RET_FAIL("usage: child --at <key>");
-            auto* c = target->childAt(key);
-            if (c) RET_OK(nodeSummary(c) + "  (index: " + std::to_string(target->indexOf(c)) + ")\n");
-            RET_FAIL("no child at key '" + key + "'");
-        }
-
-        auto arg1 = f.pos(1);
-        if (arg1.empty()) RET_FAIL("usage: child [path] <idx|name> [--has|--count|--key|--index|--at]");
-        if (isInt(arg1)) {
-            int idx = std::stoi(arg1);
-            auto* c = target->child(idx);
-            if (c) RET_OK("[" + std::to_string(idx) + "] " + nodeSummary(c) + "  (key: " + target->keyOf(c) + ")\n");
-            RET_FAIL("no child at index " + std::to_string(idx));
-        }
-        auto ovStr = f.get("overlap", 'o', "0");
-        int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
-        auto* c = target->child(arg1, overlap);
-        if (c) RET_OK(nodeSummary(c) + "  (index: " + std::to_string(target->indexOf(c)) + ")\n");
-        RET_FAIL("no child '" + arg1 + "' overlap " + std::to_string(overlap));
-    }, "child [path] <idx|name> [--has|--count|--key|--index|--at]  child access");
+        RET_OK(result);
+    }, "schema <json|xml|var> [path] [-o FILE] [-i FILE]  export/import with format");
 
     // =================================================================
     // shadow [path] [--set TARGET] [--clear]
@@ -579,50 +449,12 @@ void terminalBuiltinsEnsureRegistered()
     }, "shadow [path] [--set TARGET] [--clear]  shadow operations");
 
     // =================================================================
-    // watch [path] [--off] [--all] [--silent [--off] [--all]]
+    // help [command] [--list] [--has KEY]
     // =================================================================
-    reg("watch", [](const Var& input) -> Result {
+    reg("help", [](const Var& input) -> Result {
         auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        bool off = f.has("off");
 
-        if (f.has("silent")) {
-            if (f.has("all")) {
-                target->silentAll(!off);
-                RET_OK("SILENT " + std::string(!off ? "on" : "off") + " (recursive)\n");
-            }
-            target->silent(!off);
-            RET_OK("SILENT = " + std::string(!off ? "on" : "off") + "\n");
-        }
-
-        if (f.has("all")) {
-            target->watchAll(!off);
-            RET_OK("WATCHING " + std::string(!off ? "on" : "off") + " (recursive)\n");
-        }
-        target->watch(!off);
-        RET_OK("WATCHING = " + std::string(!off ? "on" : "off") + "\n");
-    }, "watch [path] [--off] [--all] [--silent]  watch/silent flags");
-
-    // =================================================================
-    // schema [path] <field1> [field2 ...]
-    // =================================================================
-    reg("schema", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        RESOLVE_OR_FAIL(0);
-        int n = f.posCount();
-        if (n < 2) RET_FAIL("usage: schema [path] <field1> [field2 ...]");
-        for (int i = 1; i < n; ++i)
-            target->append(f.pos(i));
-        RET_OK("built schema with " + std::to_string(n - 1) + " fields on " + nodeSummary(target) + "\n");
-    }, "schema [path] <fields...>  build schema on node");
-
-    // =================================================================
-    // cmd call|list|help|has [key] [args...]
-    // =================================================================
-    reg("cmd", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
-        auto sub = f.pos(0);
-        if (sub.empty() || sub == "list") {
+        if (f.has("list")) {
             auto cmds = command::keys();
             std::string out;
             for (auto& k : cmds) {
@@ -636,37 +468,14 @@ void terminalBuiltinsEnsureRegistered()
             }
             RET_OK(out);
         }
-        if (sub == "has") {
-            auto key = f.pos(1);
-            if (key.empty()) RET_FAIL("usage: cmd has <key>");
-            RET_OK(std::string(command::has(key) ? "true" : "false") + "\n");
-        }
-        if (sub == "help") {
-            auto key = f.pos(1);
-            if (key.empty()) RET_FAIL("usage: cmd help <key>");
-            auto h = command::help(key);
-            if (h.empty()) RET_FAIL("unknown command: " + key);
-            RET_OK(key + ": " + h + "\n");
-        }
-        if (sub == "call") {
-            auto key = f.pos(1);
-            if (key.empty()) RET_FAIL("usage: cmd call <key> [args...]");
-            Var::ListV args;
-            for (int i = 2; i < f.posCount(); ++i)
-                args.push_back(Var(f.pos(i)));
-            Var callInput = args.empty() ? Var() : Var(std::move(args));
-            return command::call(key, callInput);
-        }
-        RET_FAIL("usage: cmd [call|list|help|has] ...");
-    }, "cmd [call|list|help|has]  command management");
 
-    // =================================================================
-    // help [command]
-    // =================================================================
-    reg("help", [](const Var& input) -> Result {
-        auto f = parseFlags(input);
+        auto hasKey = f.get("has");
+        if (f.has("has")) {
+            if (hasKey.empty()) RET_FAIL("usage: help --has <key>");
+            RET_OK(std::string(command::has(hasKey) ? "true" : "false") + "\n");
+        }
+
         auto specific = f.pos(0);
-
         if (!specific.empty()) {
             auto h = command::help(specific);
             if (!h.empty()) RET_OK(specific + ": " + h + "\n");
@@ -685,78 +494,21 @@ void terminalBuiltinsEnsureRegistered()
             out += "\n";
         }
         out += "\n=== Session Commands (Terminal only) ===\n";
-        out += "  cd <path>              navigate (supports '..')\n";
+        out += "  cd <path>              navigate (supports '.' and '..')\n";
         out += "  pwd                    print current path\n";
         out += "  root                   go to root\n";
-        out += "  up/p [N]               go up N levels\n";
+        out += "  up [N]                 go up N levels\n";
         out += "  first / last           go to first/last child\n";
         out += "  prev / next            go to prev/next sibling\n";
         out += "  sibling <N>            go to sibling at offset\n";
-        out += "  data/d                 switch to global data root\n";
-        out += "  n <dot.path>           ensure & cd via dot-path\n";
         out += "  orphans                list orphan pool\n";
         out += "  adopt <N>              adopt orphan into current\n";
         out += "  take <index|path>      detach child to orphan pool\n";
         out += "  quit / exit            disconnect\n";
         RET_OK(out);
-    }, "help [command]  show help");
+    }, "help [command] [--list] [--has KEY]  show help");
 
     // =================================================================
-    // Command aliases
-    // =================================================================
-
-    reg("tree", [](const Var& input) -> Result {
-        Var::ListV args;
-        if (input.type() == Var::LIST) for (auto& i : input.toList()) args.push_back(i);
-        else if (!input.isNull()) args.push_back(input);
-        args.push_back(Var("--tree"));
-        return command::call("ls", Var(std::move(args)));
-    }, "(alias) ls --tree");
-
-    reg("names", [](const Var& input) -> Result {
-        Var::ListV args;
-        if (input.type() == Var::LIST) for (auto& i : input.toList()) args.push_back(i);
-        else if (!input.isNull()) args.push_back(input);
-        args.push_back(Var("--names"));
-        return command::call("ls", Var(std::move(args)));
-    }, "(alias) ls --names");
-
-    reg("type", [](const Var& input) -> Result {
-        Var::ListV args;
-        if (input.type() == Var::LIST) for (auto& i : input.toList()) args.push_back(i);
-        else if (!input.isNull()) args.push_back(input);
-        args.push_back(Var("--type"));
-        return command::call("get", Var(std::move(args)));
-    }, "(alias) get --type");
-
-    reg("unset", [](const Var& input) -> Result {
-        Var::ListV args;
-        if (input.type() == Var::LIST) for (auto& i : input.toList()) args.push_back(i);
-        else if (!input.isNull()) args.push_back(input);
-        args.push_back(Var("--null"));
-        return command::call("set", Var(std::move(args)));
-    }, "(alias) set --null");
-
-    reg("showjson", [](const Var& input) -> Result {
-        return command::call("json", input);
-    }, "(alias) json");
-
-    reg("savejson", [](const Var& input) -> Result {
-        Var::ListV args;
-        if (input.type() == Var::LIST) {
-            auto& list = input.toList();
-            if (list.size() >= 2) {
-                args.push_back(list[0]);
-                args.push_back(Var("--output"));
-                args.push_back(list[1]);
-            }
-        }
-        return command::call("json", Var(std::move(args)));
-    }, "(alias) json --output");
-
-    reg("resolve", [](const Var& input) -> Result {
-        return command::call("find", input);
-    }, "(alias) find (with shadow)");
     });
 }
 

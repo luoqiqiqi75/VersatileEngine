@@ -34,8 +34,8 @@ static std::vector<std::string> split(const std::string& s)
 static const std::vector<std::string>& sessionCommandNames()
 {
     static std::vector<std::string> names = {
-        "cd", "pwd", "root", "up", "p", "first", "last", "prev", "next",
-        "sibling", "data", "d", "n", "orphans", "adopt", "take",
+        "cd", "pwd", "root", "up", "first", "last", "prev", "next",
+        "sibling", "orphans", "adopt", "take",
         "quit", "exit"
     };
     return names;
@@ -134,6 +134,7 @@ struct TerminalSession::Private
     }
 
     Node* resolveRel(const std::string& relPath) const {
+        if (relPath == ".") return cur;
         return cur->find(relPath);
     }
 
@@ -178,7 +179,9 @@ std::string TerminalSession::execute(const std::string& line)
 
     if (cmd == "cd") {
         if (args.size() < 2) { s.print("usage: cd <path>\n"); return s.output; }
-        if (args[1] == "..") {
+        if (args[1] == ".") {
+            return s.output;
+        } else if (args[1] == "..") {
             if (s.cur->parent()) s.cur = s.cur->parent();
             else s.print("already at root\n");
         } else {
@@ -196,7 +199,7 @@ std::string TerminalSession::execute(const std::string& line)
         s.cur = s.root;
         return s.output;
     }
-    if (cmd == "up" || cmd == "p") {
+    if (cmd == "up") {
         int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
         auto* p = s.cur->parent(n - 1);
         if (p) s.cur = p;
@@ -233,24 +236,6 @@ std::string TerminalSession::execute(const std::string& line)
         auto* sib = s.cur->sibling(off);
         if (sib) { s.cur = sib; s.print("-> " + nodeSummary(sib) + "\n"); }
         else s.print("no sibling at offset " + std::to_string(off) + "\n");
-        return s.output;
-    }
-    if (cmd == "data" || cmd == "d") {
-        s.cur = ve::node::root();
-        s.root = s.cur;
-        s.print("switched to global data root\n");
-        return s.output;
-    }
-    if (cmd == "n") {
-        if (args.size() < 2) { s.print("usage: n <slash/path>\n"); return s.output; }
-        auto* target = ve::n(args[1]);
-        if (target) {
-            s.root = ve::node::root();
-            s.cur = target;
-            s.print("-> /" + target->path(s.root) + "\n");
-        } else {
-            s.print("failed to ensure: " + args[1] + "\n");
-        }
         return s.output;
     }
 
@@ -301,30 +286,35 @@ std::string TerminalSession::execute(const std::string& line)
     std::string canonical = cmd;
     if (cmd == "g") canonical = "get";
     else if (cmd == "s") canonical = "set";
-    else if (cmd == "c") canonical = "child";
 
     if (!command::has(canonical)) {
         s.print("unknown: " + cmd + "  (type 'help')\n");
         return s.output;
     }
 
-    // Build input LIST: [0]=absPath, [1..]=remaining args and flags
+    // Commands that don't need current node path
+    static const std::vector<std::string> pathlessCommands = {"help", "schema"};
+    bool needsPath = std::find(pathlessCommands.begin(), pathlessCommands.end(), canonical) == pathlessCommands.end();
+
+    // Build input LIST: [0]=absPath (if needed), [1..]=remaining args and flags
     Var::ListV list;
     size_t pathArgIdx = 0;
     std::string absPath;
 
-    if (args.size() > 1 && !args[1].empty() && args[1][0] != '-') {
-        auto* n = s.resolveRel(args[1]);
-        if (n) {
-            absPath = n->path(s.root);
-            pathArgIdx = 1;
+    if (needsPath) {
+        if (args.size() > 1 && !args[1].empty() && args[1][0] != '-') {
+            auto* n = s.resolveRel(args[1]);
+            if (n) {
+                absPath = n->path(s.root);
+                pathArgIdx = 1;
+            }
         }
+        if (absPath.empty()) absPath = s.absPath();
+        list.push_back(Var(absPath));
     }
-    if (absPath.empty()) absPath = s.absPath();
 
-    list.push_back(Var(absPath));
     for (size_t i = 1; i < args.size(); ++i) {
-        if (i == pathArgIdx) continue;
+        if (needsPath && i == pathArgIdx) continue;
         list.push_back(Var(args[i]));
     }
 

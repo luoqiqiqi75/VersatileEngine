@@ -159,7 +159,7 @@ void setup(const Options& options)
     if (!options.config_file.empty()) {
         std::string content = readFile(options.config_file);
         if (!content.empty()) {
-            if (!schema::importAs<schema::Json>(root, content)) {
+            if (!schema::importAs<schema::JsonS>(root, content)) {
                 veLogE << "[ve::entry] Failed to parse config: " << options.config_file;
             } else if (g.options.verbose) {
                 veLogI << "[ve::entry] Config loaded: " << options.config_file;
@@ -189,8 +189,8 @@ void setup(Node* config_node)
 
     Node* root = node::root();
     if (config_node && config_node != root) {
-        std::string exported = schema::exportAs<schema::Json>(config_node);
-        schema::importAs<schema::Json>(root, exported);
+        std::string exported = schema::exportAs<schema::JsonS>(config_node);
+        schema::importAs<schema::JsonS>(root, exported);
     }
 
     g.options.verbose = n("ve/entry")->get("verbose").toBool(false);

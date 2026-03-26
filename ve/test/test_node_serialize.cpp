@@ -355,3 +355,20 @@ VE_TEST(node_serialize_xml_basic) {
     VE_ASSERT_EQ(dst.getInt(), 42);
     VE_ASSERT_EQ(dst.count(), 1);
 }
+
+// ============================================================================
+// Var support
+// ============================================================================
+
+VE_TEST(node_serialize_var_roundtrip_default) {
+    Node src("r");
+    buildJsonTree(src);
+
+    schema::ExportOptions ex;
+    auto var = schema::exportAs<schema::Var>(&src, ex);
+
+    Node dst("r");
+    schema::ImportOptions im;
+    VE_ASSERT(schema::importAs<schema::Var>(&dst, var, im));
+    VE_ASSERT(nodeStructEqual(&src, &dst));
+}

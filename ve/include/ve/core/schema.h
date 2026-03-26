@@ -15,10 +15,7 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
-#include "ve/global.h"
-#include "ve/core/base.h"
-#include <string>
-#include <memory>
+#include "var.h"
 
 namespace ve {
 
@@ -54,9 +51,10 @@ struct VE_API Schema
 
 namespace schema {
 
-struct Json {};
-struct Bin  {};
-struct Xml  {};  // pugixml based; attrs stored as Dict in Var value; only NODE_CHANGED for attr CRUD
+struct JsonS {};
+struct BinS  {};
+struct XmlS  {};  // pugixml based; attrs stored as Dict in Var value; only NODE_CHANGED for attr CRUD
+struct VarS  {};  // Var based; exports Node tree to a single Var (Dict/List/Value)
 
 struct ImportOptions {
     bool auto_insert  = true;
@@ -76,7 +74,7 @@ template<typename Format>
 struct SchemaTraits;
 
 template<>
-struct SchemaTraits<Json>
+struct SchemaTraits<JsonS>
 {
     VE_API static std::string exportNode(const Node* node, int indent = 2);
     VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
@@ -85,7 +83,7 @@ struct SchemaTraits<Json>
 };
 
 template<>
-struct SchemaTraits<Bin>
+struct SchemaTraits<BinS>
 {
     VE_API static Bytes exportNode(const Node* node);
     VE_API static Bytes exportNode(const Node* node, const ExportOptions& options);
@@ -94,12 +92,21 @@ struct SchemaTraits<Bin>
 };
 
 template<>
-struct SchemaTraits<Xml>
+struct SchemaTraits<XmlS>
 {
     VE_API static std::string exportNode(const Node* node, int indent = 2);
     VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool        importNode(Node* node, const std::string& data);
     VE_API static bool        importNode(Node* node, const std::string& data, const ImportOptions& options);
+};
+
+template<>
+struct SchemaTraits<VarS>
+{
+    VE_API static Var exportNode(const Node* node);
+    VE_API static Var exportNode(const Node* node, const ExportOptions& options);
+    VE_API static bool    importNode(Node* node, const Var& data);
+    VE_API static bool    importNode(Node* node, const Var& data, const ImportOptions& options);
 };
 
 // --- Convenience functions -------------------------------------------------
