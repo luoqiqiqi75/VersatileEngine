@@ -112,11 +112,12 @@ public:
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
-    // Sync this node from another node using key/path semantics.
-    // Named-sibling insertion order is not part of copy semantics; same-name overlap
-    // order and anonymous occurrence are matched when reusing children.
-    // Default value sync uses set() so copy always emits NODE_CHANGED.
-    // auto_update=true switches to update() to suppress unchanged value signals.
+    // Sync this node from another node using key/path semantics (similar to imol::copyFrom).
+    // - Named-sibling insertion order is not part of copy semantics; same-name overlap
+    //   order and anonymous occurrence (#N) are matched when reusing children.
+    // - For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
+    //   (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
+    // - Default value sync uses set() (always emits NODE_CHANGED); auto_update=true uses update().
     void  copy(const Node* other, bool auto_insert = true, bool auto_remove = false, bool auto_update = false);
 
     // -- key (key = name | name#N | #N) ---

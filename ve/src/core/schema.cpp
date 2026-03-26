@@ -5,6 +5,7 @@
 #include "ve/core/node.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/impl/bin.h"
+#include "ve/core/impl/xml.h"  // for SchemaTraits<Xml>
 
 namespace ve {
 
@@ -68,6 +69,30 @@ bool SchemaTraits<Bin>::importNode(Node* node, const uint8_t* data, size_t len)
 bool SchemaTraits<Bin>::importNode(Node* node, const uint8_t* data, size_t len, const ImportOptions& options)
 {
     return impl::bin::importTree(node, data, len, options);
+}
+
+// ============================================================================
+// SchemaTraits<Xml>
+// ============================================================================
+
+std::string SchemaTraits<Xml>::exportNode(const Node* node, int indent)
+{
+    return impl::xml::exportTree(node, indent);
+}
+
+std::string SchemaTraits<Xml>::exportNode(const Node* node, const ExportOptions& options)
+{
+    return impl::xml::exportTree(node, options);
+}
+
+bool SchemaTraits<Xml>::importNode(Node* node, const std::string& data)
+{
+    return impl::xml::importTree(node, data);
+}
+
+bool SchemaTraits<Xml>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+{
+    return impl::xml::importTree(node, data, options);
 }
 
 } // namespace schema

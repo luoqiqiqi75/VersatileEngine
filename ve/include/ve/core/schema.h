@@ -56,6 +56,7 @@ namespace schema {
 
 struct Json {};
 struct Bin  {};
+struct Xml  {};  // pugixml based; attrs stored as Dict in Var value; only NODE_CHANGED for attr CRUD
 
 struct ImportOptions {
     bool auto_insert  = true;
@@ -90,6 +91,15 @@ struct SchemaTraits<Bin>
     VE_API static Bytes exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len);
     VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len, const ImportOptions& options);
+};
+
+template<>
+struct SchemaTraits<Xml>
+{
+    VE_API static std::string exportNode(const Node* node, int indent = 2);
+    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
+    VE_API static bool        importNode(Node* node, const std::string& data);
+    VE_API static bool        importNode(Node* node, const std::string& data, const ImportOptions& options);
 };
 
 // --- Convenience functions -------------------------------------------------

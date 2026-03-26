@@ -173,3 +173,7 @@ Today VE is best understood as:
 - a set of adapters that connect Qt, ROS, DDS, RTT, and web clients without forcing a rewrite
 
 That is the shape that survived repeated use in robotics, HMI, medical, and web-facing systems.
+
+## Recent Changes (2026)
+
+- **Node copy + XML support**: Optimized `Node::copy()` for clarity (kept duplicate-name matching and full signals). Added `schema::Xml` (pugixml) with `SchemaTraits<Xml>`. Attributes stored as `Dict` in `Var` value; text under `"#text"`. Dict CRUD emits only `NODE_CHANGED` (no `NODE_ADDED`/`NODE_REMOVED`). See `ve/src/core/impl/xml.*`, `schema.h`, and `node.h` docs. Updated `ve/CMakeLists.txt` with `ve_find_package(pugixml)`.

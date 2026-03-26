@@ -13,6 +13,7 @@
 #include "ve/core/command.h"
 #include "ve/core/node.h"
 #include "ve/core/impl/json.h"
+#include "ve/core/impl/xml.h"
 #include "terminal_builtins.h"
 #include "terminal_util.h"
 #include <fstream>
@@ -420,6 +421,7 @@ void terminalBuiltinsEnsureRegistered()
 
     // =================================================================
     // json [path] [-o|--output FILE] [--import FILE]
+    // xml  [path] [-o|--output FILE] [--import FILE]  (new: pugixml + Dict attrs)
     // =================================================================
     reg("json", [](const Var& input) -> Result {
         auto f = parseFlags(input);
@@ -448,6 +450,34 @@ void terminalBuiltinsEnsureRegistered()
 
         RET_OK(js);
     }, "json [path] [-o FILE] [--import FILE]  export/import JSON");
+
+    reg("xml", [](const Var& input) -> Result {
+        auto f = parseFlags(input);
+        RESOLVE_OR_FAIL(0);
+
+        auto importFile = f.get("import");
+        if (f.has("import")) {
+            if (importFile.empty()) RET_FAIL("usage: xml --import <file>");
+            std::ifstream ifs(importFile);
+            if (!ifs.is_open()) RET_FAIL("cannot read: " + importFile);
+            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            if (impl::xml::importTree(target, content))
+                RET_OK("imported from " + importFile + "\n");
+            RET_FAIL("import failed (invalid XML)");
+        }
+
+        std::string x = impl::xml::exportTree(target);
+
+        auto outFile = f.get("output", 'o');
+        if (f.has("output", 'o') && !outFile.empty()) {
+            std::ofstream ofs(outFile);
+            if (!ofs.is_open()) RET_FAIL("cannot write: " + outFile);
+            ofs << x;
+            RET_OK("saved to " + outFile + "\n");
+        }
+
+        RET_OK(x);
+    }, "xml [path] [-o FILE] [--import FILE]  export/import XML (attrs as Dict)");
 
     // =================================================================
     // child [path] [idx|name] [-o N] [--has NAME] [--count [NAME]]

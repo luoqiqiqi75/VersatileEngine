@@ -3,6 +3,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/schema.h"
+#include "ve/core/impl/xml.h"
 
 using namespace ve;
 
@@ -336,4 +337,21 @@ VE_TEST(node_serialize_json_import_signals_auto_remove) {
     VE_ASSERT_EQ(root.child("stay")->getInt(), 3);
     VE_ASSERT_EQ(events.sizeAsInt(), 1);
     VE_ASSERT_EQ(events[0], "removed:gone");
+}
+
+// ============================================================================
+// XML support (pugixml + Dict attrs only NODE_CHANGED)
+// ============================================================================
+
+VE_TEST(node_serialize_xml_basic) {
+    Node src("root");
+    src.set(42);
+    src.append("child")->set("value");
+    auto xml = schema::exportAs<schema::Xml>(&src);
+    VE_ASSERT(!xml.empty());
+
+    Node dst("dst");
+    VE_ASSERT(schema::importAs<schema::Xml>(&dst, xml));
+    VE_ASSERT_EQ(dst.getInt(), 42);
+    VE_ASSERT_EQ(dst.count(), 1);
 }
