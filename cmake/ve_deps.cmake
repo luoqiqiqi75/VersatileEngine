@@ -7,6 +7,7 @@
 #   ve_dep_asio      — standalone asio 1.29 (header-only)
 #   ve_dep_asio2     — asio2 2.9 (high-level networking, header-only)
 #   ve_dep_simdjson  — simdjson（deps/simdjson，add_subdirectory，始终静态归档，链接 simdjson::simdjson）
+#   ve_dep_pugixml   — pugixml（deps/pugixml，静态库，链接 pugixml::pugixml）
 #
 # 外部依赖由各子项目按需调用 ve_find_package() 声明:
 #   rtt/           -> nlohmann_json::nlohmann_json
@@ -79,6 +80,52 @@ unset(_VE_DEPS_SIMDJSON_SAVE_BUILD_SHARED_LIBS)
 add_library(ve_dep_simdjson INTERFACE)
 target_link_libraries(ve_dep_simdjson INTERFACE simdjson::simdjson)
 
+# --- pugixml (XML; deps/pugixml by default, static .a/.lib into libve) ---
+# Override with VE_DEP_pugixml in cmake/_local.cmake (same pattern as ve_find_package).
+set(VE_DEPS_PUGIXML_ROOT "${VE_DEPS_ROOT}/pugixml")
+if(DEFINED VE_DEP_pugixml AND EXISTS "${VE_DEP_pugixml}/CMakeLists.txt")
+    set(_VE_PUGIXML_SRC_ROOT "${VE_DEP_pugixml}")
+elseif(EXISTS "${VE_DEPS_PUGIXML_ROOT}/CMakeLists.txt")
+    set(_VE_PUGIXML_SRC_ROOT "${VE_DEPS_PUGIXML_ROOT}")
+else()
+    message(FATAL_ERROR
+        "pugixml not found. Expected ${VE_DEPS_PUGIXML_ROOT} or set VE_DEP_pugixml in cmake/_local.cmake")
+endif()
+set(VE_DEPS_PUGIXML_ROOT "${_VE_PUGIXML_SRC_ROOT}")
+
+set(_VE_DEPS_PUGIXML_SAVE_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF)
+set(PUGIXML_BUILD_TESTS OFF CACHE BOOL "pugixml: skip tests when built as VE subdir" FORCE)
+set(PUGIXML_INSTALL OFF CACHE BOOL "pugixml: no install rules when bundled in libve" FORCE)
+
+# Performance optimizations for pugixml:
+# - Default mode (non-COMPACT) for best performance
+# - Disable XPath support (not used in VE schema serialization)
+# - Keep exceptions and STL for compatibility with VE
+set(PUGIXML_NO_XPATH ON CACHE BOOL "pugixml: disable XPath (not used in VE)" FORCE)
+
+add_subdirectory("${_VE_PUGIXML_SRC_ROOT}" "${CMAKE_BINARY_DIR}/_deps/pugixml")
+set(BUILD_SHARED_LIBS "${_VE_DEPS_PUGIXML_SAVE_BUILD_SHARED_LIBS}")
+unset(_VE_DEPS_PUGIXML_SAVE_BUILD_SHARED_LIBS)
+
+# PIC required for linking static lib into shared libve on Linux/macOS
+if(TARGET pugixml-static)
+    set_target_properties(pugixml-static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Compiler-specific optimizations (cross-platform safe)
+    if(MSVC)
+        target_compile_options(pugixml-static PRIVATE /O2 /Ob2)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(pugixml-static PRIVATE -O3)
+        # Only use -march=native on x86/x64, not on ARM/other architectures
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i686")
+            target_compile_options(pugixml-static PRIVATE -march=native)
+        endif()
+    endif()
+endif()
+
+add_library(ve_dep_pugixml INTERFACE)
+target_link_libraries(ve_dep_pugixml INTERFACE pugixml::pugixml)
+
 # =============================================================================
 # ve_find_package 宏 (供各子项目按需调用)
 # =============================================================================
@@ -95,3 +142,4 @@ message(STATUS "  spdlog    (${VE_DEPS_3RD}/spdlog)")
 message(STATUS "  asio      (${VE_DEPS_3RD}/asio)")
 message(STATUS "  asio2     (${VE_DEPS_ASIO2_ROOT}/include/asio2)")
 message(STATUS "  simdjson  (${VE_DEPS_SIMDJSON_ROOT})")
+message(STATUS "  pugixml   (${VE_DEPS_PUGIXML_ROOT})")

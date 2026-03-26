@@ -46,4 +46,4 @@
 # set(VE_DEP_nlohmann_json "D:/workspace/github/json"     CACHE PATH "" FORCE)
 # set(VE_DEP_simdjson      "D:/workspace/github/simdjson"  CACHE PATH "" FORCE)
 # set(VE_DEP_yaml-cpp      "D:/workspace/github/yaml-cpp"  CACHE PATH "" FORCE)
-# set(VE_DEP_pugixml       "D:/workspace/github/pugixml"   CACHE PATH "" FORCE)
+# set(VE_DEP_pugixml "D:/workspace/github/pugixml" CACHE PATH "" FORCE)

@@ -124,5 +124,19 @@ bool importAs(Node* node, Args&&... args)
     return SchemaTraits<Format>::importNode(node, std::forward<Args>(args)...);
 }
 
+// --- Runtime format registry for terminal commands ------------------------
+
+struct VE_API SchemaFormatHandler
+{
+    std::function<std::string(const Node*)> exportFn;
+    std::function<bool(Node*, const std::string&)> importFn;
+};
+
+VE_API void registerSchemaFormat(const std::string& name, SchemaFormatHandler handler);
+VE_API bool hasSchemaFormat(const std::string& name);
+VE_API std::vector<std::string> schemaFormatNames();
+VE_API std::string exportSchemaFormat(const std::string& name, const Node* node);
+VE_API bool importSchemaFormat(const std::string& name, Node* node, const std::string& data);
+
 } // namespace schema
 } // namespace ve

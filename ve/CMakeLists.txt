@@ -52,13 +52,7 @@ target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_simdjson)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio2)
-
-# pugixml for XML support (SchemaTraits<Xml>)
-ve_find_package(pugixml
-    GIT_REPO https://github.com/zeux/pugixml.git
-    GIT_TAG v1.14
-)
-target_link_libraries(${VE_CORE_LIBRARY} PRIVATE pugixml::pugixml)
+target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_pugixml)
 
 # dynamic library loading (dlopen on Linux)
 if(NOT WIN32)

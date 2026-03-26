@@ -197,7 +197,7 @@ struct NodeWsServer::Private
     template<typename SP>
     void textWatch(SP& sp, uint64_t sid, const MozLine& m) {
         int64_t rid = nextRequestId(sid);
-        subscribeSvc->subscribe(sid, m.key);
+        if (subscribeSvc) subscribeSvc->subscribe(sid, m.key);
         sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"data\":\"subscribed\"}");
     }
 
@@ -266,12 +266,12 @@ struct NodeWsServer::Private
                 + impl::json::stringify(Var(target->path(root))) + "}", cmd.id));
         }
         else if (cmd.cmd == "subscribe") {
-            subscribeSvc->subscribe(sid, cmd.path);
+            if (subscribeSvc) subscribeSvc->subscribe(sid, cmd.path);
             sp->async_send(appendId("{\"type\":\"subscribed\",\"path\":"
                 + impl::json::stringify(Var(cmd.path)) + "}", cmd.id));
         }
         else if (cmd.cmd == "unsubscribe") {
-            subscribeSvc->unsubscribe(sid, cmd.path);
+            if (subscribeSvc) subscribeSvc->unsubscribe(sid, cmd.path);
             sp->async_send(appendId("{\"type\":\"unsubscribed\",\"path\":"
                 + impl::json::stringify(Var(cmd.path)) + "}", cmd.id));
         }
@@ -359,7 +359,9 @@ bool NodeWsServer::start()
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
-        _p->subscribeSvc->removeSession(sid);
+        if (_p->subscribeSvc) {
+            _p->subscribeSvc->removeSession(sid);
+        }
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             _p->sessions.erase(sid);
@@ -377,11 +379,11 @@ bool NodeWsServer::start()
 
 void NodeWsServer::stop()
 {
+    _p->server.stop();
     if (_p->subscribeSvc) {
         _p->subscribeSvc->stop();
         _p->subscribeSvc.reset();
     }
-    _p->server.stop();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->sessions.clear();
 }

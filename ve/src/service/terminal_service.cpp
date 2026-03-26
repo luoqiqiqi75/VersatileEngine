@@ -3,7 +3,6 @@
 // REPL logic: TerminalSession (terminal_session.cpp). This file: TCP server, telnet, line editing.
 
 #include "ve/service/terminal_service.h"
-#include "terminal_builtins.h"
 #include "terminal_line_editor.h"
 #include "terminal_session.h"
 #include "ve/core/node.h"
@@ -327,8 +326,6 @@ TerminalReplServer::~TerminalReplServer()
 
 bool TerminalReplServer::start()
 {
-    terminalBuiltinsEnsureRegistered();
-
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
         auto cs = std::make_unique<ConnectionState>();
@@ -747,7 +744,6 @@ int TerminalStdioClient::run()
     }
 
     if (!_p->session) {
-        terminalBuiltinsEnsureRegistered();
         _p->session = std::make_unique<TerminalSession>(_p->root);
         _p->editor = std::make_unique<TerminalLineEditor>(_p->session.get(), TerminalLineEditor::Mode::CONTROLLED);
     }

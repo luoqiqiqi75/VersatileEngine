@@ -267,5 +267,47 @@ bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, const ImportOpt
     return true;
 }
 
+// ============================================================================
+// Runtime format registry
+// ============================================================================
+
+static Hash<SchemaFormatHandler>& formatRegistry()
+{
+    static Hash<SchemaFormatHandler> registry;
+    return registry;
+}
+
+void registerSchemaFormat(const std::string& name, SchemaFormatHandler handler)
+{
+    formatRegistry()[name] = std::move(handler);
+}
+
+bool hasSchemaFormat(const std::string& name)
+{
+    return formatRegistry().count(name) > 0;
+}
+
+std::vector<std::string> schemaFormatNames()
+{
+    std::vector<std::string> names;
+    for (auto& [k, _] : formatRegistry())
+        names.push_back(k);
+    return names;
+}
+
+std::string exportSchemaFormat(const std::string& name, const Node* node)
+{
+    auto& reg = formatRegistry();
+    if (reg.count(name) == 0) return {};
+    return reg[name].exportFn(node);
+}
+
+bool importSchemaFormat(const std::string& name, Node* node, const std::string& data)
+{
+    auto& reg = formatRegistry();
+    if (reg.count(name) == 0) return false;
+    return reg[name].importFn(node, data);
+}
+
 } // namespace schema
 } // namespace ve

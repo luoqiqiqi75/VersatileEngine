@@ -107,14 +107,14 @@ struct BinTcpServer::Private
 
         if (op == "subscribe") {
             auto sessionId = static_cast<uint64_t>(connKey);
-            subscribeSvc->subscribe(sessionId, path);
+            if (subscribeSvc) subscribeSvc->subscribe(sessionId, path);
             auto frame = makeResponse(id, 0, Var(true));
             session_ptr->async_send(std::string(frame.begin(), frame.end()));
             return;
         }
         if (op == "unsubscribe") {
             auto sessionId = static_cast<uint64_t>(connKey);
-            subscribeSvc->unsubscribe(sessionId, path);
+            if (subscribeSvc) subscribeSvc->unsubscribe(sessionId, path);
             auto frame = makeResponse(id, 0, Var(true));
             session_ptr->async_send(std::string(frame.begin(), frame.end()));
             return;
@@ -195,7 +195,9 @@ bool BinTcpServer::start()
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
-        _p->subscribeSvc->removeSession(static_cast<uint64_t>(key));
+        if (_p->subscribeSvc) {
+            _p->subscribeSvc->removeSession(static_cast<uint64_t>(key));
+        }
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             _p->connections.erase(key);
@@ -213,11 +215,11 @@ bool BinTcpServer::start()
 
 void BinTcpServer::stop()
 {
+    _p->server.stop();
     if (_p->subscribeSvc) {
         _p->subscribeSvc->stop();
         _p->subscribeSvc.reset();
     }
-    _p->server.stop();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

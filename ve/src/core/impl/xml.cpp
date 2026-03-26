@@ -120,15 +120,32 @@ static std::string fixHtmlToXml(const std::string& html) {
     const char* remove_tags[] = {"script", "style"};
     for (const char* tag : remove_tags) {
         std::string open_tag = "<" + std::string(tag);
-        std::string close_tag = "</" + std::string(tag) + ">";
+        std::string close_tag = "</" + std::string(tag);
         size_t pos = 0;
         while ((pos = cleaned.find(open_tag, pos)) != std::string::npos) {
+            // Ensure it's a valid tag boundary
+            char next_c = cleaned[pos + open_tag.length()];
+            if (next_c != '>' && next_c != ' ' && next_c != '\t' && next_c != '\r' && next_c != '\n' && next_c != '/') {
+                pos += open_tag.length();
+                continue;
+            }
+
             size_t end = cleaned.find(close_tag, pos);
             if (end != std::string::npos) {
-                cleaned.erase(pos, end + close_tag.length() - pos);
+                size_t close_end = cleaned.find(">", end);
+                if (close_end != std::string::npos) {
+                    cleaned.erase(pos, close_end + 1 - pos);
+                } else {
+                    cleaned.erase(pos, end + close_tag.length() - pos);
+                }
             } else {
-                cleaned.erase(pos);
-                break;
+                // No closing tag found, just remove the opening tag to avoid erasing the whole file
+                size_t tag_end = cleaned.find(">", pos);
+                if (tag_end != std::string::npos) {
+                    cleaned.erase(pos, tag_end + 1 - pos);
+                } else {
+                    pos += open_tag.length();
+                }
             }
         }
     }

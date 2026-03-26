@@ -1,113 +1,71 @@
-// terminal_session.cpp — TerminalSession: pure REPL logic extracted from Terminal
+// terminal_session.cpp — TerminalSession: pure REPL logic
 //
-// Session navigation (cd/pwd/up/...) handled internally.
-// Node-operation commands dispatch to command::call() via the flags-based system.
-// No I/O — execute() returns output text as a string.
+// All terminal commands are session-local, using cur/root directly.
+// User-registered global commands (command::call) are fallback.
 
 #include "terminal_session.h"
 #include "ve/core/command.h"
 #include "ve/core/impl/json.h"
+#include "ve/core/impl/xml.h"
+#include "ve/core/schema.h"
 #include "terminal_util.h"
 
 #include <sstream>
+#include <fstream>
 #include <algorithm>
+#include <functional>
+#include <unordered_map>
 
 namespace ve {
 namespace service {
 
 using detail::isInt;
+using detail::isDouble;
 using detail::nodeSummary;
+using detail::varTypeName;
+using detail::varPreview;
+using detail::parseVar;
+using detail::Flags;
+using detail::parseFlags;
 
 // ============================================================================
-// Utilities
+// Helpers
 // ============================================================================
 
-static std::vector<std::string> split(const std::string& s)
+static std::vector<std::string> split(const std::string& line)
 {
     std::vector<std::string> tokens;
-    std::istringstream iss(s);
+    std::istringstream iss(line);
     std::string tok;
     while (iss >> tok) tokens.push_back(tok);
     return tokens;
 }
 
-static const std::vector<std::string>& sessionCommandNames()
-{
-    static std::vector<std::string> names = {
-        "cd", "pwd", "root", "up", "first", "last", "prev", "next",
-        "sibling", "orphans", "adopt", "take",
-        "quit", "exit"
-    };
-    return names;
-}
-
-static std::vector<std::string> allCommandNames()
-{
-    auto names = sessionCommandNames();
-    auto global = command::keys();
-    names.insert(names.end(), global.begin(), global.end());
-    std::sort(names.begin(), names.end());
-    names.erase(std::unique(names.begin(), names.end()), names.end());
-    return names;
-}
-
 static std::vector<std::string> completeNodePath(Node* root, Node* cur, const std::string& token)
 {
-    if (!root || !cur) {
-        return {};
-    }
-
+    if (!root || !cur) return {};
     bool absolute = !token.empty() && token[0] == '/';
     size_t slash = token.find_last_of('/');
-    std::string parentPath;
-    std::string leafPrefix;
-
-    if (slash == std::string::npos) {
-        leafPrefix = token;
-    } else {
-        parentPath = token.substr(0, slash);
-        leafPrefix = token.substr(slash + 1);
-    }
-
+    std::string parentPath, leafPrefix;
+    if (slash == std::string::npos) leafPrefix = token;
+    else { parentPath = token.substr(0, slash); leafPrefix = token.substr(slash + 1); }
     Node* base = absolute ? root : cur;
     if (!parentPath.empty()) {
         if (absolute) {
             std::string rel = parentPath;
-            if (!rel.empty() && rel[0] == '/') {
-                rel.erase(rel.begin());
-            }
+            if (!rel.empty() && rel[0] == '/') rel.erase(rel.begin());
             base = rel.empty() ? root : root->find(rel, false);
         } else {
             base = cur->find(parentPath, false);
         }
     }
-    if (!base) {
-        return {};
-    }
-
-    std::string displayPrefix;
-    if (slash != std::string::npos) {
-        displayPrefix = token.substr(0, slash + 1);
-    } else if (absolute) {
-        displayPrefix = "/";
-    }
-
+    if (!base) return {};
+    std::string pathPrefix = (slash == std::string::npos) ? "" : token.substr(0, slash + 1);
     std::vector<std::string> matches;
-    for (const auto& name : base->childNames()) {
-        if (name.size() < leafPrefix.size()) {
-            continue;
-        }
-        if (name.compare(0, leafPrefix.size(), leafPrefix) != 0) {
-            continue;
-        }
-
-        std::string candidate = displayPrefix + name;
-        if (Node* child = base->child(name, 0)) {
-            if (child->count() > 0) {
-                candidate.push_back('/');
-            }
-        }
-        matches.push_back(std::move(candidate));
+    for (auto* c : *base) {
+        auto nm = c->name();
+        if (!nm.empty() && nm.size() >= leafPrefix.size() && nm.compare(0, leafPrefix.size(), leafPrefix) == 0)
+            matches.push_back(pathPrefix + nm);
     }
     return matches;
 }
@@ -118,32 +76,438 @@ static std::vector<std::string> completeNodePath(Node* root, Node* cur, const st
 
 struct TerminalSession::Private
 {
+    using CmdFn = std::function<void(Private&, const std::vector<std::string>&)>;
+
     Node* root = nullptr;
     Node* cur  = nullptr;
     std::vector<std::string> history;
     std::vector<Node*> orphans;
     std::string output;
+    std::unordered_map<std::string, CmdFn> cmds;
 
     std::string currentPath() const { return cur->path(root); }
-
-    std::string absPath(const std::string& relPath = "") const {
-        if (relPath.empty()) return cur->path(root);
-        auto* n = cur->find(relPath, false);
-        if (n) return n->path(root);
-        return {};
-    }
 
     Node* resolveRel(const std::string& relPath) const {
         if (relPath == ".") return cur;
         return cur->find(relPath);
     }
 
-    void print(const std::string& text) { output += text; }
-
-    ~Private() {
-        for (auto* o : orphans) delete o;
+    Node* target(const std::vector<std::string>& args, int argIdx = 1) const {
+        if ((int)args.size() > argIdx && !args[argIdx].empty() && args[argIdx][0] != '-') {
+            auto* n = resolveRel(args[argIdx]);
+            if (n) return n;
+        }
+        return cur;
     }
+
+    void print(const std::string& text) { output += text; }
+    void initCommands();
+
+    ~Private() { for (auto* o : orphans) delete o; }
 };
+
+// ============================================================================
+// initCommands
+// ============================================================================
+
+void TerminalSession::Private::initCommands()
+{
+    using S = Private;
+    using Args = const std::vector<std::string>&;
+
+    // --- Navigation ---
+
+    cmds["cd"] = [](S& s, Args args) {
+        if (args.size() < 2) { s.print("usage: cd <path>\n"); return; }
+        if (args[1] == ".") return;
+        if (args[1] == "..") {
+            if (s.cur->parent()) s.cur = s.cur->parent();
+            else s.print("already at root\n");
+        } else {
+            auto* n = s.cur->find(args[1]);
+            if (n) s.cur = n; else s.print("not found: " + args[1] + "\n");
+        }
+    };
+    cmds["pwd"] = [](S& s, Args) { s.print("/" + s.currentPath() + "\n"); };
+    cmds["root"] = [](S& s, Args) { s.cur = s.root; };
+    cmds["up"] = [](S& s, Args args) {
+        int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
+        auto* p = s.cur->parent(n - 1);
+        if (p) s.cur = p; else s.print("cannot go up " + std::to_string(n) + " levels\n");
+    };
+    cmds["first"] = [](S& s, Args) {
+        auto* f = s.cur->first();
+        if (f) { s.cur = f; s.print("-> " + nodeSummary(f) + "\n"); }
+        else s.print("(no children)\n");
+    };
+    cmds["last"] = [](S& s, Args) {
+        auto* l = s.cur->last();
+        if (l) { s.cur = l; s.print("-> " + nodeSummary(l) + "\n"); }
+        else s.print("(no children)\n");
+    };
+    cmds["prev"] = [](S& s, Args) {
+        auto* p = s.cur->prev();
+        if (p) { s.cur = p; s.print("-> " + nodeSummary(p) + "\n"); }
+        else s.print("(no prev sibling)\n");
+    };
+    cmds["next"] = [](S& s, Args) {
+        auto* n = s.cur->next();
+        if (n) { s.cur = n; s.print("-> " + nodeSummary(n) + "\n"); }
+        else s.print("(no next sibling)\n");
+    };
+    cmds["sibling"] = [](S& s, Args args) {
+        if (args.size() < 2) { s.print("usage: sibling <offset>\n"); return; }
+        int off = std::stoi(args[1]);
+        auto* sib = s.cur->sibling(off);
+        if (sib) { s.cur = sib; s.print("-> " + nodeSummary(sib) + "\n"); }
+        else s.print("no sibling at offset " + std::to_string(off) + "\n");
+    };
+
+    // --- Orphan pool ---
+
+    cmds["take"] = [](S& s, Args args) {
+        if (args.size() < 2) { s.print("usage: take <index|path>\n"); return; }
+        Node* taken = nullptr;
+        if (isInt(args[1])) {
+            taken = s.cur->take(std::stoi(args[1]));
+        } else {
+            auto* c = s.cur->find(args[1], false);
+            if (c && c->parent() == s.cur) taken = s.cur->take(c);
+            else if (c) s.print("not a direct child\n");
+            else s.print("not found: " + args[1] + "\n");
+        }
+        if (taken) {
+            s.orphans.push_back(taken);
+            s.print("taken: " + nodeSummary(taken) + " -> orphan pool [" + std::to_string(s.orphans.size() - 1) + "]\n");
+        } else if (isInt(args[1])) {
+            s.print("no child at index " + args[1] + "\n");
+        }
+    };
+    cmds["orphans"] = [](S& s, Args) {
+        if (s.orphans.empty()) { s.print("(empty)\n"); return; }
+        std::string out;
+        for (size_t i = 0; i < s.orphans.size(); ++i)
+            out += "  [" + std::to_string(i) + "] " + nodeSummary(s.orphans[i]) +
+                   " (" + std::to_string(s.orphans[i]->count()) + " children)\n";
+        s.print(out);
+    };
+    cmds["adopt"] = [](S& s, Args args) {
+        if (args.size() < 2) { s.print("usage: adopt <orphan_index>\n"); return; }
+        int idx = std::stoi(args[1]);
+        if (idx < 0 || idx >= (int)s.orphans.size()) { s.print("invalid orphan index\n"); return; }
+        auto* n = s.orphans[idx];
+        s.orphans.erase(s.orphans.begin() + idx);
+        s.cur->insert(n);
+        s.print("adopted: " + n->path(s.root) + "\n");
+    };
+
+    // --- Node operations ---
+
+    cmds["ls"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto* t = s.target(args);
+        if (f.has("tree", 't')) { s.print(t->dump()); return; }
+        if (f.has("names", 'n')) {
+            auto names = t->childNames();
+            int anonCnt = 0;
+            for (auto* c : *t) if (c->name().empty()) ++anonCnt;
+            std::string out;
+            if (anonCnt > 0) out += "  (anon) x" + std::to_string(anonCnt) + "\n";
+            for (auto& nm : names) out += "  " + nm + "\n";
+            s.print(out); return;
+        }
+        if (f.has("long", 'l')) {
+            auto nm = t->name().empty() ? "(anon)" : t->name();
+            std::string out;
+            out += "  name:      " + nm + "\n";
+            out += "  path:      /" + t->path(s.root) + "\n";
+            out += "  parent:    " + std::string(t->parent() ? nodeSummary(t->parent()) : "(none)") + "\n";
+            out += "  children:  " + std::to_string(t->count()) + "\n";
+            out += "  empty:     " + std::string(t->empty() ? "yes" : "no") + "\n";
+            out += "  shadow:    " + std::string(t->shadow() ? nodeSummary(t->shadow()) : "(none)") + "\n";
+            if (!t->get().isNull()) {
+                auto& v = t->get();
+                out += "  value:     " + varPreview(v) + "\n";
+                out += "  type:      " + std::string(varTypeName(v.type())) + "\n";
+            } else { out += "  value:     (none)\n"; }
+            out += "  watching:  " + std::string(t->isWatching() ? "yes" : "no") + "\n";
+            out += "  silent:    " + std::string(t->isSilent() ? "yes" : "no") + "\n";
+            s.print(out); return;
+        }
+        int total = t->count();
+        if (total == 0) { s.print("  (empty)\n"); return; }
+        std::string out;
+        for (int i = 0; i < total; ++i) {
+            auto* c = t->child(i);
+            auto nm = c->name().empty() ? "(anon)" : c->name();
+            out += "  [" + std::to_string(i) + "] " + nm;
+            auto k = t->keyOf(c);
+            if (k != nm && k != "(anon)") out += "  (key: " + k + ")";
+            if (!c->get().isNull()) out += "  = " + varPreview(c->get());
+            out += "\n";
+        }
+        out += "  (" + std::to_string(total) + " total)\n";
+        s.print(out);
+    };
+
+    auto getImpl = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto* t = s.target(args);
+        if (f.has("type", 't')) {
+            s.print(t->get().isNull() ? "(none)\n" : std::string(varTypeName(t->get().type())) + "\n");
+            return;
+        }
+        if (t->get().isNull()) { s.print("(none)\n"); return; }
+        auto& v = t->get();
+        s.print(varPreview(v, 256) + "  (" + varTypeName(v.type()) + ")\n");
+    };
+    cmds["get"] = getImpl;
+    cmds["g"] = getImpl;
+
+    auto setImpl = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto* t = s.target(args);
+        if (f.has("null")) { t->set(Var()); s.print("value cleared\n"); return; }
+        auto raw = f.pos(1);
+        if (raw.empty()) { s.print("usage: set [path] <value> [--null]\n"); return; }
+        Var v = parseVar(raw);
+        t->set(std::move(v));
+        s.print("set: " + varPreview(t->get()) + "  (" + varTypeName(t->get().type()) + ")\n");
+    };
+    cmds["set"] = setImpl;
+    cmds["s"] = setImpl;
+
+    cmds["mk"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto* t = s.target(args);
+        auto name = f.get("name", 'n');
+        if (!name.empty() || f.has("anon", 'a')) {
+            auto ovStr = f.get("overlap", 'o', "0");
+            int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
+            auto atStr = f.get("at");
+            bool hasAt = f.has("at") && isInt(atStr);
+            if (f.has("anon", 'a')) {
+                auto* n = t->append(overlap);
+                if (n) s.print("appended " + std::to_string(1 + overlap) + " anon -> index: " + std::to_string(t->indexOf(n)) + "\n");
+                else s.print("failed\n");
+                return;
+            }
+            if (hasAt) {
+                int idx = std::stoi(atStr);
+                auto* c = new Node(name);
+                if (t->insert(c, idx)) s.print("inserted '" + name + "' at [" + std::to_string(idx) + "]\n");
+                else { delete c; s.print("insert failed\n"); }
+                return;
+            }
+            auto* n = t->append(name, overlap);
+            if (n) s.print("appended " + std::to_string(1 + overlap) + " '" + name + "' -> last: " + t->keyOf(n) + "\n");
+            else s.print("failed\n");
+            return;
+        }
+        auto path = f.pos(1);
+        if (path.empty()) { s.print("usage: mk [path] <subpath> | mk -n <name> [-o N] [-a] [--at IDX]\n"); return; }
+        auto* n = t->at(path);
+        if (n) s.print("created: /" + n->path(ve::node::root()) + "\n");
+        else s.print("failed\n");
+    };
+
+    cmds["rm"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto* t = s.target(args);
+        if (f.has("clear", 'c')) {
+            int n = t->count();
+            t->clear();
+            s.print("cleared " + std::to_string(n) + " children\n");
+            return;
+        }
+        if (f.has("index", 'i')) {
+            auto idxStr = f.get("index", 'i');
+            if (!isInt(idxStr)) { s.print("usage: rm -i <index>\n"); return; }
+            int idx = std::stoi(idxStr);
+            if (t->remove(idx)) s.print("removed [" + std::to_string(idx) + "]\n");
+            else s.print("no child at index " + std::to_string(idx) + "\n");
+            return;
+        }
+        if (f.has("name", 'n')) {
+            auto nm = f.get("name", 'n');
+            if (nm.empty()) { s.print("usage: rm -n <name> [-o N]\n"); return; }
+            auto ovStr = f.get("overlap", 'o', "0");
+            int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
+            if (t->remove(nm, overlap)) s.print("removed '" + nm + "'\n");
+            else s.print("no child '" + nm + "' overlap " + std::to_string(overlap) + "\n");
+            return;
+        }
+        if (f.has("all")) {
+            auto nm = f.get("all");
+            if (nm.empty()) { s.print("usage: rm --all <name>\n"); return; }
+            int n = t->remove(nm);
+            s.print("removed " + std::to_string(n) + " children named '" + nm + "'\n");
+            return;
+        }
+        auto childPath = f.pos(1);
+        if (!childPath.empty()) {
+            if (t->erase(childPath)) s.print("removed\n");
+            else s.print("failed (not found or is root)\n");
+            return;
+        }
+        s.print("usage: rm [path] <target> | rm -i IDX | rm -n NAME [-o N] | rm --all NAME | rm -c\n");
+    };
+
+    // --- mv / cp ---
+
+    cmds["mv"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto srcPath = f.pos(0);
+        if (srcPath.empty()) { s.print("usage: mv <src> [dest] [--at INDEX]\n"); return; }
+        auto* src = s.resolveRel(srcPath);
+        if (!src) { s.print("not found: " + srcPath + "\n"); return; }
+        auto destPath = f.pos(1);
+        auto* dest = destPath.empty() ? s.cur : s.resolveRel(destPath);
+        if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
+        if (src == dest) { s.print("cannot move node into itself\n"); return; }
+        auto atStr = f.get("at");
+        if (f.has("at") && isInt(atStr)) {
+            int idx = std::stoi(atStr);
+            if (dest->insert(src, idx)) s.print("moved to [" + std::to_string(idx) + "] " + src->path(s.root) + "\n");
+            else s.print("insert failed\n");
+            return;
+        }
+        dest->insert(src);
+        s.print("moved to " + src->path(s.root) + "\n");
+    };
+
+    cmds["cp"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto srcPath = f.pos(0);
+        if (srcPath.empty()) { s.print("usage: cp <src> [dest] [-r] [-u] [-I]\n"); return; }
+        auto* src = s.resolveRel(srcPath);
+        if (!src) { s.print("not found: " + srcPath + "\n"); return; }
+        auto destPath = f.pos(1);
+        auto* dest = destPath.empty() ? s.cur : s.resolveRel(destPath);
+        if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
+        if (src == dest) { s.print("cannot copy node onto itself\n"); return; }
+        if (src->isAncestorOf(dest) || dest->isAncestorOf(src)) {
+            s.print("cannot copy between overlapping subtrees\n"); return;
+        }
+        bool ai = !f.has("no-insert", 'I'), ar = f.has("remove", 'r'), au = f.has("update", 'u');
+        dest->copy(src, ai, ar, au);
+        s.print("copied /" + src->path(s.root) + " -> /" + dest->path(s.root)
+            + "  (insert:" + std::string(ai?"on":"off") + ", remove:" + std::string(ar?"on":"off")
+            + ", update:" + std::string(au?"on":"off") + ")\n");
+    };
+
+    // --- Schema ---
+
+    cmds["schema"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto format = f.pos(0);
+        if (format.empty()) {
+            auto fmts = schema::schemaFormatNames();
+            std::string out = "available formats: json, xml, var";
+            for (auto& fn : fmts) out += ", " + fn;
+            s.print(out + "\n"); return;
+        }
+        auto pathStr = f.pos(1);
+        auto* t = pathStr.empty() ? s.cur : s.resolveRel(pathStr);
+        if (!t) { s.print("not found: " + pathStr + "\n"); return; }
+
+        auto importFile = f.get("import", 'i');
+        if (f.has("import", 'i')) {
+            if (importFile.empty()) { s.print("usage: schema " + format + " -i <file>\n"); return; }
+            std::ifstream ifs(importFile);
+            if (!ifs.is_open()) { s.print("cannot read: " + importFile + "\n"); return; }
+            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            bool ok = false;
+            if (format == "json") ok = impl::json::importTree(t, content);
+            else if (format == "xml") ok = impl::xml::importTree(t, content);
+            else if (schema::hasSchemaFormat(format)) ok = schema::importSchemaFormat(format, t, content);
+            s.print(ok ? "imported from " + importFile + "\n" : "import failed (invalid " + format + ")\n");
+            return;
+        }
+
+        std::string result;
+        if (format == "json") result = impl::json::exportTree(t);
+        else if (format == "xml") result = impl::xml::exportTree(t);
+        else if (format == "var") { result = impl::json::stringify(schema::exportAs<schema::VarS>(t)) + "\n"; }
+        else if (schema::hasSchemaFormat(format)) result = schema::exportSchemaFormat(format, t);
+        else { s.print("unknown format: " + format + "\n"); return; }
+
+        auto outFile = f.get("output", 'o');
+        if (f.has("output", 'o') && !outFile.empty()) {
+            std::ofstream ofs(outFile);
+            if (!ofs.is_open()) { s.print("cannot write: " + outFile + "\n"); return; }
+            ofs << result;
+            s.print("saved to " + outFile + "\n"); return;
+        }
+        s.print(result);
+    };
+
+    // --- Shadow ---
+
+    cmds["shadow"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto* t = s.target(args);
+        if (f.has("clear")) { t->setShadow(nullptr); s.print("shadow cleared\n"); return; }
+        auto setPath = f.get("set");
+        if (f.has("set")) {
+            if (setPath.empty()) { s.print("usage: shadow --set <path>\n"); return; }
+            auto* sh = s.resolveRel(setPath);
+            if (!sh) { s.print("not found: " + setPath + "\n"); return; }
+            t->setShadow(sh);
+            s.print("shadow set to: " + sh->path(s.root) + "\n"); return;
+        }
+        auto* sh = t->shadow();
+        s.print(sh ? "shadow: " + nodeSummary(sh) + " (/" + sh->path(s.root) + ")\n" : "(no shadow)\n");
+    };
+
+    // --- Help ---
+
+    cmds["help"] = [](S& s, Args args) {
+        auto f = parseFlags(args);
+        auto specific = f.pos(0);
+        if (!specific.empty()) {
+            auto h = command::help(specific);
+            s.print(h.empty() ? "unknown command: " + specific + "\n" : specific + ": " + h + "\n");
+            return;
+        }
+        std::string out;
+        out += "=== Node Commands ===\n";
+        out += "  ls [path] [-t] [-l] [-n]   list children / tree / details\n";
+        out += "  get [path] [-t]            get value or type\n";
+        out += "  set [path] <value> [--null] set or clear value\n";
+        out += "  mk [path] <sub> | -n NAME  ensure path or create child\n";
+        out += "  rm [path] [target] [-i] [-n] [-c]  remove\n";
+        out += "  mv <src> [dest] [--at N]   reparent node\n";
+        out += "  cp <src> [dest] [-r] [-u]  copy subtree\n";
+        out += "  schema <fmt> [path] [-o/-i] export/import\n";
+        out += "  shadow [path] [--set/--clear] shadow ops\n";
+        out += "\n=== Navigation ===\n";
+        out += "  cd <path>       navigate ('.' and '..')\n";
+        out += "  pwd             print current path\n";
+        out += "  root            go to root\n";
+        out += "  up [N]          go up N levels\n";
+        out += "  first / last    first/last child\n";
+        out += "  prev / next     prev/next sibling\n";
+        out += "  sibling <N>     sibling at offset\n";
+        out += "\n=== Orphan Pool ===\n";
+        out += "  take <idx|path> detach to orphan pool\n";
+        out += "  orphans         list orphan pool\n";
+        out += "  adopt <N>       adopt orphan into current\n";
+        out += "\n=== Other ===\n";
+        out += "  quit / exit     disconnect\n";
+        auto userCmds = command::keys();
+        if (!userCmds.empty()) {
+            out += "\n=== User Commands ===\n";
+            for (auto& k : userCmds) {
+                auto h = command::help(k);
+                out += "  " + k;
+                if (!h.empty()) { int pad = 22 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
+                out += "\n";
+            }
+        }
+        s.print(out);
+    };
+}
 
 // ============================================================================
 // TerminalSession
@@ -154,6 +518,7 @@ TerminalSession::TerminalSession(Node* root)
 {
     _p->root = root;
     _p->cur  = root;
+    _p->initCommands();
 }
 
 TerminalSession::~TerminalSession() = default;
@@ -161,7 +526,6 @@ TerminalSession::~TerminalSession() = default;
 std::string TerminalSession::execute(const std::string& line)
 {
     _p->output.clear();
-
     if (line.empty()) return {};
 
     auto args = split(line);
@@ -171,162 +535,32 @@ std::string TerminalSession::execute(const std::string& line)
     auto& cmd = args[0];
     auto& s = *_p;
 
-    // --- quit/exit returns special marker ---
     if (cmd == "quit" || cmd == "exit")
         return "\x04";
 
-    // --- Session navigation commands ---
+    auto it = s.cmds.find(cmd);
+    if (it != s.cmds.end()) {
+        it->second(s, args);
+        return s.output;
+    }
 
-    if (cmd == "cd") {
-        if (args.size() < 2) { s.print("usage: cd <path>\n"); return s.output; }
-        if (args[1] == ".") {
-            return s.output;
-        } else if (args[1] == "..") {
-            if (s.cur->parent()) s.cur = s.cur->parent();
-            else s.print("already at root\n");
+    // Fallback: user-registered global commands
+    if (command::has(cmd)) {
+        Var::ListV list;
+        for (size_t i = 1; i < args.size(); ++i)
+            list.push_back(Var(args[i]));
+        auto r = command::call(cmd, list.empty() ? Var() : Var(std::move(list)));
+        if (r.isSuccess() || r.isAccepted()) {
+            auto& content = r.content();
+            if (!content.isNull())
+                s.print(content.toString());
         } else {
-            auto* n = s.cur->find(args[1]);
-            if (n) s.cur = n;
-            else s.print("not found: " + args[1] + "\n");
+            s.print(Var(r).toString() + "\n");
         }
         return s.output;
     }
-    if (cmd == "pwd") {
-        s.print("/" + s.currentPath() + "\n");
-        return s.output;
-    }
-    if (cmd == "root") {
-        s.cur = s.root;
-        return s.output;
-    }
-    if (cmd == "up") {
-        int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
-        auto* p = s.cur->parent(n - 1);
-        if (p) s.cur = p;
-        else s.print("cannot go up " + std::to_string(n) + " levels\n");
-        return s.output;
-    }
-    if (cmd == "first") {
-        auto* f = s.cur->first();
-        if (f) { s.cur = f; s.print("-> " + nodeSummary(f) + "\n"); }
-        else s.print("(no children)\n");
-        return s.output;
-    }
-    if (cmd == "last") {
-        auto* l = s.cur->last();
-        if (l) { s.cur = l; s.print("-> " + nodeSummary(l) + "\n"); }
-        else s.print("(no children)\n");
-        return s.output;
-    }
-    if (cmd == "prev") {
-        auto* p = s.cur->prev();
-        if (p) { s.cur = p; s.print("-> " + nodeSummary(p) + "\n"); }
-        else s.print("(no prev sibling)\n");
-        return s.output;
-    }
-    if (cmd == "next") {
-        auto* n = s.cur->next();
-        if (n) { s.cur = n; s.print("-> " + nodeSummary(n) + "\n"); }
-        else s.print("(no next sibling)\n");
-        return s.output;
-    }
-    if (cmd == "sibling") {
-        if (args.size() < 2) { s.print("usage: sibling <offset>\n"); return s.output; }
-        int off = std::stoi(args[1]);
-        auto* sib = s.cur->sibling(off);
-        if (sib) { s.cur = sib; s.print("-> " + nodeSummary(sib) + "\n"); }
-        else s.print("no sibling at offset " + std::to_string(off) + "\n");
-        return s.output;
-    }
 
-    // --- Session-local orphan commands ---
-
-    if (cmd == "take") {
-        if (args.size() < 2) { s.print("usage: take <index|path>\n"); return s.output; }
-        Node* taken = nullptr;
-        if (isInt(args[1])) {
-            int idx = std::stoi(args[1]);
-            taken = s.cur->take(idx);
-        } else {
-            auto* c = s.cur->find(args[1], false);
-            if (c && c->parent() == s.cur) taken = s.cur->take(c);
-            else if (c) s.print("not a direct child\n");
-            else        s.print("not found: " + args[1] + "\n");
-        }
-        if (taken) {
-            s.orphans.push_back(taken);
-            s.print("taken: " + nodeSummary(taken) + " -> orphan pool [" + std::to_string(s.orphans.size() - 1) + "]\n");
-        } else if (isInt(args[1])) {
-            s.print("no child at index " + args[1] + "\n");
-        }
-        return s.output;
-    }
-    if (cmd == "orphans") {
-        if (s.orphans.empty()) { s.print("(empty)\n"); return s.output; }
-        std::string out;
-        for (size_t i = 0; i < s.orphans.size(); ++i)
-            out += "  [" + std::to_string(i) + "] " + nodeSummary(s.orphans[i]) +
-                   " (" + std::to_string(s.orphans[i]->count()) + " children)\n";
-        s.print(out);
-        return s.output;
-    }
-    if (cmd == "adopt") {
-        if (args.size() < 2) { s.print("usage: adopt <orphan_index>\n"); return s.output; }
-        int idx = std::stoi(args[1]);
-        if (idx < 0 || idx >= (int)s.orphans.size()) { s.print("invalid orphan index\n"); return s.output; }
-        auto* n = s.orphans[idx];
-        s.orphans.erase(s.orphans.begin() + idx);
-        s.cur->insert(n);
-        s.print("adopted: " + n->path(s.root) + "\n");
-        return s.output;
-    }
-
-    // --- Dispatch to global command system ---
-
-    std::string canonical = cmd;
-    if (cmd == "g") canonical = "get";
-    else if (cmd == "s") canonical = "set";
-
-    if (!command::has(canonical)) {
-        s.print("unknown: " + cmd + "  (type 'help')\n");
-        return s.output;
-    }
-
-    // Commands that don't need current node path
-    static const std::vector<std::string> pathlessCommands = {"help", "schema"};
-    bool needsPath = std::find(pathlessCommands.begin(), pathlessCommands.end(), canonical) == pathlessCommands.end();
-
-    // Build input LIST: [0]=absPath (if needed), [1..]=remaining args and flags
-    Var::ListV list;
-    size_t pathArgIdx = 0;
-    std::string absPath;
-
-    if (needsPath) {
-        if (args.size() > 1 && !args[1].empty() && args[1][0] != '-') {
-            auto* n = s.resolveRel(args[1]);
-            if (n) {
-                absPath = n->path(s.root);
-                pathArgIdx = 1;
-            }
-        }
-        if (absPath.empty()) absPath = s.absPath();
-        list.push_back(Var(absPath));
-    }
-
-    for (size_t i = 1; i < args.size(); ++i) {
-        if (needsPath && i == pathArgIdx) continue;
-        list.push_back(Var(args[i]));
-    }
-
-    auto r = command::call(canonical, Var(std::move(list)));
-    if (r.isSuccess() || r.isAccepted()) {
-        auto& content = r.content();
-        if (!content.isNull())
-            s.print(content.toString());
-    } else {
-        s.print(Var(r).toString() + "\n");
-    }
-
+    s.print("unknown: " + cmd + "  (type 'help')\n");
     return s.output;
 }
 
@@ -344,13 +578,19 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
 
     if (completingCmd) {
         std::vector<std::string> matches;
-        for (auto& name : allCommandNames())
+        for (auto& [name, _] : _p->cmds)
             if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0)
                 matches.push_back(name);
+        for (auto& name : command::keys())
+            if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0)
+                matches.push_back(name);
+        if (std::string("quit").compare(0, prefix.size(), prefix) == 0) matches.push_back("quit");
+        if (std::string("exit").compare(0, prefix.size(), prefix) == 0) matches.push_back("exit");
+        std::sort(matches.begin(), matches.end());
+        matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
         return matches;
-    } else {
-        return completeNodePath(_p->root, _p->cur, prefix);
     }
+    return completeNodePath(_p->root, _p->cur, prefix);
 }
 
 const std::vector<std::string>& TerminalSession::history() const { return _p->history; }
