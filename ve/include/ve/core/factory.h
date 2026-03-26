@@ -200,8 +200,8 @@ public:
     virtual ~Factory() {}
 
     template<typename... Params>
-    RetT exec(const std::string& key, Params&&... params) { return this->has(key) ? (*this)[key](std::forward<Params>(params)...) : (RetT)(NULL); }
-    RetT exec(const std::string& key) { return this->has(key) ? (*this)[key]() : (RetT)(NULL); }
+    RetT exec(const std::string& key, Params&&... params) { return this->has(key) ? (*this)[key](std::forward<Params>(params)...) : RetT{}; }
+    RetT exec(const std::string& key) { return this->has(key) ? (*this)[key]() : RetT{}; }
 
     template<typename T, typename... Params>
     T execAs(const std::string& key, Params&&... params) { return static_cast<T>(exec(key, std::forward<Params>(params)...)); }
@@ -213,7 +213,7 @@ public:
         return ret;
     }
 
-    RetT instance(const std::string& key) { return _cache.value(key, NULL); }
+    RetT instance(const std::string& key) { return _cache.value(key, RetT{}); }
 
 private:
     Dict<RetT> _cache;
