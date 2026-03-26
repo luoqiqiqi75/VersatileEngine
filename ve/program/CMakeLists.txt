@@ -16,10 +16,6 @@ add_custom_command(
 )
 
 # --- Module DLLs ---
-if(VE_BUILD_EXAMPLE)
-    add_subdirectory(example)
-endif()
-
 if(VE_BUILD_MCP)
     add_subdirectory(mcp)
 endif()
