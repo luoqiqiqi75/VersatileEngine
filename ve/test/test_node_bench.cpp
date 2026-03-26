@@ -1177,11 +1177,11 @@ VE_TEST(node_bench_schema_json_roundtrip_10k) {
     ex.indent = 0;
 
     BENCH_BEGIN;
-    std::string json = schema::exportAs<schema::Json>(&src, ex);
+    std::string json = schema::exportAs<schema::JsonS>(&src, ex);
     Node        dst("dst");
     dst.silent(true);
     schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::Json>(&dst, json, im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
     BENCH_END("schema: json export+import merge 10k wide");
 
     VE_ASSERT_EQ(dst.count(), 10000);
@@ -1194,11 +1194,11 @@ VE_TEST(node_bench_schema_bin_roundtrip_10k) {
     schema::ExportOptions ex;
 
     BENCH_BEGIN;
-    Bytes       bytes = schema::exportAs<schema::Bin>(&src, ex);
+    Bytes       bytes = schema::exportAs<schema::BinS>(&src, ex);
     Node        dst("dst");
     dst.silent(true);
     schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::Bin>(&dst, bytes.data(), bytes.size(), im));
+    VE_ASSERT(schema::importAs<schema::BinS>(&dst, bytes.data(), bytes.size(), im));
     BENCH_END("schema: bin export+import merge 10k wide");
 
     VE_ASSERT_EQ(dst.count(), 10000);
@@ -1213,11 +1213,11 @@ VE_TEST(node_bench_schema_json_roundtrip_100k) {
     ex.indent = 0;
 
     BENCH_BEGIN;
-    std::string json = schema::exportAs<schema::Json>(&src, ex);
+    std::string json = schema::exportAs<schema::JsonS>(&src, ex);
     Node        dst("dst");
     dst.silent(true);
     schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::Json>(&dst, json, im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
     BENCH_END("schema: json export+import merge 100k wide (VE_NODE_BENCH_LARGE)");
 
     VE_ASSERT_EQ(dst.count(), 100000);

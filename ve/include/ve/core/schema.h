@@ -4,14 +4,17 @@
 // SchemaField / Schema: describe the expected structure of a Node subtree.
 // schema::exportAs<F> / importAs<F>: tag-dispatched Node serialization.
 //
-// Format tags: schema::Json, schema::Bin
+// Format tags: schema::JsonS, schema::BinS, schema::XmlS, schema::VarS
 // Customization point: schema::SchemaTraits<Format>
+// Runtime extension: schema::registerSchemaFormat() for plugin formats.
 // ImportOptions drive merge-style import.
 // auto_update=false => set() always emits changed on copied nodes.
 // auto_update=true  => update() suppresses unchanged value signals.
 // ExportOptions drive formatting and hidden-node filtering.
-// Json is schema-oriented and ignores repeated named siblings.
-// Bin preserves the full tree, including repeated names and order.
+// JsonS is schema-oriented and ignores repeated named siblings.
+// BinS preserves the full tree, including repeated names and order.
+// XmlS uses pugixml; attrs stored as Dict in Var value.
+// VarS exports Node tree to a single Var (Dict/List/Value).
 // ----------------------------------------------------------------------------
 #pragma once
 
