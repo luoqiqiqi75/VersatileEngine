@@ -19,7 +19,7 @@ struct Node::Private
     Node* parent  = nullptr;
     Node* shadow  = nullptr;
 
-    struct Children : Pooled<Children> {
+    struct Children {
         Hash<SmallVector<int>> indices;   // name → [global indices in nodes]
         Vector<Node*>          nodes;     // all children, true insertion order
 

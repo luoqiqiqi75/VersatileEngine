@@ -88,7 +88,7 @@ public:
         Var::DictV v = getDict();
         d.clear();
         for (const auto& kv : v) {
-            d[kv.key] = kv.value.to<typename DictT::mapped_type>();
+            d[kv.first] = kv.second.to<typename DictT::mapped_type>();
         }
     }
 
@@ -272,7 +272,7 @@ protected:
     const Var& value() const;
 
 private:
-    VE_DECLARE_POOL_PRIVATE
+    VE_DECLARE_UNIQUE_PRIVATE
 };
 
 namespace node {

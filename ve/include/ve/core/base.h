@@ -396,17 +396,9 @@ public:
 // SmallVector: SBO vector (default N = 1), same API as Vector
 
 template<typename T, uint32_t N = 1>
-class SmallVector : public impl::SmallVectorImpl<T, N>,
-                    public basic::TContainer<SmallVector<T, N>, T>
+class SmallVector : public impl::SmallVectorImpl<T, N>, public basic::TContainer<SmallVector<T, N>, T>
 {
-public:
-    using ImplT = impl::SmallVectorImpl<T, N>;
-
-    using ImplT::SmallVectorImpl;
-
-    SmallVector() : ImplT() {}
-    SmallVector(const ImplT& other) : ImplT(other) {}
-    SmallVector(ImplT&& other) noexcept : ImplT(std::move(other)) {}
+    VE_INHERIT_CONSTRUCTOR(SmallVectorImpl, SmallVector, impl::SmallVectorImpl<T, N>)
 };
 
 namespace basic {
@@ -499,9 +491,7 @@ template<typename V>
 using Hash = UnorderedHashMap<std::string, V>;
 
 // OrderedHashMap: insertion-ordered Robin Hood hashing (Godot-derived)
-template<typename K, typename V,
-         typename Hasher     = impl::HashMapHasherDefault,
-         typename Comparator = impl::HashMapComparatorDefault<K>>
+template<typename K, typename V, typename Hasher = impl::HashMapHasherDefault, typename Comparator = impl::HashMapComparatorDefault<K>>
 class OrderedHashMap
     : public impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>, public basic::KVContainer<OrderedHashMap<K, V, Hasher, Comparator>, K, V>
 {
