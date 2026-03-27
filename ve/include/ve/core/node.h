@@ -44,39 +44,52 @@ public:
 
     template<typename T> T getAs(const T& def = T{}) const { return value().to<T>(def); }
 
-    bool        getBool(bool def = false) const { return value().toBool(def); }
-    int         getInt(int def = -1) const { return value().toInt(def); }
-    int64_t     getInt64(int64_t def = -1) const { return value().toInt64(def); }
-    double      getDouble(double def = 0.0) const { return value().toDouble(def); }
-    std::string getString(const std::string& def = "") const { return value().toString(def); }
+    bool        getBool(bool def = false) const { return get().toBool(def); }
+    int         getInt(int def = -1) const { return get().toInt(def); }
+    int64_t     getInt64(int64_t def = -1) const { return get().toInt64(def); }
+    double      getDouble(double def = 0.0) const { return get().toDouble(def); }
+    std::string getString(const std::string& def = "") const { return get().toString(def); }
 
-    const Var::ListV& getList() const { return value().toList(); }
-    const Var::DictV& getDict() const { return value().toDict(); }
-
-    Ints    getInts(int def = -1) const;
-    Doubles getDoubles(double def = 0.0) const;
-    Strings getStrings(const std::string& def = "") const;
-    Values  getValues(double def = 0.0) const;
-
-    template<typename T>
-    Vector<T> getAsList(const T& def = T{}) const {
-        Vector<T> result;
-        result.reserve(count());
+    Var::ListV  getList() const
+    {
+        Var::ListV v;
+        v.reserve(count());
         for (auto* c : *this) {
-            result.push_back(c ? c->getAs<T>(def) : def);
+            v.push_back(c->get());
         }
-        return result;
+        return v;
     }
 
-    template<typename T>
-    Dict<T> getAsDict(const T& def = T{}) const {
-        Dict<T> result;
-        for (auto* c : *this) {
-            if (c && !c->name().empty()) {
-                result[c->name()] = c->getAs<T>(def);
-            }
+    template<typename ListT> void getList(ListT& l) const
+    {
+        Var::ListV v = getList();
+        l.resize(v.size());
+        for (const auto& item : v) {
+            l.push_back(item.to<typename ListT::value_type>());
         }
-        return result;
+    }
+
+    Ints getInts() const { Ints is; getList(is); return is; }
+    Doubles getDoubles() const { Doubles ds; getList(ds); return ds; }
+    Strings getStrings() const { Strings ss; getList(ss); return ss; }
+    Values getValues() const { Values vs; getList(vs); return vs; }
+
+    Var::DictV  getDict() const
+    {
+        Var::DictV v;
+        for (auto* c : *this) {
+            v[c->name()] = c->get();
+        }
+        return v;
+    }
+
+    template<typename DictT> void getDict(DictT& d)
+    {
+        Var::DictV v = getDict();
+        d.clear();
+        for (const auto& kv : v) {
+            d[kv.key] = kv.value.to<typename DictT::mapped_type>();
+        }
     }
 
     Node* set(const Var& v);
@@ -86,10 +99,23 @@ public:
     template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
     template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
 
-    Node* setInts(const Ints& values);
-    Node* setDoubles(const Doubles& values);
-    Node* setStrings(const Strings& values);
-    Node* setValues(const Values& values);
+    template<typename ListT> Node* setList(const ListT& l)
+    {
+        for (std::size_t i = 0; i < l.size(); i++) {
+            set(l.size() - i - 1, l[i]);
+        }
+        return set(get());
+    }
+    template<typename ListT> Node* setList(const std::string& path, const ListT& l) { return at(path)->setList(l); }
+
+    template<typename DictT> Node* setDict(const DictT& d)
+    {
+        for (const auto& kv : d) {
+            set(kv.first, kv.second);
+        }
+        return set(get());
+    }
+    template<typename DictT> Node* setDict(const std::string& path, const DictT& d) { return at(path)->setDict(d); }
 
     bool update(const Var& v);
 
@@ -164,11 +190,32 @@ public:
 
     std::string keyOf(const Node* child, int guess = -1) const;
 
-    Node* childAt(const std::string& key) const;
+    // Single-level access with ensure semantics (creates if not found)
+    Node*       at(int index);
+    Node*       at(const std::string& name, int overlap);
 
-    // --- container interface ---
+    // Single-level key access: "name" | "name#N" | "#N"
+    Node* atKey(const std::string& key) const;  // find only, returns nullptr if not found
+    Node* atKey(const std::string& key);        // ensure exists, creates if not found
+
+
+    // --- path (path = key/key/...) ---
+    Node* shadow() const;
+    void  setShadow(Node* shadow);
+
+    std::string path(Node* ancestor = nullptr) const;
+
+    // Multi-level path access: "a/b/c"
+    Node*       atPath(const std::string& path, bool use_shadow = true) const;  // find only
+    Node*       atPath(const std::string& path, bool use_shadow = true);        // ensure exists
+    Node*       at(const std::string& path) { return atPath(path); }            // default: ensure exists
+
+    bool        erase(const std::string& path, bool auto_delete = true);
+
+    Node*       find(const std::string& path, bool use_shadow = true) const;    // alias for atPath const
+        // --- container interface ---
     Node* operator[](int index) const { return child(index); }
-    Node* operator[](const std::string& key) const { return childAt(key); }
+    Node* operator[](const std::string& key) const { return atKey(key); }
 
     class ChildIterator {
         Node* const* _p = nullptr;
@@ -200,17 +247,6 @@ public:
     ChildIterator        end()    const;
     ReverseChildIterator rbegin() const;
     ReverseChildIterator rend()   const;
-
-    // --- path (path = key/key/...) ---
-    Node* shadow() const;
-    void  setShadow(Node* shadow);
-
-    Node*       find(const std::string& path, bool use_shadow = true) const;
-    std::string path(Node* ancestor = nullptr) const;
-    Node*       at(const std::string& path);
-    Node*       at(int index);
-    Node*       at(const std::string& name, int overlap);
-    bool        erase(const std::string& path, bool auto_delete = true);
 
     // --- flags (reuses Object::_flags, higher bits) ---
     enum NodeFlag : int {
