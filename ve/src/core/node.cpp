@@ -876,6 +876,130 @@ bool Node::update(const Var& v)
 }
 
 // ============================================================================
+// Node — container convenience
+// ============================================================================
+
+Ints Node::getInts(int def) const
+{
+    Ints result;
+    result.reserve(count());
+    for (auto* c : *this) {
+        result.push_back(c ? c->getInt(def) : def);
+    }
+    return result;
+}
+
+Doubles Node::getDoubles(double def) const
+{
+    Doubles result;
+    result.reserve(count());
+    for (auto* c : *this) {
+        result.push_back(c ? c->getDouble(def) : def);
+    }
+    return result;
+}
+
+Strings Node::getStrings(const std::string& def) const
+{
+    Strings result;
+    result.reserve(count());
+    for (auto* c : *this) {
+        result.push_back(c ? c->getString(def) : def);
+    }
+    return result;
+}
+
+Values Node::getValues(double def) const
+{
+    Values result;
+    result.reserve(count());
+    for (auto* c : *this) {
+        result.push_back(c ? c->getDouble(def) : def);
+    }
+    return result;
+}
+
+Node* Node::setInts(const Ints& values)
+{
+    int have = count();
+    int need = values.sizeAsInt();
+
+    for (int i = 0; i < std::min(have, need); ++i) {
+        if (auto* c = child(i)) c->set(values[i]);
+    }
+
+    for (int i = have - 1; i >= need; --i) {
+        remove(child(i));
+    }
+
+    for (int i = have; i < need; ++i) {
+        insert(new Node(""))->set(values[i]);
+    }
+
+    return this;
+}
+
+Node* Node::setDoubles(const Doubles& values)
+{
+    int have = count();
+    int need = values.sizeAsInt();
+
+    for (int i = 0; i < std::min(have, need); ++i) {
+        if (auto* c = child(i)) c->set(values[i]);
+    }
+
+    for (int i = have - 1; i >= need; --i) {
+        remove(child(i));
+    }
+
+    for (int i = have; i < need; ++i) {
+        insert(new Node(""))->set(values[i]);
+    }
+
+    return this;
+}
+
+Node* Node::setStrings(const Strings& values)
+{
+    int have = count();
+    int need = values.sizeAsInt();
+
+    for (int i = 0; i < std::min(have, need); ++i) {
+        if (auto* c = child(i)) c->set(values[i]);
+    }
+
+    for (int i = have - 1; i >= need; --i) {
+        remove(child(i));
+    }
+
+    for (int i = have; i < need; ++i) {
+        insert(new Node(""))->set(values[i]);
+    }
+
+    return this;
+}
+
+Node* Node::setValues(const Values& values)
+{
+    int have = count();
+    int need = values.sizeAsInt();
+
+    for (int i = 0; i < std::min(have, need); ++i) {
+        if (auto* c = child(i)) c->set(values[i]);
+    }
+
+    for (int i = have - 1; i >= need; --i) {
+        remove(child(i));
+    }
+
+    for (int i = have; i < need; ++i) {
+        insert(new Node(""))->set(values[i]);
+    }
+
+    return this;
+}
+
+// ============================================================================
 // Node — global data tree
 // ============================================================================
 

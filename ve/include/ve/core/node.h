@@ -50,12 +50,46 @@ public:
     double      getDouble(double def = 0.0) const { return value().toDouble(def); }
     std::string getString(const std::string& def = "") const { return value().toString(def); }
 
+    const Var::ListV& getList() const { return value().toList(); }
+    const Var::DictV& getDict() const { return value().toDict(); }
+
+    Ints    getInts(int def = -1) const;
+    Doubles getDoubles(double def = 0.0) const;
+    Strings getStrings(const std::string& def = "") const;
+    Values  getValues(double def = 0.0) const;
+
+    template<typename T>
+    Vector<T> getAsList(const T& def = T{}) const {
+        Vector<T> result;
+        result.reserve(count());
+        for (auto* c : *this) {
+            result.push_back(c ? c->getAs<T>(def) : def);
+        }
+        return result;
+    }
+
+    template<typename T>
+    Dict<T> getAsDict(const T& def = T{}) const {
+        Dict<T> result;
+        for (auto* c : *this) {
+            if (c && !c->name().empty()) {
+                result[c->name()] = c->getAs<T>(def);
+            }
+        }
+        return result;
+    }
+
     Node* set(const Var& v);
     Node* set(Var&& v);
 
     template<typename T> Node* set(const std::string& path, T&& t) { at(path)->set(std::forward<T>(t)); return this; }
     template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
     template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
+
+    Node* setInts(const Ints& values);
+    Node* setDoubles(const Doubles& values);
+    Node* setStrings(const Strings& values);
+    Node* setValues(const Values& values);
 
     bool update(const Var& v);
 
