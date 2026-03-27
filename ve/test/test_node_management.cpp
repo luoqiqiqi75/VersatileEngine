@@ -507,6 +507,79 @@ VE_TEST(node_copy_matches_anonymous_children_by_occurrence) {
     VE_ASSERT_EQ(anon1->getInt(), 3);
 }
 
+VE_TEST(node_copy_reuses_nested_anonymous_children_in_place) {
+    Node src("src");
+    src.at("config/joint_types")->at(0)->set(10);
+    src.at("config/joint_types")->at(1)->set(20);
+
+    Node dst("dst");
+    Node* joint_types = dst.at("config/joint_types");
+    Node* first = joint_types->at(0);
+    Node* second = joint_types->at(1);
+    Node* extra = joint_types->at(2);
+    first->set(-1);
+    second->set(-2);
+    extra->set(99);
+
+    dst.copy(&src, true, false);
+
+    VE_ASSERT_EQ(joint_types->count(), 3);
+    VE_ASSERT_EQ(joint_types->child(0), first);
+    VE_ASSERT_EQ(joint_types->child(1), second);
+    VE_ASSERT_EQ(joint_types->child(2), extra);
+    VE_ASSERT_EQ(first->getInt(), 10);
+    VE_ASSERT_EQ(second->getInt(), 20);
+    VE_ASSERT_EQ(extra->getInt(), 99);
+}
+
+VE_TEST(node_copy_reuses_nested_duplicate_named_children_by_overlap) {
+    Node src("src");
+    Node* src_cfg = src.at("config");
+    src_cfg->append("joint")->set(1);
+    src_cfg->append("joint")->set(2);
+
+    Node dst("dst");
+    Node* dst_cfg = dst.at("config");
+    Node* first = dst_cfg->append("joint");
+    Node* second = dst_cfg->append("joint");
+    Node* extra = dst_cfg->append("joint");
+    first->set(-1);
+    second->set(-2);
+    extra->set(99);
+
+    dst.copy(&src, true, false);
+
+    VE_ASSERT_EQ(dst_cfg->count("joint"), 3);
+    VE_ASSERT_EQ(dst_cfg->child("joint", 0), first);
+    VE_ASSERT_EQ(dst_cfg->child("joint", 1), second);
+    VE_ASSERT_EQ(dst_cfg->child("joint", 2), extra);
+    VE_ASSERT_EQ(first->getInt(), 1);
+    VE_ASSERT_EQ(second->getInt(), 2);
+    VE_ASSERT_EQ(extra->getInt(), 99);
+}
+
+VE_TEST(node_copy_nested_auto_remove_clears_extra_children) {
+    Node src("src");
+    src.at("value")->append("joint")->set(1);
+    src.at("value")->append("joint")->set(2);
+
+    Node dst("dst");
+    Node* value = dst.at("value");
+    Node* first = value->append("joint");
+    Node* second = value->append("joint");
+    value->append("joint")->set(99);
+    first->set(-1);
+    second->set(-2);
+
+    value->copy(src.at("value"), true, true, false);
+
+    VE_ASSERT_EQ(value->count("joint"), 2);
+    VE_ASSERT_EQ(value->child("joint", 0), first);
+    VE_ASSERT_EQ(value->child("joint", 1), second);
+    VE_ASSERT_EQ(first->getInt(), 1);
+    VE_ASSERT_EQ(second->getInt(), 2);
+}
+
 VE_TEST(node_copy_default_set_emits_changed_even_if_equal) {
     Node src("src");
     src.set(9);

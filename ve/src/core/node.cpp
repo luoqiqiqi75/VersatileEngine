@@ -126,8 +126,8 @@ bool Node::isAncestorOf(const Node* descendant_node) const
 
 Node* Node::child(int index) const
 {
-    if (!_p->children) return nullptr;
     LockT lk(mutex());
+    if (!_p->children) return nullptr;
     if (index < 0) index += _p->children->nodes.sizeAsInt();
     if (index < 0 || index >= _p->children->nodes.sizeAsInt()) return nullptr;
     return _p->children->nodes.at(index);
@@ -135,9 +135,9 @@ Node* Node::child(int index) const
 
 Node* Node::child(const std::string& name, int overlap) const
 {
-    if (!_p->children) return nullptr;
     if (name.empty()) return child(overlap);
     LockT lk(mutex());
+    if (!_p->children) return nullptr;
     if (const auto* iv = _p->children->indices.ptr(name); iv) {
         if (overlap >= 0 && static_cast<std::size_t>(overlap) < iv->size())
             return _p->children->nodes.value((*iv)[static_cast<std::size_t>(overlap)], nullptr);
@@ -147,8 +147,9 @@ Node* Node::child(const std::string& name, int overlap) const
 
 int Node::indexOf(const Node* child_node, int guess) const
 {
-    if (!child_node || !_p->children) return -1;
+    if (!child_node) return -1;
     LockT lk(mutex());
+    if (!_p->children) return -1;
 
     auto& nodes = _p->children->nodes;
     const int sz = nodes.sizeAsInt();
@@ -184,12 +185,18 @@ int Node::indexOf(const Node* child_node, int guess) const
 
 int Node::count() const
 {
+    // Many callers use count() as a cheap existence/size check on nodes that are
+    // concurrently updated (insert/take/clear all lock mutex()).
+    // Without locking here, reading the underlying containers is a data race
+    // and can manifest as heap corruption later (for example glibc tcache aborts).
+    LockT lk(mutex());
     return _p->children ? _p->children->nodes.sizeAsInt() : 0;
 }
 
 int Node::count(const std::string& name) const
 {
     if (name.empty()) return count();
+    LockT lk(mutex());
     if (!_p->children) return 0;
     if (const auto* iv = _p->children->indices.ptr(name)) return iv->sizeAsInt();
     return 0;
@@ -197,16 +204,16 @@ int Node::count(const std::string& name) const
 
 Vector<Node*> Node::children() const
 {
-    if (!_p->children) return {};
     LockT lk(mutex());
+    if (!_p->children) return {};
     return _p->children->nodes;
 }
 
 Vector<Node*> Node::children(const std::string& name) const
 {
     if (name.empty()) return children();
-    if (!_p->children) return {};
     LockT lk(mutex());
+    if (!_p->children) return {};
     Vector<Node*> out;
     if (const auto* iv = _p->children->indices.ptr(name); iv) {
         for (const int i : *iv)
@@ -217,8 +224,8 @@ Vector<Node*> Node::children(const std::string& name) const
 
 Strings Node::childNames() const
 {
-    if (!_p->children) return {};
     LockT lk(mutex());
+    if (!_p->children) return {};
     Strings out;
     Hash<char> seen;
     for (const auto* n : _p->children->nodes) {
@@ -525,10 +532,10 @@ void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto
 // Node — key
 // ============================================================================
 
-// Core parser: "name#N"→(name,N)  "#N"→("",N)  "name"→(name,-1)  ""→false
+// Core parser: "name#N"→(name,N)  "#N"→("",N)  "name"→(name,0)  ""→false
 bool Node::parseKey(std::string_view key, std::string_view& name, int& index)
 {
-    index = -1;
+    index = 0;
     if (key.empty()) { name = {}; return false; }
 
     auto pos = key.rfind('#');
@@ -588,8 +595,9 @@ int Node::keyIndex(const std::string& key)
 
 std::string Node::keyOf(const Node* child, int guess) const
 {
-    if (!child || !_p->children) return "";
+    if (!child) return "";
     LockT lk(mutex());
+    if (!_p->children) return "";
 
     int gi = indexOf(child, guess);
     if (gi < 0) return "";
@@ -701,33 +709,88 @@ std::string Node::path(Node* ancestor) const
 Node* Node::at(const std::string& path)
 {
     if (path.empty()) return this;
+    const std::string requested_path = path;
     std::string_view sv(path);
     Node* start = this;
     if (sv[0] == '/') { start = _root(this); sv.remove_prefix(1); if (sv.empty()) return start; }
-    return _walk(sv, start, [](Node* cur, auto& nm, int idx, bool gl) -> Node* {
-        std::string key = gl ? "" : nm;
-        int have = cur->count(key);
-        for (int i = have; i <= idx; ++i) cur->insert(new Node(key));
-        return cur->child(key, idx);
-    });
+    Node* cur = start;
+    while (!sv.empty() && cur) {
+        auto slash = sv.find('/');
+        auto seg = (slash == std::string_view::npos) ? sv : sv.substr(0, slash);
+        sv = (slash == std::string_view::npos) ? std::string_view{} : sv.substr(slash + 1);
+        if (seg.empty()) continue;
+
+        const std::string key(seg);
+        auto* out = cur->childAt(key);
+        if (out) {
+            cur = out;
+            continue;
+        }
+
+        std::string_view nmv;
+        int idx;
+        if (!Node::parseKey(seg, nmv, idx)) {
+            veLogE << "<ve.node> at path parse failed path=" << requested_path
+                   << " parent=" << cur->path()
+                   << " key=" << key;
+            return nullptr;
+        }
+
+        const std::string name(nmv);
+        // veLogDs << cur->path() << "want to append" << name << "+" << idx;
+        out = cur->append(name, idx);
+
+        if (!out) {
+            veLogE << "<ve.node> at path resolve failed path=" << requested_path
+                   << " parent=" << cur->path()
+                   << " key=" << key;
+            return nullptr;
+        }
+        cur = out;
+    }
+    return cur;
 }
 
 Node* Node::at(int index)
 {
     if (index < 0) return nullptr;
-    int have = count();
-    for (int i = have; i <= index; ++i)
-        insert(new Node(""));
-    return child(index);
+    auto* out = child(index);
+    int attempts = 0;
+    while (!out && attempts <= index) {
+        if (!insert(new Node(""))) {
+            veLogE << "<ve.node> at index create failed parent=" << path()
+                   << " key=" << Node::toKey("", index);
+            return nullptr;
+        }
+        out = child(index);
+        ++attempts;
+    }
+    if (!out) {
+        veLogE << "<ve.node> at index resolve failed parent=" << path()
+               << " key=" << Node::toKey("", index);
+    }
+    return out;
 }
 
 Node* Node::at(const std::string& name, int overlap)
 {
     if (overlap < 0) return nullptr;
-    int have = name.empty() ? count() : count(name);
-    for (int i = have; i <= overlap; ++i)
-        insert(new Node(name));
-    return child(name, overlap);
+    auto* out = child(name, overlap);
+    int attempts = 0;
+    while (!out && attempts <= overlap + 1) {
+        if (!insert(new Node(name))) {
+            veLogE << "<ve.node> at key create failed parent=" << path()
+                   << " key=" << Node::toKey(name, overlap);
+            return nullptr;
+        }
+        out = child(name, overlap);
+        ++attempts;
+    }
+    if (!out) {
+        veLogE << "<ve.node> at key resolve failed parent=" << path()
+               << " key=" << Node::toKey(name, overlap);
+    }
+    return out;
 }
 
 bool Node::erase(const std::string& path, bool auto_delete)

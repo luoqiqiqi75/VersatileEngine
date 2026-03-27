@@ -16,6 +16,7 @@
 #include <memory>
 #include <array>
 #include <link.h>
+#include <unordered_map>
 
 // ---------------------------------------------------------------------------
 // Helper: get all thread IDs of current process
@@ -65,48 +66,35 @@ static std::string DemangleName(const char* symbol)
 }
 
 // ---------------------------------------------------------------------------
-// Module base address for PIE executables
+// Shell escaping for popen("addr2line ...")
 // ---------------------------------------------------------------------------
-static uintptr_t GetModuleBaseAddress(const char* modulePath)
+static std::string ShellEscapeSingleQuotes(const char* s)
 {
-    FILE* maps = fopen("/proc/self/maps", "r");
-    if (!maps) return 0;
-
-    const char* targetName = strrchr(modulePath, '/');
-    targetName = targetName ? targetName + 1 : modulePath;
-
-    char line[512];
-    uintptr_t baseAddr = 0;
-    while (fgets(line, sizeof(line), maps)) {
-        uintptr_t start;
-        char perms[16], offset[32], path[256];
-        if (sscanf(line, "%lx-%*x %s %s %*s %*s %255s", &start, perms, offset, path) >= 4) {
-            if (strstr(path, targetName) && strcmp(offset, "00000000") == 0) {
-                baseAddr = start;
-                break;
-            }
-        }
+    if (!s) return {};
+    std::string out;
+    for (const char* p = s; *p; ++p) {
+        if (*p == '\'') out += "'\\''";
+        else            out += *p;
     }
-    fclose(maps);
-    return baseAddr;
+    return out;
 }
 
 // ---------------------------------------------------------------------------
-// Batch addr2line for source locations (PIE-aware)
+// Batch addr2line for source locations (PIE / shared-library aware)
 // ---------------------------------------------------------------------------
-static std::vector<std::string> GetSourceLocations(const std::vector<void*>& addresses, const char* modulePath)
+static std::vector<std::string> GetSourceLocations(const std::vector<void*>& addresses,
+                                                   const char* modulePath,
+                                                   uintptr_t moduleBase)
 {
     std::vector<std::string> results(addresses.size());
     if (!modulePath || addresses.empty()) return results;
 
-    uintptr_t baseAddr = GetModuleBaseAddress(modulePath);
-
     std::ostringstream cmd;
-    cmd << "addr2line -e '" << modulePath << "' -f -C -i -s -p";
+    cmd << "addr2line -e '" << ShellEscapeSingleQuotes(modulePath) << "' -f -C -i -s -p";
     for (void* addr : addresses) {
         uintptr_t a = (uintptr_t)addr;
-        if (baseAddr > 0 && a > baseAddr) cmd << " 0x" << std::hex << (a - baseAddr);
-        else                               cmd << " 0x" << std::hex << a;
+        if (moduleBase > 0 && a > moduleBase) cmd << " 0x" << std::hex << (a - moduleBase);
+        else                                  cmd << " 0x" << std::hex << a;
     }
     cmd << " 2>/dev/null";
 
@@ -157,7 +145,12 @@ static std::string PrintThreadStack(pid_t threadId)
     if (len > 0) exePath[len] = '\0';
 
     // Collect per-frame info via dladdr
-    struct FrameInfo { void* addr; const char* modulePath; std::string funcName; };
+    struct FrameInfo {
+        void* addr = nullptr;
+        const char* modulePath = nullptr;
+        uintptr_t moduleBase = 0;
+        std::string funcName;
+    };
     std::vector<FrameInfo> frames(nptrs);
 
     for (int i = 0; i < nptrs; i++) {
@@ -165,6 +158,7 @@ static std::string PrintThreadStack(pid_t threadId)
         Dl_info info;
         if (dladdr(buffer[i], &info)) {
             frames[i].modulePath = info.dli_fname;
+            frames[i].moduleBase = reinterpret_cast<uintptr_t>(info.dli_fbase);
             if (info.dli_sname) {
                 int status = 0;
                 char* d = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
@@ -173,31 +167,42 @@ static std::string PrintThreadStack(pid_t threadId)
             }
         } else {
             frames[i].modulePath = exePath;
+            frames[i].moduleBase = 0;
         }
     }
 
-    // Batch addr2line for the main executable frames
-    std::vector<void*> mainAddrs;
-    std::vector<int>   mainIndices;
-    const char* mainExePath = nullptr;
+    // Batch addr2line by module (main executable + all DSOs).
+    struct ModuleBatch {
+        const char* modulePath = nullptr;
+        uintptr_t moduleBase = 0;
+        std::vector<void*> addrs;
+        std::vector<int> indices;
+    };
+    std::unordered_map<std::string, ModuleBatch> moduleBatches;
+    moduleBatches.reserve(16);
     for (int i = 0; i < nptrs; i++) {
-        if (frames[i].modulePath && strstr(frames[i].modulePath, exePath)) {
-            mainAddrs.push_back(frames[i].addr);
-            mainIndices.push_back(i);
-            if (!mainExePath) mainExePath = frames[i].modulePath;
+        const char* modulePath = frames[i].modulePath ? frames[i].modulePath : exePath;
+        if (!modulePath || !*modulePath) continue;
+        auto& batch = moduleBatches[std::string(modulePath)];
+        if (!batch.modulePath) {
+            batch.modulePath = modulePath;
+            batch.moduleBase = frames[i].moduleBase;
         }
+        batch.addrs.push_back(frames[i].addr);
+        batch.indices.push_back(i);
     }
-    auto sourceLocations = (!mainAddrs.empty() && mainExePath)
-        ? GetSourceLocations(mainAddrs, mainExePath)
-        : std::vector<std::string>{};
+
+    std::vector<std::string> sourceLocations(nptrs);
+    for (auto& [_, batch] : moduleBatches) {
+        auto locs = GetSourceLocations(batch.addrs, batch.modulePath, batch.moduleBase);
+        for (size_t i = 0; i < batch.indices.size() && i < locs.size(); ++i)
+            sourceLocations[batch.indices[i]] = std::move(locs[i]);
+    }
 
     // Format each frame
     for (int i = 0; i < nptrs; i++) {
         oss << "  #" << i << " ";
-        std::string srcLoc;
-        for (size_t j = 0; j < mainIndices.size(); j++) {
-            if (mainIndices[j] == i && j < sourceLocations.size()) { srcLoc = sourceLocations[j]; break; }
-        }
+        const std::string& srcLoc = sourceLocations[i];
         if (!srcLoc.empty()) {
             oss << srcLoc;
         } else if (!frames[i].funcName.empty()) {
@@ -208,6 +213,16 @@ static std::string PrintThreadStack(pid_t threadId)
             oss << frames[i].funcName << ")";
         } else {
             oss << DemangleName(strings[i]);
+        }
+        if (frames[i].modulePath) {
+            const char* mod = strrchr(frames[i].modulePath, '/');
+            oss << " [" << (mod ? mod + 1 : frames[i].modulePath);
+            if (frames[i].moduleBase != 0) {
+                uintptr_t a = reinterpret_cast<uintptr_t>(buffer[i]);
+                if (a > frames[i].moduleBase)
+                    oss << " +0x" << std::hex << (a - frames[i].moduleBase) << std::dec;
+            }
+            oss << "]";
         }
         oss << " [0x" << std::hex << (uintptr_t)buffer[i] << std::dec << "]\n";
     }
