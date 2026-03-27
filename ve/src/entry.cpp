@@ -267,7 +267,7 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
 
     Hash<int> base_pri;
     for (const auto& kv : factory) {
-        const std::string& key = kv.key;
+        const std::string& key = kv.first;
 
         int priority = pri_map.has(key) ? pri_map[key] : 100;
         bool enabled = true;

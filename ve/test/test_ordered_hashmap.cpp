@@ -14,7 +14,7 @@ VE_TEST(ohm_insert_order) {
     m["b"] = 2;
 
     Vector<std::string> keys;
-    for (auto& kv : m) keys.append(std::string(kv.key));
+    for (auto& kv : m) keys.append(std::string(kv.first));
     VE_ASSERT_EQ(keys.sizeAsInt(), 3);
     VE_ASSERT_EQ(keys[0], "c");
     VE_ASSERT_EQ(keys[1], "a");
@@ -62,8 +62,8 @@ VE_TEST(ohm_stress_1000) {
     // check insertion order
     int idx = 0;
     for (auto& kv : m) {
-        VE_ASSERT_EQ(kv.key, idx);
-        VE_ASSERT_EQ(kv.value, idx * idx);
+        VE_ASSERT_EQ(kv.first, idx);
+        VE_ASSERT_EQ(kv.second, idx * idx);
         idx++;
     }
 
@@ -74,7 +74,7 @@ VE_TEST(ohm_stress_1000) {
     // remaining should be odd numbers in order
     idx = 1;
     for (auto& kv : m) {
-        VE_ASSERT_EQ(kv.key, idx);
+        VE_ASSERT_EQ(kv.first, idx);
         idx += 2;
     }
 }

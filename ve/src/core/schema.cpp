@@ -217,27 +217,27 @@ static void varToNodeImpl(const Var& var, Node* node)
     if (var.type() == Var::DICT) {
         auto& dict = var.toDict();
         for (auto& kv : dict) {
-            if (kv.key == "_value") {
-                node->set(kv.value);
-            } else if (kv.key.empty()) {
+            if (kv.first == "_value") {
+                node->set(kv.second);
+            } else if (kv.first.empty()) {
                 // Anonymous children list
                 clearAnonymousChildren(node);
-                if (kv.value.type() == Var::LIST) {
-                    for (auto& elem : kv.value.toList()) {
+                if (kv.second.type() == Var::LIST) {
+                    for (auto& elem : kv.second.toList()) {
                         varToNodeImpl(elem, node->append());
                     }
                 }
             } else {
                 // Named child
-                Node* c = ensureSchemaChild(node, kv.key);
+                Node* c = ensureSchemaChild(node, kv.first);
                 if (!c) continue;
                 
-                if (kv.value.type() == Var::LIST) {
-                    for (auto& elem : kv.value.toList()) {
+                if (kv.second.type() == Var::LIST) {
+                    for (auto& elem : kv.second.toList()) {
                         varToNodeImpl(elem, c->append());
                     }
                 } else {
-                    varToNodeImpl(kv.value, c);
+                    varToNodeImpl(kv.second, c);
                 }
             }
         }

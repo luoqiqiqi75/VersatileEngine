@@ -4,7 +4,6 @@
 #pragma once
 
 #include "ve/core/var.h"
-#include <cstdint>
 
 namespace ve {
 

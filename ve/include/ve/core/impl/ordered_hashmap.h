@@ -44,21 +44,22 @@ namespace ve::impl {
 
 /**
  * KeyValue pair for InsertionOrderedHashMap
+ * Compatible with std::pair interface (uses first/second)
  */
 template <typename K, typename V>
 struct KeyValue {
-    const K key{};
-    V value{};
+    const K first{};
+    V second{};
 
     KeyValue &operator=(const KeyValue &) = delete;
     KeyValue &operator=(KeyValue &&) = delete;
 
     constexpr KeyValue(const KeyValue &) = default;
     constexpr KeyValue(KeyValue &&) = default;
-    constexpr KeyValue(const K &p_key, const V &p_value) : key(p_key), value(p_value) {}
+    constexpr KeyValue(const K &p_key, const V &p_value) : first(p_key), second(p_value) {}
 
-    constexpr bool operator==(const KeyValue &o) const { return key == o.key && value == o.value; }
-    constexpr bool operator!=(const KeyValue &o) const { return key != o.key || value != o.value; }
+    constexpr bool operator==(const KeyValue &o) const { return first == o.first && second == o.second; }
+    constexpr bool operator!=(const KeyValue &o) const { return first != o.first || second != o.second; }
 };
 
 template <typename TKey, typename TValue>
@@ -134,7 +135,7 @@ private:
         while (true) {
             if (_hashes[idx] == EMPTY_HASH) return false;
             if (distance > _get_probe_length(idx, _hashes[idx], capacity, capacity_inv)) return false;
-            if (_hashes[idx] == p_hash && Comparator::compare(_elements[idx]->data.key, p_key)) {
+            if (_hashes[idx] == p_hash && Comparator::compare(_elements[idx]->data.first, p_key)) {
                 r_idx = idx;
                 return true;
             }
@@ -251,14 +252,14 @@ public:
         uint32_t idx = 0;
         bool exists = _lookup_idx(p_key, idx);
         assert(exists && "HashMap key not found");
-        return _elements[idx]->data.value;
+        return _elements[idx]->data.second;
     }
 
     const TValue &get(const TKey &p_key) const {
         uint32_t idx = 0;
         bool exists = _lookup_idx(p_key, idx);
         assert(exists && "HashMap key not found");
-        return _elements[idx]->data.value;
+        return _elements[idx]->data.second;
     }
 
     VE_FORCE_INLINE bool has(const TKey &p_key) const {
@@ -366,7 +367,7 @@ public:
         uint32_t idx = 0;
         bool exists = _lookup_idx(p_key, idx);
         assert(exists && "HashMap key not found");
-        return _elements[idx]->data.value;
+        return _elements[idx]->data.second;
     }
 
     TValue &operator[](const TKey &p_key) {
@@ -374,9 +375,9 @@ public:
         uint32_t idx = 0;
         bool exists = _elements && _size > 0 && _lookup_idx_unchecked(p_key, hash, idx);
         if (!exists) {
-            return _insert(p_key, TValue(), hash)->data.value;
+            return _insert(p_key, TValue(), hash)->data.second;
         } else {
-            return _elements[idx]->data.value;
+            return _elements[idx]->data.second;
         }
     }
 
@@ -389,7 +390,7 @@ public:
         if (!exists) {
             return Iterator(_insert(p_key, p_value, hash, p_front_insert));
         } else {
-            _elements[idx]->data.value = p_value;
+            _elements[idx]->data.second = p_value;
             return Iterator(_elements[idx]);
         }
     }
@@ -400,7 +401,7 @@ public:
         reserve(hash_table_size_primes[p_other._capacity_idx]);
         if (p_other._size == 0) return;
         for (const KeyValue<TKey, TValue> &E : p_other) {
-            insert(E.key, E.value);
+            insert(E.first, E.second);
         }
     }
 

@@ -185,8 +185,8 @@ void writeVar(const Var& v, Bytes& buf)
             auto& dict = v.toDict();
             writeU32(buf, static_cast<uint32_t>(dict.size()));
             for (auto& kv : dict) {
-                writeStr(buf, kv.key);
-                writeVar(kv.value, buf);
+                writeStr(buf, kv.first);
+                writeVar(kv.second, buf);
             }
             break;
         }

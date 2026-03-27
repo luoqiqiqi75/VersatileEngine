@@ -199,11 +199,11 @@ std::string Var::toString(const std::string& def) const {
         for (const auto& kv : dict) {
             if (!first) s += ", ";
             first = false;
-            s += kv.key + ": ";
-            if (kv.value._type == STRING)
-                s += '"' + kv.value.toString() + '"';
+            s += kv.first + ": ";
+            if (kv.second._type == STRING)
+                s += '"' + kv.second.toString() + '"';
             else
-                s += kv.value.toString();
+                s += kv.second.toString();
         }
         s += '}';
         return s;
@@ -387,8 +387,8 @@ bool Var::operator==(const Var& other) const {
             const auto& d2 = *other._storage._dict;
             if (d1.size() != d2.size()) return false;
             for (const auto& kv : d1) {
-                auto it = d2.find(kv.key);
-                if (it == d2.end() || it->value != kv.value) {
+                auto it = d2.find(kv.first);
+                if (it == d2.end() || it->second != kv.second) {
                     return false;
                 }
             }

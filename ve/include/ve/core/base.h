@@ -411,29 +411,14 @@ public:
 
 namespace basic {
 
-// KV accessor policies
-
-struct StdPairKVAccess {
-    template<typename KV> static const auto& key(const KV& kv) { return kv.first; }
-    template<typename KV> static auto& value(KV& kv) { return kv.second; }
-    template<typename KV> static const auto& value(const KV& kv) { return kv.second; }
-};
-
-struct ImplKVAccess {
-    template<typename KV> static const auto& key(const KV& kv) { return kv.key; }
-    template<typename KV> static auto& value(KV& kv) { return kv.value; }
-    template<typename KV> static const auto& value(const KV& kv) { return kv.value; }
-};
-
 // KV container CRTP mixin
 
-template<typename DerivedT, typename KeyT, typename ValueT, typename KVAccessor = StdPairKVAccess>
+template<typename DerivedT, typename KeyT, typename ValueT>
 class KVContainer
 {
 public:
     using MapLike = std::true_type;
     using DictLike = std::integral_constant<bool, std::is_same_v<KeyT, std::string>>;
-    using KVAccessT = KVAccessor;
 
 protected:
     const DerivedT* dPtr() const { return static_cast<const DerivedT*>(this); }
@@ -452,36 +437,36 @@ public:
     {
         Vector<KeyT> vec;
         vec.reserve(dPtr()->size());
-        for (const auto& kv : *dPtr()) vec.push_back(KVAccessor::key(kv));
+        for (const auto& kv : *dPtr()) vec.push_back(kv.first);
         return vec;
     }
     Vector<ValueT> values() const
     {
         Vector<ValueT> vec;
         vec.reserve(dPtr()->size());
-        for (const auto& kv : *dPtr()) vec.push_back(KVAccessor::value(kv));
+        for (const auto& kv : *dPtr()) vec.push_back(kv.second);
         return vec;
     }
 
     ValueT value(const KeyT& key) const
     {
         const auto it = dPtr()->find(key);
-        return it == dPtr()->end() ? ValueT() : KVAccessor::value(*it);
+        return it == dPtr()->end() ? ValueT() : it->second;
     }
     ValueT value(const KeyT& key, const ValueT& default_value) const
     {
         const auto it = dPtr()->find(key);
-        return it == dPtr()->end() ? default_value : KVAccessor::value(*it);
+        return it == dPtr()->end() ? default_value : it->second;
     }
     ValueT* ptr(const KeyT& key)
     {
         auto it = dPtr()->find(key);
-        return it == dPtr()->end() ? nullptr : &KVAccessor::value(*it);
+        return it == dPtr()->end() ? nullptr : &it->second;
     }
     const ValueT* ptr(const KeyT& key) const
     {
         const auto it = dPtr()->find(key);
-        return it == dPtr()->end() ? nullptr : &KVAccessor::value(*it);
+        return it == dPtr()->end() ? nullptr : &it->second;
     }
 
     DerivedT& insertOne(const KeyT& key, const ValueT& value) { auto d = dPtr(); d->operator[](key) = value; return *d; }
@@ -518,7 +503,7 @@ template<typename K, typename V,
          typename Hasher     = impl::HashMapHasherDefault,
          typename Comparator = impl::HashMapComparatorDefault<K>>
 class OrderedHashMap
-    : public impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>, public basic::KVContainer<OrderedHashMap<K, V, Hasher, Comparator>, K, V, basic::ImplKVAccess>
+    : public impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>, public basic::KVContainer<OrderedHashMap<K, V, Hasher, Comparator>, K, V>
 {
     using ImplBase = impl::InsertionOrderedHashMap<K, V, Hasher, Comparator>;
 public:

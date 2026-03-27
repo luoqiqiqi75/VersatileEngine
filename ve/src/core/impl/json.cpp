@@ -83,9 +83,9 @@ static void varToJson(const Var& v, std::string& out)
                 if (!first) out += ',';
                 first = false;
                 out += '"';
-                escape(kv.key, out);
+                escape(kv.first, out);
                 out += "\":";
-                varToJson(kv.value, out);
+                varToJson(kv.second, out);
             }
             out += '}';
             break;

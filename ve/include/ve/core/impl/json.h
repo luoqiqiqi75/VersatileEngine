@@ -14,8 +14,6 @@
 #pragma once
 
 #include "ve/core/var.h"
-#include <string>
-#include <vector>
 
 namespace ve {
 
