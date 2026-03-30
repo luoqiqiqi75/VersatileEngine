@@ -226,7 +226,7 @@ void TerminalSession::Private::initCommands()
             out += "  empty:     " + std::string(t->empty() ? "yes" : "no") + "\n";
             out += "  shadow:    " + std::string(t->shadow() ? nodeSummary(t->shadow()) : "(none)") + "\n";
             if (!t->get().isNull()) {
-                auto& v = t->get();
+                const auto& v = t->get();
                 out += "  value:     " + varPreview(v) + "\n";
                 out += "  type:      " + std::string(varTypeName(v.type())) + "\n";
             } else { out += "  value:     (none)\n"; }
@@ -258,7 +258,7 @@ void TerminalSession::Private::initCommands()
             return;
         }
         if (t->get().isNull()) { s.print("(none)\n"); return; }
-        auto& v = t->get();
+        const auto& v = t->get();
         s.print(varPreview(v, 256) + "  (" + varTypeName(v.type()) + ")\n");
     };
     cmds["get"] = getImpl;

@@ -77,14 +77,56 @@ bool Values::greaterThan(const Values &other) const
     return true;
 }
 
-bool Values::equals(const Values& other) const
+Values& Values::operator+=(const Values& o)
 {
-    int s = sizeAsInt();
-    if (s != other.sizeAsInt()) return false;
-    for (int i = 0; i < s; i++) {
-        if (std::fabs(at(i) - other.at(i)) > eps) return false;
+    const int n = std::min(sizeAsInt(), o.sizeAsInt());
+    for (int i = 0; i < n; ++i) {
+        at(i) += o.at(i);
     }
-    return true;
+    return *this;
+}
+
+Values& Values::operator-=(const Values& o)
+{
+    const int n = std::min(sizeAsInt(), o.sizeAsInt());
+    for (int i = 0; i < n; ++i) {
+        at(i) -= o.at(i);
+    }
+    return *this;
+}
+
+Values& Values::append(const Values& o)
+{
+    insert(end(), o.begin(), o.end());
+    return *this;
+}
+
+double Values::sum() const
+{
+    double result = 0.0;
+    for (const auto& v : *this) {
+        result += v;
+    }
+    return result;
+}
+
+double Values::norm() const
+{
+    double result = 0.0;
+    for (const auto& v : *this) {
+        result += v * v;
+    }
+    return std::sqrt(result);
+}
+
+double Values::distance(const Values& o) const
+{
+    return (*this - o).norm();
+}
+
+bool Values::near(const Values& o, double epsilon) const
+{
+    return distance(o) < epsilon;
 }
 
 }

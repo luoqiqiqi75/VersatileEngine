@@ -539,11 +539,39 @@ public:
 
     bool smallerThan(const Values& other) const;
     bool greaterThan(const Values& other) const;
-    bool equals(const Values& other) const;
 
     bool operator<(const Values& other) const { return smallerThan(other); }
     bool operator>(const Values& other) const { return greaterThan(other); }
-    bool operator==(const Values& other) const { return equals(other); }
+    bool operator==(const Values& other) const { return near(other); }
+
+    // Arithmetic operators (scalar)
+    Values& operator+=(double v) { return add(v); }
+    Values& operator-=(double v) { return add(-v); }
+    Values& operator*=(double v) { return multiply(v); }
+    Values& operator/=(double v) { return multiply(1.0 / v); }
+
+    Values operator+(double v) const { return Values(*this) += v; }
+    Values operator-(double v) const { return Values(*this) -= v; }
+    Values operator*(double v) const { return Values(*this) *= v; }
+    Values operator/(double v) const { return Values(*this) /= v; }
+
+    // Arithmetic operators (vector)
+    Values& operator+=(const Values& o);
+    Values& operator-=(const Values& o);
+
+    Values operator+(const Values& o) const { return Values(*this) += o; }
+    Values operator-(const Values& o) const { return Values(*this) -= o; }
+
+    // Concatenation
+    using Doubles::append;
+    Values& append(const Values& o);
+    Values operator|(const Values& o) const { return Values(*this).append(o); }
+
+    // Math utilities
+    double sum() const;
+    double norm() const;
+    double distance(const Values& o) const;
+    bool near(const Values& o, double epsilon = 0.0001) const;
 
 private:
     Unit m_unit = NONE;
