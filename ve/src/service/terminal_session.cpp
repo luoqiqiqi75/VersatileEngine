@@ -35,9 +35,52 @@ using detail::parseFlags;
 static std::vector<std::string> split(const std::string& line)
 {
     std::vector<std::string> tokens;
-    std::istringstream iss(line);
-    std::string tok;
-    while (iss >> tok) tokens.push_back(tok);
+    std::string current;
+    bool in_quote = false;
+    char quote_char = '\0';
+    bool escaped = false;
+
+    for (size_t i = 0; i < line.size(); ++i) {
+        char ch = line[i];
+
+        if (escaped) {
+            current.push_back(ch);
+            escaped = false;
+            continue;
+        }
+
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+
+        if (!in_quote && (ch == '"' || ch == '\'')) {
+            in_quote = true;
+            quote_char = ch;
+            continue;
+        }
+
+        if (in_quote && ch == quote_char) {
+            in_quote = false;
+            quote_char = '\0';
+            continue;
+        }
+
+        if (!in_quote && std::isspace(static_cast<unsigned char>(ch))) {
+            if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+
+        current.push_back(ch);
+    }
+
+    if (!current.empty()) {
+        tokens.push_back(current);
+    }
+
     return tokens;
 }
 
@@ -422,17 +465,33 @@ void TerminalSession::Private::initCommands()
         auto* t = pathStr.empty() ? s.cur : s.resolve(pathStr);
         if (!t) { s.print("not found: " + pathStr + "\n"); return; }
 
-        auto importFile = f.get("import", 'i');
-        if (f.has("import", 'i')) {
-            if (importFile.empty()) { s.print("usage: schema " + format + " -i <file>\n"); return; }
-            std::ifstream ifs(importFile);
-            if (!ifs.is_open()) { s.print("cannot read: " + importFile + "\n"); return; }
-            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        bool isImport = f.has("import", 'i');
+        auto file = f.get("file", 'f');
+        auto importContent = f.get("import", 'i');
+
+        if (isImport) {
+            std::string content;
+            if (!file.empty()) {
+                std::ifstream ifs(file);
+                if (!ifs.is_open()) { s.print("cannot read: " + file + "\n"); return; }
+                content.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            } else if (!importContent.empty()) {
+                content = importContent;
+            } else {
+                s.print("usage: schema " + format + " -i <content> | -i -f <file>\n");
+                return;
+            }
+
             bool ok = false;
             if (format == "json") ok = impl::json::importTree(t, content);
             else if (format == "xml") ok = impl::xml::importTree(t, content);
             else if (schema::hasSchemaFormat(format)) ok = schema::importSchemaFormat(format, t, content);
-            s.print(ok ? "imported from " + importFile + "\n" : "import failed (invalid " + format + ")\n");
+
+            if (ok) {
+                s.print(file.empty() ? "imported\n" : "imported from " + file + "\n");
+            } else {
+                s.print("import failed (invalid " + format + ")\n");
+            }
             return;
         }
 
@@ -443,14 +502,14 @@ void TerminalSession::Private::initCommands()
         else if (schema::hasSchemaFormat(format)) result = schema::exportSchemaFormat(format, t);
         else { s.print("unknown format: " + format + "\n"); return; }
 
-        auto outFile = f.get("output", 'o');
-        if (f.has("output", 'o') && !outFile.empty()) {
-            std::ofstream ofs(outFile);
-            if (!ofs.is_open()) { s.print("cannot write: " + outFile + "\n"); return; }
+        if (!file.empty()) {
+            std::ofstream ofs(file);
+            if (!ofs.is_open()) { s.print("cannot write: " + file + "\n"); return; }
             ofs << result;
-            s.print("saved to " + outFile + "\n"); return;
+            s.print("saved to " + file + "\n");
+        } else {
+            s.print(result);
         }
-        s.print(result);
     };
 
     // --- Shadow ---
@@ -490,7 +549,7 @@ void TerminalSession::Private::initCommands()
         out += "  rm <path> [-i] [-n] [-c]   remove at path (relative to cur)\n";
         out += "  mv <src> [dest] [--at N]   reparent node\n";
         out += "  cp <src> [dest] [-r] [-u]  copy subtree\n";
-        out += "  schema <fmt> [path] [-o/-i] export/import\n";
+        out += "  schema <fmt> [path] [-f FILE] [-i] export/import\n";
         out += "  shadow [path] [--set/--clear] shadow ops\n";
         out += "\n=== Navigation ===\n";
         out += "  cd <path>       navigate ('.' and '..')\n";

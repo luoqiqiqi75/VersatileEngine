@@ -317,11 +317,15 @@ private:
             cursor_ += suffix.size();
         }
 
-        bool single_terminal_match =
-            matches.size() == 1 && !matches[0].empty() && matches[0].back() != '/';
-        if (single_terminal_match && (cursor_ == line_.size() || line_[cursor_] != ' ')) {
-            line_.insert(cursor_, 1, ' ');
-            ++cursor_;
+        bool is_first_word = (word_start == std::string::npos);
+        bool single_match = (matches.size() == 1);
+        bool ends_with_slash = !matches[0].empty() && matches[0].back() == '/';
+
+        if (single_match && is_first_word && !ends_with_slash) {
+            if (cursor_ == line_.size() || line_[cursor_] != ' ') {
+                line_.insert(cursor_, 1, ' ');
+                ++cursor_;
+            }
         }
 
         if (matches.size() > 1) {
@@ -359,9 +363,14 @@ private:
             if (common.size() > prefix.size()) {
                 current += common.substr(prefix.size());
             }
-            if (matches.size() == 1 && (!matches[0].empty() && matches[0].back() != '/')) {
+
+            bool is_first_word = (word_start == std::string::npos);
+            bool single_match = (matches.size() == 1);
+            bool ends_with_slash = !matches[0].empty() && matches[0].back() == '/';
+
+            if (single_match && is_first_word && !ends_with_slash) {
                 current.push_back(' ');
-            } else {
+            } else if (matches.size() > 1) {
                 match_output += formatMatches(matches);
             }
         }
