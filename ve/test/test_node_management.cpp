@@ -23,10 +23,12 @@ VE_TEST(node_isKey) {
     VE_ASSERT(Node::isKey("#0"));
     VE_ASSERT(Node::isKey("#99"));
 
+    // valid keys: # and name# (implicit index 0)
+    VE_ASSERT(Node::isKey("#"));        // global index 0
+    VE_ASSERT(Node::isKey("a#"));       // name with index 0
+
     // invalid keys
     VE_ASSERT(!Node::isKey(""));        // empty
-    VE_ASSERT(!Node::isKey("#"));       // no digits after #
-    VE_ASSERT(!Node::isKey("a#"));      // no digits after #
     VE_ASSERT(!Node::isKey("#abc"));    // non-digit after #
     VE_ASSERT(!Node::isKey("a#b"));     // non-digit after #
     VE_ASSERT(!Node::isKey("/"));       // path separator
@@ -43,11 +45,13 @@ VE_TEST(node_keyIndex) {
     VE_ASSERT_EQ(Node::keyIndex("item#3"), 3);
     VE_ASSERT_EQ(Node::keyIndex("tag#100"), 100);
 
-    // keys without explicit index
-    VE_ASSERT_EQ(Node::keyIndex("hello"), -1);
+    // keys with implicit index 0
+    VE_ASSERT_EQ(Node::keyIndex("hello"), 0);
+    VE_ASSERT_EQ(Node::keyIndex("#"), 0);
+    VE_ASSERT_EQ(Node::keyIndex("a#"), 0);
+
+    // invalid keys
     VE_ASSERT_EQ(Node::keyIndex(""), -1);
-    VE_ASSERT_EQ(Node::keyIndex("#"), -1);
-    VE_ASSERT_EQ(Node::keyIndex("a#"), -1);
     VE_ASSERT_EQ(Node::keyIndex("#abc"), -1);
 }
 

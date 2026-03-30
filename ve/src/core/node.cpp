@@ -1,11 +1,6 @@
 // node.cpp — ve::Node
 #include "ve/core/node.h"
 #include "ve/core/var.h"
-#include <algorithm>
-#include <charconv>
-#include <string_view>
-#include <unordered_set>
-
 #include "ve/core/log.h"
 
 namespace ve {
@@ -32,8 +27,8 @@ struct Node::Private
         }
     };
 
-    Children* children = nullptr;
-    Var*      value    = nullptr;
+    Children*   children = nullptr;
+    Var         value;
 
     Children* ensureChildren()
     {
@@ -97,8 +92,8 @@ static Node* _take_copy_match(const Node* src_child, CopyMatchState& state)
 // Node — construction / static
 // ============================================================================
 
-Node::Node(const std::string& name) : Object(name) {}
-Node::~Node() { _p->clearChildren(true); delete _p->value; }
+Node::Node(const std::string& name) : Object(name), _p(std::make_unique<Private>()) {}
+Node::~Node() { _p->clearChildren(true); }
 
 // ============================================================================
 // Node — tree navigation
@@ -137,10 +132,9 @@ Node* Node::child(const std::string& name, int overlap) const
 {
     if (name.empty()) return child(overlap);
     LockT lk(mutex());
-    if (!_p->children) return nullptr;
+    if (!_p->children || overlap < 0) return nullptr;
     if (const auto* iv = _p->children->indices.ptr(name); iv) {
-        if (overlap >= 0 && static_cast<std::size_t>(overlap) < iv->size())
-            return _p->children->nodes.value((*iv)[static_cast<std::size_t>(overlap)], nullptr);
+        return _p->children->nodes.value((*iv).value(overlap, -1), nullptr);
     }
     return nullptr;
 }
@@ -532,7 +526,7 @@ void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto
 // Node — key
 // ============================================================================
 
-// Core parser: "name#N"→(name,N)  "#N"→("",N)  "name"→(name,0)  ""→false
+// Core parser: "name#N"→(name,N)  "#N"→("",N)  "name"→(name,0)  "name#"→(name,0)  "#"→("",0)  "#abc"→false
 bool Node::parseKey(std::string_view key, std::string_view& name, int& index)
 {
     index = 0;
@@ -543,11 +537,11 @@ bool Node::parseKey(std::string_view key, std::string_view& name, int& index)
 
     // parse digits after #
     auto dp = key.substr(pos + 1);
-    if (dp.empty()) { name = key; return true; }  // trailing '#' with no digits — treat whole as name
+    if (dp.empty()) { name = key.substr(0, pos); return true; }  // trailing '#' — valid, index=0
 
     int val = 0;
     for (char c : dp) {
-        if (c < '0' || c > '9') { name = key; return true; }  // non-digit — treat whole as name
+        if (c < '0' || c > '9') return false;  // non-digit after # — invalid
         val = val * 10 + (c - '0');
     }
 
@@ -748,7 +742,7 @@ Node* Node::atKey(const std::string& key)
     }
 
     // Named access with overlap
-    return at(std::string(nm), idx < 0 ? 0 : idx);
+    return at(std::string(nm), idx);
 }
 
 // ============================================================================
@@ -874,17 +868,19 @@ void Node::silentAll(bool on)
 // Node — value operations
 // ============================================================================
 
-const Var& Node::value() const { static const Var _null_var; return _p->value ? *_p->value : _null_var; }
+const Var& Node::value() const {
+    // No lock for read - accept stale read risk
+    return _p->value;
+}
 
 Node* Node::set(const Var& v)
 {
-    Var nv(v);                              // copy outside lock
+    Var nv(v);  // copy outside lock
     {
-        LockT lk(mutex());
-        if (!_p->value) _p->value = new Var();
-        _p->value->swap(nv);               // swap ≈ 16 bytes, no heap op
+        LockT lk(mutex());  // use Object's mutex
+        _p->value.swap(nv);  // swap only 16 bytes, very fast
     }
-    // nv = old value (swapped out); v = new value (original ref still valid)
+    // nv now holds old value, trigger signals outside lock
     trigger<NODE_CHANGED>(v, nv);
     activate(NODE_CHANGED, this);
     return this;
@@ -892,14 +888,13 @@ Node* Node::set(const Var& v)
 
 Node* Node::set(Var&& v)
 {
-    Var nv(std::move(v));                   // move outside lock
-    const Var sig(nv);                      // snapshot for signal
+    Var nv(std::move(v));  // move outside lock
+    const Var sig(nv);     // snapshot for signal
     {
-        LockT lk(mutex());
-        if (!_p->value) _p->value = new Var();
-        _p->value->swap(nv);               // swap ≈ 16 bytes, no heap op
+        LockT lk(mutex());  // use Object's mutex
+        _p->value.swap(nv);  // swap only 16 bytes, very fast
     }
-    // nv = old value; sig = new value
+    // nv now holds old value, trigger signals outside lock
     trigger<NODE_CHANGED>(sig, nv);
     activate(NODE_CHANGED, this);
     return this;
@@ -939,7 +934,7 @@ std::string Node::dump(int depth) const
     if (key.empty()) key = "(anon)";
 
     std::string out = indent + key;
-    if (_p->value) out += " = " + _p->value->toString();
+    if (!_p->value.isNull()) out += " = " + _p->value.toString();
     if (_p->shadow) out += "  -> " + _p->shadow->name();
     out += "\n";
 

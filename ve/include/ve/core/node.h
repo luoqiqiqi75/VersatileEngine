@@ -3,7 +3,6 @@
 
 #include "factory.h"
 #include "schema.h"
-#include <string_view>
 
 namespace ve {
 
@@ -39,16 +38,16 @@ public:
     };
 
     // --- value ---
-    const Var& get() const { return value(); }
-    const Var& get(const std::string& path, const Var& def = Var()) const { if (auto n = find(path)) return n->value(); return def; }
+    Var get() const { return value(); }
+    Var get(const std::string& path, const Var& def = Var()) const { if (auto n = find(path)) return n->value(); return def; }
 
     template<typename T> T getAs(const T& def = T{}) const { return value().to<T>(def); }
 
-    bool        getBool(bool def = false) const { return get().toBool(def); }
-    int         getInt(int def = -1) const { return get().toInt(def); }
-    int64_t     getInt64(int64_t def = -1) const { return get().toInt64(def); }
-    double      getDouble(double def = 0.0) const { return get().toDouble(def); }
-    std::string getString(const std::string& def = "") const { return get().toString(def); }
+    bool        getBool(bool def = false) const { return value().toBool(def); }
+    int         getInt(int def = -1) const { return value().toInt(def); }
+    int64_t     getInt64(int64_t def = -1) const { return value().toInt64(def); }
+    double      getDouble(double def = 0.0) const { return value().toDouble(def); }
+    std::string getString(const std::string& def = "") const { return value().toString(def); }
 
     Var::ListV  getList() const
     {

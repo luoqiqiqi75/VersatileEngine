@@ -459,7 +459,7 @@ public:
     InsertionOrderedHashMap(std::initializer_list<KeyValue<TKey, TValue>> p_init) {
         reserve(static_cast<uint32_t>(p_init.size()));
         for (const KeyValue<TKey, TValue> &E : p_init) {
-            insert(E.key, E.value);
+            insert(E.first, E.second);
         }
     }
 
