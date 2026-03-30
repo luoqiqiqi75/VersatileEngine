@@ -211,7 +211,7 @@ public:
 
     bool        erase(const std::string& path, bool auto_delete = true);
 
-    Node*       find(const std::string& path, bool use_shadow = true) const;    // alias for atPath const
+    Node*       find(const std::string& path, bool use_shadow = true) const { return atPath(path, use_shadow); }
         // --- container interface ---
     Node* operator[](int index) const { return child(index); }
     Node* operator[](const std::string& key) const { return atKey(key); }

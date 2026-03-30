@@ -681,19 +681,14 @@ Node* Node::at(int index)
 {
     if (index < 0) return nullptr;
     auto* out = child(index);
-    int attempts = 0;
-    while (!out && attempts <= index) {
-        if (!insert(new Node(""))) {
-            veLogE << "<ve.node> at index create failed parent=" << path()
-                   << " key=" << Node::toKey("", index);
-            return nullptr;
-        }
-        out = child(index);
-        ++attempts;
+    if (out) return out;
+    if (!append(index - count())) {
+        veLogE << "<ve.node> at index failed append to " << path() << ", index = " << index << ", count = " << count();
+        return nullptr;
     }
+    out = child(index); // rematch
     if (!out) {
-        veLogE << "<ve.node> at index resolve failed parent=" << path()
-               << " key=" << Node::toKey("", index);
+        veLogE << "<ve.node> at index failed on " << path() << " with index " << index;
     }
     return out;
 }
@@ -702,19 +697,14 @@ Node* Node::at(const std::string& name, int overlap)
 {
     if (overlap < 0) return nullptr;
     auto* out = child(name, overlap);
-    int attempts = 0;
-    while (!out && attempts <= overlap + 1) {
-        if (!insert(new Node(name))) {
-            veLogE << "<ve.node> at key create failed parent=" << path()
-                   << " key=" << Node::toKey(name, overlap);
-            return nullptr;
-        }
-        out = child(name, overlap);
-        ++attempts;
+    if (out) return out;
+    if (!append(name, overlap - count(name))) {
+        veLogE << "<ve.node> at index failed append to " << path() << ", key = " << toKey(name, overlap) << ", count = " << count(name);
+        return nullptr;
     }
+    out = child(name, overlap); // rematch
     if (!out) {
-        veLogE << "<ve.node> at key resolve failed parent=" << path()
-               << " key=" << Node::toKey(name, overlap);
+        veLogE << "<ve.node> at index failed on " << path() << " with key " << toKey(name, overlap);
     }
     return out;
 }
@@ -749,7 +739,7 @@ Node* Node::atKey(const std::string& key)
 // Node — atPath (multi-level path access)
 // ============================================================================
 
-Node* Node::find(const std::string& path, bool use_shadow) const
+Node* Node::atPath(const std::string& path, bool use_shadow) const
 {
     if (path.empty()) return const_cast<Node*>(this);
     std::string_view sv(path);
@@ -762,11 +752,6 @@ Node* Node::find(const std::string& path, bool use_shadow) const
                 c = gl ? sh->child(idx) : sh->child(nm, idx);
         return c;
     });
-}
-
-Node* Node::atPath(const std::string& path, bool use_shadow) const
-{
-    return find(path, use_shadow);
 }
 
 Node* Node::atPath(const std::string& path, bool use_shadow)
@@ -811,12 +796,12 @@ Node* Node::atPath(const std::string& path, bool use_shadow)
         }
 
         // Node doesn't exist, create it
-        out = cur->append(name, overlap);
+        out = cur->at(name, overlap);
 
         if (!out) {
-            veLogE << "<ve.node> atPath resolve failed path=" << requested_path
-                   << " parent=" << cur->path()
-                   << " key=" << std::string(seg);
+            veLogE << "<ve.node> atPath resolve failed on " << requested_path
+                   << " parent =" << cur->path()
+                   << " key =" << std::string(seg);
             return nullptr;
         }
         cur = out;
