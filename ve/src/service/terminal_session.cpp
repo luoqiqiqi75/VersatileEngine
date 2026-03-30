@@ -87,14 +87,19 @@ struct TerminalSession::Private
 
     std::string currentPath() const { return cur->path(root); }
 
-    Node* resolveRel(const std::string& relPath) const {
-        if (relPath == ".") return cur;
-        return cur->find(relPath);
+    Node* resolve(const std::string& path) const {
+        if (path.empty() || path == ".") return cur;
+        if (path == "..") return cur->parent() ? cur->parent() : cur;
+        bool absolute = path[0] == '/';
+        Node* base = absolute ? root : cur;
+        std::string relPath = absolute ? path.substr(1) : path;
+        if (relPath.empty()) return base;
+        return base->find(relPath);
     }
 
     Node* target(const std::vector<std::string>& args, int argIdx = 1) const {
         if ((int)args.size() > argIdx && !args[argIdx].empty() && args[argIdx][0] != '-') {
-            auto* n = resolveRel(args[argIdx]);
+            auto* n = resolve(args[argIdx]);
             if (n) return n;
         }
         return cur;
@@ -279,9 +284,9 @@ void TerminalSession::Private::initCommands()
 
     cmds["mk"] = [](S& s, Args args) {
         auto f = parseFlags(args);
-        auto* t = s.target(args);
         auto name = f.get("name", 'n');
         if (!name.empty() || f.has("anon", 'a')) {
+            auto* t = s.target(args);
             auto ovStr = f.get("overlap", 'o', "0");
             int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
             auto atStr = f.get("at");
@@ -304,10 +309,13 @@ void TerminalSession::Private::initCommands()
             else s.print("failed\n");
             return;
         }
-        auto path = f.pos(1);
-        if (path.empty()) { s.print("usage: mk [path] <subpath> | mk -n <name> [-o N] [-a] [--at IDX]\n"); return; }
-        auto* n = t->at(path);
-        if (n) s.print("created: /" + n->path(ve::node::root()) + "\n");
+        auto path = f.pos(0);
+        if (path.empty()) { s.print("usage: mk <path> | mk -n <name> [-o N] [-a] [--at IDX]\n"); return; }
+        bool absolute = path[0] == '/';
+        Node* base = absolute ? s.root : s.cur;
+        std::string relPath = absolute ? path.substr(1) : path;
+        auto* n = base->at(relPath);
+        if (n) s.print("created: /" + n->path(s.root) + "\n");
         else s.print("failed\n");
     };
 
@@ -344,9 +352,12 @@ void TerminalSession::Private::initCommands()
             s.print("removed " + std::to_string(n) + " children named '" + nm + "'\n");
             return;
         }
-        auto childPath = f.pos(1);
+        auto childPath = f.pos(0);
         if (!childPath.empty()) {
-            if (t->erase(childPath)) s.print("removed\n");
+            bool absolute = childPath[0] == '/';
+            Node* base = absolute ? s.root : s.cur;
+            std::string relPath = absolute ? childPath.substr(1) : childPath;
+            if (base->erase(relPath)) s.print("removed\n");
             else s.print("failed (not found or is root)\n");
             return;
         }
@@ -359,10 +370,10 @@ void TerminalSession::Private::initCommands()
         auto f = parseFlags(args);
         auto srcPath = f.pos(0);
         if (srcPath.empty()) { s.print("usage: mv <src> [dest] [--at INDEX]\n"); return; }
-        auto* src = s.resolveRel(srcPath);
+        auto* src = s.resolve(srcPath);
         if (!src) { s.print("not found: " + srcPath + "\n"); return; }
         auto destPath = f.pos(1);
-        auto* dest = destPath.empty() ? s.cur : s.resolveRel(destPath);
+        auto* dest = destPath.empty() ? s.cur : s.resolve(destPath);
         if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
         if (src == dest) { s.print("cannot move node into itself\n"); return; }
         auto atStr = f.get("at");
@@ -380,10 +391,10 @@ void TerminalSession::Private::initCommands()
         auto f = parseFlags(args);
         auto srcPath = f.pos(0);
         if (srcPath.empty()) { s.print("usage: cp <src> [dest] [-r] [-u] [-I]\n"); return; }
-        auto* src = s.resolveRel(srcPath);
+        auto* src = s.resolve(srcPath);
         if (!src) { s.print("not found: " + srcPath + "\n"); return; }
         auto destPath = f.pos(1);
-        auto* dest = destPath.empty() ? s.cur : s.resolveRel(destPath);
+        auto* dest = destPath.empty() ? s.cur : s.resolve(destPath);
         if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
         if (src == dest) { s.print("cannot copy node onto itself\n"); return; }
         if (src->isAncestorOf(dest) || dest->isAncestorOf(src)) {
@@ -408,7 +419,7 @@ void TerminalSession::Private::initCommands()
             s.print(out + "\n"); return;
         }
         auto pathStr = f.pos(1);
-        auto* t = pathStr.empty() ? s.cur : s.resolveRel(pathStr);
+        auto* t = pathStr.empty() ? s.cur : s.resolve(pathStr);
         if (!t) { s.print("not found: " + pathStr + "\n"); return; }
 
         auto importFile = f.get("import", 'i');
@@ -451,7 +462,7 @@ void TerminalSession::Private::initCommands()
         auto setPath = f.get("set");
         if (f.has("set")) {
             if (setPath.empty()) { s.print("usage: shadow --set <path>\n"); return; }
-            auto* sh = s.resolveRel(setPath);
+            auto* sh = s.resolve(setPath);
             if (!sh) { s.print("not found: " + setPath + "\n"); return; }
             t->setShadow(sh);
             s.print("shadow set to: " + sh->path(s.root) + "\n"); return;
@@ -475,8 +486,8 @@ void TerminalSession::Private::initCommands()
         out += "  ls [path] [-t] [-l] [-n]   list children / tree / details\n";
         out += "  get [path] [-t]            get value or type\n";
         out += "  set [path] <value> [--null] set or clear value\n";
-        out += "  mk [path] <sub> | -n NAME  ensure path or create child\n";
-        out += "  rm [path] [target] [-i] [-n] [-c]  remove\n";
+        out += "  mk <path> | -n NAME        create at path (relative to cur)\n";
+        out += "  rm <path> [-i] [-n] [-c]   remove at path (relative to cur)\n";
         out += "  mv <src> [dest] [--at N]   reparent node\n";
         out += "  cp <src> [dest] [-r] [-u]  copy subtree\n";
         out += "  schema <fmt> [path] [-o/-i] export/import\n";
