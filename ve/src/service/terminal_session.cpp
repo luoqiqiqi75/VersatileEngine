@@ -636,8 +636,27 @@ std::string TerminalSession::execute(const std::string& line)
 
 std::string TerminalSession::prompt() const
 {
-    if (_p->cur == _p->root) return "/> ";
-    return "/" + _p->cur->path(_p->root) + "> ";
+    bool use_color = true;
+    std::string path_color = "\x1b[36m";
+    std::string prompt_color = "\x1b[32m";
+
+    if (Node* cfg = _p->root->find("ve/server/terminal/repl/config")) {
+        use_color = cfg->get("prompt_color").toBool(true);
+        auto pc = cfg->get("prompt_path_color").toString();
+        if (!pc.empty()) path_color = pc;
+        auto sc = cfg->get("prompt_symbol_color").toString();
+        if (!sc.empty()) prompt_color = sc;
+    }
+
+    if (!use_color) {
+        if (_p->cur == _p->root) return "/> ";
+        return "/" + _p->cur->path(_p->root) + "> ";
+    }
+
+    if (_p->cur == _p->root) {
+        return path_color + "/" + "\x1b[0m" + prompt_color + "> \x1b[0m";
+    }
+    return path_color + "/" + _p->cur->path(_p->root) + "\x1b[0m" + prompt_color + "> \x1b[0m";
 }
 
 std::vector<std::string> TerminalSession::complete(const std::string& partial)

@@ -473,11 +473,11 @@ Terminal::Terminal(QWidget *parent) :
     QStringList logo;
     logo.append(R"(  .                 .                       )");
     logo.append(R"( / \               / \                      )");
-    logo.append(R"( \  \             /  /-----------.          )");
+    logo.append(R"( \  \             /  /`----------.          )");
     logo.append(R"(  \  \           /  /  o----------'         )");
     logo.append(R"(   \  \         /  / \  \                   )");
     logo.append(R"(    \  \       /  /   \  \                  )");
-    logo.append(R"(     .  o     o  .     .  \_______.-.       )");
+    logo.append(R"(     .  o     o  .     .  o.______.-.       )");
     logo.append(R"(      \  \   /  /       \  ,-------`-'      )");
     logo.append(R"(       \  \ /  /         \  \               )");
     logo.append(R"(        \  v  /           \  \              )");
