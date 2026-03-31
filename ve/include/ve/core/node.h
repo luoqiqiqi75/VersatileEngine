@@ -39,7 +39,7 @@ public:
 
     // --- value ---
     Var get() const { return value(); }
-    Var get(const std::string& path, const Var& def = Var()) const { if (auto n = find(path)) return n->value(); return def; }
+    Var get(const std::string& path) const { if (auto n = find(path)) return n->value(); return Var {}; }
 
     template<typename T> T getAs(const T& def = T{}) const { return value().to<T>(def); }
 
@@ -49,7 +49,16 @@ public:
     double      getDouble(double def = 0.0) const { return value().toDouble(def); }
     std::string getString(const std::string& def = "") const { return value().toString(def); }
 
-    Var::ListV  getList() const
+    Node* set(const Var& v);
+    Node* set(Var&& v);
+
+    template<typename T> Node* set(const std::string& path, T&& t) { at(path)->set(std::forward<T>(t)); return this; }
+    template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
+    template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
+
+    bool update(const Var& v);
+
+    Var::ListV toList() const
     {
         Var::ListV v;
         v.reserve(count());
@@ -59,21 +68,21 @@ public:
         return v;
     }
 
-    template<typename ListT> void getList(ListT& l) const
+    template<typename ListT> void toList(ListT& l) const
     {
-        Var::ListV v = getList();
-        l.resize(v.size());
+        Var::ListV v = toList();
+        l.reserve(v.size());
         for (const auto& item : v) {
             l.push_back(item.to<typename ListT::value_type>());
         }
     }
 
-    Ints getInts() const { Ints is; getList(is); return is; }
-    Doubles getDoubles() const { Doubles ds; getList(ds); return ds; }
-    Strings getStrings() const { Strings ss; getList(ss); return ss; }
-    Values getValues() const { Values vs; getList(vs); return vs; }
+    Ints toInts() const { Ints is; toList(is); return is; }
+    Doubles toDoubles() const { Doubles ds; toList(ds); return ds; }
+    Strings toStrings() const { Strings ss; toList(ss); return ss; }
+    Values toValues() const { Values vs; toList(vs); return vs; }
 
-    Var::DictV  getDict() const
+    Var::DictV toDict() const
     {
         Var::DictV v;
         for (auto* c : *this) {
@@ -82,41 +91,32 @@ public:
         return v;
     }
 
-    template<typename DictT> void getDict(DictT& d)
+    template<typename DictT> void toDict(DictT& d)
     {
-        Var::DictV v = getDict();
+        Var::DictV v = toDict();
         d.clear();
         for (const auto& kv : v) {
             d[kv.first] = kv.second.to<typename DictT::mapped_type>();
         }
     }
 
-    Node* set(const Var& v);
-    Node* set(Var&& v);
-
-    template<typename T> Node* set(const std::string& path, T&& t) { at(path)->set(std::forward<T>(t)); return this; }
-    template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
-    template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
-
-    template<typename ListT> Node* setList(const ListT& l)
+    template<typename ListT> Node* fromList(const ListT& l)
     {
         for (std::size_t i = 0; i < l.size(); i++) {
             set(l.size() - i - 1, l[i]);
         }
         return set(get());
     }
-    template<typename ListT> Node* setList(const std::string& path, const ListT& l) { return at(path)->setList(l); }
+    template<typename ListT> Node* fromList(const std::string& path, const ListT& l) { return at(path)->fromList(l); }
 
-    template<typename DictT> Node* setDict(const DictT& d)
+    template<typename DictT> Node* fromDict(const DictT& d)
     {
         for (const auto& kv : d) {
             set(kv.first, kv.second);
         }
         return set(get());
     }
-    template<typename DictT> Node* setDict(const std::string& path, const DictT& d) { return at(path)->setDict(d); }
-
-    bool update(const Var& v);
+    template<typename DictT> Node* fromDict(const std::string& path, const DictT& d) { return at(path)->fromDict(d); }
 
     // --- tree navigation ---
     Node* parent() const;

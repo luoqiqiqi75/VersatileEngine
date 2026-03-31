@@ -21,21 +21,6 @@ VE_API QObject* global();
 
 } // namespace ve
 
-namespace ve::version {
-
-typedef Factory<int()> Manager;
-VE_API Manager& manager();
-VE_API int number(const QString& key, bool sum = false);
-
-} // namespace ve::version
-
-#define VE_REGISTER_VERSION(KEY, VER) VE_AUTO_RUN(ve::version::manager().insertOne(#KEY, [] (void) -> int { return VER; }))
-
-#define VE_REGISTER_RELEASE_VERSION(KEY, MAJOR, MINOR, BASELINE) VE_AUTO_RUN( \
-    ve::version::manager().regist(QString("@0_%1").arg(KEY), [] (void) -> int { return BASELINE; }); \
-    ve::version::manager().regist(QString("@1_%1").arg(KEY), [] (void) -> int { return MAJOR; }); \
-    ve::version::manager().regist(QString("@2_%1").arg(KEY), [] (void) -> int { return MINOR; }))
-
 namespace ve::qwidget {
 
 using F = Factory<QWidget*(QWidget*)>;
