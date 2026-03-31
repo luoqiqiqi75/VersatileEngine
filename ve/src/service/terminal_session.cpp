@@ -6,11 +6,13 @@
 #include "terminal_session.h"
 #include "ve/core/command.h"
 #include "ve/core/impl/json.h"
+#include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"
 #include "ve/core/schema.h"
 #include "terminal_util.h"
 
 #include <sstream>
+#include <iomanip>
 #include <fstream>
 #include <algorithm>
 #include <functional>
@@ -457,7 +459,7 @@ void TerminalSession::Private::initCommands()
         auto format = f.pos(0);
         if (format.empty()) {
             auto fmts = schema::schemaFormatNames();
-            std::string out = "available formats: json, xml, var";
+            std::string out = "available formats: json, xml, bin, var";
             for (auto& fn : fmts) out += ", " + fn;
             s.print(out + "\n"); return;
         }
@@ -472,7 +474,7 @@ void TerminalSession::Private::initCommands()
         if (isImport) {
             std::string content;
             if (!file.empty()) {
-                std::ifstream ifs(file);
+                std::ifstream ifs(file, format == "bin" ? std::ios::binary : std::ios::in);
                 if (!ifs.is_open()) { s.print("cannot read: " + file + "\n"); return; }
                 content.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
             } else if (!importContent.empty()) {
@@ -485,6 +487,7 @@ void TerminalSession::Private::initCommands()
             bool ok = false;
             if (format == "json") ok = impl::json::importTree(t, content);
             else if (format == "xml") ok = impl::xml::importTree(t, content);
+            else if (format == "bin") ok = impl::bin::importTree(t, reinterpret_cast<const uint8_t*>(content.data()), content.size());
             else if (schema::hasSchemaFormat(format)) ok = schema::importSchemaFormat(format, t, content);
 
             if (ok) {
@@ -499,6 +502,26 @@ void TerminalSession::Private::initCommands()
         if (format == "json") result = impl::json::exportTree(t);
         else if (format == "xml") result = impl::xml::exportTree(t);
         else if (format == "var") { result = impl::json::stringify(schema::exportAs<schema::VarS>(t)) + "\n"; }
+        else if (format == "bin") {
+            auto bytes = impl::bin::exportTree(t);
+            if (!file.empty()) {
+                std::ofstream ofs(file, std::ios::binary);
+                if (!ofs.is_open()) { s.print("cannot write: " + file + "\n"); return; }
+                ofs.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                s.print("saved to " + file + " (" + std::to_string(bytes.size()) + " bytes)\n");
+                return;
+            }
+            // hex dump to terminal
+            std::ostringstream oss;
+            for (size_t i = 0; i < bytes.size(); ++i) {
+                if (i > 0 && i % 16 == 0) oss << "\n";
+                else if (i > 0) oss << " ";
+                oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(bytes[i]);
+            }
+            oss << "\n(" << std::dec << bytes.size() << " bytes)\n";
+            s.print(oss.str());
+            return;
+        }
         else if (schema::hasSchemaFormat(format)) result = schema::exportSchemaFormat(format, t);
         else { s.print("unknown format: " + format + "\n"); return; }
 

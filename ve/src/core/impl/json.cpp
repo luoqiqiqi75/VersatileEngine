@@ -112,9 +112,10 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const schema::Exp
     std::string pad(depth * indent, ' ');
     std::string pad1((depth + 1) * indent, ' ');
 
+    auto all_children = node->children();
     Vector<const Node*> visible_children;
-    visible_children.reserve(node->count());
-    for (auto* child : *node) {
+    visible_children.reserve(all_children.sizeAsInt());
+    for (auto* child : all_children) {
         if (!isIgnoredChild(child, options))
             visible_children.push_back(child);
     }

@@ -254,14 +254,15 @@ static void writeNode(const Node* node, Bytes& buf, const schema::ExportOptions&
     writeVar(node->get(), buf);
 
     // children
-    uint32_t visible_count = 0;
-    for (auto* child : *node) {
+    auto all_children = node->children();
+    Vector<const Node*> visible_children;
+    visible_children.reserve(all_children.sizeAsInt());
+    for (auto* child : all_children) {
         if (!isIgnoredChild(child, options))
-            ++visible_count;
+            visible_children.push_back(child);
     }
-    writeU32(buf, visible_count);
-    for (auto* c : *node) {
-        if (isIgnoredChild(c, options)) continue;
+    writeU32(buf, static_cast<uint32_t>(visible_children.size()));
+    for (auto* c : visible_children) {
         writeU16(buf, static_cast<uint16_t>(c->name().size()));
         buf.insert(buf.end(), c->name().begin(), c->name().end());
         writeNode(c, buf, options);

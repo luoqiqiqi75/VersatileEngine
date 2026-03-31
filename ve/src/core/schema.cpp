@@ -103,9 +103,10 @@ static Var nodeToVarImpl(const Node* node, const ExportOptions& options)
 {
     if (!node) return Var();
 
+    auto all_children = node->children();
     Vector<const Node*> visible_children;
-    visible_children.reserve(node->count());
-    for (auto* child : *node) {
+    visible_children.reserve(all_children.sizeAsInt());
+    for (auto* child : all_children) {
         if (options.auto_ignore && child && !child->name().empty() && child->name()[0] == '_') {
             continue;
         }
