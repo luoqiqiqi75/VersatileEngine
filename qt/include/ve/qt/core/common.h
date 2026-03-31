@@ -15,12 +15,6 @@
 
 class QWidget;
 
-namespace ve {
-
-VE_API QObject* global();
-
-} // namespace ve
-
 namespace ve::qwidget {
 
 using F = Factory<QWidget*(QWidget*)>;
