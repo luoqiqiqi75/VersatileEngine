@@ -8,6 +8,7 @@
 #   ve_dep_asio2     — asio2 2.9 (high-level networking, header-only)
 #   ve_dep_simdjson  — simdjson（deps/simdjson，add_subdirectory，始终静态归档，链接 simdjson::simdjson）
 #   ve_dep_pugixml   — pugixml（deps/pugixml，静态库，链接 pugixml::pugixml）
+#   ve_dep_msgpack   — msgpack-c 6.1.1 (serialization, header-only)
 #
 # 外部依赖由各子项目按需调用 ve_find_package() 声明:
 #   rtt/           -> nlohmann_json::nlohmann_json
@@ -126,6 +127,10 @@ endif()
 add_library(ve_dep_pugixml INTERFACE)
 target_link_libraries(ve_dep_pugixml INTERFACE pugixml::pugixml)
 
+# --- msgpack-c (header-only, C++17 serialization) ---
+add_library(ve_dep_msgpack INTERFACE)
+target_include_directories(ve_dep_msgpack INTERFACE "${VE_DEPS_ROOT}/msgpack-c/include")
+
 # =============================================================================
 # ve_find_package 宏 (供各子项目按需调用)
 # =============================================================================
@@ -143,3 +148,4 @@ message(STATUS "  asio      (${VE_DEPS_3RD}/asio)")
 message(STATUS "  asio2     (${VE_DEPS_ASIO2_ROOT}/include/asio2)")
 message(STATUS "  simdjson  (${VE_DEPS_SIMDJSON_ROOT})")
 message(STATUS "  pugixml   (${VE_DEPS_PUGIXML_ROOT})")
+message(STATUS "  msgpack-c (${VE_DEPS_ROOT}/msgpack-c)")

@@ -53,6 +53,7 @@ target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_spdlog)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio2)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_pugixml)
+target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_msgpack)
 
 # dynamic library loading (dlopen on Linux)
 if(NOT WIN32)

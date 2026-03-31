@@ -1,234 +1,122 @@
 // ----------------------------------------------------------------------------
-// bin.cpp — Binary serialization for Var and Node (hand-rolled, little-endian)
+// bin.cpp — Binary serialization for Var and Node (MessagePack-based)
 // ----------------------------------------------------------------------------
 #include "ve/core/impl/bin.h"
 #include "ve/core/node.h"
 
+#define MSGPACK_NO_BOOST
+#include <msgpack.hpp>
+#include <cstring>
+
 namespace ve::impl::bin {
 
 // ============================================================================
-// Little-endian read/write primitives
+// Var → MessagePack
 // ============================================================================
 
-static inline void writeU8(Bytes& buf, uint8_t v)
-{
-    buf.push_back(v);
-}
-
-static inline void writeU16(Bytes& buf, uint16_t v)
-{
-    buf.push_back(static_cast<uint8_t>(v));
-    buf.push_back(static_cast<uint8_t>(v >> 8));
-}
-
-static inline void writeU32(Bytes& buf, uint32_t v)
-{
-    buf.push_back(static_cast<uint8_t>(v));
-    buf.push_back(static_cast<uint8_t>(v >> 8));
-    buf.push_back(static_cast<uint8_t>(v >> 16));
-    buf.push_back(static_cast<uint8_t>(v >> 24));
-}
-
-static inline void writeI64(Bytes& buf, int64_t v)
-{
-    uint64_t u;
-    std::memcpy(&u, &v, 8);
-    for (int i = 0; i < 8; ++i)
-        buf.push_back(static_cast<uint8_t>(u >> (i * 8)));
-}
-
-static inline void writeF64(Bytes& buf, double v)
-{
-    uint64_t u;
-    std::memcpy(&u, &v, 8);
-    for (int i = 0; i < 8; ++i)
-        buf.push_back(static_cast<uint8_t>(u >> (i * 8)));
-}
-
-static inline void writeStr(Bytes& buf, const std::string& s)
-{
-    writeU32(buf, static_cast<uint32_t>(s.size()));
-    buf.insert(buf.end(), s.begin(), s.end());
-}
-
-static inline void writeBin(Bytes& buf, const Bytes& b)
-{
-    writeU32(buf, static_cast<uint32_t>(b.size()));
-    buf.insert(buf.end(), b.begin(), b.end());
-}
-
-// --- read ---
-
-static inline bool canRead(const uint8_t* ptr, const uint8_t* end, size_t n)
-{
-    if (!ptr || !end) return false;
-    return (end - ptr) >= static_cast<ptrdiff_t>(n);
-}
-
-static inline uint8_t readU8(const uint8_t*& ptr, const uint8_t* end)
-{
-    if (!canRead(ptr, end, 1)) { ptr = nullptr; return 0; }
-    return *ptr++;
-}
-
-static inline uint16_t readU16(const uint8_t*& ptr, const uint8_t* end)
-{
-    if (!canRead(ptr, end, 2)) { ptr = nullptr; return 0; }
-    uint16_t v = static_cast<uint16_t>(ptr[0]) | (static_cast<uint16_t>(ptr[1]) << 8);
-    ptr += 2;
-    return v;
-}
-
-static inline uint32_t readU32(const uint8_t*& ptr, const uint8_t* end)
-{
-    if (!canRead(ptr, end, 4)) { ptr = nullptr; return 0; }
-    uint32_t v = static_cast<uint32_t>(ptr[0])
-               | (static_cast<uint32_t>(ptr[1]) << 8)
-               | (static_cast<uint32_t>(ptr[2]) << 16)
-               | (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-    return v;
-}
-
-static inline int64_t readI64(const uint8_t*& ptr, const uint8_t* end)
-{
-    if (!canRead(ptr, end, 8)) { ptr = nullptr; return 0; }
-    uint64_t u = 0;
-    for (int i = 0; i < 8; ++i)
-        u |= static_cast<uint64_t>(ptr[i]) << (i * 8);
-    ptr += 8;
-    int64_t v;
-    std::memcpy(&v, &u, 8);
-    return v;
-}
-
-static inline double readF64(const uint8_t*& ptr, const uint8_t* end)
-{
-    if (!canRead(ptr, end, 8)) { ptr = nullptr; return 0.0; }
-    uint64_t u = 0;
-    for (int i = 0; i < 8; ++i)
-        u |= static_cast<uint64_t>(ptr[i]) << (i * 8);
-    ptr += 8;
-    double v;
-    std::memcpy(&v, &u, 8);
-    return v;
-}
-
-static inline std::string readStr(const uint8_t*& ptr, const uint8_t* end)
-{
-    uint32_t len = readU32(ptr, end);
-    if (!canRead(ptr, end, len)) { ptr = nullptr; return ""; }
-    std::string s(reinterpret_cast<const char*>(ptr), len);
-    ptr += len;
-    return s;
-}
-
-static inline Bytes readBytesRaw(const uint8_t*& ptr, const uint8_t* end)
-{
-    uint32_t len = readU32(ptr, end);
-    if (!canRead(ptr, end, len)) { ptr = nullptr; return {}; }
-    Bytes b(ptr, ptr + len);
-    ptr += len;
-    return b;
-}
-
-// ============================================================================
-// Var serialization
-// ============================================================================
-
-// Type tags aligned with Var::Type enum values
-static constexpr uint8_t TAG_NULL    = 0;
-static constexpr uint8_t TAG_BOOL    = 1;
-static constexpr uint8_t TAG_INT     = 2;
-static constexpr uint8_t TAG_DOUBLE  = 3;
-static constexpr uint8_t TAG_STRING  = 4;
-static constexpr uint8_t TAG_BIN     = 5;
-static constexpr uint8_t TAG_LIST    = 6;
-static constexpr uint8_t TAG_DICT    = 7;
-
-void writeVar(const Var& v, Bytes& buf)
+static void packVar(const Var& v, msgpack::packer<msgpack::sbuffer>& pk)
 {
     switch (v.type()) {
         case Var::NONE:
-            writeU8(buf, TAG_NULL);
+            pk.pack_nil();
             break;
         case Var::BOOL:
-            writeU8(buf, TAG_BOOL);
-            writeU8(buf, v.toBool() ? 1 : 0);
+            pk.pack(v.toBool());
             break;
         case Var::INT:
-            writeU8(buf, TAG_INT);
-            writeI64(buf, v.toInt64());
+            pk.pack(v.toInt64());
             break;
         case Var::DOUBLE:
-            writeU8(buf, TAG_DOUBLE);
-            writeF64(buf, v.toDouble());
+            pk.pack(v.toDouble());
             break;
-        case Var::STRING:
-            writeU8(buf, TAG_STRING);
-            writeStr(buf, v.toString());
-            break;
-        case Var::BIN:
-            writeU8(buf, TAG_BIN);
-            writeBin(buf, v.toBin());
-            break;
-        case Var::LIST: {
-            writeU8(buf, TAG_LIST);
-            auto& list = v.toList();
-            writeU32(buf, static_cast<uint32_t>(list.size()));
-            for (auto& item : list)
-                writeVar(item, buf);
+        case Var::STRING: {
+            const auto& s = v.toString();
+            pk.pack_str(static_cast<uint32_t>(s.size()));
+            pk.pack_str_body(s.data(), s.size());
             break;
         }
-        case Var::DICT: {
-            writeU8(buf, TAG_DICT);
-            auto& dict = v.toDict();
-            writeU32(buf, static_cast<uint32_t>(dict.size()));
-            for (auto& kv : dict) {
-                writeStr(buf, kv.first);
-                writeVar(kv.second, buf);
+        case Var::BIN: {
+            const auto& b = v.toBin();
+            pk.pack_bin(static_cast<uint32_t>(b.size()));
+            pk.pack_bin_body(reinterpret_cast<const char*>(b.data()), b.size());
+            break;
+        }
+        case Var::LIST: {
+            const auto& list = v.toList();
+            pk.pack_array(static_cast<uint32_t>(list.size()));
+            for (const auto& item : list) {
+                packVar(item, pk);
             }
             break;
         }
-        default:
-            writeU8(buf, TAG_STRING);
-            writeStr(buf, v.toString());
+        case Var::DICT: {
+            const auto& dict = v.toDict();
+            pk.pack_map(static_cast<uint32_t>(dict.size()));
+            for (const auto& kv : dict) {
+                pk.pack_str(static_cast<uint32_t>(kv.first.size()));
+                pk.pack_str_body(kv.first.data(), kv.first.size());
+                packVar(kv.second, pk);
+            }
             break;
+        }
+        case Var::POINTER:
+        case Var::CUSTOM:
+        default: {
+            const auto& s = v.toString();
+            pk.pack_str(static_cast<uint32_t>(s.size()));
+            pk.pack_str_body(s.data(), s.size());
+            break;
+        }
     }
 }
 
-Var readVar(const uint8_t*& ptr, const uint8_t* end)
-{
-    if (!ptr || ptr >= end) return Var();
-    uint8_t tag = readU8(ptr, end);
+// ============================================================================
+// MessagePack → Var
+// ============================================================================
 
-    switch (tag) {
-        case TAG_NULL:
+static Var unpackVar(const msgpack::object& obj)
+{
+    switch (obj.type) {
+        case msgpack::type::NIL:
             return Var();
-        case TAG_BOOL:
-            return Var(readU8(ptr, end) != 0);
-        case TAG_INT:
-            return Var(readI64(ptr, end));
-        case TAG_DOUBLE:
-            return Var(readF64(ptr, end));
-        case TAG_STRING:
-            return Var(readStr(ptr, end));
-        case TAG_BIN:
-            return Var(readBytesRaw(ptr, end));
-        case TAG_LIST: {
-            uint32_t count = readU32(ptr, end);
+        case msgpack::type::BOOLEAN:
+            return Var(obj.as<bool>());
+        case msgpack::type::POSITIVE_INTEGER:
+            return Var(static_cast<int64_t>(obj.as<uint64_t>()));
+        case msgpack::type::NEGATIVE_INTEGER:
+            return Var(obj.as<int64_t>());
+        case msgpack::type::FLOAT32:
+        case msgpack::type::FLOAT64:
+            return Var(obj.as<double>());
+        case msgpack::type::STR: {
+            msgpack::object_str str = obj.via.str;
+            return Var(std::string(str.ptr, str.size));
+        }
+        case msgpack::type::BIN: {
+            msgpack::object_bin bin = obj.via.bin;
+            Bytes bytes(reinterpret_cast<const uint8_t*>(bin.ptr),
+                        reinterpret_cast<const uint8_t*>(bin.ptr) + bin.size);
+            return Var(std::move(bytes));
+        }
+        case msgpack::type::ARRAY: {
+            msgpack::object_array arr = obj.via.array;
             Var::ListV list;
-            list.reserve(count);
-            for (uint32_t i = 0; i < count; ++i)
-                list.push_back(readVar(ptr, end));
+            list.reserve(arr.size);
+            for (uint32_t i = 0; i < arr.size; ++i) {
+                list.push_back(unpackVar(arr.ptr[i]));
+            }
             return Var(std::move(list));
         }
-        case TAG_DICT: {
-            uint32_t count = readU32(ptr, end);
+        case msgpack::type::MAP: {
+            msgpack::object_map map = obj.via.map;
             Var::DictV dict;
-            for (uint32_t i = 0; i < count; ++i) {
-                std::string key = readStr(ptr, end);
-                dict[key] = readVar(ptr, end);
+            for (uint32_t i = 0; i < map.size; ++i) {
+                const msgpack::object_kv& kv = map.ptr[i];
+                if (kv.key.type == msgpack::type::STR) {
+                    msgpack::object_str key_str = kv.key.via.str;
+                    std::string key(key_str.ptr, key_str.size);
+                    dict[key] = unpackVar(kv.val);
+                }
             }
             return Var(std::move(dict));
         }
@@ -238,7 +126,7 @@ Var readVar(const uint8_t*& ptr, const uint8_t* end)
 }
 
 // ============================================================================
-// Node tree serialization
+// Node tree → MessagePack (format: {_v: value, _c: [[name, node], ...]})
 // ============================================================================
 
 static bool isIgnoredChild(const Node* child, const schema::ExportOptions& options)
@@ -249,44 +137,125 @@ static bool isIgnoredChild(const Node* child, const schema::ExportOptions& optio
         && child->name()[0] == '_';
 }
 
-static void writeNode(const Node* node, Bytes& buf, const schema::ExportOptions& options)
+static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, const schema::ExportOptions& options)
 {
-    writeVar(node->get(), buf);
+    int fieldCount = 0;
+    const Var& nodeValue = node->get();
+    bool hasValue = !nodeValue.isNull();
 
-    // children
     auto all_children = node->children();
     Vector<const Node*> visible_children;
     visible_children.reserve(all_children.sizeAsInt());
     for (auto* child : all_children) {
-        if (!isIgnoredChild(child, options))
+        if (!isIgnoredChild(child, options)) {
             visible_children.push_back(child);
+        }
     }
-    writeU32(buf, static_cast<uint32_t>(visible_children.size()));
-    for (auto* c : visible_children) {
-        writeU16(buf, static_cast<uint16_t>(c->name().size()));
-        buf.insert(buf.end(), c->name().begin(), c->name().end());
-        writeNode(c, buf, options);
+    bool hasChildren = !visible_children.empty();
+
+    if (hasValue) fieldCount++;
+    if (hasChildren) fieldCount++;
+
+    pk.pack_map(fieldCount);
+
+    if (hasValue) {
+        pk.pack_str(2);
+        pk.pack_str_body("_v", 2);
+        packVar(nodeValue, pk);
+    }
+
+    if (hasChildren) {
+        pk.pack_str(2);
+        pk.pack_str_body("_c", 2);
+        pk.pack_array(static_cast<uint32_t>(visible_children.size()));
+        for (const Node* child : visible_children) {
+            pk.pack_array(2);
+            const std::string& name = child->name();
+            pk.pack_str(static_cast<uint32_t>(name.size()));
+            pk.pack_str_body(name.data(), name.size());
+            packNode(child, pk, options);
+        }
     }
 }
 
-static void readNode(const uint8_t*& ptr, const uint8_t* end, Node* node)
-{
-    // value
-    Var v = readVar(ptr, end);
-    if (!v.isNull())
-        node->set(std::move(v));
+// ============================================================================
+// MessagePack → Node tree
+// ============================================================================
 
-    // children
-    uint32_t count = readU32(ptr, end);
-    if (!ptr) return;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint16_t nameLen = readU16(ptr, end);
-        if (!ptr || !canRead(ptr, end, nameLen)) { ptr = nullptr; return; }
-        std::string name(reinterpret_cast<const char*>(ptr), nameLen);
-        ptr += nameLen;
-        auto* c = node->append(name);
-        readNode(ptr, end, c);
-        if (!ptr) return;
+static void unpackNode(const msgpack::object& obj, Node* node)
+{
+    if (obj.type != msgpack::type::MAP) {
+        return;
+    }
+
+    msgpack::object_map map = obj.via.map;
+    for (uint32_t i = 0; i < map.size; ++i) {
+        const msgpack::object_kv& kv = map.ptr[i];
+        if (kv.key.type != msgpack::type::STR) {
+            continue;
+        }
+
+        msgpack::object_str key_str = kv.key.via.str;
+        std::string key(key_str.ptr, key_str.size);
+
+        if (key == "_v") {
+            Var v = unpackVar(kv.val);
+            if (!v.isNull()) {
+                node->set(std::move(v));
+            }
+        }
+        else if (key == "_c") {
+            if (kv.val.type == msgpack::type::ARRAY) {
+                msgpack::object_array children = kv.val.via.array;
+                for (uint32_t j = 0; j < children.size; ++j) {
+                    const msgpack::object& child_pair = children.ptr[j];
+                    if (child_pair.type == msgpack::type::ARRAY && child_pair.via.array.size == 2) {
+                        const msgpack::object& name_obj = child_pair.via.array.ptr[0];
+                        const msgpack::object& node_obj = child_pair.via.array.ptr[1];
+
+                        if (name_obj.type == msgpack::type::STR) {
+                            msgpack::object_str name_str = name_obj.via.str;
+                            std::string name(name_str.ptr, name_str.size);
+                            Node* child = node->append(name);
+                            unpackNode(node_obj, child);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+void writeVar(const Var& v, Bytes& buf)
+{
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(&sbuf);
+    packVar(v, pk);
+    buf.insert(buf.end(), sbuf.data(), sbuf.data() + sbuf.size());
+}
+
+Var readVar(const uint8_t*& ptr, const uint8_t* end)
+{
+    if (!ptr || ptr >= end) {
+        return Var();
+    }
+
+    try {
+        size_t offset = 0;
+        msgpack::object_handle oh = msgpack::unpack(reinterpret_cast<const char*>(ptr), end - ptr, offset);
+        const msgpack::object& obj = oh.get();
+
+        ptr += offset;
+
+        return unpackVar(obj);
+    }
+    catch (...) {
+        ptr = nullptr;
+        return Var();
     }
 }
 
@@ -297,34 +266,41 @@ Bytes exportTree(const Node* node)
 
 Bytes exportTree(const Node* node, const schema::ExportOptions& options)
 {
-    if (!node) return {};
-    Bytes buf;
-    buf.reserve(1024);
-    writeNode(node, buf, options);
-    return buf;
+    if (!node) {
+        return {};
+    }
+
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(&sbuf);
+    packNode(node, pk, options);
+
+    return Bytes(sbuf.data(), sbuf.data() + sbuf.size());
 }
 
 bool importTree(Node* node, const uint8_t* data, size_t len)
 {
-    if (!node || !data || len == 0) return false;
-    const uint8_t* ptr = data;
-    const uint8_t* end = data + len;
-    readNode(ptr, end, node);
-    return ptr != nullptr && ptr <= end;
+    return importTree(node, data, len, schema::ImportOptions{});
 }
 
 bool importTree(Node* node, const uint8_t* data, size_t len, const schema::ImportOptions& options)
 {
-    if (!node || !data || len == 0) return false;
-    const uint8_t* ptr = data;
-    const uint8_t* end = data + len;
+    if (!node || !data || len == 0) {
+        return false;
+    }
 
-    Node parsed("bin_import");
-    readNode(ptr, end, &parsed);
-    if (!ptr || ptr > end) return false;
+    try {
+        msgpack::object_handle oh = msgpack::unpack(reinterpret_cast<const char*>(data), len);
+        const msgpack::object& obj = oh.get();
 
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
-    return true;
+        Node parsed("bin_import");
+        unpackNode(obj, &parsed);
+
+        node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+        return true;
+    }
+    catch (...) {
+        return false;
+    }
 }
 
-} // namespace ve::bin
+} // namespace ve::impl::bin
