@@ -1,0 +1,72 @@
+# VersatileEngine Python Client
+
+Python client library for VersatileEngine JSON-RPC and MessagePack IPC.
+
+## Installation
+
+```bash
+pip install requests websockets
+```
+
+## Usage
+
+### HTTP JSON-RPC Client
+
+```python
+from ve_client import VeJsonRpcClient
+
+client = VeJsonRpcClient("http://localhost:5070")
+
+# Get node value
+result = client.node_get("/config")
+print(result.value)
+
+# Set node value
+client.node_set("/test", 42)
+
+# List children
+children = client.node_list("/")
+print(children)
+
+# Run command
+result = client.command_run("ls", {"path": "/"})
+```
+
+### WebSocket Client (Async)
+
+```python
+import asyncio
+from ve_client.jsonrpc_ws import VeJsonRpcWsClient
+
+async def main():
+    client = VeJsonRpcWsClient("ws://localhost:5071")
+    await client.connect()
+    
+    # Subscribe to changes
+    def on_change(value):
+        print(f"Value changed: {value}")
+    
+    await client.subscribe("/config", on_change)
+    
+    # Keep running
+    await asyncio.sleep(60)
+    
+    await client.disconnect()
+
+asyncio.run(main())
+```
+
+## Examples
+
+See `examples/test_client.py` for complete examples.
+
+```bash
+cd ve/py
+python examples/test_client.py
+```
+
+## Requirements
+
+- Python 3.7+
+- requests
+- websockets

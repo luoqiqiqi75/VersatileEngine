@@ -1,39 +1,36 @@
-// subscribe_service.cpp — SubscribeService: NODE_ACTIVATED push logic
+// subscribe_service.cpp — SubscribeService: per-node subscription with optional bubble
 //
-// Watches root for signal bubbling, matches changed paths against per-session
-// subscriptions, and invokes the Transport-provided push callback.
+// Default: connects to target node's NODE_CHANGED signal (precise)
+// Optional: bubble=true connects to NODE_ACTIVATED for subtree changes
+//
+// Lifecycle: each subscription has its own Object observer.
+//   - Node deleted -> sender connections cleared, callback stops
+//   - Session removed -> observer destructed -> alive token killed, callback stops
 
 #include "subscribe_service.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
-#include "ve/core/impl/json.h"
 
 #include <mutex>
 #include <unordered_map>
-#include <unordered_set>
-#include <atomic>
+#include <vector>
 
 namespace ve {
 namespace service {
 
-static bool matchSubscription(const std::string& changedPath, const std::string& subPath)
+struct SubEntry
 {
-    if (subPath.empty()) return true;
-    if (changedPath == subPath) return true;
-    if (changedPath.size() > subPath.size()
-        && changedPath[subPath.size()] == '/'
-        && changedPath.compare(0, subPath.size(), subPath) == 0)
-        return true;
-    return false;
-}
+    std::string path;
+    bool bubble;
+    Object observer{"_sub"};
+};
 
 struct SubscribeService::Private
 {
     Node* root = nullptr;
-    Object observer{"_subscribe_observer"};
     std::mutex mtx;
-    std::unordered_map<uint64_t, std::unordered_set<std::string>> sessions;
-    std::atomic<int> subCount{0};
+    // session -> list of subscriptions (observer lifetime = subscription lifetime)
+    std::unordered_map<uint64_t, std::vector<std::unique_ptr<SubEntry>>> sessions;
     PushFn pushFn;
 };
 
@@ -50,59 +47,68 @@ SubscribeService::~SubscribeService()
 
 void SubscribeService::start()
 {
-    _p->root->watchAll(true);
-
-    _p->root->connect<Node::NODE_ACTIVATED>(
-        &_p->observer, [this](int64_t signal, void* ptr) {
-            if (signal != Node::NODE_CHANGED || !ptr) return;
-            if (_p->subCount.load(std::memory_order_relaxed) == 0) return;
-            if (!_p->pushFn) return;
-
-            auto* source = static_cast<Node*>(ptr);
-            std::string changedPath = source->path(_p->root);
-            Var value = source->get();
-
-            std::lock_guard<std::mutex> lock(_p->mtx);
-            for (auto& [sessionId, subs] : _p->sessions) {
-                for (auto& subPath : subs) {
-                    if (matchSubscription(changedPath, subPath)) {
-                        _p->pushFn(sessionId, changedPath, value);
-                        break;
-                    }
-                }
-            }
-        });
 }
 
 void SubscribeService::stop()
 {
-    _p->root->disconnect(&_p->observer);
-    _p->root->watchAll(false);
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->sessions.clear();
-    _p->subCount.store(0, std::memory_order_relaxed);
 }
 
-void SubscribeService::subscribe(uint64_t session, const std::string& path)
+void SubscribeService::subscribe(uint64_t session, const std::string& path, bool bubble)
 {
+    Node* target = path.empty() ? _p->root : _p->root->find(path);
+    if (!target) {
+        target = _p->root->at(path);
+    }
+    if (!target) return;
+
+    auto entry = std::make_unique<SubEntry>();
+    entry->path = path;
+    entry->bubble = bubble;
+
+    if (bubble) {
+        target->watchAll(true);
+        target->connect<Node::NODE_ACTIVATED>(
+            &entry->observer, [this, session, root = _p->root](int64_t signal, void* ptr) {
+                if (signal != Node::NODE_CHANGED || !ptr || !_p->pushFn) return;
+                auto* src = static_cast<Node*>(ptr);
+                _p->pushFn(session, src->path(root), src->get());
+            });
+    } else {
+        target->connect<Node::NODE_CHANGED>(
+            &entry->observer, [this, session, path, target](int64_t, void*) {
+                if (!_p->pushFn) return;
+                _p->pushFn(session, path, target->get());
+            });
+    }
+
     std::lock_guard<std::mutex> lock(_p->mtx);
-    _p->sessions[session].insert(path);
-    _p->subCount.store(static_cast<int>(_p->sessions.size()), std::memory_order_relaxed);
+    _p->sessions[session].push_back(std::move(entry));
 }
 
 void SubscribeService::unsubscribe(uint64_t session, const std::string& path)
 {
     std::lock_guard<std::mutex> lock(_p->mtx);
     auto it = _p->sessions.find(session);
-    if (it != _p->sessions.end())
-        it->second.erase(path);
+    if (it == _p->sessions.end()) return;
+
+    auto& entries = it->second;
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+        [&path](const std::unique_ptr<SubEntry>& e) {
+            return e->path == path;
+        }), entries.end());
+
+    if (entries.empty()) {
+        _p->sessions.erase(it);
+    }
 }
 
 void SubscribeService::removeSession(uint64_t session)
 {
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->sessions.erase(session);
-    _p->subCount.store(static_cast<int>(_p->sessions.size()), std::memory_order_relaxed);
+    // SubEntry destructed -> observer destructed -> alive killed -> callbacks stop
 }
 
 void SubscribeService::setPushCallback(PushFn fn)

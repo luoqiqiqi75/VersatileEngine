@@ -25,15 +25,14 @@ public:
     void start();
     void stop();
 
-    void subscribe(uint64_t session, const std::string& path);
+    void subscribe(uint64_t session, const std::string& path, bool bubble = false);
     void unsubscribe(uint64_t session, const std::string& path);
     void removeSession(uint64_t session);
 
     void setPushCallback(PushFn fn);
 
 private:
-    struct Private;
-    std::unique_ptr<Private> _p;
+    VE_DECLARE_UNIQUE_PRIVATE
 };
 
 } // namespace service

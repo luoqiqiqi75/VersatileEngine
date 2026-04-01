@@ -130,6 +130,19 @@ static std::string readFileBytes(const std::filesystem::path& filepath)
 // Private
 // ============================================================================
 
+// ============================================================================
+// JSON-RPC 2.0 Error Codes
+// ============================================================================
+
+enum JsonRpcError
+{
+    JRpcParseError     = -32700,
+    JRpcInvalidRequest = -32600,
+    JRpcMethodNotFound = -32601,
+    JRpcInvalidParams  = -32602,
+    JRpcInternalError  = -32603
+};
+
 struct NodeHttpServer::Private
 {
     Node*    root = nullptr;
@@ -141,6 +154,15 @@ struct NodeHttpServer::Private
     std::string defaultFile = "index.html";
 
     bool tryServeFile(const std::string& reqPath, http::web_response& rep);
+
+    // JSON-RPC 2.0
+    std::string handleJsonRpc(const std::string& requestJson);
+    Var jrpcNodeGet(const Var& params);
+    Var jrpcNodeSet(const Var& params);
+    Var jrpcNodeList(const Var& params);
+    Var jrpcCommandRun(const Var& params);
+    std::string jrpcResponse(const Var& id, const Var& result);
+    std::string jrpcError(const Var& id, int code, const std::string& message);
 };
 
 // ============================================================================
@@ -236,6 +258,13 @@ bool NodeHttpServer::start()
             auto sec = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
             std::string json = "{\"status\":\"ok\",\"uptime_s\":" + std::to_string(sec) + "}";
             rep.fill_json(std::move(json), http::status::ok);
+        });
+
+    // POST /jsonrpc — JSON-RPC 2.0 endpoint
+    _p->server.bind<http::verb::post>("/jsonrpc",
+        [this](http::web_request& req, http::web_response& rep) {
+            std::string response = _p->handleJsonRpc(std::string(req.body()));
+            rep.fill_json(std::move(response), http::status::ok);
         });
 
     // GET / — explicit route so static root index.html is served before generic not_found
@@ -451,6 +480,194 @@ void NodeHttpServer::stop()
 bool NodeHttpServer::isRunning() const
 {
     return _p->server.is_started();
+}
+
+// ============================================================================
+// JSON-RPC 2.0 Implementation
+// ============================================================================
+
+std::string NodeHttpServer::Private::handleJsonRpc(const std::string& requestJson)
+{
+    try {
+        Var request = impl::json::parse(requestJson);
+        if (!request.isDict()) {
+            return jrpcError(Var(), JRpcInvalidRequest, "Request must be an object");
+        }
+
+        auto& dict = request.toDict();
+
+        if (!dict.has("jsonrpc") || dict["jsonrpc"].toString() != "2.0") {
+            return jrpcError(Var(), JRpcInvalidRequest, "Invalid jsonrpc version");
+        }
+
+        Var id = dict.has("id") ? dict["id"] : Var();
+
+        if (!dict.has("method") || !dict["method"].isString()) {
+            return jrpcError(id, JRpcInvalidRequest, "Missing or invalid method");
+        }
+        std::string method = dict["method"].toString();
+
+        Var params = dict.has("params") ? dict["params"] : Var(Var::DictV{});
+
+        Var result;
+        if (method == "node.get") {
+            result = jrpcNodeGet(params);
+        } else if (method == "node.set") {
+            result = jrpcNodeSet(params);
+        } else if (method == "node.list") {
+            result = jrpcNodeList(params);
+        } else if (method == "command.run") {
+            result = jrpcCommandRun(params);
+        } else {
+            return jrpcError(id, JRpcMethodNotFound, "Method not found: " + method);
+        }
+
+        return jrpcResponse(id, result);
+    }
+    catch (const std::exception& e) {
+        return jrpcError(Var(), JRpcInternalError, e.what());
+    }
+}
+
+Var NodeHttpServer::Private::jrpcNodeGet(const Var& params)
+{
+    if (!params.isDict()) {
+        throw std::runtime_error("params must be an object");
+    }
+
+    auto& dict = params.toDict();
+    if (!dict.has("path")) {
+        throw std::runtime_error("Missing required parameter: path");
+    }
+
+    std::string path = dict["path"].toString();
+    Node* node = root->find(path);
+
+    Var::DictV result;
+    if (!node) {
+        result["found"] = false;
+    } else {
+        result["found"] = true;
+        result["value"] = node->get();
+        result["path"] = node->path();
+    }
+    return Var(result);
+}
+
+Var NodeHttpServer::Private::jrpcNodeSet(const Var& params)
+{
+    if (!params.isDict()) {
+        throw std::runtime_error("params must be an object");
+    }
+
+    auto& dict = params.toDict();
+    if (!dict.has("path") || !dict.has("value")) {
+        throw std::runtime_error("Missing required parameters: path, value");
+    }
+
+    std::string path = dict["path"].toString();
+    Var value = dict["value"];
+
+    Node* node = root->find(path);
+    if (!node) {
+        node = root->at(path);
+    }
+
+    if (node) {
+        node->set(value);
+    }
+
+    Var::DictV result;
+    result["success"] = (node != nullptr);
+    if (node) {
+        result["path"] = node->path();
+    }
+    return Var(result);
+}
+
+Var NodeHttpServer::Private::jrpcNodeList(const Var& params)
+{
+    if (!params.isDict()) {
+        throw std::runtime_error("params must be an object");
+    }
+
+    auto& dict = params.toDict();
+    if (!dict.has("path")) {
+        throw std::runtime_error("Missing required parameter: path");
+    }
+
+    std::string path = dict["path"].toString();
+    Node* node = root->find(path);
+
+    Var::DictV result;
+    if (!node) {
+        result["found"] = false;
+    } else {
+        Var::ListV children;
+        for (auto* child : node->children()) {
+            Var::DictV childInfo;
+            childInfo["name"] = child->name();
+            childInfo["path"] = child->path();
+            childInfo["hasValue"] = !child->get().isNull();
+            childInfo["childCount"] = static_cast<int64_t>(child->children().size());
+            children.push_back(Var(childInfo));
+        }
+
+        result["found"] = true;
+        result["path"] = node->path();
+        result["children"] = Var(children);
+    }
+    return Var(result);
+}
+
+Var NodeHttpServer::Private::jrpcCommandRun(const Var& params)
+{
+    if (!params.isDict()) {
+        throw std::runtime_error("params must be an object");
+    }
+
+    auto& dict = params.toDict();
+    if (!dict.has("name")) {
+        throw std::runtime_error("Missing required parameter: name");
+    }
+
+    std::string name = dict["name"].toString();
+    Var args = dict.has("args") ? dict["args"] : Var(Var::DictV{});
+
+    Var cmdResult = command::call(name, args);
+
+    Var::DictV response;
+    response["result"] = cmdResult;
+    return Var(response);
+}
+
+std::string NodeHttpServer::Private::jrpcResponse(const Var& id, const Var& result)
+{
+    Var::DictV response;
+    response["jsonrpc"] = "2.0";
+    response["result"] = result;
+    if (!id.isNull()) {
+        response["id"] = id;
+    }
+    return impl::json::stringify(Var(response));
+}
+
+std::string NodeHttpServer::Private::jrpcError(const Var& id, int code, const std::string& message)
+{
+    Var::DictV error;
+    error["code"] = static_cast<int64_t>(code);
+    error["message"] = message;
+
+    Var::DictV response;
+    response["jsonrpc"] = "2.0";
+    response["error"] = Var(error);
+    if (!id.isNull()) {
+        response["id"] = id;
+    } else {
+        response["id"] = Var();
+    }
+
+    return impl::json::stringify(Var(response));
 }
 
 } // namespace service

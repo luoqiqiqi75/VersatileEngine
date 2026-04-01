@@ -31,7 +31,7 @@
           "config": { "port": 8080 }
         },
         "ws": {
-          "enable": false,
+          "enable": true,
           "config": { "port": 8081 }
         }
       },
@@ -43,15 +43,8 @@
       },
       "bin": {
         "tcp": {
-          "enable": false,
+          "enable": true,
           "config": { "port": 5065 }
-        }
-      },
-      "jsonrpc": {
-        "enable": false,
-        "config": {
-          "http_port": 5070,
-          "ws_port": 5071
         }
       }
     }

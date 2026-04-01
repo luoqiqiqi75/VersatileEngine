@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+ve_client/__init__.py
+ve_client/jsonrpc.py
+ve_client/jsonrpc_ws.py
+ve_client/types.py
+ve_client.egg-info/PKG-INFO
+ve_client.egg-info/SOURCES.txt
+ve_client.egg-info/dependency_links.txt
+ve_client.egg-info/requires.txt
+ve_client.egg-info/top_level.txt
