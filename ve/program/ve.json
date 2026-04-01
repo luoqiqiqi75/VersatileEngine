@@ -46,6 +46,13 @@
           "enable": false,
           "config": { "port": 5065 }
         }
+      },
+      "jsonrpc": {
+        "enable": false,
+        "config": {
+          "http_port": 5070,
+          "ws_port": 5071
+        }
       }
     }
   }
