@@ -146,7 +146,7 @@ enum JsonRpcError
 struct NodeHttpServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 8080;
+    uint16_t port = 5080;
     asio2::http_server server;
     std::chrono::steady_clock::time_point startTime;
 

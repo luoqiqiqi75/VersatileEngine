@@ -36,6 +36,8 @@ class ServerModule : public Module
 {
     std::unique_ptr<service::NodeHttpServer> _node_http_s;
     std::unique_ptr<service::NodeWsServer> _node_ws_s;
+    std::unique_ptr<service::NodeTcpServer> _node_tcp_s;
+    std::unique_ptr<service::NodeUdpServer> _node_udp_s;
 
     std::unique_ptr<service::BinTcpServer> _bin_tcp_s;
 
@@ -82,8 +84,10 @@ void ServerModule::init() {
 }
 
 void ServerModule::ready() {
-    if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 8080);
-    if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 8081);
+    if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 5080);
+    if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 5081);
+    if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 5082);
+    if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 5083);
     if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 5065);
     if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 5061);
 }
@@ -91,6 +95,8 @@ void ServerModule::ready() {
 void ServerModule::deinit() {
     closeServer(_node_http_s, node()->at("node/http"));
     closeServer(_node_ws_s, node()->at("node/ws"));
+    closeServer(_node_tcp_s, node()->at("node/tcp"));
+    closeServer(_node_udp_s, node()->at("node/udp"));
     closeServer(_bin_tcp_s, node()->at("bin/tcp"));
     closeServer(_terminal_repl_s, node()->at("terminal/repl"));
 }

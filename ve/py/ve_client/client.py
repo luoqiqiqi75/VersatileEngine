@@ -21,7 +21,7 @@ class VeClient:
         client.command("ls", {"path": "/"})
     """
 
-    def __init__(self, base_url: str = "http://localhost:8080",
+    def __init__(self, base_url: str = "http://localhost:5080",
                  transport: str = "http", timeout: int = 30):
         """
         Args:

@@ -111,7 +111,7 @@ static std::string appendId(const std::string& jsonStr, const std::string& id)
 struct NodeWsServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 8081;
+    uint16_t port = 5081;
 
     asio2::ws_server server;
     std::atomic<int> connCount{0};

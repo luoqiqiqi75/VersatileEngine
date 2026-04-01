@@ -51,7 +51,7 @@ def main():
     print("VeClient Test")
     print("=" * 40)
 
-    base = "http://localhost:8080"
+    base = "http://localhost:5080"
 
     # Test HTTP REST transport
     ok1 = test_transport("http", VeClient(base, transport="http"))

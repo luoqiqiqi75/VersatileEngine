@@ -7,7 +7,7 @@ from ve_client import VeClient
 
 
 def main():
-    client = VeClient("http://localhost:8080")
+    client = VeClient("http://localhost:5080")
 
     if not client.ping():
         print("Cannot connect to VE server at localhost:8080")

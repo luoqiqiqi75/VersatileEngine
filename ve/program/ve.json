@@ -28,11 +28,19 @@
       "node": {
         "http": {
           "enable": true,
-          "config": { "port": 8080 }
+          "config": { "port": 5080 }
         },
         "ws": {
           "enable": true,
-          "config": { "port": 8081 }
+          "config": { "port": 5081 }
+        },
+        "tcp": {
+          "enable": true,
+          "config": { "port": 5082 }
+        },
+        "udp": {
+          "enable": true,
+          "config": { "port": 5083 }
         }
       },
       "terminal": {

@@ -4,7 +4,7 @@ VersatileEngine Python Client Library
 Usage:
     from ve_client import VeClient
 
-    client = VeClient("http://localhost:8080")
+    client = VeClient("http://localhost:5080")
     client.get("/config")
     client.set("/test", 42)
     client.list("/")
