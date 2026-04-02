@@ -14,6 +14,15 @@ namespace ve::dds {
 namespace ftypes = eprosima::fastrtps::types;
 namespace fdds   = eprosima::fastdds::dds;
 
+namespace {
+
+inline bool hasNodeValue(const Node* node)
+{
+    return node && !node->get().isNull();
+}
+
+} // namespace
+
 // ============================================================================
 // YAML ↔ Var conversion
 // ============================================================================
@@ -86,12 +95,12 @@ YAML::Node nodeToYaml(Node* n)
     if (!n) return YAML::Node(YAML::NodeType::Null);
 
     if (n->count() == 0) {
-        return varToYaml(n->value());
+        return varToYaml(n->get());
     }
 
     YAML::Node yn(YAML::NodeType::Map);
-    if (n->hasValue())
-        yn["_value"] = varToYaml(n->value());
+    if (hasNodeValue(n))
+        yn["_value"] = varToYaml(n->get());
 
     for (auto* child : *n) {
         auto name = child->name();
@@ -116,7 +125,7 @@ void yamlToNode(const YAML::Node& yn, Node* n)
             if (key == "_value") {
                 n->set(yamlToVar(it->second));
             } else {
-                auto* child = n->ensure(key);
+                auto* child = n->at(key);
                 yamlToNode(it->second, child);
             }
         }
@@ -311,7 +320,7 @@ void CommandService::start()
         {
             auto* root = node::root();
             auto* target = path.empty() || path == "/"
-                ? root : root->resolve(path, false);
+                ? root : root->find(path, false);
             if (!target) {
                 outCode = Result::FAIL;
                 outResult = "not found: " + path;
@@ -344,7 +353,7 @@ void CommandService::start()
         {
             auto* root = node::root();
             auto* target = path.empty() || path == "/"
-                ? root : root->resolve(path, false);
+                ? root : root->find(path, false);
             if (!target) {
                 outCode = Result::FAIL;
                 outResult = "not found: " + path;
@@ -368,7 +377,7 @@ void CommandService::start()
            const std::string& args, int& outCode, std::string& outResult)
         {
             auto* root = node::root();
-            auto* target = root->ensure(path);
+            auto* target = (path.empty() || path == "/") ? root : root->at(path);
             if (!target) {
                 outCode = Result::FAIL;
                 outResult = "cannot ensure: " + path;

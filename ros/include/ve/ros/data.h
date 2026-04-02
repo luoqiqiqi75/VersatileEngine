@@ -126,14 +126,13 @@ template<typename T> inline typename DataSerializeHelper<T>::IsDictT fromString(
 { return false; }
 template<typename T> inline typename DataSerializeHelper<T>::IsDictT toString(const T& value, std::string& to)
 {
-    using Access = typename T::KVAccessT;
     std::ostringstream oss;
     oss << "{";
     std::size_t cnt = 0;
     std::string s;
     for (const auto& kv : value) {
-        if (!toString(Access::value(kv), s)) {}
-        oss << Access::key(kv) << ": " << s;
+        if (!toString(kv.second, s)) {}
+        oss << kv.first << ": " << s;
         if (++cnt < value.size()) oss << ", ";
     }
     oss << "}";

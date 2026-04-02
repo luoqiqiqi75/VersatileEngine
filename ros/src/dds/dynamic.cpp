@@ -7,6 +7,15 @@ namespace ve::dds {
 namespace ftypes = eprosima::fastrtps::types;
 namespace fdds   = eprosima::fastdds::dds;
 
+namespace {
+
+inline bool hasNodeValue(const Node* node)
+{
+    return node && !node->get().isNull();
+}
+
+} // namespace
+
 // ============================================================================
 // buildDynType
 // ============================================================================
@@ -25,13 +34,13 @@ ftypes::DynamicType_ptr buildDynType(Node* schema, const std::string& type_name)
         auto cname = child->name();
         if (cname.empty()) continue;
 
-        if (child->count() > 0 && child->hasValue() == false) {
+        if (child->count() > 0 && !hasNodeValue(child)) {
             auto nested = buildDynType(child, cname);
             builder->add_member(mid++, cname, nested);
             continue;
         }
 
-        auto& val = child->value();
+        auto val = child->get();
         switch (val.type()) {
         case Var::BOOL:
             builder->add_member(mid++, cname,
@@ -70,7 +79,7 @@ void nodeToData(Node* n, ftypes::DynamicData* d)
         auto cname = child->name();
         if (cname.empty()) { ++mid; continue; }
 
-        if (child->count() > 0 && !child->hasValue()) {
+        if (child->count() > 0 && !hasNodeValue(child)) {
             auto* nested = d->loan_value(mid);
             if (nested) {
                 nodeToData(child, nested);
@@ -80,7 +89,7 @@ void nodeToData(Node* n, ftypes::DynamicData* d)
             continue;
         }
 
-        auto& val = child->value();
+        auto val = child->get();
         switch (val.type()) {
         case Var::BOOL:
             d->set_bool_value(val.toBool(), mid);
@@ -113,7 +122,7 @@ void dataToNode(ftypes::DynamicData* d, Node* n)
         auto cname = child->name();
         if (cname.empty()) { ++mid; continue; }
 
-        if (child->count() > 0 && !child->hasValue()) {
+        if (child->count() > 0 && !hasNodeValue(child)) {
             auto* nested = d->loan_value(mid);
             if (nested) {
                 dataToNode(nested, child);
@@ -123,7 +132,7 @@ void dataToNode(ftypes::DynamicData* d, Node* n)
             continue;
         }
 
-        auto& val = child->value();
+        auto val = child->get();
         switch (val.type()) {
         case Var::BOOL: {
             bool v = false;
