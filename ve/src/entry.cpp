@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <queue>
+#include <filesystem>
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -149,6 +150,39 @@ void setup(const std::string& config_file)
     setup(opts);
 }
 
+// Helper: recursively load JSON files from directory into node tree
+static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbose)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    if (!fs::is_directory(dir_path, ec)) return;
+
+    for (auto& entry : fs::directory_iterator(dir_path, ec)) {
+        if (ec) break;
+
+        std::string path = entry.path().string();
+        std::string stem = entry.path().stem().string();
+
+        if (entry.is_directory()) {
+            Node* child = parent->find(stem);
+            if (!child) child = parent->append(stem);
+            loadConfigDir(child, path, verbose);
+        } else if (entry.is_regular_file() && entry.path().extension() == ".json") {
+            std::string content = readFile(path);
+            if (!content.empty()) {
+                Node* child = parent->find(stem);
+                if (!child) child = parent->append(stem);
+                if (!schema::importAs<schema::JsonS>(child, content)) {
+                    veLogE << "[ve::entry] Failed to parse config: " << path;
+                } else if (verbose) {
+                    veLogI << "[ve::entry] Config loaded: " << path;
+                }
+            }
+        }
+    }
+}
+
 void setup(const Options& options)
 {
     auto& g = G();
@@ -157,15 +191,22 @@ void setup(const Options& options)
     Node* root = node::root();
 
     if (!options.config_file.empty()) {
-        std::string content = readFile(options.config_file);
-        if (!content.empty()) {
-            if (!schema::importAs<schema::JsonS>(root, content)) {
-                veLogE << "[ve::entry] Failed to parse config: " << options.config_file;
-            } else if (g.options.verbose) {
-                veLogI << "[ve::entry] Config loaded: " << options.config_file;
-            }
+        namespace fs = std::filesystem;
+        std::error_code ec;
+
+        if (fs::is_directory(options.config_file, ec)) {
+            loadConfigDir(root, options.config_file, g.options.verbose);
         } else {
-            veLogW << "[ve::entry] Config file empty or not found: " << options.config_file;
+            std::string content = readFile(options.config_file);
+            if (!content.empty()) {
+                if (!schema::importAs<schema::JsonS>(root, content)) {
+                    veLogE << "[ve::entry] Failed to parse config: " << options.config_file;
+                } else if (g.options.verbose) {
+                    veLogI << "[ve::entry] Config loaded: " << options.config_file;
+                }
+            } else {
+                veLogW << "[ve::entry] Config file empty or not found: " << options.config_file;
+            }
         }
     }
 
@@ -526,6 +567,16 @@ int exec(const std::string& config_file)
 
 int exec(int argc, char** argv)
 {
+    // Extract app name from argv[0]
+    if (argc > 0 && argv[0]) {
+        namespace fs = std::filesystem;
+        fs::path exe_path(argv[0]);
+        std::string app_name = exe_path.stem().string();
+        if (!app_name.empty()) {
+            log::setAppName(app_name);
+        }
+    }
+
     Options opts;
     opts.argc = argc;
     opts.argv = argv;

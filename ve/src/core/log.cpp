@@ -102,6 +102,13 @@ std::string ve_get_log_dir()
 {
     if (!ve_log_dir_override.empty()) return ve_log_dir_override;
 
+    // Try working directory first: ./log/
+    std::string cwd_log = "log";
+    std::error_code ec;
+    fs::create_directories(cwd_log, ec);
+    if (!ec) return cwd_log;
+
+    // Fallback to platform-specific directory
 #ifdef _WIN32
     // %LOCALAPPDATA%/<AppName>/log/
     PWSTR wpath = nullptr;

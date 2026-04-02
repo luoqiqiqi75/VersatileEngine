@@ -35,7 +35,10 @@ public:
             }
 
             log::setAppName(n->get("config/log/app").toString("ve"));
-            log::setLogDir(n->get("config/log/dir").toString("."));
+            std::string log_dir = n->get("config/log/dir").toString("");
+            if (!log_dir.empty()) {
+                log::setLogDir(log_dir);
+            }
         }
     }
 };
