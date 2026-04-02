@@ -94,6 +94,35 @@ std::string handleNodeJsonCmd(Node* root, Node* reqNode)
         resp.set("children", Var(std::move(children)));
         return nodeToJson(resp);
     }
+    else if (cmd == "command.run") {
+        std::string name = reqNode->get("name").toString();
+        if (name.empty()) {
+            resp.set("type", "error");
+            resp.set("msg", "command name required");
+            return nodeToJson(resp);
+        }
+        if (!command::has(name)) {
+            resp.set("type", "error");
+            resp.set("msg", "unknown command: " + name);
+            return nodeToJson(resp);
+        }
+
+        // Convert args to Var (should be a list)
+        Var args;
+        if (reqNode->find("args")) {
+            args = schema::exportAs<schema::VarS>(reqNode->find("args"));
+        }
+
+        Result result = command::call(name, args);
+        if (result.isSuccess() || result.isAccepted()) {
+            resp.set("type", "ok");
+            resp.at("result")->set(result.content());
+        } else {
+            resp.set("type", "error");
+            resp.set("msg", result.content().toString());
+        }
+        return nodeToJson(resp);
+    }
 
     resp.set("type", "error");
     resp.set("msg", "unknown command: " + cmd);

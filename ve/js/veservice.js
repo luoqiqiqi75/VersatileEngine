@@ -262,6 +262,69 @@ var VEService = function(wsUrl) {
             }
         }
     };
+
+    this.command = function(name, args) {
+        if (!this.transport || !this.isConnected) {
+            return Promise.reject(new Error("WebSocket not connected"));
+        }
+
+        var self = this;
+        return new Promise(function(resolve, reject) {
+            var id = self._generateRequestId();
+
+            var timer = setTimeout(function() {
+                if (self.pendingRequests.has(id)) {
+                    self.pendingRequests.delete(id);
+                    reject(new Error("Request timeout"));
+                }
+            }, self.timeout);
+
+            self.pendingRequests.set(id, {
+                resolve: function(data) { clearTimeout(timer); resolve(data); },
+                reject:  function(err)  { clearTimeout(timer); reject(err); }
+            });
+
+            // Convert args to list format
+            var argsList = [];
+            if (Array.isArray(args)) {
+                argsList = args;
+            } else if (typeof args === 'object' && args !== null) {
+                // Convert {format:"json", path:"/config", file:"config.json"}
+                // to ["json", "/config", "-f", "config.json"]
+                for (var key in args) {
+                    if (args.hasOwnProperty(key)) {
+                        var val = args[key];
+                        if (key === 'format' || key === 'path') {
+                            argsList.push(String(val));
+                        } else if (key === 'file') {
+                            argsList.push('-f', String(val));
+                        } else if (key === 'inline' || key === 'data') {
+                            argsList.push('-i', String(val));
+                        } else if (key === 'compact' && val) {
+                            argsList.push('--compact');
+                        } else if (key === 'ignore_private' && val) {
+                            argsList.push('--ignore-private');
+                        } else if (key === 'remove' && val) {
+                            argsList.push('--remove');
+                        }
+                    }
+                }
+            }
+
+            try {
+                self.transport.send(JSON.stringify({
+                    cmd: "command.run",
+                    name: name,
+                    args: argsList,
+                    id: id
+                }));
+            } catch (error) {
+                self.pendingRequests.delete(id);
+                clearTimeout(timer);
+                reject(error);
+            }
+        });
+    };
 };
 
 if (typeof veService === "undefined") {
