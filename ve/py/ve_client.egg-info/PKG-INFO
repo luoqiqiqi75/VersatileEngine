@@ -1,15 +1,21 @@
 Metadata-Version: 2.4
 Name: ve-client
-Version: 0.1.0
+Version: 0.3.0
 Summary: VersatileEngine Python client library
 Author: VersatileEngine Contributors
 License: LGPL-3.0
 Requires-Python: >=3.7
 Description-Content-Type: text/markdown
-Requires-Dist: requests>=2.25.0
-Requires-Dist: websockets>=10.0
+Provides-Extra: http
+Requires-Dist: requests>=2.25.0; extra == "http"
 Provides-Extra: msgpack
 Requires-Dist: msgpack>=1.0.0; extra == "msgpack"
+Provides-Extra: ws
+Requires-Dist: websockets>=10.0; extra == "ws"
+Provides-Extra: all
+Requires-Dist: requests>=2.25.0; extra == "all"
+Requires-Dist: msgpack>=1.0.0; extra == "all"
+Requires-Dist: websockets>=10.0; extra == "all"
 
 # VersatileEngine Python Client
 

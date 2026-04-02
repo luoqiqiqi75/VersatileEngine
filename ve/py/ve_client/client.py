@@ -1,44 +1,98 @@
 """Unified VersatileEngine client."""
 
 from typing import Any, Dict, List, Optional
-from .transports import Transport, HttpRestTransport, JsonRpcTransport
+from .transports import (
+    Transport, HttpRestTransport, JsonRpcTransport,
+    TcpJsonTransport, MsgPackTransport
+)
+
+
+def parse_url(url: str) -> tuple:
+    """Parse URL into (scheme, host, port)."""
+    if "://" in url:
+        scheme, rest = url.split("://", 1)
+    else:
+        scheme = "tcp"
+        rest = url
+
+    if ":" in rest:
+        host, port_str = rest.rsplit(":", 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            host = rest
+            port = None
+    else:
+        host = rest
+        port = None
+
+    return scheme, host, port
 
 
 class VeClient:
     """VersatileEngine client supporting multiple transports.
 
     Usage:
-        # REST API (default)
-        client = VeClient("http://localhost:8080")
+        # TCP JSON (default, pure stdlib)
+        client = VeClient()
+        client = VeClient("tcp://localhost:5082")
+
+        # HTTP REST
+        client = VeClient("http://localhost:5080")
 
         # JSON-RPC
-        client = VeClient("http://localhost:8080", transport="jsonrpc")
+        client = VeClient("http://localhost:5080", transport="jsonrpc")
+
+        # MessagePack (high-performance)
+        client = VeClient("tcp://localhost:5065", transport="msgpack")
 
         # Operations
         client.get("/config/port")
         client.set("/test", 42)
         client.list("/")
-        client.command("ls", {"path": "/"})
     """
 
-    def __init__(self, base_url: str = "http://localhost:5080",
-                 transport: str = "http", timeout: int = 30):
+    def __init__(self, url: str = "tcp://localhost:5082",
+                 transport: str = None, timeout: int = 30):
         """
         Args:
-            base_url: Server base URL (e.g. "http://localhost:8080")
-            transport: "http" (REST) or "jsonrpc" (JSON-RPC 2.0)
+            url: Server URL (tcp://host:port, http://host:port)
+            transport: Override transport ("tcp", "http", "jsonrpc", "msgpack")
             timeout: Request timeout in seconds
         """
-        self._transport = self._create_transport(transport, base_url, timeout)
+        if transport is None:
+            transport = self._detect_transport(url)
+
+        self._transport = self._create_transport(transport, url, timeout)
 
     @staticmethod
-    def _create_transport(name: str, base_url: str, timeout: int) -> Transport:
-        if name == "http":
+    def _detect_transport(url: str) -> str:
+        scheme, _, _ = parse_url(url)
+        if scheme in ("http", "https"):
+            return "http"
+        elif scheme == "tcp":
+            return "tcp"
+        else:
+            return "tcp"
+
+    @staticmethod
+    def _create_transport(name: str, url: str, timeout: int) -> Transport:
+        scheme, host, port = parse_url(url)
+
+        if name == "tcp":
+            port = port or 5082
+            return TcpJsonTransport(host, port, timeout)
+        elif name == "msgpack":
+            port = port or 5065
+            return MsgPackTransport(host, port, timeout)
+        elif name == "http":
+            base_url = url if "://" in url else f"http://{url}"
             return HttpRestTransport(base_url, timeout)
         elif name == "jsonrpc":
+            base_url = url if "://" in url else f"http://{url}"
             return JsonRpcTransport(base_url, timeout)
         else:
-            raise ValueError(f"Unknown transport: {name!r}. Use 'http' or 'jsonrpc'.")
+            raise ValueError(f"Unknown transport: {name!r}")
 
     def get(self, path: str = "/") -> Any:
         """Get node value at path."""
@@ -63,3 +117,8 @@ class VeClient:
     def ping(self) -> bool:
         """Test connection."""
         return self._transport.ping()
+
+    def close(self):
+        """Close connection."""
+        if hasattr(self._transport, 'close'):
+            self._transport.close()

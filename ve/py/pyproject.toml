@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ve-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "VersatileEngine Python client library"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -12,13 +12,13 @@ license = {text = "LGPL-3.0"}
 authors = [
     {name = "VersatileEngine Contributors"}
 ]
-dependencies = [
-    "requests>=2.25.0"
-]
+dependencies = []
 
 [project.optional-dependencies]
+http = ["requests>=2.25.0"]
 msgpack = ["msgpack>=1.0.0"]
 ws = ["websockets>=10.0"]
+all = ["requests>=2.25.0", "msgpack>=1.0.0", "websockets>=10.0"]
 
 [tool.setuptools.packages.find]
 include = ["ve_client*"]
