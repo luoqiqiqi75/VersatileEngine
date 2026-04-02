@@ -9,10 +9,19 @@ find_dependency(simdjson REQUIRED)
 if(NOT TARGET VersatileEngine::ve)
   add_library(VersatileEngine::ve SHARED IMPORTED GLOBAL)
   set_target_properties(VersatileEngine::ve PROPERTIES
-    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/@CMAKE_SHARED_LIBRARY_PREFIX@ve@CMAKE_SHARED_LIBRARY_SUFFIX@"
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
     INTERFACE_LINK_LIBRARIES "simdjson::simdjson"
   )
+  if(WIN32)
+    set_target_properties(VersatileEngine::ve PROPERTIES
+      IMPORTED_IMPLIB "${PACKAGE_PREFIX_DIR}/lib/@CMAKE_IMPORT_LIBRARY_PREFIX@@VE_CORE_LIBRARY@@CMAKE_IMPORT_LIBRARY_SUFFIX@"
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/bin/@VE_CORE_LIBRARY@@CMAKE_SHARED_LIBRARY_SUFFIX@"
+    )
+  else()
+    set_target_properties(VersatileEngine::ve PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/@CMAKE_SHARED_LIBRARY_PREFIX@@VE_CORE_LIBRARY@@CMAKE_SHARED_LIBRARY_SUFFIX@"
+    )
+  endif()
   if(UNIX AND NOT APPLE)
     find_dependency(Threads REQUIRED)
     set_target_properties(VersatileEngine::ve PROPERTIES

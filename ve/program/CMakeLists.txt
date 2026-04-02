@@ -1,17 +1,20 @@
 # =============================================================================
 # ve/program/CMakeLists.txt - ve entry process + module DLLs
 # =============================================================================
-# Target must not be named "ve" — conflicts with libve shared library target "ve".
+# Target must not be named "ve" because it conflicts with
+# the core shared library target on Unix builds.
 
-add_executable(ve_program main.cpp)
-set_target_properties(ve_program PROPERTIES OUTPUT_NAME ve)
-target_link_libraries(ve_program PRIVATE ${VE_CORE_LIBRARY})
+set(VE_PROGRAM_TARGET ve_program)
+
+add_executable(${VE_PROGRAM_TARGET} main.cpp)
+set_target_properties(${VE_PROGRAM_TARGET} PROPERTIES OUTPUT_NAME ve)
+target_link_libraries(${VE_PROGRAM_TARGET} PRIVATE VersatileEngine::ve)
 
 add_custom_command(
-    TARGET ve_program POST_BUILD
+    TARGET ${VE_PROGRAM_TARGET} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/ve.json
-        $<TARGET_FILE_DIR:ve_program>/ve.json
+        $<TARGET_FILE_DIR:${VE_PROGRAM_TARGET}>/ve.json
     COMMENT "Copy default ve.json next to ve binary"
 )
 

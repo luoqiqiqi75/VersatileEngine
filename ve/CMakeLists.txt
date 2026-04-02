@@ -1,5 +1,5 @@
 # =============================================================================
-# ve/CMakeLists.txt - pure C++ base library -> libve
+# ve/CMakeLists.txt - pure C++ base library -> libve / libve.dll
 #
 # Provides: ve/global.h (VE_API), ve/core/base.h (Object, Manager),
 #           ve/core/log.h,
@@ -23,17 +23,15 @@ endif()
 file(GLOB_RECURSE _PLAT_SOURCES ${_PLAT_DIR}/*.h ${_PLAT_DIR}/*.cpp)
 
 # --- Library target ---
-if(WIN32)
-    set(VE_CORE_LIBRARY libve)
-else()
-    set(VE_CORE_LIBRARY ve)
-endif()
+ve_resolve_library_target_name(VE_CORE_LIBRARY ve)
 set(VE_CORE_LIBRARY ${VE_CORE_LIBRARY} PARENT_SCOPE)
 
 add_library(${VE_CORE_LIBRARY} SHARED
     ${_CORE_ALL}
     ${_PLAT_SOURCES}
 )
+
+ve_add_core_library_alias(${VE_CORE_LIBRARY})
 
 target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE VE_LIBRARY)
 

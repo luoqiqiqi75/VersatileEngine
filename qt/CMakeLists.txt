@@ -31,11 +31,7 @@ option(VE_BUILD_QT_QML     "Build QML bridge (needs Qt Qml)"              ON)
 option(VE_BUILD_QT_BROWSER "Build veqtbrowser module DLL (WebView)"       ON)
 
 # --- Output library name ---
-if(WIN32)
-    set(VE_QT_LIBRARY libveqt)
-else()
-    set(VE_QT_LIBRARY veqt)
-endif()
+ve_resolve_library_target_name(VE_QT_LIBRARY veqt)
 
 # ==========================================================
 # Create the single shared library target
@@ -48,8 +44,8 @@ target_compile_definitions(${VE_QT_LIBRARY} PRIVATE VE_LIBRARY VE_QT_HAS_IMOL=1)
 ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC  "Core;Network")
 ve_target_link_qt(${VE_QT_LIBRARY} PRIVATE "Widgets")
 
-# Link libve (core)
-target_link_libraries(${VE_QT_LIBRARY} PUBLIC libve)
+# Link core VE target
+target_link_libraries(${VE_QT_LIBRARY} PUBLIC VersatileEngine::ve)
 
 # ==========================================================
 # Public headers — single unified include/

@@ -16,7 +16,7 @@ if(VE_NODE_BENCH_LARGE)
     target_compile_definitions(ve_test PRIVATE VE_NODE_BENCH_LARGE=1)
 endif()
 
-target_link_libraries(ve_test PRIVATE ${VE_CORE_LIBRARY})
+target_link_libraries(ve_test PRIVATE VersatileEngine::ve)
 
 if(UNIX)
     target_link_libraries(ve_test PRIVATE pthread dl)

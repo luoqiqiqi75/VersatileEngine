@@ -19,11 +19,7 @@ message(STATUS "")
 message(STATUS "[libveros]  FastDDS (fastrtps ${fastrtps_VERSION}, fastcdr ${fastcdr_VERSION})")
 
 # --- Output library name ---
-if(WIN32)
-    set(VE_ROS_LIBRARY libveros)
-else()
-    set(VE_ROS_LIBRARY veros)
-endif()
+ve_resolve_library_target_name(VE_ROS_LIBRARY veros)
 set(VE_ROS_LIBRARY ${VE_ROS_LIBRARY} PARENT_SCOPE)
 
 # --- Create shared library ---
@@ -33,12 +29,7 @@ target_compile_features(${VE_ROS_LIBRARY} PUBLIC cxx_std_17)
 target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_LIBRARY)
 
 # --- Link dependencies ---
-if(WIN32)
-    target_link_libraries(${VE_ROS_LIBRARY} PUBLIC libve)
-else()
-    target_link_libraries(${VE_ROS_LIBRARY} PUBLIC ve)
-endif()
-
+target_link_libraries(${VE_ROS_LIBRARY} PUBLIC VersatileEngine::ve)
 target_link_libraries(${VE_ROS_LIBRARY} PUBLIC fastrtps fastcdr)
 
 # yaml-cpp for CommandService YAML serialization
