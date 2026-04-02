@@ -136,7 +136,7 @@ struct BinTcpServer::Private
             if (!target) { send(-1, Var("cannot create")); return; }
             Var data = dict.has("data") ? dict["data"] : Var();
             if (data.isBin()) {
-                auto& bin = data.toBin();
+                auto bin = data.toBin();
                 schema::importAs<schema::BinS>(target, bin.data(), bin.size());
             } else {
                 target->set(data);

@@ -23,11 +23,11 @@ class RosModule : public Module
 public:
     explicit RosModule(const std::string& name) : Module(name)
     {
-        node()->ensure("config/domain_id")->set(Var(0));
-        node()->ensure("config/service_prefix")->set(Var("ve"));
-        node()->ensure("config/command_service")->set(Var(true));
+        node()->at("config/domain_id")->set(Var(0));
+        node()->at("config/service_prefix")->set(Var("ve"));
+        node()->at("config/command_service")->set(Var(true));
 
-        int domain_id = node()->resolve("config/domain_id")->get<int>(0);
+        int domain_id = node()->get("config/domain_id").toInt(0);
 
         participant_ = &dds::Participant::instance(domain_id);
 
@@ -46,8 +46,8 @@ protected:
 
     void ready() override
     {
-        bool auto_service = node()->resolve("config/command_service")->get<bool>(true);
-        std::string prefix = node()->resolve("config/service_prefix")->get<std::string>("ve");
+        bool auto_service = node()->get("config/command_service").toBool(true);
+        std::string prefix = node()->get("config/service_prefix").toString("ve");
 
         if (auto_service && participant_) {
             cmdService_ = std::make_unique<dds::CommandService>(*participant_, prefix);
@@ -88,6 +88,7 @@ private:
 
         std::vector<eprosima::fastrtps::rtps::InstanceHandle_t> handles;
         dp->get_discovered_participants(handles);
+        auto participantNames = dp->get_participant_names();
 
         auto* scanNode = n("ve/ros/scan");
         scanNode->clear();
@@ -97,18 +98,17 @@ private:
 
         int idx = 0;
         for (auto& h : handles) {
-            fdds::builtin::ParticipantBuiltinTopicData pd;
-            if (dp->get_discovered_participant_data(pd, h) ==
-                eprosima::fastrtps::types::ReturnCode_t::RETCODE_OK)
-            {
-                std::string pname(pd.participant_name.to_string());
-                if (pname.empty()) pname = "(anonymous)";
+            (void)h;
 
-                auto* pn = scanNode->append(std::to_string(idx));
-                pn->set("name", Var(pname));
+            std::string pname = idx < static_cast<int>(participantNames.size())
+                ? participantNames[static_cast<std::size_t>(idx)]
+                : "";
+            if (pname.empty()) pname = "(anonymous)";
 
-                veLogI << "[ve.ros]   [" << idx << "] " << pname;
-            }
+            auto* pn = scanNode->append(std::to_string(idx));
+            pn->set("name", Var(pname));
+
+            veLogI << "[ve.ros]   [" << idx << "] " << pname;
             ++idx;
         }
 

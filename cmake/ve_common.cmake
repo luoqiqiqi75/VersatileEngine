@@ -40,3 +40,24 @@ macro(ve_target_link_qt VE_IN_TARGET VE_IN_VISIBILITY VE_IN_COMPONENTS)
         target_link_libraries(${VE_IN_TARGET} ${VE_IN_VISIBILITY} Qt${QT_VERSION_MAJOR}::${_qt_comp})
     endforeach()
 endmacro()
+
+# Resolve a module library target name from its base name.
+# Example:
+#   ve_resolve_library_target_name(VE_QT_LIBRARY veqt)
+#   -> libveqt on Windows, veqt elsewhere
+function(ve_resolve_library_target_name out_var base_name)
+    if(WIN32)
+        set(_resolved_name "lib${base_name}")
+    else()
+        set(_resolved_name "${base_name}")
+    endif()
+
+    set(${out_var} "${_resolved_name}" PARENT_SCOPE)
+endfunction()
+
+# Expose the canonical in-tree link target for the VE core library.
+function(ve_add_core_library_alias target_name)
+    if(NOT TARGET VersatileEngine::ve)
+        add_library(VersatileEngine::ve ALIAS ${target_name})
+    endif()
+endfunction()

@@ -29,23 +29,15 @@ else()
 endif()
 
 # --- Output library name ---
-if(WIN32)
-    set(VE_RTT_LIBRARY libvertt)
-else()
-    set(VE_RTT_LIBRARY vertt)
-endif()
+ve_resolve_library_target_name(VE_RTT_LIBRARY vertt)
 
 # --- Create the single library target ---
 add_library(${VE_RTT_LIBRARY} STATIC)
 
 target_compile_features(${VE_RTT_LIBRARY} PUBLIC cxx_std_17)
 
-# Link libve — provides ve/global.h etc. transitively
-if(WIN32)
-    target_link_libraries(${VE_RTT_LIBRARY} PUBLIC libve)
-else()
-    target_link_libraries(${VE_RTT_LIBRARY} PUBLIC ve)
-endif()
+# Link core VE target — provides ve/global.h etc. transitively
+target_link_libraries(${VE_RTT_LIBRARY} PUBLIC VersatileEngine::ve)
 
 # nlohmann/json — used by JsonRef / Result / XService
 ve_find_package(nlohmann_json

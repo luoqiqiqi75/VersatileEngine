@@ -61,11 +61,11 @@ protected:
 
         command::reg("ros_demo.status", [](const Var&) -> Result {
             auto* root = n("app/ros_demo");
-            std::string s = "robot=" + root->child("robot")->child("name")->get<std::string>()
-                + " pos=[" + root->child("robot")->child("x")->value().toString()
-                + "," + root->child("robot")->child("y")->value().toString()
-                + "," + root->child("robot")->child("z")->value().toString()
-                + "] hb=" + root->child("heartbeat")->value().toString();
+            std::string s = "robot=" + root->child("robot")->child("name")->getString()
+                + " pos=[" + root->child("robot")->child("x")->get().toString()
+                + "," + root->child("robot")->child("y")->get().toString()
+                + "," + root->child("robot")->child("z")->get().toString()
+                + "] hb=" + root->child("heartbeat")->get().toString();
             return Result(Result::SUCCESS, Var(s));
         }, "Show ros_demo status summary");
 
