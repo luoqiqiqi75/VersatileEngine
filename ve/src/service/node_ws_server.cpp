@@ -12,6 +12,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
+#include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
 
@@ -29,8 +30,22 @@
 namespace ve {
 namespace service {
 
+// from node_tcp_server.cpp
+extern std::string handleNodeJsonCmd(Node* root, Node* reqNode);
+
 // ============================================================================
-// Text protocol parser
+// Schema-based JSON helpers
+// ============================================================================
+
+static const schema::ExportOptions compactJson{0};
+
+static std::string J(Node& n)
+{
+    return schema::exportAs<schema::JsonS>(&n, compactJson);
+}
+
+// ============================================================================
+// Text protocol parser (legacy MozHelper)
 // ============================================================================
 
 struct MozLine
@@ -64,44 +79,6 @@ static MozLine parseMozLine(const std::string& raw)
         m.param = raw.substr(pos);
     }
     return m;
-}
-
-// ============================================================================
-// JSON protocol parser
-// ============================================================================
-
-struct JsonCommand
-{
-    std::string cmd;
-    std::string path;
-    std::string value;
-    std::string id;
-};
-
-static JsonCommand parseJsonCommand(const std::string& raw)
-{
-    JsonCommand r;
-    Var parsed = impl::json::parse(raw);
-    if (parsed.isDict()) {
-        auto& dict = parsed.toDict();
-        if (dict.has("cmd"))   r.cmd   = dict["cmd"].toString();
-        if (dict.has("path"))  r.path  = dict["path"].toString();
-        if (dict.has("value")) r.value = impl::json::stringify(dict["value"]);
-        if (dict.has("id"))    r.id    = impl::json::stringify(dict["id"]);
-    }
-    return r;
-}
-
-static std::string appendId(const std::string& jsonStr, const std::string& id)
-{
-    if (id.empty()) {
-        return jsonStr;
-    }
-    auto pos = jsonStr.rfind('}');
-    if (pos == std::string::npos) {
-        return jsonStr;
-    }
-    return jsonStr.substr(0, pos) + ",\"id\":" + id + "}";
 }
 
 // ============================================================================
@@ -141,48 +118,58 @@ struct NodeWsServer::Private
         sessions[sid].textProtocol = true;
     }
 
-    // --- Text protocol handlers ---
+    // --- Text protocol handlers (legacy, kept as-is for compat) ---
 
     template<typename SP>
     void textGet(SP& sp, uint64_t sid, const MozLine& m) {
         int64_t rid = nextRequestId(sid);
         Node* target = m.key.empty() ? root : root->find(m.key);
         if (!target) {
-            sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"error\":\"not found\"}");
+            Node r("r");
+            r.set("requestId", rid);
+            r.set("error", "not found");
+            sp->async_send(J(r));
             return;
         }
-        sp->async_send("{\"requestId\":" + std::to_string(rid)
-            + ",\"data\":" + impl::json::exportTree(target) + "}");
+        Node r("r");
+        r.set("requestId", rid);
+        r.at("data")->copy(target);
+        sp->async_send(J(r));
     }
 
     template<typename SP>
     void textSet(SP& sp, uint64_t sid, const MozLine& m) {
         int64_t rid = nextRequestId(sid);
         if (m.key.empty()) {
-            sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"error\":\"path required\"}");
+            Node r("r"); r.set("requestId", rid); r.set("error", "path required");
+            sp->async_send(J(r));
             return;
         }
         Node* target = root->find(m.key);
         if (!target) {
-            sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"error\":\"cannot create node\"}");
+            Node r("r"); r.set("requestId", rid); r.set("error", "cannot create node");
+            sp->async_send(J(r));
             return;
         }
         if (!m.param.empty()) {
             target->set(impl::json::parse(m.param));
         }
-        sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"data\":\"ok\"}");
+        Node r("r"); r.set("requestId", rid); r.set("data", "ok");
+        sp->async_send(J(r));
     }
 
     template<typename SP>
     void textTrigger(SP& sp, uint64_t sid, const MozLine& m) {
         int64_t rid = nextRequestId(sid);
         if (m.key.empty()) {
-            sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"error\":\"path required\"}");
+            Node r("r"); r.set("requestId", rid); r.set("error", "path required");
+            sp->async_send(J(r));
             return;
         }
         Node* target = root->find(m.key);
         if (!target) {
-            sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"error\":\"not found\"}");
+            Node r("r"); r.set("requestId", rid); r.set("error", "not found");
+            sp->async_send(J(r));
             return;
         }
         if (!m.param.empty()) {
@@ -191,14 +178,16 @@ struct NodeWsServer::Private
             target->trigger<Node::NODE_CHANGED>();
             target->activate(Node::NODE_CHANGED, target);
         }
-        sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"data\":\"ok\"}");
+        Node r("r"); r.set("requestId", rid); r.set("data", "ok");
+        sp->async_send(J(r));
     }
 
     template<typename SP>
     void textWatch(SP& sp, uint64_t sid, const MozLine& m) {
         int64_t rid = nextRequestId(sid);
         if (subscribeSvc) subscribeSvc->subscribe(sid, m.key);
-        sp->async_send("{\"requestId\":" + std::to_string(rid) + ",\"data\":\"subscribed\"}");
+        Node r("r"); r.set("requestId", rid); r.set("data", "subscribed");
+        sp->async_send(J(r));
     }
 
     template<typename SP>
@@ -213,71 +202,54 @@ struct NodeWsServer::Private
             if (dict.has("body")) body  = dict["body"];
         }
 
-        std::string idStr = std::to_string(cmdId);
-
         if (!command::has(m.key)) {
-            sp->async_send("{\"id\":" + idStr
-                + ",\"error\":\"Unknown command: " + m.key + "\"}");
+            Node r("r"); r.set("id", cmdId); r.set("error", "Unknown command: " + m.key);
+            sp->async_send(J(r));
             return;
         }
 
         auto result = command::call(m.key, body);
+        Node r("r");
+        r.set("id", cmdId);
         if (result.isSuccess() || result.isAccepted()) {
-            std::string data = impl::json::stringify(result.content());
-            sp->async_send("{\"id\":" + idStr
-                + ",\"c\":{" + impl::json::stringify(Var(m.key)) + ":" + data + "}}");
+            r.at("c")->at(m.key)->set(result.content());
         } else {
-            sp->async_send("{\"id\":" + idStr
-                + ",\"error\":" + impl::json::stringify(Var(result).toString()) + "}");
+            r.set("error", Var(result).toString());
         }
+        sp->async_send(J(r));
     }
 
     // --- JSON protocol handlers ---
 
     template<typename SP>
     void jsonMessage(SP& sp, uint64_t sid, const std::string& msg) {
-        auto cmd = parseJsonCommand(msg);
+        // Parse via schema
+        Node req("req");
+        if (!schema::importAs<schema::JsonS>(&req, msg)) {
+            Node r("r"); r.set("type", "error"); r.set("msg", "invalid json");
+            sp->async_send(J(r));
+            return;
+        }
 
-        if (cmd.cmd == "get") {
-            Node* target = cmd.path.empty() ? root : root->at(cmd.path);
-            if (!target) {
-                sp->async_send(appendId("{\"type\":\"error\",\"msg\":\"node not found\"}", cmd.id));
-                return;
-            }
-            std::string resp = "{\"type\":\"data\",\"path\":"
-                + impl::json::stringify(Var(target->path(root)))
-                + ",\"value\":" + impl::json::exportTree(target) + "}";
-            sp->async_send(appendId(std::move(resp), cmd.id));
+        std::string cmd = req.get("cmd").toString();
+        std::string path = req.get("path").toString();
+
+        if (cmd == "subscribe") {
+            if (subscribeSvc) subscribeSvc->subscribe(sid, path);
+            Node r("r"); r.set("type", "subscribed"); r.set("path", path);
+            if (!req.get("id").isNull()) r.at("id")->set(req.get("id"));
+            sp->async_send(J(r));
         }
-        else if (cmd.cmd == "set") {
-            if (cmd.path.empty()) {
-                sp->async_send(appendId("{\"type\":\"error\",\"msg\":\"path required\"}", cmd.id));
-                return;
-            }
-            Node* target = root->at(cmd.path);
-            if (!target) {
-                sp->async_send(appendId("{\"type\":\"error\",\"msg\":\"cannot create node\"}", cmd.id));
-                return;
-            }
-            if (!cmd.value.empty()) {
-                target->set(impl::json::parse(cmd.value));
-            }
-            sp->async_send(appendId("{\"type\":\"ok\",\"path\":"
-                + impl::json::stringify(Var(target->path(root))) + "}", cmd.id));
-        }
-        else if (cmd.cmd == "subscribe") {
-            if (subscribeSvc) subscribeSvc->subscribe(sid, cmd.path);
-            sp->async_send(appendId("{\"type\":\"subscribed\",\"path\":"
-                + impl::json::stringify(Var(cmd.path)) + "}", cmd.id));
-        }
-        else if (cmd.cmd == "unsubscribe") {
-            if (subscribeSvc) subscribeSvc->unsubscribe(sid, cmd.path);
-            sp->async_send(appendId("{\"type\":\"unsubscribed\",\"path\":"
-                + impl::json::stringify(Var(cmd.path)) + "}", cmd.id));
+        else if (cmd == "unsubscribe") {
+            if (subscribeSvc) subscribeSvc->unsubscribe(sid, path);
+            Node r("r"); r.set("type", "unsubscribed"); r.set("path", path);
+            if (!req.get("id").isNull()) r.at("id")->set(req.get("id"));
+            sp->async_send(J(r));
         }
         else {
-            sp->async_send(appendId("{\"type\":\"error\",\"msg\":\"unknown command: "
-                + cmd.cmd + "\"}", cmd.id));
+            // Reuse shared handler
+            std::string response = handleNodeJsonCmd(root, &req);
+            sp->async_send(std::move(response));
         }
     }
 };
@@ -300,19 +272,19 @@ NodeWsServer::~NodeWsServer()
 
 bool NodeWsServer::start()
 {
-    // --- SubscribeService setup ---
     _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
     _p->subscribeSvc->setPushCallback(
         [this](uint64_t sessionId, const std::string& path, const Var& value) {
-            std::string pushMsg;
+            Node evt("e");
             if (_p->isTextSession(sessionId)) {
-                pushMsg = "{\"key\":" + impl::json::stringify(Var(path))
-                    + ",\"data\":" + impl::json::stringify(value) + "}";
+                evt.set("key", path);
+                evt.at("data")->set(value);
             } else {
-                pushMsg = "{\"type\":\"event\",\"path\":"
-                    + impl::json::stringify(Var(path))
-                    + ",\"value\":" + impl::json::stringify(value) + "}";
+                evt.set("type", "event");
+                evt.set("path", path);
+                evt.at("value")->set(value);
             }
+            std::string pushMsg = J(evt);
 
             _p->server.post([this, sessionId, pushMsg = std::move(pushMsg)]() {
                 _p->server.foreach_session(
@@ -324,7 +296,6 @@ bool NodeWsServer::start()
         });
     _p->subscribeSvc->start();
 
-    // --- Connection handling ---
     _p->server.bind_connect([this](auto& session_ptr) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
         {
@@ -351,8 +322,8 @@ bool NodeWsServer::start()
             else if (m.fn == "c") { _p->textCommand(session_ptr, sid, m); }
             else {
                 int64_t rid = _p->nextRequestId(sid);
-                session_ptr->async_send("{\"requestId\":" + std::to_string(rid)
-                    + ",\"error\":\"unknown function: " + m.fn + "\"}");
+                Node r("r"); r.set("requestId", rid); r.set("error", "unknown function: " + m.fn);
+                session_ptr->async_send(J(r));
             }
         }
     });

@@ -11,6 +11,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
+#include "ve/core/schema.h"
 #include "ve/core/impl/bin.h"
 #include "ve/core/log.h"
 
@@ -125,14 +126,21 @@ struct BinTcpServer::Private
         if (op == "get") {
             Node* target = path.empty() ? root : root->find(path);
             if (!target) { send(-1, Var("not found")); return; }
-            send(0, target->get());
+            // Export as binary tree via schema
+            auto bytes = schema::exportAs<schema::BinS>(target);
+            send(0, Var(std::move(bytes)));
             return;
         }
         if (op == "set") {
             Node* target = path.empty() ? root : root->at(path);
             if (!target) { send(-1, Var("cannot create")); return; }
             Var data = dict.has("data") ? dict["data"] : Var();
-            target->set(data);
+            if (data.isBin()) {
+                auto& bin = data.toBin();
+                schema::importAs<schema::BinS>(target, bin.data(), bin.size());
+            } else {
+                target->set(data);
+            }
             send(0, Var(true));
             return;
         }
@@ -149,7 +157,7 @@ struct BinTcpServer::Private
         if (op == "tree") {
             Node* target = path.empty() ? root : root->find(path);
             if (!target) { send(-1, Var("not found")); return; }
-            auto bytes = impl::bin::exportTree(target);
+            auto bytes = schema::exportAs<schema::BinS>(target);
             send(0, Var(std::move(bytes)));
             return;
         }

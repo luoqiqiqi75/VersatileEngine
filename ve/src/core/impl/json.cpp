@@ -404,7 +404,9 @@ bool importTree(Node* node, const std::string& json)
     auto err = doc.get_value().get(val);
     if (err) return false;
 
-    domToNode(val, node);
+    Node parsed("json_import");
+    domToNode(val, &parsed);
+    node->copy(&parsed);
     return true;
 }
 

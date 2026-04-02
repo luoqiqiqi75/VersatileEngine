@@ -11,7 +11,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
-#include "ve/core/impl/json.h"
+#include "ve/core/schema.h"
 #include "ve/core/log.h"
 
 #ifdef _MSC_VER
@@ -26,7 +26,7 @@ namespace ve {
 namespace service {
 
 // Reuse from node_tcp_server.cpp
-extern std::string handleNodeJsonCmd(Node* root, const Var& parsed);
+extern std::string handleNodeJsonCmd(Node* root, Node* reqNode);
 
 // ============================================================================
 // Private
@@ -61,8 +61,12 @@ bool NodeUdpServer::start()
         std::string msg(data);
         if (msg.empty()) return;
 
-        Var parsed = impl::json::parse(msg);
-        std::string response = handleNodeJsonCmd(_p->root, parsed);
+        Node req("req");
+        if (!schema::importAs<schema::JsonS>(&req, msg)) {
+            session_ptr->async_send("{\"type\":\"error\",\"msg\":\"invalid json\"}");
+            return;
+        }
+        std::string response = handleNodeJsonCmd(_p->root, &req);
         session_ptr->async_send(response);
     });
 

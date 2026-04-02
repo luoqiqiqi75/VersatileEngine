@@ -77,6 +77,7 @@ def test_subscribe_tcp():
 
     # Set value from writer
     events = []
+    decoder = json.JSONDecoder()
     for v in [100, 200, 300]:
         wr.sendall(json.dumps({"cmd": "set", "path": "/test/watch", "value": v, "id": v}).encode() + b"\n")
         time.sleep(0.1)
@@ -84,15 +85,16 @@ def test_subscribe_tcp():
 
         # Read event from subscriber
         try:
-            data = sub.recv(4096).decode().strip()
-            if data:
-                for line in data.split("\n"):
-                    line = line.strip()
-                    if line:
-                        msg = json.loads(line)
-                        if msg.get("type") == "event":
-                            events.append(msg)
-                            print(f"  [event] path={msg.get('path')} value={msg.get('value')}")
+            raw = sub.recv(4096).decode().strip()
+            while raw:
+                try:
+                    msg, idx = decoder.raw_decode(raw)
+                    raw = raw[idx:].strip()
+                    if msg.get("type") == "event":
+                        events.append(msg)
+                        print(f"  [event] path={msg.get('path')} value={msg.get('value')}")
+                except json.JSONDecodeError:
+                    break
         except socket.timeout:
             pass
 

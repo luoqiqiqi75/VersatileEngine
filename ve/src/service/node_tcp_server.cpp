@@ -1,7 +1,7 @@
 // node_tcp_server.cpp — ve::service::NodeTcpServer
 //
 // JSON text protocol over TCP, newline-delimited.
-// Same command format as NodeWsServer JSON mode:
+// Request/response use Node + schema::exportAs<JsonS> for serialization.
 //   {"cmd":"get","path":"...","id":1}
 //   {"cmd":"set","path":"...","value":...,"id":1}
 //   {"cmd":"subscribe","path":"...","id":1}
@@ -12,7 +12,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
-#include "ve/core/impl/json.h"
+#include "ve/core/schema.h"
 #include "ve/core/log.h"
 
 #ifdef _MSC_VER
@@ -30,70 +30,74 @@ namespace ve {
 namespace service {
 
 // ============================================================================
-// Shared JSON command handling
+// Shared Node-based JSON command handling
 // ============================================================================
 
-static Var parseJsonMsg(const std::string& raw)
+static std::string nodeToJson(Node& n)
 {
-    return impl::json::parse(raw);
+    return schema::exportAs<schema::JsonS>(&n, schema::ExportOptions{0});
 }
 
-std::string handleNodeJsonCmd(Node* root, const Var& parsed)
+std::string handleNodeJsonCmd(Node* root, Node* reqNode)
 {
-    if (!parsed.isDict()) {
-        return "{\"type\":\"error\",\"msg\":\"invalid json\"}";
-    }
+    std::string cmd = reqNode->get("cmd").toString();
+    std::string path = reqNode->get("path").toString();
 
-    auto& dict = parsed.toDict();
-    std::string cmd = dict.has("cmd") ? dict["cmd"].toString() : "";
-    std::string path = dict.has("path") ? dict["path"].toString() : "";
-    std::string idField;
-    if (dict.has("id")) {
-        idField = ",\"id\":" + impl::json::stringify(dict["id"]);
-    }
+    Node resp("r");
+    if (!reqNode->get("id").isNull()) resp.at("id")->set(reqNode->get("id"));
 
     if (cmd == "get") {
         Node* target = path.empty() ? root : root->find(path);
         if (!target) {
-            return "{\"type\":\"error\",\"msg\":\"not found\"" + idField + "}";
+            resp.set("type", "error");
+            resp.set("msg", "not found");
+            return nodeToJson(resp);
         }
-        return "{\"type\":\"data\",\"path\":"
-            + impl::json::stringify(Var(target->path(root)))
-            + ",\"value\":" + impl::json::exportTree(target) + idField + "}";
+        resp.set("type", "data");
+        resp.set("path", target->path(root));
+        resp.at("value")->copy(target);
+        return nodeToJson(resp);
     }
     else if (cmd == "set") {
         if (path.empty()) {
-            return "{\"type\":\"error\",\"msg\":\"path required\"" + idField + "}";
+            resp.set("type", "error");
+            resp.set("msg", "path required");
+            return nodeToJson(resp);
         }
         Node* target = root->at(path);
         if (!target) {
-            return "{\"type\":\"error\",\"msg\":\"cannot create node\"" + idField + "}";
+            resp.set("type", "error");
+            resp.set("msg", "cannot create node");
+            return nodeToJson(resp);
         }
-        if (dict.has("value")) {
-            target->set(dict["value"]);
+        Node* valNode = reqNode->find("value");
+        if (valNode) {
+            target->copy(valNode);
         }
-        return "{\"type\":\"ok\",\"path\":"
-            + impl::json::stringify(Var(target->path(root))) + idField + "}";
+        resp.set("type", "ok");
+        resp.set("path", target->path(root));
+        return nodeToJson(resp);
     }
     else if (cmd == "list") {
         Node* target = path.empty() ? root : root->find(path);
         if (!target) {
-            return "{\"type\":\"error\",\"msg\":\"not found\"" + idField + "}";
+            resp.set("type", "error");
+            resp.set("msg", "not found");
+            return nodeToJson(resp);
         }
-        std::string json = "{\"type\":\"data\",\"path\":"
-            + impl::json::stringify(Var(target->path(root)))
-            + ",\"children\":[";
-        int total = target->count();
-        for (int i = 0; i < total; ++i) {
-            auto* c = target->child(i);
-            if (i > 0) json += ",";
-            json += "\"" + c->name() + "\"";
+        resp.set("type", "data");
+        resp.set("path", target->path(root));
+        Var::ListV children;
+        for (int i = 0; i < target->count(); ++i) {
+            children.push_back(Var(target->child(i)->name()));
         }
-        json += "]" + idField + "}";
-        return json;
+        resp.set("children", Var(std::move(children)));
+        return nodeToJson(resp);
     }
 
-    return "{\"type\":\"error\",\"msg\":\"unknown command: " + cmd + "\"" + idField + "}";
+    resp.set("type", "error");
+    resp.set("msg", "unknown command: " + cmd);
+    return nodeToJson(resp);
 }
 
 // ============================================================================
@@ -133,41 +137,42 @@ struct NodeTcpServer::Private
             std::string line = buf.substr(0, pos);
             buf.erase(0, pos + 1);
 
-            // Trim \r
             if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
             if (line.empty()) continue;
 
-            auto parsed = parseJsonMsg(line);
-            if (!parsed.isDict()) {
+            // Parse request via schema
+            Node req("req");
+            if (!schema::importAs<schema::JsonS>(&req, line)) {
                 session_ptr->async_send("{\"type\":\"error\",\"msg\":\"invalid json\"}\n");
                 continue;
             }
 
-            auto& dict = parsed.toDict();
-            std::string cmd = dict.has("cmd") ? dict["cmd"].toString() : "";
+            std::string cmd = req.get("cmd").toString();
 
             if (cmd == "subscribe") {
-                std::string path = dict.has("path") ? dict["path"].toString() : "";
+                std::string path = req.get("path").toString();
                 auto sid = static_cast<uint64_t>(connKey);
                 if (subscribeSvc) subscribeSvc->subscribe(sid, path);
-                std::string idField;
-                if (dict.has("id")) idField = ",\"id\":" + impl::json::stringify(dict["id"]);
-                session_ptr->async_send("{\"type\":\"subscribed\",\"path\":"
-                    + impl::json::stringify(Var(path)) + idField + "}\n");
+                Node resp("r");
+                resp.set("type", "subscribed");
+                resp.set("path", path);
+                if (!req.get("id").isNull()) resp.at("id")->set(req.get("id"));
+                session_ptr->async_send(nodeToJson(resp) + "\n");
             }
             else if (cmd == "unsubscribe") {
-                std::string path = dict.has("path") ? dict["path"].toString() : "";
+                std::string path = req.get("path").toString();
                 auto sid = static_cast<uint64_t>(connKey);
                 if (subscribeSvc) subscribeSvc->unsubscribe(sid, path);
-                std::string idField;
-                if (dict.has("id")) idField = ",\"id\":" + impl::json::stringify(dict["id"]);
-                session_ptr->async_send("{\"type\":\"unsubscribed\",\"path\":"
-                    + impl::json::stringify(Var(path)) + idField + "}\n");
+                Node resp("r");
+                resp.set("type", "unsubscribed");
+                resp.set("path", path);
+                if (!req.get("id").isNull()) resp.at("id")->set(req.get("id"));
+                session_ptr->async_send(nodeToJson(resp) + "\n");
             }
             else {
-                std::string response = handleNodeJsonCmd(root, parsed);
+                std::string response = handleNodeJsonCmd(root, &req);
                 session_ptr->async_send(response + "\n");
             }
         }
@@ -195,9 +200,11 @@ bool NodeTcpServer::start()
     _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
     _p->subscribeSvc->setPushCallback(
         [this](uint64_t sessionId, const std::string& path, const Var& value) {
-            std::string pushMsg = "{\"type\":\"event\",\"path\":"
-                + impl::json::stringify(Var(path))
-                + ",\"value\":" + impl::json::stringify(value) + "}\n";
+            Node evt("e");
+            evt.set("type", "event");
+            evt.set("path", path);
+            evt.at("value")->set(value);
+            std::string pushMsg = nodeToJson(evt) + "\n";
 
             _p->server.post([this, sessionId, pushMsg = std::move(pushMsg)]() {
                 _p->server.foreach_session(
