@@ -333,12 +333,12 @@ class MsgPackTransport(Transport):
             except Exception:
                 pass
 
-    def _send_frame(self, op: str, path: str, args=None) -> tuple:
+    def _send_frame(self, op: str, path: str, data=None) -> tuple:
         with self._lock:
             self._id += 1
             payload_dict = {"op": op, "path": path, "id": self._id}
-            if args:
-                payload_dict["args"] = args
+            if data is not None:
+                payload_dict["data"] = data
 
             payload = msgpack.packb(payload_dict)
             header = struct.pack("<BI", 0x00, len(payload))  # FLAG_REQUEST
@@ -363,7 +363,7 @@ class MsgPackTransport(Transport):
         return resp.get("data")
 
     def set(self, path: str, value: Any) -> bool:
-        flag, resp = self._send_frame("set", path, [value])
+        flag, resp = self._send_frame("set", path, value)
         return flag != 0xC0
 
     def list(self, path: str) -> List[Dict]:

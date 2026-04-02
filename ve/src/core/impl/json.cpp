@@ -369,9 +369,26 @@ Var parse(const std::string& json)
 
     simdjson::ondemand::value val;
     auto err = doc.get_value().get(val);
-    if (err) return Var();
+    if (!err) return domToVar(val);
 
-    return domToVar(val);
+    // Fallback: simdjson ondemand may not support bare values
+    std::string s = json;
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+    if (s.empty()) return Var();
+    if (s == "null") return Var();
+    if (s == "true") return Var(true);
+    if (s == "false") return Var(false);
+    if (s.front() == '"' && s.back() == '"' && s.size() >= 2) {
+        return Var(s.substr(1, s.size() - 2));
+    }
+    try {
+        if (s.find('.') != std::string::npos || s.find('e') != std::string::npos || s.find('E') != std::string::npos) {
+            return Var(std::stod(s));
+        }
+        return Var(static_cast<int64_t>(std::stoll(s)));
+    } catch (...) {}
+    return Var();
 }
 
 bool importTree(Node* node, const std::string& json)

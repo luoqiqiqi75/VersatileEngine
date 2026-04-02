@@ -97,41 +97,74 @@ struct BinTcpServer::Private
 
         std::string op;
         std::string path;
-        Var args;
         int64_t id = 0;
 
         if (dict.has("op"))   op   = dict["op"].toString();
         if (dict.has("path")) path = dict["path"].toString();
-        if (dict.has("args")) args = dict["args"];
         if (dict.has("id"))   id   = dict["id"].toInt64();
+
+        auto send = [&](int code, const Var& data) {
+            auto frame = makeResponse(id, code, data);
+            session_ptr->async_send(std::string(frame.begin(), frame.end()));
+        };
 
         if (op == "subscribe") {
             auto sessionId = static_cast<uint64_t>(connKey);
             if (subscribeSvc) subscribeSvc->subscribe(sessionId, path);
-            auto frame = makeResponse(id, 0, Var(true));
-            session_ptr->async_send(std::string(frame.begin(), frame.end()));
+            send(0, Var(true));
             return;
         }
         if (op == "unsubscribe") {
             auto sessionId = static_cast<uint64_t>(connKey);
             if (subscribeSvc) subscribeSvc->unsubscribe(sessionId, path);
-            auto frame = makeResponse(id, 0, Var(true));
-            session_ptr->async_send(std::string(frame.begin(), frame.end()));
+            send(0, Var(true));
             return;
         }
 
-        // Build command input: LIST{path, ...args}
+        // Node operations
+        if (op == "get") {
+            Node* target = path.empty() ? root : root->find(path);
+            if (!target) { send(-1, Var("not found")); return; }
+            send(0, target->get());
+            return;
+        }
+        if (op == "set") {
+            Node* target = path.empty() ? root : root->at(path);
+            if (!target) { send(-1, Var("cannot create")); return; }
+            Var data = dict.has("data") ? dict["data"] : Var();
+            target->set(data);
+            send(0, Var(true));
+            return;
+        }
+        if (op == "ls") {
+            Node* target = path.empty() ? root : root->find(path);
+            if (!target) { send(-1, Var("not found")); return; }
+            Var::ListV list;
+            for (auto* c : target->children()) {
+                list.push_back(Var(c->name()));
+            }
+            send(0, Var(std::move(list)));
+            return;
+        }
+        if (op == "tree") {
+            Node* target = path.empty() ? root : root->find(path);
+            if (!target) { send(-1, Var("not found")); return; }
+            auto bytes = impl::bin::exportTree(target);
+            send(0, Var(std::move(bytes)));
+            return;
+        }
+
+        // Fallback: command::call for custom commands
+        Var args = dict.has("args") ? dict["args"] : Var();
         Var::ListV inputList;
         inputList.push_back(Var(path));
         if (args.type() == Var::LIST) {
-            for (auto& a : args.toList())
+            for (auto& a : args.toList()) {
                 inputList.push_back(a);
+            }
         }
-
         auto result = command::call(op, Var(std::move(inputList)));
-
-        auto frame = makeResponse(id, result.code(), result.content());
-        session_ptr->async_send(std::string(frame.begin(), frame.end()));
+        send(result.code(), result.content());
     }
 };
 

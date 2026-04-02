@@ -70,14 +70,17 @@ void SubscribeService::subscribe(uint64_t session, const std::string& path, bool
     if (bubble) {
         target->watchAll(true);
         target->connect<Node::NODE_ACTIVATED>(
-            &entry->observer, [this, session, root = _p->root](int64_t signal, void* ptr) {
-                if (signal != Node::NODE_CHANGED || !ptr || !_p->pushFn) return;
-                auto* src = static_cast<Node*>(ptr);
+            &entry->observer, [this, session, root = _p->root](const Var& data) {
+                if (!data.isList() || data.toList().size() < 2) return;
+                auto signal = data[0].toInt64();
+                if (signal != Node::NODE_CHANGED) return;
+                auto* src = static_cast<Node*>(data[1].toPointer());
+                if (!src || !_p->pushFn) return;
                 _p->pushFn(session, src->path(root), src->get());
             });
     } else {
         target->connect<Node::NODE_CHANGED>(
-            &entry->observer, [this, session, path, target](int64_t, void*) {
+            &entry->observer, [this, session, path, target]() {
                 if (!_p->pushFn) return;
                 _p->pushFn(session, path, target->get());
             });
