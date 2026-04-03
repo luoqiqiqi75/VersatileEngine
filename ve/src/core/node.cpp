@@ -642,28 +642,76 @@ Node::ReverseChildIterator Node::rend() const
 // Node — path
 // ============================================================================
 
-Node* Node::shadow() const { return _p->shadow; }
+const Node* Node::shadow() const { return _p->shadow; }
 void  Node::setShadow(Node* s) { LockT lk(mutex()); _p->shadow = s; }
 
-// walk path segments, calling step(name, idx, global) for each
-template<typename StepFn>
-static Node* _walk(std::string_view sv, const Node* start, StepFn step)
-{
-    const Node* cur = start;
-    while (!sv.empty() && cur) {
-        auto slash = sv.find('/');
-        auto seg = (slash == std::string_view::npos) ? sv : sv.substr(0, slash);
-        sv = (slash == std::string_view::npos) ? std::string_view{} : sv.substr(slash + 1);
-        if (seg.empty()) continue;
+// ============================================================================
+// Node — atKey (single-level key access)
+// ============================================================================
 
-        std::string_view nmv; int idx;
-        if (!Node::parseKey(seg, nmv, idx)) return nullptr;
-        bool gl = nmv.empty() && idx >= 0;
-        std::string nm(nmv);
-        cur = step(const_cast<Node*>(cur), nm, gl ? idx : std::max(idx, 0), gl);
+Node* Node::atKey(int index, bool use_shadow) const
+{
+    if (Node* cn = child(index)) return cn;
+    if (use_shadow) {
+        if (auto* sn = shadow()) return sn->atKey(index, true);
     }
-    return const_cast<Node*>(cur);
+    return nullptr;
 }
+
+Node *Node::atKey(const std::string &name, int overlap, bool use_shadow) const
+{
+    if (Node* cn = child(name, overlap)) return cn;
+    if (use_shadow) {
+        if (auto* sn = shadow()) return sn->atKey(name, overlap, true);
+    }
+    return nullptr;
+}
+
+Node* Node::atKey(std::string_view key, bool use_shadow) const
+{
+    std::string_view nm; int idx;
+    if (!parseKey(key, nm, idx)) return nullptr;
+    return nm.empty() && idx >= 0 ? atKey(idx, use_shadow) : atKey(std::string(nm), idx < 0 ? 0 : idx, use_shadow);
+}
+
+Node* Node::atKey(int index, bool use_shadow)
+{
+    if (Node* cn = const_cast<const Node*>(this)->atKey(index, use_shadow)) return cn;
+
+    if (index < 0) return nullptr;
+    if (!append(index - count())) {
+        veLogE << "<ve.node> at index failed append to " << path() << ", index = " << index << ", count = " << count();
+        return nullptr;
+    }
+    Node* cn = child(index); // rematch
+    if (!cn) veLogE << "<ve.node> at index failed on " << path() << " with index " << index;
+    return cn;
+}
+
+Node* Node::atKey(const std::string& name, int overlap, bool use_shadow)
+{
+    if (Node* cn = const_cast<const Node*>(this)->atKey(name, overlap, use_shadow)) return cn;
+
+    if (overlap < 0) return nullptr;
+    if (!append(name, overlap - count(name))) {
+        veLogE << "<ve.node> at index failed append to " << path() << ", key = " << toKey(name, overlap) << ", count = " << count(name);
+        return nullptr;
+    }
+    Node* cn = child(name, overlap); // rematch
+    if (!cn) veLogE << "<ve.node> at index failed on " << path() << " with key " << toKey(name, overlap);
+    return cn;
+}
+
+Node* Node::atKey(std::string_view key, bool use_shadow)
+{
+    std::string_view nm; int idx;
+    if (!parseKey(key, nm, idx)) return nullptr;
+    return (nm.empty() && idx >= 0) ? at(idx, use_shadow) : at(std::string(nm), idx, use_shadow);
+}
+
+// ============================================================================
+// Node — atPath (multi-level path access)
+// ============================================================================
 
 static Node* _root(const Node* n) { auto* p = const_cast<Node*>(n); while (p->parent()) p = p->parent(); return p; }
 
@@ -677,134 +725,44 @@ std::string Node::path(Node* ancestor) const
     return pp.empty() ? seg : pp + "/" + seg;
 }
 
-Node* Node::at(int index)
-{
-    if (index < 0) return nullptr;
-    auto* out = child(index);
-    if (out) return out;
-    if (!append(index - count())) {
-        veLogE << "<ve.node> at index failed append to " << path() << ", index = " << index << ", count = " << count();
-        return nullptr;
-    }
-    out = child(index); // rematch
-    if (!out) {
-        veLogE << "<ve.node> at index failed on " << path() << " with index " << index;
-    }
-    return out;
-}
-
-Node* Node::at(const std::string& name, int overlap)
-{
-    if (overlap < 0) return nullptr;
-    auto* out = child(name, overlap);
-    if (out) return out;
-    if (!append(name, overlap - count(name))) {
-        veLogE << "<ve.node> at index failed append to " << path() << ", key = " << toKey(name, overlap) << ", count = " << count(name);
-        return nullptr;
-    }
-    out = child(name, overlap); // rematch
-    if (!out) {
-        veLogE << "<ve.node> at index failed on " << path() << " with key " << toKey(name, overlap);
-    }
-    return out;
-}
-
-// ============================================================================
-// Node — atKey (single-level key access)
-// ============================================================================
-
-Node* Node::atKey(const std::string& key) const
-{
-    std::string_view nm; int idx;
-    if (!parseKey(key, nm, idx)) return nullptr;
-    if (nm.empty() && idx >= 0) return child(idx);
-    return child(std::string(nm), idx < 0 ? 0 : idx);
-}
-
-Node* Node::atKey(const std::string& key)
-{
-    std::string_view nm; int idx;
-    if (!parseKey(key, nm, idx)) return nullptr;
-
-    if (nm.empty() && idx >= 0) {
-        // Global index access
-        return at(idx);
-    }
-
-    // Named access with overlap
-    return at(std::string(nm), idx);
-}
-
-// ============================================================================
-// Node — atPath (multi-level path access)
-// ============================================================================
-
-Node* Node::atPath(const std::string& path, bool use_shadow) const
+Node* Node::atPath(std::string_view path, bool use_shadow) const
 {
     if (path.empty()) return const_cast<Node*>(this);
-    std::string_view sv(path);
-    auto* s = const_cast<Node*>(this);
-    if (sv[0] == '/') { s = _root(this); sv.remove_prefix(1); if (sv.empty()) return s; }
-    return _walk(sv, s, [use_shadow](Node* cur, auto& nm, int idx, bool gl) -> Node* {
-        auto* c = gl ? cur->child(idx) : cur->child(nm, idx);
-        if (use_shadow)
-            for (auto* sh = cur->shadow(); !c && sh; sh = sh->shadow())
-                c = gl ? sh->child(idx) : sh->child(nm, idx);
-        return c;
-    });
-}
+    const Node* cur = this;
+    if (path[0] == '/') {
+        cur = _root(this);
+        path.remove_prefix(1);
+        if (path.empty()) return const_cast<Node*>(cur);
+    }
 
-Node* Node::atPath(const std::string& path, bool use_shadow)
-{
-    if (path.empty()) return this;
-    const std::string requested_path = path;
-    std::string_view sv(path);
-    Node* start = this;
-    if (sv[0] == '/') { start = _root(this); sv.remove_prefix(1); if (sv.empty()) return start; }
-    Node* cur = start;
-    while (!sv.empty() && cur) {
-        auto slash = sv.find('/');
-        auto seg = (slash == std::string_view::npos) ? sv : sv.substr(0, slash);
-        sv = (slash == std::string_view::npos) ? std::string_view{} : sv.substr(slash + 1);
+    while (!path.empty() && cur) {
+        auto slash = path.find('/');
+        auto seg = (slash == std::string_view::npos) ? path : path.substr(0, slash);
+        path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        // Parse the segment first
-        std::string_view nmv;
-        int idx;
-        if (!Node::parseKey(seg, nmv, idx)) {
-            veLogE << "<ve.node> atPath parse failed path=" << requested_path
-                   << " parent=" << cur->path()
-                   << " key=" << std::string(seg);
-            return nullptr;
-        }
+        cur = cur->atKey(seg, use_shadow);
+    }
+    return const_cast<Node*>(cur);
+}
 
-        // Try to find existing node
-        const std::string name(nmv);
-        const int overlap = idx < 0 ? 0 : idx;
-        auto* out = nmv.empty() && idx >= 0 ? cur->child(idx) : cur->child(name, overlap);
+Node* Node::atPath(std::string_view path, bool use_shadow)
+{
+    if (path.empty()) return this;
+    Node* cur = this;
+    if (path[0] == '/') {
+        cur = _root(this);
+        path.remove_prefix(1);
+        if (path.empty()) return cur;
+    }
 
-        // If use_shadow, also check shadow chain
-        if (!out && use_shadow) {
-            for (auto* sh = cur->shadow(); !out && sh; sh = sh->shadow()) {
-                out = nmv.empty() && idx >= 0 ? sh->child(idx) : sh->child(name, overlap);
-            }
-        }
+    while (!path.empty() && cur) {
+        auto slash = path.find('/');
+        auto seg = (slash == std::string_view::npos) ? path : path.substr(0, slash);
+        path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
+        if (seg.empty()) continue;
 
-        if (out) {
-            cur = out;
-            continue;
-        }
-
-        // Node doesn't exist, create it
-        out = cur->at(name, overlap);
-
-        if (!out) {
-            veLogE << "<ve.node> atPath resolve failed on " << requested_path
-                   << " parent =" << cur->path()
-                   << " key =" << std::string(seg);
-            return nullptr;
-        }
-        cur = out;
+        cur = cur->atKey(seg, use_shadow);
     }
     return cur;
 }

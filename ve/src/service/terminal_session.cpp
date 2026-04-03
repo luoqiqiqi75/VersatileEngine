@@ -639,10 +639,12 @@ std::string TerminalSession::execute(const std::string& line)
 
     // Fallback: user-registered global commands
     if (command::has(cmd)) {
+        Node* ctx = command::context(cmd, s.cur);
         Var::ListV list;
         for (size_t i = 1; i < args.size(); ++i)
             list.push_back(Var(args[i]));
-        auto r = command::call(cmd, list.empty() ? Var() : Var(std::move(list)));
+        ctx->set(list.empty() ? Var() : Var(std::move(list)));
+        auto r = command::call(cmd, ctx);
         if (r.isSuccess() || r.isAccepted()) {
             auto& content = r.content();
             if (!content.isNull())
@@ -650,6 +652,7 @@ std::string TerminalSession::execute(const std::string& line)
         } else {
             s.print(Var(r).toString() + "\n");
         }
+        delete ctx;
         return s.output;
     }
 

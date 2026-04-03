@@ -26,18 +26,72 @@ Primary categories:
 
 - none
 - bool
-- int
-- int64
+- int (int64)
 - double
 - string
-- binary
-- list
-- dictionary
+- binary (Bytes)
+- list (Vector<Var>)
+- dictionary (Dict<Var>)
 - pointer
-- custom
+- custom (std::any)
 
 Use `Var` at boundaries.
 Use native domain types inside your own code, then convert at the edge.
+
+#### Construction & Conversion
+
+**Direct construction**:
+```cpp
+Var v1(42);                    // int
+Var v2(3.14);                  // double
+Var v3("hello");               // string
+Var v4(Var::ListV{1, 2, 3});   // list
+Var v5(Var::DictV{{"a", 1}});  // dict
+```
+
+**From containers** (automatic conversion):
+```cpp
+std::vector<int> vec = {1, 2, 3};
+Var v = vec;  // Converts to LIST
+
+std::map<std::string, int> map = {{"a", 1}};
+Var v = map;  // Converts to DICT
+```
+
+**Quick conversion methods**:
+```cpp
+// Extract values (type-safe, returns default on mismatch)
+int i = v.toInt(0);           // default: -1
+double d = v.toDouble(0.0);   // default: 0.0
+std::string s = v.toString(); // default: ""
+const Var::ListV& list = v.toList();
+const Var::DictV& dict = v.toDict();
+
+// In-place conversion (chainable)
+v.fromString("hello");        // Convert to STRING
+v.fromList({1, 2, 3});        // Convert to LIST
+v.fromDict({{"a", 1}});       // Convert to DICT
+
+// Generic conversion (uses Convert<T>)
+int value = v.as<int>();      // Throws on failure
+auto opt = v.tryAs<int>();    // Returns std::optional<int>
+```
+
+**Type checking**:
+```cpp
+if (v.isInt()) { ... }
+if (v.isList()) { ... }
+if (v.isDict()) { ... }
+```
+
+**Custom types**:
+```cpp
+struct MyData { int x; };
+Var v = Var::custom(MyData{42});
+if (auto* p = v.customPtr<MyData>()) {
+    // Use p->x
+}
+```
 
 ### `ve::Object`
 

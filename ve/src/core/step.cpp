@@ -1,6 +1,7 @@
 // step.cpp — ve::Step implementation
 
 #include "ve/core/step.h"
+#include "ve/core/node.h"
 
 namespace ve {
 
@@ -13,10 +14,18 @@ Step::Step(const std::string& name, StepFn fn)
 Step::Step(const std::string& name, StepFn fn, LoopRef loop)
     : _name(name), _fn(std::move(fn)), _loop(std::move(loop)) {}
 
+Result Step::exec(Node* ctx) const
+{
+    if (!_fn) return Result(Result::FAIL, std::string("step has no function"));
+    return _fn(ctx);
+}
+
 Result Step::exec(const Var& input) const
 {
     if (!_fn) return Result(Result::FAIL, std::string("step has no function"));
-    return _fn(input);
+    Node tmp("_input");
+    tmp.set(input);
+    return _fn(&tmp);
 }
 
 Step Step::clone() const

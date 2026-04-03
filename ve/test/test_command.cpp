@@ -257,16 +257,16 @@ VE_TEST(command_help_metadata) {
 // ============================================================================
 
 VE_TEST(step_factory_register_and_exec) {
-    GlobalStepFactory().insertOne("_test_greet", [](const Var& v) -> Result {
+    command::reg("_test_greet", Step("_test_greet", [](const Var& v) -> Result {
         return Result(Result::SUCCESS, Var("hello " + v.toString()));
-    });
-    VE_ASSERT(GlobalStepFactory().has("_test_greet"));
+    }));
+    VE_ASSERT(command::has("_test_greet"));
 
-    auto r = GlobalStepFactory().exec("_test_greet", Var("world"));
+    auto r = command::call("_test_greet", Var("world"));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toString(), "hello world");
 
-    GlobalStepFactory().erase("_test_greet");
+    GlobalCommandFactory().erase("_test_greet");
 }
 
 VE_TEST(command_factory_register_and_exec) {
@@ -290,9 +290,9 @@ VE_TEST(command_factory_register_and_exec) {
 // ============================================================================
 
 VE_TEST(command_ns_reg_and_call) {
-    command::reg("_test_echo", [](const Var& v) -> Result {
+    command::reg("_test_echo", Step("_test_echo", [](const Var& v) -> Result {
         return Result(Result::SUCCESS, v);
-    }, "echo input");
+    }), "echo input");
 
     VE_ASSERT(command::has("_test_echo"));
     VE_ASSERT_EQ(command::help("_test_echo"), "echo input");
@@ -300,7 +300,7 @@ VE_TEST(command_ns_reg_and_call) {
     Result r = command::call("_test_echo", Var(42));
     VE_ASSERT(r.isSuccess());
 
-    GlobalStepFactory().erase("_test_echo");
+    GlobalCommandFactory().erase("_test_echo");
 }
 
 VE_TEST(command_ns_run) {
@@ -320,16 +320,16 @@ VE_TEST(command_ns_run) {
 }
 
 VE_TEST(command_ns_step) {
-    GlobalStepFactory().insertOne("_test_inc", [](const Var& v) -> Result {
+    command::reg("_test_inc", Step("_test_inc", [](const Var& v) -> Result {
         return Result(Result::SUCCESS, Var(v.toInt() + 1));
-    });
+    }));
 
-    Pipeline* pipe = command::step("_test_inc", Var(10));
+    Pipeline* pipe = command::run("_test_inc", Var(10));
     VE_ASSERT(pipe != nullptr);
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 
-    GlobalStepFactory().erase("_test_inc");
+    GlobalCommandFactory().erase("_test_inc");
 }
 
 VE_TEST(command_ns_not_found) {

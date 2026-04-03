@@ -106,10 +106,56 @@ curl http://localhost:5080/api/cmd
 **Run command**
 ```bash
 POST /api/cmd/{name}
-Body: {"args": ...}
+Body: {"args": [...]}  # args must be a list
 
-curl -X POST http://localhost:5080/api/cmd/ls -H "Content-Type: application/json" -d '{"body":"/"}'
+# Example: save command
+curl -X POST http://localhost:5080/api/cmd/save \
+  -H "Content-Type: application/json" \
+  -d '{"args": ["json", "/config", "-f", "config.json"]}'
+# {"ok":true,"result":"Saved to config.json"}
+
+# Example: load command
+curl -X POST http://localhost:5080/api/cmd/load \
+  -H "Content-Type: application/json" \
+  -d '{"args": ["json", "/config", "-f", "config.json"]}'
+# {"ok":true,"result":"Imported from config.json"}
+
+# Example: ls command
+curl -X POST http://localhost:5080/api/cmd/ls \
+  -H "Content-Type: application/json" \
+  -d '{"args": ["/"]}'
 # {"ok":true,"result":[...]}
+```
+
+**Built-in file I/O commands** (registered by server_module):
+
+- `save <format> [path] [-f file]` - Export node to file or return as string
+  - Formats: json, xml, bin, var, or custom (via schema registry)
+  - Files saved to `./data/` by default (configurable via `ve/server/file_io/data_root`)
+  - Without `-f`: returns exported content
+  - With `-f`: saves to server filesystem
+
+- `load <format> [path] [-f file] [-i data]` - Import node from file or inline data
+  - `-f file`: load from server filesystem
+  - `-i data`: import from inline string
+
+Examples:
+```bash
+# Save to file
+curl -X POST http://localhost:5080/api/cmd/save \
+  -d '{"args": ["json", "/config", "-f", "config.json"]}'
+
+# Get export without saving
+curl -X POST http://localhost:5080/api/cmd/save \
+  -d '{"args": ["json", "/config"]}'
+
+# Load from file
+curl -X POST http://localhost:5080/api/cmd/load \
+  -d '{"args": ["json", "/config", "-f", "config.json"]}'
+
+# Load inline
+curl -X POST http://localhost:5080/api/cmd/load \
+  -d '{"args": ["json", "/config", "-i", "{\"key\":\"value\"}"]}'
 ```
 
 **Health check**
@@ -131,7 +177,7 @@ All methods available via `POST /jsonrpc`.
 | `node.get` | `{"path": "/config"}` | Get node value |
 | `node.set` | `{"path": "/test", "value": 42}` | Set node value |
 | `node.list` | `{"path": "/"}` | List children with metadata |
-| `command.run` | `{"name": "ls", "args": {...}}` | Run a command |
+| `command.run` | `{"name": "save", "args": ["json", "/config", "-f", "cfg.json"]}` | Run a command (args must be list) |
 
 **Examples:**
 
@@ -209,6 +255,66 @@ Connect to `ws://localhost:5081` and send JSON messages:
 ```json
 {"cmd":"set","path":"/test","value":42,"id":2}
 -> {"type":"ok","path":"test","id":2}
+```
+
+**List**
+```json
+{"cmd":"list","path":"/","id":3}
+-> {"type":"data","path":"","children":["config","test"],"id":3}
+```
+
+**Run command**
+```json
+{"cmd":"command.run","name":"save","args":["json","/config","-f","config.json"],"id":4}
+-> {"type":"ok","result":"Saved to config.json","id":4}
+```
+
+**Subscribe** (watch for changes)
+```json
+{"cmd":"subscribe","path":"/config","id":5}
+-> {"type":"ok","id":5}
+// Later when /config changes:
+-> {"type":"event","path":"config","value":{...}}
+```
+
+**Unsubscribe**
+```json
+{"cmd":"unsubscribe","path":"/config","id":6}
+-> {"type":"ok","id":6}
+```
+
+### JavaScript Client (veservice.js)
+
+```javascript
+// Include veservice.js
+<script src="veservice.js"></script>
+
+// Connect
+const veService = new VEService("ws://localhost:5081");
+
+// Get/Set
+const value = await veService.get("/config");
+await veService.set("/test", 42);
+
+// Subscribe
+veService.subscribe("/config", (value) => {
+    console.log("Config changed:", value);
+});
+
+// Run command
+const result = await veService.command("save", {
+    format: "json",
+    path: "/config",
+    file: "config.json"
+});
+// Internally converts to: ["json", "/config", "-f", "config.json"]
+
+// Load command
+await veService.command("load", {
+    format: "json",
+    path: "/config",
+    file: "config.json"
+});
 ```
 
 **Subscribe** (receive push on node change)

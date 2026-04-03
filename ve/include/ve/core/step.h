@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// step.h — ve::Step: single execution unit wrapping Result(const Var&)
+// step.h — ve::Step: single execution unit wrapping Result(Node* ctx)
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -26,10 +26,12 @@ template<> inline bool parse(const Result& r, std::string& s)
 }
 }
 
+class Node;
+
 class VE_API Step
 {
 public:
-    using StepFn = std::function<Result(const Var&)>;
+    using StepFn = std::function<Result(Node* ctx)>;
 
     Step() = default;
     Step(StepFn fn);
@@ -37,13 +39,15 @@ public:
     Step(const std::string& name, StepFn fn, LoopRef loop);
 
     // Convenience template: adapt various function signatures into StepFn.
-    //   Result(const Var&)   — direct
-    //   Result()             — ignore input
-    //   void(const Var&)     — return SUCCESS
-    //   void()               — return SUCCESS
-    //   bool(const Var&)     — true → SUCCESS, false → FAIL
-    //   bool()               — true → SUCCESS, false → FAIL
-    //   Result(T)            — Var auto-unpack single arg
+    //   Result(Node*)        - direct (new primary)
+    //   Result(const Var&)   - legacy: ctx->get() as input
+    //   Result()             - ignore input
+    //   void(Node*)          - return SUCCESS
+    //   void(const Var&)     - return SUCCESS
+    //   void()               - return SUCCESS
+    //   bool(Node*)          - true -> SUCCESS, false -> FAIL
+    //   bool(const Var&)     - true -> SUCCESS, false -> FAIL
+    //   bool()               - true -> SUCCESS, false -> FAIL
     template<typename F, std::enable_if_t<
         basic::FnTraits<std::decay_t<F>>::IsFunction
         && !std::is_convertible_v<F, StepFn>, int> = 0>
@@ -53,7 +57,8 @@ public:
         _fn = wrapFn(std::move(fn));
     }
 
-    Result exec(const Var& input = {}) const;
+    Result exec(Node* ctx = nullptr) const;
+    Result exec(const Var& input) const;  // backward compat: wraps in temp node
 
     const std::string& name() const { return _name; }
     const LoopRef& loop() const { return _loop; }
@@ -75,32 +80,44 @@ private:
 
         if constexpr (Traits::ArgCnt == 0) {
             if constexpr (std::is_same_v<Ret, Result>)
-                return [f = std::move(fn)](const Var&) -> Result { return f(); };
+                return [f = std::move(fn)](Node*) -> Result { return f(); };
             else if constexpr (std::is_same_v<Ret, bool>)
-                return [f = std::move(fn)](const Var&) -> Result { return Result(f()); };
+                return [f = std::move(fn)](Node*) -> Result { return Result(f()); };
             else
-                return [f = std::move(fn)](const Var&) -> Result { f(); return Result::SUCCESS; };
+                return [f = std::move(fn)](Node*) -> Result { f(); return Result::SUCCESS; };
         }
         else if constexpr (Traits::ArgCnt == 1) {
             using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
-            if constexpr (std::is_same_v<Arg0, Var>) {
+
+            if constexpr (std::is_same_v<Arg0, Node*>) {
+                // New primary: Result(Node*)
                 if constexpr (std::is_same_v<Ret, Result>)
                     return StepFn(std::move(fn));
                 else if constexpr (std::is_same_v<Ret, bool>)
-                    return [f = std::move(fn)](const Var& v) -> Result { return Result(f(v)); };
+                    return [f = std::move(fn)](Node* ctx) -> Result { return Result(f(ctx)); };
                 else
-                    return [f = std::move(fn)](const Var& v) -> Result { f(v); return Result::SUCCESS; };
-            } else {
+                    return [f = std::move(fn)](Node* ctx) -> Result { f(ctx); return Result::SUCCESS; };
+            }
+            else if constexpr (std::is_same_v<Arg0, Var>) {
+                // Legacy: Result(const Var&) - extract value from context node
                 if constexpr (std::is_same_v<Ret, Result>)
-                    return [f = std::move(fn)](const Var& v) -> Result { return f(v.as<Arg0>()); };
+                    return [f = std::move(fn)](Node* ctx) -> Result { return f(ctx ? ctx->get() : Var()); };
                 else if constexpr (std::is_same_v<Ret, bool>)
-                    return [f = std::move(fn)](const Var& v) -> Result { return Result(f(v.as<Arg0>())); };
+                    return [f = std::move(fn)](Node* ctx) -> Result { return Result(f(ctx ? ctx->get() : Var())); };
                 else
-                    return [f = std::move(fn)](const Var& v) -> Result { f(v.as<Arg0>()); return Result::SUCCESS; };
+                    return [f = std::move(fn)](Node* ctx) -> Result { f(ctx ? ctx->get() : Var()); return Result::SUCCESS; };
+            }
+            else {
+                if constexpr (std::is_same_v<Ret, Result>)
+                    return [f = std::move(fn)](Node* ctx) -> Result { return f((ctx ? ctx->get() : Var()).as<Arg0>()); };
+                else if constexpr (std::is_same_v<Ret, bool>)
+                    return [f = std::move(fn)](Node* ctx) -> Result { return Result(f((ctx ? ctx->get() : Var()).as<Arg0>())); };
+                else
+                    return [f = std::move(fn)](Node* ctx) -> Result { f((ctx ? ctx->get() : Var()).as<Arg0>()); return Result::SUCCESS; };
             }
         }
         else {
-            return [](const Var&) -> Result { return Result::FAIL; };
+            return [](Node*) -> Result { return Result::FAIL; };
         }
     }
 

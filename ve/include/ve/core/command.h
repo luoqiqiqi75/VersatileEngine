@@ -1,21 +1,23 @@
 // ----------------------------------------------------------------------------
-// command.h — ve::Command + GlobalStepFactory / GlobalCommandFactory + command::
+// command.h - ve::Command + command:: namespace
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
 //
-// Command  = named collection of Steps (blueprint/recipe).
+// Command  = named collection of Steps with optional declare node.
 //            Does not execute itself; call pipeline() to create a Pipeline.
 //
-// Factory  = GlobalStepFactory()   — stores Step functions by key
-//            GlobalCommandFactory() — stores Command creators by key
+// Declare  = Node at /ve/command/declare/{key}, defines parameter metadata.
+//            Context nodes shadow to declare for defaults + help.
 //
 // command:: = convenience namespace for end users:
-//             run()  → Pipeline*  (async)
-//             step() → Pipeline*  (single-step)
-//             call() → Result     (sync)
+//             reg()      register a command (single-step or multi-step)
+//             call()     sync execute
+//             run()      async execute -> Pipeline*
+//             context()  create context node (shadowed to declare)
+//             parseArgs  parse POSIX args into context node
 
 #pragma once
 
@@ -27,7 +29,7 @@ namespace ve {
 class Node;
 
 // ============================================================================
-// Command — step definition template (blueprint)
+// Command - step definition template (blueprint)
 // ============================================================================
 
 class VE_API Command
@@ -71,41 +73,64 @@ private:
 };
 
 // ============================================================================
-// Global factories
+// Global factory
 // ============================================================================
 
-using StepFactory    = Factory<Result(const Var&)>;
 using CommandFactory = Factory<Command*()>;
 
-VE_API StepFactory&    GlobalStepFactory();
 VE_API CommandFactory& GlobalCommandFactory();
 
 // ============================================================================
-// command:: — user convenience API
+// command:: - user convenience API
 // ============================================================================
 
 namespace command {
 
-// Execute a registered Command → create Pipeline, start, return Pipeline*.
-// Caller owns the returned Pipeline.
+// --- registration ---
+// Register a single-step command.
+// fn: Result(Node*) — new primary signature.
+// If a declare node exists at /ve/command/declare/{key}, it is auto-linked.
+VE_API void reg(const std::string& key, Step::StepFn fn,
+                const std::string& help = "");
+
+// Register via Step object (supports legacy signatures via Step's wrapFn).
+// Usage: command::reg("save", Step("save", [](const Var& v) -> Result { ... }));
+VE_API void reg(const std::string& key, const Step& step,
+                const std::string& help = "");
+
+// Register a multi-step command via builder callback.
+VE_API void build(const std::string& key,
+                  std::function<void(Command&)> builder,
+                  const std::string& help = "");
+
+// --- execution ---
+// Sync call: create context, execute, return Result.
+VE_API Result call(const std::string& key, Node* ctx);
+VE_API Result call(const std::string& key, const Var& input = {});  // backward compat
+
+// Async: create Pipeline, start, return Pipeline* (caller owns).
+VE_API Pipeline* run(const std::string& key, Node* ctx);
 VE_API Pipeline* run(const std::string& key, const Var& input = {});
-VE_API Pipeline* run(const std::string& key, Node* input);
 
-// Execute a single registered Step → wrap in a Pipeline, start.
-VE_API Pipeline* step(const std::string& key, const Var& input = {});
+// --- context ---
+// Create a context node shadowed to /ve/command/declare/{key}.
+// currentNode is stored as _current (the caller's working node).
+// Caller owns the returned Node and must delete it.
+VE_API Node* context(const std::string& key, Node* currentNode = nullptr);
 
-// Synchronous call: run to completion, return final Result.
-VE_API Result call(const std::string& key, const Var& input = {});
+// Get declare node (may be nullptr if no declare registered).
+VE_API Node* declareNode(const std::string& key);
 
-// Query
+// --- argument parsing ---
+// Parse POSIX-style args into context node using declare metadata.
+// Reads _pos, _short from declare (via shadow) to map args to named children.
+// Returns false on parse error.
+VE_API bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx = 0);
+
+// --- query ---
 VE_API bool        has(const std::string& key);
 VE_API Strings     keys();
 VE_API std::string help(const std::string& key);
-
-// Convenience registration: wraps GlobalStepFactory + stores help text.
-// Used by REPL-style steps (e.g. TCP Terminal builtins register via command::reg).
-VE_API void reg(const std::string& key, Step::StepFn fn,
-                const std::string& help = "");
 
 } // namespace command
 

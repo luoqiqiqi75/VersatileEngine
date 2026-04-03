@@ -47,11 +47,19 @@ public:
     Var(std::string&& v);
     Var(const Bytes& v);
     Var(Bytes&& v);
-    Var(void* ptr);
+    explicit Var(void* ptr);
     Var(const ListV& v);
     Var(ListV&& v);
     Var(const DictV& v);
     Var(DictV&& v);
+
+    // Block implicit pointer-to-bool conversion for non-char pointers
+    template<typename T, std::enable_if_t<
+        std::is_pointer_v<T>
+        && !std::is_same_v<T, const char*>
+        && !std::is_same_v<T, char*>
+        && !std::is_same_v<T, void*>, int> = 0>
+    Var(T) = delete;
 
     template<typename T>
     Var(const T& v) : _type(NONE), _storage{} {

@@ -105,7 +105,8 @@ void ServerModule::registerFileCommands()
     auto data_root = _data_root;
 
     // save <format> [path] [-f file] [--compact] [--ignore-private]
-    command::reg("save", [data_root](const Var& args) -> Result {
+    command::reg("save", [data_root](Node* ctx) -> Result {
+        auto args = ctx->get();
         if (!args.isList()) {
             return Result(Result::FAIL, Var("Args must be a list"));
         }
@@ -124,8 +125,12 @@ void ServerModule::registerFileCommands()
             return Result(Result::FAIL, Var(out));
         }
 
+        // Resolve target: use _current from context if available
+        Node* current = static_cast<Node*>(ctx->get("_current").toPointer());
+        Node* base = current ? current : node::root();
+
         std::string pathStr = f.pos(1);
-        Node* target = pathStr.empty() ? node::root() : node::root()->find(pathStr);
+        Node* target = pathStr.empty() ? base : base->find(pathStr);
         if (!target) {
             return Result(Result::FAIL, Var("Node not found: " + pathStr));
         }
@@ -200,7 +205,8 @@ void ServerModule::registerFileCommands()
     }, "save <format> [path] [-f file]");
 
     // load <format> [path] [-f file] [-i data]
-    command::reg("load", [data_root](const Var& args) -> Result {
+    command::reg("load", [data_root](Node* ctx) -> Result {
+        auto args = ctx->get();
         if (!args.isList()) {
             return Result(Result::FAIL, Var("Args must be a list"));
         }
@@ -216,8 +222,12 @@ void ServerModule::registerFileCommands()
             return Result(Result::FAIL, Var("Usage: load <format> [path] [-f file] [-i data]"));
         }
 
+        // Resolve target: use _current from context if available
+        Node* current = static_cast<Node*>(ctx->get("_current").toPointer());
+        Node* base = current ? current : node::root();
+
         std::string pathStr = f.pos(1);
-        Node* target = pathStr.empty() ? node::root() : node::root()->at(pathStr);
+        Node* target = pathStr.empty() ? base : base->at(pathStr);
 
         std::string file = f.get("file", 'f');
         std::string importContent = f.get("inline", 'i');

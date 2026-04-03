@@ -7,10 +7,10 @@
 // ----------------------------------------------------------------------------
 //
 // Pipeline runs a sequence of Steps with a state machine:
-//   IDLE → start → RUNNING → (all done) → DONE
-//                           → (error)    → ERRORED
-//                  → pause  → PAUSED → resume → RUNNING
-//                  → stop   → IDLE
+//   IDLE -> start -> RUNNING -> (all done) -> DONE
+//                             -> (error)    -> ERRORED
+//                  -> pause  -> PAUSED -> resume -> RUNNING
+//                  -> stop   -> IDLE
 //
 // Signals: CMD_DONE, CMD_ERROR (emitted on completion / failure)
 //
@@ -44,7 +44,8 @@ public:
     int stepCount() const;
 
     // --- execution state machine ---
-    Result start(const Var& input = {});
+    Result start(Node* ctx = nullptr);
+    Result start(const Var& input);  // backward compat
     void   pause();
     void   resume();
     void   stop();
@@ -53,7 +54,8 @@ public:
 
     // --- progress ---
     int currentStep() const;
-    const Var& input() const;
+    Node* context() const;
+    const Result& lastResult() const;
 
     // --- result callback (convenience alongside signals) ---
     using ResultHandler = std::function<void(const Result&)>;

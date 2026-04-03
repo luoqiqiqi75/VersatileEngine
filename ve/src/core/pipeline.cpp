@@ -1,6 +1,7 @@
 // pipeline.cpp — ve::Pipeline: state machine + Step chain execution
 
 #include "ve/core/pipeline.h"
+#include "ve/core/node.h"
 #include "ve/core/factory.h"
 
 namespace ve {
@@ -11,15 +12,23 @@ struct Pipeline::Private
     List<Step>      queue;       // runtime queue (copied from steps on start)
     State           state = IDLE;
     int             stepIndex = -1;
-    Var             input;
+    Node*           context = nullptr;
+    bool            ownsContext = false;
     Result          lastResult = Result::SUCCESS;
     ResultHandler   handler;
+
+    void clearContext()
+    {
+        if (ownsContext && context) { delete context; }
+        context = nullptr;
+        ownsContext = false;
+    }
 };
 
 Pipeline::Pipeline(const std::string& name)
     : Object(name) {}
 
-Pipeline::~Pipeline() = default;
+Pipeline::~Pipeline() { _p->clearContext(); }
 
 // --- build ---
 
@@ -45,10 +54,11 @@ int Pipeline::stepCount() const { return static_cast<int>(_p->steps.size()); }
 
 // --- execution state machine ---
 
-Result Pipeline::start(const Var& input)
+Result Pipeline::start(Node* ctx)
 {
+    _p->clearContext();
     _p->state = RUNNING;
-    _p->input = input;
+    _p->context = ctx;
     _p->stepIndex = 0;
     _p->lastResult = Result::SUCCESS;
 
@@ -71,6 +81,16 @@ Result Pipeline::start(const Var& input)
     return _p->lastResult;
 }
 
+Result Pipeline::start(const Var& input)
+{
+    // Backward compat: create a temp context node with input as value
+    auto* ctx = new Node("_input");
+    ctx->set(input);
+    auto r = start(ctx);
+    _p->ownsContext = true;  // Pipeline owns this temp node
+    return r;
+}
+
 void Pipeline::pause()
 {
     if (_p->state == RUNNING)
@@ -90,6 +110,7 @@ void Pipeline::stop()
     _p->queue.clear();
     _p->state = IDLE;
     _p->stepIndex = -1;
+    _p->clearContext();
 }
 
 void Pipeline::finish(const Result& result)
@@ -102,7 +123,8 @@ Pipeline::State Pipeline::state() const { return _p->state; }
 // --- progress ---
 
 int Pipeline::currentStep() const { return _p->stepIndex; }
-const Var& Pipeline::input() const { return _p->input; }
+Node* Pipeline::context() const { return _p->context; }
+const Result& Pipeline::lastResult() const { return _p->lastResult; }
 
 // --- result handler ---
 
@@ -132,27 +154,28 @@ void Pipeline::runNext()
         if (step.loop()) {
             auto alive = Alive::create();
             auto self = this;
-            auto input = _p->input;
+            auto ctx = _p->context;
             auto stepFn = step;
-            step.loop().post([self, alive, stepFn, input]() {
+            step.loop().post([self, alive, stepFn, ctx]() {
                 if (alive.dead()) return;
-                Result r = stepFn.exec(input);
+                Result r = stepFn.exec(ctx);
                 self->handleResult(r);
             });
             return;
         }
 
-        Result r = step.exec(_p->input);
-        if (r.isAccepted()) return;  // async — wait for external finish()
+        Result r = step.exec(_p->context);
+        if (r.isAccepted()) return;  // async - wait for external finish()
         if (r.isError()) {
             complete(ERRORED, CMD_ERROR, r);
             return;
         }
+        _p->lastResult = r;
         ++_p->stepIndex;
     }
 
     if (_p->state == RUNNING && _p->queue.empty()) {
-        complete(DONE, CMD_DONE, Result::SUCCESS);
+        complete(DONE, CMD_DONE, _p->lastResult);
     }
 }
 
@@ -165,6 +188,7 @@ void Pipeline::handleResult(const Result& result)
         return;
     }
 
+    _p->lastResult = result;
     ++_p->stepIndex;
 
     if (_p->queue.empty()) {
