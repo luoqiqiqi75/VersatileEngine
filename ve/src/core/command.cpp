@@ -1,12 +1,49 @@
-// command.cpp - ve::Command, global factory, and command:: namespace
+// command.cpp - ve::Command, Step, global factory, and command:: namespace
 
 #include "ve/core/command.h"
 #include "ve/core/node.h"
 #include "ve/core/log.h"
-
-#include <map>
+#include "ve/core/pipeline.h"
 
 namespace ve {
+
+// ============================================================================
+// Step
+// ============================================================================
+
+Step::Step(StepFn fn)
+    : _fn(std::move(fn)) {}
+
+Step::Step(const std::string& name, StepFn fn)
+    : _name(name), _fn(std::move(fn)) {}
+
+Step::Step(const std::string& name, StepFn fn, LoopRef loop)
+    : _name(name), _fn(std::move(fn)), _loop(std::move(loop)) {}
+
+Result Step::exec(Node* ctx) const
+{
+    if (!_fn) return Result(Result::FAIL, std::string("step has no function"));
+    return _fn(ctx);
+}
+
+Result Step::exec(const Var& input) const
+{
+    if (!_fn) return Result(Result::FAIL, std::string("step has no function"));
+    Node tmp("_input");
+    tmp.set(input);
+    return _fn(&tmp);
+}
+
+Step Step::clone() const
+{
+    Step copy;
+    copy._name = _name;
+    copy._fn = _fn;
+    copy._loop = _loop;
+    copy._inputDesc = _inputDesc;
+    copy._outputDesc = _outputDesc;
+    return copy;
+}
 
 // ============================================================================
 // Command

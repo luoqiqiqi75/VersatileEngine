@@ -19,8 +19,7 @@
 
 #pragma once
 
-#include "step.h"
-#include "factory.h"
+#include "command.h"
 
 namespace ve {
 
