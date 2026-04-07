@@ -60,7 +60,7 @@ VE_TEST(node_keyOf_not_child) {
 VE_TEST(node_childAt_name) {
     Node root("root");
     Node* a = root.append("a");
-    VE_ASSERT_EQ(root.atKey("a"), a);
+    VE_ASSERT_EQ(root.at("a"), a);
 }
 
 VE_TEST(node_childAt_name_index) {
@@ -69,11 +69,10 @@ VE_TEST(node_childAt_name_index) {
     Node* i1 = root.append("item");
     root.append("item");
 
-    VE_ASSERT_EQ(root.atKey("item"), root.child("item", 0));
-    VE_ASSERT_EQ(root.atKey("item#1"), i1);
-    VE_ASSERT_EQ(root.atKey("item#2"), root.child("item", 2));
-    // atKey (non-const) calls at() which creates nodes
-    VE_ASSERT(root.atKey("item#3") != nullptr);
+    VE_ASSERT_EQ(root.at("item"), root.child("item", 0));
+    VE_ASSERT_EQ(root.at("item#1"), i1);
+    VE_ASSERT_EQ(root.at("item#2"), root.child("item", 2));
+    VE_ASSERT(root.at("item#3") != nullptr);
     VE_ASSERT_EQ(root.count("item"), 4);  // item#3 was created
 }
 
@@ -82,16 +81,15 @@ VE_TEST(node_childAt_global) {
     Node* a = root.append("a");
     Node* b = root.append("b");
 
-    VE_ASSERT_EQ(root.atKey("#0"), a);
-    VE_ASSERT_EQ(root.atKey("#1"), b);
-    // atKey (non-const) calls at() which creates nodes
-    VE_ASSERT(root.atKey("#2") != nullptr);
+    VE_ASSERT_EQ(root.at("#0"), a);
+    VE_ASSERT_EQ(root.at("#1"), b);
+    VE_ASSERT(root.at("#2") != nullptr);
     VE_ASSERT_EQ(root.count(), 3);  // #2 was created
 }
 
 VE_TEST(node_childAt_empty) {
     Node root("root");
-    VE_ASSERT(root.atKey("") == nullptr);
+    VE_ASSERT(root.atKey("", true) == nullptr);
 }
 
 // ============================================================================

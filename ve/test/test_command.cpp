@@ -2,6 +2,7 @@
 
 #include "ve_test.h"
 #include <ve/core/command.h>
+#include <ve/core/pipeline.h>
 #include <ve/core/node.h>
 
 using namespace ve;
@@ -79,9 +80,9 @@ VE_TEST(step_metadata) {
 
 VE_TEST(pipeline_single_step) {
     Pipeline pipe("test");
-    pipe.add("step1", [](const Var& v) -> Result {
+    pipe.add(Step("step1", [](const Var& v) -> Result {
         return Result(Result::SUCCESS, Var(v.toInt() + 100));
-    });
+    }));
 
     VE_ASSERT_EQ(pipe.stepCount(), 1);
     VE_ASSERT_EQ(pipe.state(), Pipeline::IDLE);
@@ -93,9 +94,9 @@ VE_TEST(pipeline_single_step) {
 VE_TEST(pipeline_multi_step) {
     std::vector<int> order;
     Pipeline pipe("multi");
-    pipe.add("a", [&order](const Var&) -> Result { order.push_back(1); return Result::SUCCESS; });
-    pipe.add("b", [&order](const Var&) -> Result { order.push_back(2); return Result::SUCCESS; });
-    pipe.add("c", [&order](const Var&) -> Result { order.push_back(3); return Result::SUCCESS; });
+    pipe.add(Step("a", [&order](const Var&) -> Result { order.push_back(1); return Result::SUCCESS; }));
+    pipe.add(Step("b", [&order](const Var&) -> Result { order.push_back(2); return Result::SUCCESS; }));
+    pipe.add(Step("c", [&order](const Var&) -> Result { order.push_back(3); return Result::SUCCESS; }));
 
     pipe.start();
     VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
@@ -108,9 +109,9 @@ VE_TEST(pipeline_multi_step) {
 VE_TEST(pipeline_error_stops) {
     std::vector<int> order;
     Pipeline pipe("err");
-    pipe.add("ok",   [&order](const Var&) -> Result { order.push_back(1); return Result::SUCCESS; });
-    pipe.add("fail", [&order](const Var&) -> Result { order.push_back(2); return Result::FAIL; });
-    pipe.add("skip", [&order](const Var&) -> Result { order.push_back(3); return Result::SUCCESS; });
+    pipe.add(Step("ok",   [&order](const Var&) -> Result { order.push_back(1); return Result::SUCCESS; }));
+    pipe.add(Step("fail", [&order](const Var&) -> Result { order.push_back(2); return Result::FAIL; }));
+    pipe.add(Step("skip", [&order](const Var&) -> Result { order.push_back(3); return Result::SUCCESS; }));
 
     pipe.start();
     VE_ASSERT_EQ(pipe.state(), Pipeline::ERRORED);
@@ -120,12 +121,12 @@ VE_TEST(pipeline_error_stops) {
 VE_TEST(pipeline_pause_resume) {
     std::vector<int> order;
     Pipeline pipe("pausable");
-    pipe.add("a", [&](const Var&) -> Result {
+    pipe.add(Step("a", [&](const Var&) -> Result {
         order.push_back(1);
         pipe.pause();
         return Result::SUCCESS;
-    });
-    pipe.add("b", [&order](const Var&) -> Result { order.push_back(2); return Result::SUCCESS; });
+    }));
+    pipe.add(Step("b", [&order](const Var&) -> Result { order.push_back(2); return Result::SUCCESS; }));
 
     pipe.start();
     VE_ASSERT_EQ(pipe.state(), Pipeline::PAUSED);
@@ -139,12 +140,12 @@ VE_TEST(pipeline_pause_resume) {
 VE_TEST(pipeline_stop) {
     std::vector<int> order;
     Pipeline pipe("stoppable");
-    pipe.add("a", [&](const Var&) -> Result {
+    pipe.add(Step("a", [&](const Var&) -> Result {
         order.push_back(1);
         pipe.pause();
         return Result::SUCCESS;
-    });
-    pipe.add("b", [&order](const Var&) -> Result { order.push_back(2); return Result::SUCCESS; });
+    }));
+    pipe.add(Step("b", [&order](const Var&) -> Result { order.push_back(2); return Result::SUCCESS; }));
 
     pipe.start();
     VE_ASSERT_EQ(pipe.state(), Pipeline::PAUSED);
@@ -157,7 +158,7 @@ VE_TEST(pipeline_stop) {
 VE_TEST(pipeline_rerun) {
     int count = 0;
     Pipeline pipe("rerun");
-    pipe.add("inc", [&count](const Var&) -> Result { ++count; return Result::SUCCESS; });
+    pipe.add(Step("inc", [&count](const Var&) -> Result { ++count; return Result::SUCCESS; }));
 
     pipe.start();
     VE_ASSERT_EQ(count, 1);
@@ -171,7 +172,7 @@ VE_TEST(pipeline_rerun) {
 VE_TEST(pipeline_result_handler) {
     bool handler_called = false;
     Pipeline pipe("rh");
-    pipe.add("ok", [](const Var&) -> Result { return Result::SUCCESS; });
+    pipe.add(Step("ok", [](const Var&) -> Result { return Result::SUCCESS; }));
     pipe.setResultHandler([&handler_called](const Result& r) {
         handler_called = true;
         VE_ASSERT(r.isSuccess());
@@ -184,7 +185,7 @@ VE_TEST(pipeline_signal_done) {
     Object observer("obs");
     bool got_done = false;
     Pipeline pipe("sig");
-    pipe.add("ok", [](const Var&) -> Result { return Result::SUCCESS; });
+    pipe.add(Step("ok", [](const Var&) -> Result { return Result::SUCCESS; }));
     pipe.connect<Pipeline::CMD_DONE>(&observer, [&got_done](const Var&) {
         got_done = true;
     });
@@ -196,7 +197,7 @@ VE_TEST(pipeline_signal_error) {
     Object observer("obs");
     bool got_error = false;
     Pipeline pipe("sig_err");
-    pipe.add("fail", [](const Var&) -> Result { return Result::FAIL; });
+    pipe.add(Step("fail", [](const Var&) -> Result { return Result::FAIL; }));
     pipe.connect<Pipeline::CMD_ERROR>(&observer, [&got_error](const Var&) {
         got_error = true;
     });
@@ -207,7 +208,7 @@ VE_TEST(pipeline_signal_error) {
 VE_TEST(pipeline_clone) {
     int count = 0;
     Pipeline pipe("orig");
-    pipe.add("inc", [&count](const Var&) -> Result { ++count; return Result::SUCCESS; });
+    pipe.add(Step("inc", [&count](const Var&) -> Result { ++count; return Result::SUCCESS; }));
 
     Pipeline* copy = pipe.clone();
     VE_ASSERT_EQ(copy->name(), "orig");

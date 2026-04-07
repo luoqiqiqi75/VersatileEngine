@@ -726,7 +726,7 @@ VE_TEST(node_bench_childAt_key) {
     BENCH_BEGIN;
     for (int rep = 0; rep < 10000; ++rep) {
         for (int i = 0; i < 100; ++i)
-            (void)root.atKey("item#" + std::to_string(i));
+            (void)root.at("item#" + std::to_string(i));
     }
     BENCH_END("childAt(key) 100 dups x10k");
 }
