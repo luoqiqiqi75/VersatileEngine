@@ -4,7 +4,8 @@
 // Mirrors core/test/test_node_bench.cpp so that results can be compared
 // side-by-side with ve::Node benchmarks.
 //
-// Compare with ve/test/test_node_bench.cpp — tags: "copy:", "schema: json", "schema: bin".
+// Compare with ve/test/test_node_bench.cpp - tags: "copy:", "schema: json", "schema: bin",
+//   "insert 100k named/anon (signals default|watch root ON|silent)".
 // API differences vs ve::Node::copy / schema import:
 //   • copyFrom(context, other, auto_insert, auto_remove) has no auto_update; ve::Node::copy has
 //     auto_update as third flag (false=set always emit changed, true=update suppress unchanged signals).
@@ -41,6 +42,8 @@
 #include <QCoreApplication>
 #include <QString>
 #include <QDebug>
+#include <QtGlobal>
+#include <cstdio>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -53,6 +56,16 @@
 #include "imol/modulemanager.h"
 
 using namespace imol;
+
+// Windows GUI subsystem builds may not attach a console; qDebug() then skips stdout/stderr.
+// Force all Qt log lines to stderr so CI and scripted runs can capture "[bench]" timings.
+static void veBenchMessageToStderr(QtMsgType, const QMessageLogContext&, const QString& msg)
+{
+    const QByteArray b = msg.toLocal8Bit();
+    std::fwrite(b.constData(), 1, static_cast<size_t>(b.size()), stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+}
 
 // ============================================================================
 // Helpers
@@ -257,8 +270,36 @@ static void complex_ensure_erase()
 // Benchmarks
 // ============================================================================
 
-// Mirrors: node_bench_insert_100k_named
-static void bench_insert_100k_named()
+// Mirrors: node_bench_insert_100k_named_* (ve/test/test_node_bench.cpp)
+static void bench_insert_100k_named_default()
+{
+    ModuleObject root("root");
+    root.quiet(false);
+    root.watch(false);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "n" + QString::number(i));
+    BENCH_END("insert 100k named (signals default)");
+
+    ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+static void bench_insert_100k_named_watch_root()
+{
+    ModuleObject root("root");
+    root.quiet(false);
+    root.watch(true, false);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "n" + QString::number(i));
+    BENCH_END("insert 100k named (watch root ON)");
+
+    ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+static void bench_insert_100k_named_silent()
 {
     ModuleObject root("root");
     root.quiet(true);
@@ -266,14 +307,41 @@ static void bench_insert_100k_named()
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append(&root, "n" + QString::number(i));
-    BENCH_END("insert 100k named");
+    BENCH_END("insert 100k named (silent)");
 
     ASSERT_EQ(root.cmobjCount(), 100000);
 }
 
-// Mirrors: node_bench_insert_100k_anon
-// Note: ModuleObject generates UUID for each anonymous node (extra overhead)
-static void bench_insert_100k_anon()
+// Note: ModuleObject generates UUID for each anonymous node (extra overhead vs ve::Node)
+static void bench_insert_100k_anon_default()
+{
+    ModuleObject root("root");
+    root.quiet(false);
+    root.watch(false);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "");
+    BENCH_END("insert 100k anon (signals default)");
+
+    ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+static void bench_insert_100k_anon_watch_root()
+{
+    ModuleObject root("root");
+    root.quiet(false);
+    root.watch(true, false);
+
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append(&root, "");
+    BENCH_END("insert 100k anon (watch root ON)");
+
+    ASSERT_EQ(root.cmobjCount(), 100000);
+}
+
+static void bench_insert_100k_anon_silent()
 {
     ModuleObject root("root");
     root.quiet(true);
@@ -281,7 +349,7 @@ static void bench_insert_100k_anon()
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append(&root, "");
-    BENCH_END("insert 100k anon (UUID gen)");
+    BENCH_END("insert 100k anon (silent)");
 
     ASSERT_EQ(root.cmobjCount(), 100000);
 }
@@ -620,36 +688,8 @@ static void bench_childAt_key()
 }
 
 // ============================================================================
-// Benchmarks — Signal enabled (fair comparison with ve::Node)
+// Benchmarks — Signal enabled (insert 100k modes: see bench_insert_100k_* above)
 // ============================================================================
-
-// ve::Node always triggers signals on insert/remove/clear.
-// These benchmarks run with quiet(false) to match that behavior.
-
-static void bench_signal_insert_100k_named()
-{
-    ModuleObject root("root");
-    // quiet(false) — default, signals enabled
-
-    BENCH_BEGIN;
-    for (int i = 0; i < 100000; ++i)
-        root.append(&root, "n" + QString::number(i));
-    BENCH_END("signal ON: insert 100k named");
-
-    ASSERT_EQ(root.cmobjCount(), 100000);
-}
-
-static void bench_signal_insert_100k_anon()
-{
-    ModuleObject root("root");
-
-    BENCH_BEGIN;
-    for (int i = 0; i < 100000; ++i)
-        root.append(&root, "");
-    BENCH_END("signal ON: insert 100k anon (UUID)");
-
-    ASSERT_EQ(root.cmobjCount(), 100000);
-}
 
 static void bench_signal_clear_100k()
 {
@@ -905,6 +945,7 @@ static void bench_json_import_file()
 
 int main(int argc, char *argv[])
 {
+    qInstallMessageHandler(veBenchMessageToStderr);
     QCoreApplication app(argc, argv);
 
     // Accept optional JSON path: veBench [json_file]
@@ -915,7 +956,8 @@ int main(int argc, char *argv[])
     qDebug() << " Compare with ve::Node benchmarks (test_node_bench)";
     qDebug() << "==========================================================";
     qDebug() << "";
-    qDebug() << "Note: ModuleObject quiet(true) is used to skip signal emission.";
+    qDebug() << "Note: insert 100k named/anon runs three modes: (signals default), (watch root ON), (silent).";
+    qDebug() << "      Large-scale inserts (500k/1M) and most other benches use quiet(true) to measure structure.";
     qDebug() << "      Anonymous nodes use UUID generation (extra overhead vs ve::Node).";
     qDebug() << "      Path separator is '.' (ModuleObject) vs '/' (ve::Node).";
     if (!g_json_path.isEmpty())
@@ -938,8 +980,12 @@ int main(int argc, char *argv[])
     // --- Benchmarks ---
     qDebug() << "";
     qDebug() << "==================== Benchmarks ====================";
-    RUN_TEST(bench_insert_100k_named);
-    RUN_TEST(bench_insert_100k_anon);
+    RUN_TEST(bench_insert_100k_named_default);
+    RUN_TEST(bench_insert_100k_named_watch_root);
+    RUN_TEST(bench_insert_100k_named_silent);
+    RUN_TEST(bench_insert_100k_anon_default);
+    RUN_TEST(bench_insert_100k_anon_watch_root);
+    RUN_TEST(bench_insert_100k_anon_silent);
     RUN_TEST(bench_insert_500k_named);
     RUN_TEST(bench_insert_500k_anon);
     RUN_TEST(bench_insert_1m_named);
@@ -961,11 +1007,9 @@ int main(int argc, char *argv[])
     RUN_TEST(bench_childAt_key);
     RUN_TEST(bench_lifecycle_100k);
 
-    // --- Signal enabled (fair comparison) ---
+    // --- Signal enabled (clear / lifecycle; insert 100k modes are above) ---
     qDebug() << "";
     qDebug() << "==================== Signal enabled ====================";
-    RUN_TEST(bench_signal_insert_100k_named);
-    RUN_TEST(bench_signal_insert_100k_anon);
     RUN_TEST(bench_signal_clear_100k);
     RUN_TEST(bench_signal_lifecycle_100k);
 

@@ -250,22 +250,66 @@ VE_TEST(node_complex_ensure_erase) {
 // ============================================================================
 // Benchmarks — Small (baseline, same as before)
 // ============================================================================
+// Insert 100k: three signal modes (align with qt/example/bench veBench):
+//   (signals default) = silent off, watch off (framework defaults)
+//   (watch root ON)   = silent off, root.watch(true) only (no watchAll; imol uses watch(true,false))
+//   (silent)          = root.silent(true)  |  imol quiet(true)
 
-VE_TEST(node_bench_insert_100k_named) {
+VE_TEST(node_bench_insert_100k_named_default) {
     Node root("root");
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append("n" + std::to_string(i));
-    BENCH_END("insert 100k named");
+    BENCH_END("insert 100k named (signals default)");
     VE_ASSERT_EQ(root.count(), 100000);
 }
 
-VE_TEST(node_bench_insert_100k_anon) {
+VE_TEST(node_bench_insert_100k_named_watch_root) {
+    Node root("root");
+    root.watch(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("n" + std::to_string(i));
+    BENCH_END("insert 100k named (watch root ON)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_insert_100k_named_silent) {
+    Node root("root");
+    root.silent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("n" + std::to_string(i));
+    BENCH_END("insert 100k named (silent)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_insert_100k_anon_default) {
     Node root("root");
     BENCH_BEGIN;
     for (int i = 0; i < 100000; ++i)
         root.append("");
-    BENCH_END("insert 100k anon");
+    BENCH_END("insert 100k anon (signals default)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_insert_100k_anon_watch_root) {
+    Node root("root");
+    root.watch(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("");
+    BENCH_END("insert 100k anon (watch root ON)");
+    VE_ASSERT_EQ(root.count(), 100000);
+}
+
+VE_TEST(node_bench_insert_100k_anon_silent) {
+    Node root("root");
+    root.silent(true);
+    BENCH_BEGIN;
+    for (int i = 0; i < 100000; ++i)
+        root.append("");
+    BENCH_END("insert 100k anon (silent)");
     VE_ASSERT_EQ(root.count(), 100000);
 }
 
@@ -793,26 +837,7 @@ VE_TEST(node_bench_lifecycle_wide_tree) {
 // ============================================================================
 // Benchmarks — Silent mode (signal OFF, fair comparison with MObj quiet)
 // ============================================================================
-
-VE_TEST(node_bench_silent_insert_100k_named) {
-    Node root("root");
-    root.silent(true);
-    BENCH_BEGIN;
-    for (int i = 0; i < 100000; ++i)
-        root.append("n" + std::to_string(i));
-    BENCH_END("silent: insert 100k named");
-    VE_ASSERT_EQ(root.count(), 100000);
-}
-
-VE_TEST(node_bench_silent_insert_100k_anon) {
-    Node root("root");
-    root.silent(true);
-    BENCH_BEGIN;
-    for (int i = 0; i < 100000; ++i)
-        root.append("");
-    BENCH_END("silent: insert 100k anon");
-    VE_ASSERT_EQ(root.count(), 100000);
-}
+// Insert 100k with silent root: see node_bench_insert_100k_named_silent / _anon_silent above.
 
 VE_TEST(node_bench_silent_clear_100k) {
     Node root("root");
