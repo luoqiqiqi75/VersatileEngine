@@ -63,6 +63,31 @@ public:
     Var::ListV listNodes(const std::string&) const override { return {}; }
     Var::ListV listTopics(const std::string&) const override { return {}; }
     Var::DictV topicInfo(const std::string&) const override { return {}; }
+    Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
+    {
+        Var::DictV result;
+        result["ok"] = Var(false);
+        result["message"] = Var("Fast DDS placeholder backend does not implement topic subscribe");
+        result["name"] = Var(config.name);
+        result["topic"] = Var(config.topic);
+        return result;
+    }
+    Var::DictV unsubscribeTopic(const std::string& name) override
+    {
+        Var::DictV result;
+        result["ok"] = Var(false);
+        result["message"] = Var("Fast DDS placeholder backend does not implement topic unsubscribe");
+        result["name"] = Var(name);
+        return result;
+    }
+    Var::DictV publishTopic(const TopicPublishRequest& request) override
+    {
+        Var::DictV result;
+        result["ok"] = Var(false);
+        result["message"] = Var("Fast DDS placeholder backend does not implement topic publish");
+        result["topic"] = Var(request.topic);
+        return result;
+    }
     Var::ListV listServices(const std::string&) const override { return {}; }
     Var::DictV serviceInfo(const std::string&) const override { return {}; }
     Var::DictV listParams(const std::string&) const override { return {}; }

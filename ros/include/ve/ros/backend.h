@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ve/core/node.h"
+#include "ve/ros/topic.h"
 
 namespace ve::ros {
 
@@ -24,6 +25,9 @@ public:
     virtual Var::ListV listNodes(const std::string& filter = "") const = 0;
     virtual Var::ListV listTopics(const std::string& filter = "") const = 0;
     virtual Var::DictV topicInfo(const std::string& topic) const = 0;
+    virtual Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) = 0;
+    virtual Var::DictV unsubscribeTopic(const std::string& name) = 0;
+    virtual Var::DictV publishTopic(const TopicPublishRequest& request) = 0;
     virtual Var::ListV listServices(const std::string& filter = "") const = 0;
     virtual Var::DictV serviceInfo(const std::string& service) const = 0;
     virtual Var::DictV listParams(const std::string& node_name = "") const = 0;

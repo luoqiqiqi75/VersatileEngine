@@ -95,6 +95,31 @@ public:
         dict["topic"] = Var(topic);
         return dict;
     }
+    Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
+    {
+        Var::DictV dict;
+        dict["ok"] = Var(false);
+        dict["message"] = Var("Fast DDS generic subscribe is not implemented in v1");
+        dict["name"] = Var(config.name);
+        dict["topic"] = Var(config.topic);
+        return dict;
+    }
+    Var::DictV unsubscribeTopic(const std::string& name) override
+    {
+        Var::DictV dict;
+        dict["ok"] = Var(false);
+        dict["message"] = Var("Fast DDS generic unsubscribe is not implemented in v1");
+        dict["name"] = Var(name);
+        return dict;
+    }
+    Var::DictV publishTopic(const TopicPublishRequest& request) override
+    {
+        Var::DictV dict;
+        dict["ok"] = Var(false);
+        dict["message"] = Var("Fast DDS generic publish is not implemented in v1");
+        dict["topic"] = Var(request.topic);
+        return dict;
+    }
 
     Var::ListV listServices(const std::string&) const override { return {}; }
     Var::DictV serviceInfo(const std::string& service) const override

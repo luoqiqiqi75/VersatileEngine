@@ -22,6 +22,7 @@
 #pragma once
 
 #include "loop.h"
+#include "node.h"
 #include "var.h"
 #include "factory.h"
 
@@ -40,7 +41,6 @@ template<> inline bool parse(const Result& r, std::string& s)
 }
 }
 
-class Node;
 class Pipeline;
 
 // ============================================================================
@@ -128,11 +128,11 @@ private:
             }
             else {
                 if constexpr (std::is_same_v<Ret, Result>)
-                    return [f = std::move(fn)](Node* ctx) -> Result { return f((ctx ? ctx->get() : Var()).as<Arg0>()); };
+                    return [f = std::move(fn)](Node* ctx) -> Result { return f((ctx ? ctx->get() : Var()).template as<Arg0>()); };
                 else if constexpr (std::is_same_v<Ret, bool>)
-                    return [f = std::move(fn)](Node* ctx) -> Result { return Result(f((ctx ? ctx->get() : Var()).as<Arg0>())); };
+                    return [f = std::move(fn)](Node* ctx) -> Result { return Result(f((ctx ? ctx->get() : Var()).template as<Arg0>())); };
                 else
-                    return [f = std::move(fn)](Node* ctx) -> Result { f((ctx ? ctx->get() : Var()).as<Arg0>()); return Result::SUCCESS; };
+                    return [f = std::move(fn)](Node* ctx) -> Result { f((ctx ? ctx->get() : Var()).template as<Arg0>()); return Result::SUCCESS; };
             }
         }
         else {

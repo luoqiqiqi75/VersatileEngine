@@ -1,10 +1,14 @@
 #include "ve/ros/backend.h"
+#include "ve/core/schema.h"
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/parameter_client.hpp>
 
 #include <chrono>
+#include <cstring>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -171,6 +175,41 @@ bool containsFilter(const std::string& text, const std::string& filter)
     return filter.empty() || text.find(filter) != std::string::npos;
 }
 
+std::string encodeHex(const uint8_t* data, std::size_t size)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (std::size_t i = 0; i < size; ++i)
+        oss << std::setw(2) << static_cast<int>(data[i]);
+    return oss.str();
+}
+
+bool decodeHex(const std::string& text, std::vector<uint8_t>& bytes)
+{
+    if (text.size() % 2 != 0)
+        return false;
+
+    bytes.clear();
+    bytes.reserve(text.size() / 2);
+    for (std::size_t i = 0; i < text.size(); i += 2) {
+        unsigned int value = 0;
+        std::istringstream iss(text.substr(i, 2));
+        iss >> std::hex >> value;
+        if (iss.fail())
+            return false;
+        bytes.push_back(static_cast<uint8_t>(value));
+    }
+    return true;
+}
+
+std::string normalizedPayloadFormat(std::string format)
+{
+    std::transform(format.begin(), format.end(), format.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return format.empty() ? "cdr_hex" : format;
+}
+
 std::string runtimeNodeName()
 {
 #ifdef _WIN32
@@ -184,6 +223,14 @@ bool isInternalParamName(const std::string& name)
 {
     return name.rfind("qos_overrides./", 0) == 0
         || name == "start_type_description_service";
+}
+
+Var::DictV makeResult(bool ok, std::string message)
+{
+    Var::DictV result;
+    result["ok"] = Var(ok);
+    result["message"] = Var(std::move(message));
+    return result;
 }
 
 class RclcppBackend : public Backend
@@ -250,6 +297,8 @@ public:
     void stop() override
     {
         std::lock_guard<std::mutex> lock(mu_);
+        subscriptions_.clear();
+        publishers_.clear();
         node_.reset();
         if (context_) {
             context_->shutdown("ve.ros shutdown");
@@ -362,6 +411,121 @@ public:
         result["subscriber_count"] = Var(static_cast<int64_t>(node_->count_subscribers(topic)));
         result["publishers"] = Var(std::move(publishers));
         result["subscriptions"] = Var(std::move(subscriptions));
+        return result;
+    }
+
+    Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!node_)
+            return makeResult(false, "rclcpp backend is not started");
+        if (config.name.empty() || config.topic.empty())
+            return makeResult(false, "name/topic is required");
+
+        std::string topic_type = config.type.empty() ? inferTopicTypeLocked(config.topic) : config.type;
+        if (topic_type.empty())
+            return makeResult(false, "topic type is required");
+
+        const std::string payload_format = normalizedPayloadFormat(config.payload_format);
+        if (payload_format != "cdr_hex")
+            return makeResult(false, "only cdr_hex payload format is supported in v1");
+
+        auto target_path = config.target_node;
+        if (target_path.empty())
+            target_path = "ve/ros/runtime/messages/" + config.name;
+
+        auto subscription = node_->create_generic_subscription(
+            config.topic,
+            topic_type,
+            rclcpp::QoS(10),
+            [name = config.name,
+             topic = config.topic,
+             type = topic_type,
+             target_path,
+             this](std::shared_ptr<rclcpp::SerializedMessage> message) {
+                Node payload("payload");
+                payload.set("topic", Var(topic));
+                payload.set("type", Var(type));
+                payload.set("format", Var("cdr_hex"));
+                payload.set("size", Var(static_cast<int64_t>(message->size())));
+                const auto& raw = message->get_rcl_serialized_message();
+                payload.set("data", Var(encodeHex(raw.buffer, raw.buffer_length)));
+
+                if (!target_path.empty())
+                    ve::n(target_path)->copy(&payload, true, true, true);
+                ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx")->set(
+                    ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx")->getInt64(0) + 1);
+            });
+
+        SubscriptionInfo info;
+        info.config = config;
+        info.config.type = topic_type;
+        info.config.payload_format = payload_format;
+        info.target_node = target_path;
+        info.subscription = subscription;
+        subscriptions_.insertOne(config.name, std::move(info));
+
+        Var::DictV result = makeResult(true, "topic subscribed");
+        result["name"] = Var(config.name);
+        result["topic"] = Var(config.topic);
+        result["type"] = Var(topic_type);
+        result["target_node"] = Var(target_path);
+        result["payload_format"] = Var(payload_format);
+        return result;
+    }
+
+    Var::DictV unsubscribeTopic(const std::string& name) override
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!subscriptions_.has(name))
+            return makeResult(false, "subscription not found");
+        subscriptions_.erase(name);
+
+        Var::DictV result = makeResult(true, "topic unsubscribed");
+        result["name"] = Var(name);
+        return result;
+    }
+
+    Var::DictV publishTopic(const TopicPublishRequest& request) override
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!node_)
+            return makeResult(false, "rclcpp backend is not started");
+        if (request.topic.empty())
+            return makeResult(false, "topic is required");
+
+        std::string topic_type = request.type.empty() ? inferTopicTypeLocked(request.topic) : request.type;
+        if (topic_type.empty())
+            return makeResult(false, "topic type is required");
+
+        const std::string payload_format = normalizedPayloadFormat(request.payload_format);
+        if (payload_format != "cdr_hex")
+            return makeResult(false, "only cdr_hex payload format is supported in v1");
+
+        std::vector<uint8_t> bytes;
+        if (!decodeHex(request.payload, bytes))
+            return makeResult(false, "invalid cdr_hex payload");
+
+        auto publisher = publishers_.value(request.topic, rclcpp::GenericPublisher::SharedPtr{});
+        if (!publisher) {
+            publisher = node_->create_generic_publisher(request.topic, topic_type, rclcpp::QoS(10));
+            publishers_.insertOne(request.topic, publisher);
+        }
+
+        rclcpp::SerializedMessage message(bytes.size());
+        auto& raw = message.get_rcl_serialized_message();
+        if (bytes.size() > raw.buffer_capacity)
+            message.reserve(bytes.size());
+        std::memcpy(raw.buffer, bytes.data(), bytes.size());
+        raw.buffer_length = bytes.size();
+
+        publisher->publish(message);
+
+        Var::DictV result = makeResult(true, "topic publish ok");
+        result["topic"] = Var(request.topic);
+        result["type"] = Var(topic_type);
+        result["size"] = Var(static_cast<int64_t>(bytes.size()));
+        result["payload_format"] = Var(payload_format);
         return result;
     }
 
@@ -501,20 +665,27 @@ public:
     }
 
 private:
+    struct SubscriptionInfo {
+        TopicSubscriptionConfig config;
+        std::string target_node;
+        rclcpp::GenericSubscription::SharedPtr subscription;
+    };
+
+    std::string inferTopicTypeLocked(const std::string& topic_name) const
+    {
+        const auto topics = node_->get_topic_names_and_types();
+        auto it = topics.find(topic_name);
+        if (it == topics.end() || it->second.empty())
+            return "";
+        return it->second.front();
+    }
+
     std::shared_ptr<rclcpp::SyncParametersClient> makeParamClientLocked(const std::string& node_name) const
     {
         rclcpp::ExecutorOptions options;
         options.context = context_;
         auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>(options);
         return std::make_shared<rclcpp::SyncParametersClient>(executor, node_, node_name);
-    }
-
-    Var::DictV makeResult(bool ok, std::string message) const
-    {
-        Var::DictV result;
-        result["ok"] = Var(ok);
-        result["message"] = Var(std::move(message));
-        return result;
     }
 
     Var::DictV listParamsForNodeLocked(const std::string& node_name) const
@@ -550,6 +721,8 @@ private:
     std::string node_name_;
     std::string node_namespace_;
     std::string node_full_name_;
+    Dict<SubscriptionInfo> subscriptions_;
+    Dict<rclcpp::GenericPublisher::SharedPtr> publishers_;
 };
 
 const bool registered = []() {

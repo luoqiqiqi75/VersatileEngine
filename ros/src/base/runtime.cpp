@@ -124,6 +124,8 @@ bool refreshRuntime(Node* runtime_node, std::string& error)
     writeRuntimeTree(runtime_node, "topics", Var(current->listTopics()));
     writeRuntimeTree(runtime_node, "services", Var(current->listServices()));
     writeRuntimeTree(runtime_node, "params", Var(Var::DictV{}));
+    writeRuntimeTree(runtime_node, "subscriptions", Var(Var::DictV{}));
+    writeRuntimeTree(runtime_node, "publications", Var(Var::DictV{}));
     return true;
 }
 
