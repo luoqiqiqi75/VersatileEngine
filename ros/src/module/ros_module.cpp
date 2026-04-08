@@ -1,24 +1,89 @@
 // ros_module.cpp  - ve::RosModule (ve.ros)
 //
-// DDS adapter entry point:
-//   constructor: load default config, create Participant
-//   init():      scan DDS domain for discovered participants
-//   ready():     read final config, start CommandService
-//   deinit():    stop CommandService, destroy Participant
+// Official runtime entry point for ve/ros:
+//   - selects and starts a backend
+//   - exposes discovery + parameter commands
+//   - keeps runtime state under ve/ros/runtime/*
 
-#include "ve/core/module.h"
+#include "ve/core/command.h"
 #include "ve/core/log.h"
-#include "ve/ros/dds/participant.h"
-#include "ve/ros/service/command_service.h"
-
-#include <fastdds/dds/domain/DomainParticipant.hpp>
+#include "ve/core/module.h"
+#include "ve/core/schema.h"
+#include "ve/ros/command_service.h"
+#include "ve/ros/parser.h"
+#include "ve/ros/runtime.h"
+#include "ve/ros/service.h"
+#include "ve/ros/topic.h"
 
 namespace ve {
 
+namespace {
+
+Result okResult(const Var& content)
+{
+    return Result(Result::SUCCESS, content);
+}
+
+Result failResult(const std::string& message)
+{
+    return Result(Result::FAIL, Var(message));
+}
+
+void writeNodeTree(Node* root, const std::string& path, const Var& value)
+{
+    if (!root)
+        return;
+    auto* target = root->at(path);
+    target->clear();
+    target->set(Var());
+    schema::importAs<schema::VarS>(target, value);
+}
+
+std::string argString(const Var& args, const std::string& key = "", const std::string& def = "")
+{
+    if (args.isString())
+        return args.toString(def);
+    if (args.isList()) {
+        const auto& list = args.toList();
+        return list.empty() ? def : list.front().toString(def);
+    }
+    if (args.isDict() && !key.empty()) {
+        const auto& dict = args.toDict();
+        auto it = dict.find(key);
+        if (it != dict.end())
+            return it->second.toString(def);
+    }
+    return def;
+}
+
+std::string argStringAt(const Var& args,
+                        const std::string& key,
+                        int positional_index,
+                        const std::string& def = "")
+{
+    if (args.isDict() && !key.empty()) {
+        const auto& dict = args.toDict();
+        auto it = dict.find(key);
+        if (it != dict.end())
+            return it->second.toString(def);
+    }
+    if (args.isList()) {
+        const auto& list = args.toList();
+        if (positional_index >= 0 && positional_index < static_cast<int>(list.size()))
+            return list[static_cast<std::size_t>(positional_index)].toString(def);
+    }
+    if (positional_index == 0 && args.isString())
+        return args.toString(def);
+    return def;
+}
+
+} // namespace
+
 class RosModule : public Module
 {
-    dds::Participant* participant_ = nullptr;
-    std::unique_ptr<dds::CommandService> cmdService_;
+    std::unique_ptr<ros::CommandService> cmdService_;
+    std::string active_backend_;
+    bool commands_registered_ = false;
 
 public:
     explicit RosModule(const std::string& name) : Module(name)
@@ -26,37 +91,49 @@ public:
         node()->at("config/domain_id")->set(Var(0));
         node()->at("config/service_prefix")->set(Var("ve"));
         node()->at("config/command_service")->set(Var(true));
+        node()->at("config/backend")->set(Var(""));
+        node()->at("config/note")->set(Var(
+            "ve.ros exposes official ROS integration surfaces. "
+            "Project-specific adapters should live outside ve/ros core."));
 
-        int domain_id = node()->get("config/domain_id").toInt(0);
-
-        participant_ = &dds::Participant::instance(domain_id);
-
-        n("ve/ros/domain_id")->set(Var(domain_id));
-        n("ve/ros/state")->set(Var("created"));
-
-        veLogI << "[ve.ros] Participant created, domain_id=" << domain_id;
+        syncRuntimeState("created");
     }
 
 protected:
     void init() override
     {
-        scanDomain();
-        n("ve/ros/state")->set(Var("init"));
+        registerCommands();
+        syncRuntimeState("init");
     }
 
     void ready() override
     {
         bool auto_service = node()->get("config/command_service").toBool(true);
         std::string prefix = node()->get("config/service_prefix").toString("ve");
+        const std::string requested_backend = node()->get("config/backend").toString();
 
-        if (auto_service && participant_) {
-            cmdService_ = std::make_unique<dds::CommandService>(*participant_, prefix);
-            cmdService_->start();
-            veLogI << "[ve.ros] CommandService started (" << prefix << "/command, "
-                   << prefix << "/data_*)";
+        std::string error;
+        if (!ros::activateBackend(requested_backend, n("ve/ros/runtime"), error)) {
+            active_backend_.clear();
+            syncRuntimeState("error");
+            n("ve/ros/runtime/last_error")->set(Var(error));
+            veLogW << "[ve.ros] failed to activate backend: " << error;
+            return;
+        }
+        active_backend_ = ros::activeBackendKey();
+
+        if (auto_service) {
+            cmdService_ = std::make_unique<ros::CommandService>(prefix);
+            if (!cmdService_->start(&error)) {
+                veLogW << "[ve.ros] command service not started: " << error;
+                n("ve/ros/runtime/command_service_error")->set(Var(error));
+                cmdService_.reset();
+            } else {
+                veLogI << "[ve.ros] CommandService started via backend=" << cmdService_->backendKey();
+            }
         }
 
-        n("ve/ros/state")->set(Var("ready"));
+        syncRuntimeState("ready");
         veLogI << "[ve.ros] ready";
     }
 
@@ -67,57 +144,167 @@ protected:
             cmdService_.reset();
             veLogI << "[ve.ros] CommandService stopped";
         }
+        ros::deactivateBackend();
 
-        if (participant_) {
-            int did = participant_->domainId();
-            dds::Participant::destroy(did);
-            participant_ = nullptr;
-            veLogI << "[ve.ros] Participant destroyed (domain " << did << ")";
-        }
-
-        n("ve/ros/state")->set(Var("stopped"));
+        syncRuntimeState("stopped");
     }
 
 private:
-    void scanDomain()
+    void registerCommands()
     {
-        if (!participant_ || !participant_->raw()) return;
+        if (commands_registered_)
+            return;
+        commands_registered_ = true;
 
-        namespace fdds = eprosima::fastdds::dds;
-        auto* dp = participant_->raw();
+        command::reg("ros.info", [this](const Var&) -> Result {
+            return okResult(Var(buildInfo()));
+        });
 
-        std::vector<eprosima::fastrtps::rtps::InstanceHandle_t> handles;
-        dp->get_discovered_participants(handles);
-        auto participantNames = dp->get_participant_names();
+        command::reg("ros.backend.list", [](const Var&) -> Result {
+            return okResult(Var(ros::backendInfoList()));
+        });
 
-        auto* scanNode = n("ve/ros/scan");
-        scanNode->clear();
+        command::reg("ros.backend.info", [](const Var& args) -> Result {
+            std::string key_name = argString(args, "key");
+            if (key_name.empty()) {
+                if (auto current = ros::defaultBackend())
+                    key_name = current->key();
+            }
+            if (key_name.empty())
+                return failResult("no ros backend is registered");
+            if (auto current = ros::backend(key_name))
+                return okResult(Var(current->info()));
+            return failResult("ros backend not found: " + key_name);
+        });
 
-        veLogI << "[ve.ros] DDS domain scan: " << handles.size()
-               << " remote participant(s)";
+        command::reg("ros.parser.list", [](const Var&) -> Result {
+            return okResult(Var(ros::parserInfoList()));
+        });
 
-        int idx = 0;
-        for (auto& h : handles) {
-            (void)h;
+        command::reg("ros.env", [](const Var&) -> Result {
+            return okResult(Var(ros::envInfo()));
+        });
 
-            std::string pname = idx < static_cast<int>(participantNames.size())
-                ? participantNames[static_cast<std::size_t>(idx)]
-                : "";
-            if (pname.empty()) pname = "(anonymous)";
+        command::reg("ros.node.list", [this](const Var& args) -> Result {
+            const auto result = ros::listNodes(argString(args, "filter"));
+            writeNodeTree(n("ve/ros"), "runtime/nodes", Var(result));
+            return okResult(Var(result));
+        });
 
-            auto* pn = scanNode->append(std::to_string(idx));
-            pn->set("name", Var(pname));
+        command::reg("ros.topic.list", [this](const Var& args) -> Result {
+            const auto result = ros::listTopics(argString(args, "filter"));
+            writeNodeTree(n("ve/ros"), "runtime/topics", Var(result));
+            return okResult(Var(result));
+        });
 
-            veLogI << "[ve.ros]   [" << idx << "] " << pname;
-            ++idx;
-        }
+        command::reg("ros.topic.info", [](const Var& args) -> Result {
+            const auto topic_name = argStringAt(args, "name", 0);
+            if (topic_name.empty())
+                return failResult("topic name is required");
+            return okResult(Var(ros::topicInfo(topic_name)));
+        });
 
-        n("ve/ros/scan_count")->set(Var(static_cast<int>(handles.size())));
+        command::reg("ros.service.list", [this](const Var& args) -> Result {
+            const auto result = ros::listServices(argString(args, "filter"));
+            writeNodeTree(n("ve/ros"), "runtime/services", Var(result));
+            return okResult(Var(result));
+        });
 
-        if (participant_->publisher())
-            veLogI << "[ve.ros] local publisher active";
-        if (participant_->subscriber())
-            veLogI << "[ve.ros] local subscriber active";
+        command::reg("ros.service.info", [](const Var& args) -> Result {
+            const auto service_name = argStringAt(args, "name", 0);
+            if (service_name.empty())
+                return failResult("service name is required");
+            return okResult(Var(ros::serviceInfo(service_name)));
+        });
+
+        command::reg("ros.param.list", [this](const Var& args) -> Result {
+            const auto result = ros::listParams(argString(args, "node"));
+            writeNodeTree(n("ve/ros"), "runtime/params", Var(result));
+            return okResult(Var(result));
+        });
+
+        command::reg("ros.param.get", [](const Var& args) -> Result {
+            const auto node_name = argStringAt(args, "node", 0);
+            const auto param_name = argStringAt(args, "name", 1);
+            if (node_name.empty() || param_name.empty())
+                return failResult("node/name is required");
+            return okResult(Var(ros::getParam(node_name, param_name)));
+        });
+
+        command::reg("ros.param.set", [](const Var& args) -> Result {
+            if (args.isDict()) {
+                const auto& dict = args.toDict();
+                const auto node_it = dict.find("node");
+                const auto name_it = dict.find("name");
+                const auto value_it = dict.find("value");
+                if (node_it == dict.end() || name_it == dict.end() || value_it == dict.end())
+                    return failResult("node/name/value is required");
+                return okResult(Var(ros::setParam(node_it->second.toString(),
+                                                  name_it->second.toString(),
+                                                  value_it->second)));
+            }
+            if (args.isList() && args.toList().size() >= 3) {
+                const auto& list = args.toList();
+                return okResult(Var(ros::setParam(list[0].toString(),
+                                                  list[1].toString(),
+                                                  ros::yaml::decode(list[2].toString()))));
+            }
+            return failResult("args must be {node,name,value} or [node, name, yaml_value]");
+        });
+
+        command::reg("ros.runtime.refresh", [this](const Var&) -> Result {
+            std::string error;
+            if (!ros::refreshRuntime(n("ve/ros/runtime"), error))
+                return failResult(error);
+            return okResult(Var(ros::runtimeInfo()));
+        });
+    }
+
+    Var::DictV buildInfo() const
+    {
+        Var::DictV dict;
+        dict["state"] = Var(n("ve/ros/runtime/state")->getString());
+        dict["domain_id"] = Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0)));
+        dict["service_prefix"] = Var(node()->get("config/service_prefix").toString("ve"));
+        dict["command_service_enabled"] = Var(node()->get("config/command_service").toBool(true));
+        dict["command_service_running"] = Var(cmdService_ ? cmdService_->isRunning() : false);
+        dict["backend_requested"] = Var(node()->get("config/backend").toString());
+        dict["backend_active"] = Var(active_backend_);
+        if (auto current = ros::backend(active_backend_))
+            dict["backend_active_info"] = Var(current->info());
+        else
+            dict["backend_active_info"] = Var();
+        dict["backends"] = Var(ros::backendInfoList());
+        dict["parsers"] = Var(ros::parserInfoList());
+        dict["env"] = Var(ros::envInfo());
+        dict["nodes"] = n("ve/ros/runtime/nodes")->get();
+        dict["topics"] = n("ve/ros/runtime/topics")->get();
+        dict["services"] = n("ve/ros/runtime/services")->get();
+        dict["params"] = n("ve/ros/runtime/params")->get();
+        dict["note"] = Var(node()->get("config/note").toString());
+        return dict;
+    }
+
+    void syncRuntimeState(const std::string& state)
+    {
+        auto* root = n("ve/ros");
+        root->set("state", Var(state));
+        root->set("runtime/state", Var(state));
+        root->set("runtime/domain_id", Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0))));
+        root->set("runtime/service_prefix", Var(node()->get("config/service_prefix").toString("ve")));
+        root->set("runtime/command_service_enabled", Var(node()->get("config/command_service").toBool(true)));
+        root->set("runtime/command_service_running", Var(cmdService_ ? cmdService_->isRunning() : false));
+        root->set("runtime/backend_requested", Var(node()->get("config/backend").toString()));
+        root->set("runtime/backend_active", Var(active_backend_));
+        writeNodeTree(root, "runtime/backends", Var(ros::backendInfoList()));
+        writeNodeTree(root, "runtime/parsers", Var(ros::parserInfoList()));
+        writeNodeTree(root, "runtime/env", Var(ros::envInfo()));
+        root->at("runtime/nodes");
+        root->at("runtime/topics");
+        root->at("runtime/services");
+        root->at("runtime/params");
+        root->set("runtime/note", Var(
+            "ve/ros v1 exposes runtime discovery and parameter APIs through backend-neutral entry points."));
     }
 };
 
