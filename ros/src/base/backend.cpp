@@ -120,7 +120,6 @@ Var::DictV Backend::info() const
     dict["started"] = Var(isStarted());
     dict["priority"] = Var(static_cast<int64_t>(priority()));
     dict["summary"] = Var(summary());
-    dict["supports_command_service"] = Var(supportsCommandService());
     dict["details"] = Var(details());
     return dict;
 }

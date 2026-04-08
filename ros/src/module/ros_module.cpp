@@ -9,11 +9,11 @@
 #include "ve/core/log.h"
 #include "ve/core/module.h"
 #include "ve/core/schema.h"
-#include "ve/ros/command_service.h"
 #include "ve/ros/parser.h"
 #include "ve/ros/runtime.h"
 #include "ve/ros/service.h"
 #include "ve/ros/topic.h"
+#include "ve/ros/yaml_schema.h"
 
 namespace ve {
 
@@ -81,7 +81,6 @@ std::string argStringAt(const Var& args,
 
 class RosModule : public Module
 {
-    std::unique_ptr<ros::CommandService> cmdService_;
     std::string active_backend_;
     bool commands_registered_ = false;
 
@@ -90,7 +89,6 @@ public:
     {
         node()->at("config/domain_id")->set(Var(0));
         node()->at("config/service_prefix")->set(Var("ve"));
-        node()->at("config/command_service")->set(Var(true));
         node()->at("config/backend")->set(Var(""));
         node()->at("config/note")->set(Var(
             "ve.ros exposes official ROS integration surfaces. "
@@ -108,8 +106,6 @@ protected:
 
     void ready() override
     {
-        bool auto_service = node()->get("config/command_service").toBool(true);
-        std::string prefix = node()->get("config/service_prefix").toString("ve");
         const std::string requested_backend = node()->get("config/backend").toString();
 
         std::string error;
@@ -122,28 +118,12 @@ protected:
         }
         active_backend_ = ros::activeBackendKey();
 
-        if (auto_service) {
-            cmdService_ = std::make_unique<ros::CommandService>(prefix);
-            if (!cmdService_->start(&error)) {
-                veLogW << "[ve.ros] command service not started: " << error;
-                n("ve/ros/runtime/command_service_error")->set(Var(error));
-                cmdService_.reset();
-            } else {
-                veLogI << "[ve.ros] CommandService started via backend=" << cmdService_->backendKey();
-            }
-        }
-
         syncRuntimeState("ready");
         veLogI << "[ve.ros] ready";
     }
 
     void deinit() override
     {
-        if (cmdService_) {
-            cmdService_->stop();
-            cmdService_.reset();
-            veLogI << "[ve.ros] CommandService stopped";
-        }
         ros::deactivateBackend();
 
         syncRuntimeState("stopped");
@@ -306,8 +286,6 @@ private:
         dict["state"] = Var(n("ve/ros/runtime/state")->getString());
         dict["domain_id"] = Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0)));
         dict["service_prefix"] = Var(node()->get("config/service_prefix").toString("ve"));
-        dict["command_service_enabled"] = Var(node()->get("config/command_service").toBool(true));
-        dict["command_service_running"] = Var(cmdService_ ? cmdService_->isRunning() : false);
         dict["backend_requested"] = Var(node()->get("config/backend").toString());
         dict["backend_active"] = Var(active_backend_);
         if (auto current = ros::backend(active_backend_))
@@ -332,8 +310,6 @@ private:
         root->set("runtime/state", Var(state));
         root->set("runtime/domain_id", Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0))));
         root->set("runtime/service_prefix", Var(node()->get("config/service_prefix").toString("ve")));
-        root->set("runtime/command_service_enabled", Var(node()->get("config/command_service").toBool(true)));
-        root->set("runtime/command_service_running", Var(cmdService_ ? cmdService_->isRunning() : false));
         root->set("runtime/backend_requested", Var(node()->get("config/backend").toString()));
         root->set("runtime/backend_active", Var(active_backend_));
         writeNodeTree(root, "runtime/backends", Var(ros::backendInfoList()));

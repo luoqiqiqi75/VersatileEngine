@@ -74,12 +74,14 @@ target_include_directories(${VE_ROS_LIBRARY} PRIVATE
 )
 
 file(GLOB_RECURSE _ROS_PUBLIC_HEADERS include/ve/ros/*.h)
+file(GLOB _ROS_UMBRELLA_HEADERS include/veRos)
 file(GLOB_RECURSE _ROS_BASE_SRC src/base/*.cpp src/base/*.h)
 file(GLOB_RECURSE _ROS_MODULE_SRC src/module/*.cpp src/module/*.h)
 file(GLOB_RECURSE _ROS_SERVICE_SRC src/service/*.cpp src/service/*.h)
 
 target_sources(${VE_ROS_LIBRARY} PRIVATE
     ${_ROS_PUBLIC_HEADERS}
+    ${_ROS_UMBRELLA_HEADERS}
     ${_ROS_BASE_SRC}
     ${_ROS_MODULE_SRC}
     ${_ROS_SERVICE_SRC}

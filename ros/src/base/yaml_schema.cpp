@@ -1,10 +1,6 @@
-#include "ve/ros/command_service.h"
+#include "ve/ros/yaml_schema.h"
 
-#include "ve/ros/runtime.h"
-
-namespace ve::ros {
-
-namespace yaml {
+namespace ve::ros::yaml {
 
 YAML::Node varToYaml(const Var& v)
 {
@@ -106,9 +102,7 @@ Var decode(const std::string& yaml_str)
     }
 }
 
-} // namespace yaml
-
-} // namespace ve::ros
+} // namespace ve::ros::yaml
 
 namespace ve::schema {
 
@@ -161,69 +155,3 @@ const bool yaml_schema_registered = []() {
 } // namespace
 
 } // namespace ve::schema
-
-namespace ve::ros {
-
-struct CommandService::Private
-{
-    std::string prefix;
-    std::string backend_key;
-    bool running = false;
-};
-
-CommandService::CommandService(const std::string& prefix)
-    : _p(new Private)
-{
-    _p->prefix = prefix;
-}
-
-CommandService::~CommandService()
-{
-    stop();
-    delete _p;
-}
-
-bool CommandService::start(std::string* error)
-{
-    if (_p->running)
-        return true;
-
-    auto current = activeBackend();
-    if (!current) {
-        if (error)
-            *error = "no active ROS backend";
-        return false;
-    }
-
-    std::string local_error;
-    if (!current->startCommandService(_p->prefix, local_error)) {
-        if (error)
-            *error = local_error;
-        return false;
-    }
-
-    _p->running = true;
-    _p->backend_key = current->key();
-    return true;
-}
-
-void CommandService::stop()
-{
-    if (!_p->running)
-        return;
-    if (auto current = activeBackend())
-        current->stopCommandService();
-    _p->running = false;
-}
-
-bool CommandService::isRunning() const
-{
-    return _p->running;
-}
-
-std::string CommandService::backendKey() const
-{
-    return _p->backend_key;
-}
-
-} // namespace ve::ros

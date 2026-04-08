@@ -1,5 +1,4 @@
 #include "participant.h"
-#include "command_service_fastdds.h"
 
 #include "ve/ros/backend.h"
 
@@ -16,7 +15,7 @@ public:
     int priority() const override { return 80; }
     std::string summary() const override
     {
-        return "Native Fast DDS backend with participant lifecycle and command service support.";
+        return "Native Fast DDS backend with participant lifecycle.";
     }
 
     bool isAvailable() const override { return true; }
@@ -45,9 +44,6 @@ public:
 
     void stop() override
     {
-        if (command_service_)
-            command_service_->stop();
-        command_service_.reset();
         participant_.reset();
     }
 
@@ -155,29 +151,9 @@ public:
         return dict;
     }
 
-    bool supportsCommandService() const override { return true; }
-    bool startCommandService(const std::string& prefix, std::string& error) override
-    {
-        if (!participant_) {
-            error = "Fast DDS backend is not started";
-            return false;
-        }
-        if (!command_service_)
-            command_service_ = std::make_unique<FastDdsCommandService>(*participant_, prefix);
-        command_service_->start();
-        return true;
-    }
-
-    void stopCommandService() override
-    {
-        if (command_service_)
-            command_service_->stop();
-    }
-
 private:
     int domain_id_ = 0;
     std::unique_ptr<Participant> participant_;
-    std::unique_ptr<FastDdsCommandService> command_service_;
 };
 
 const bool registered = []() {
