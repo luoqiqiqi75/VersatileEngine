@@ -173,9 +173,11 @@ VE_API void build(const std::string& key,
                   std::function<void(Command&)> builder,
                   const std::string& help = "");
 
-/// ctx null: builds context via context(key); deleted after the sync call (Pipeline never owns caller-built ctx).
-VE_API Result call(const std::string& key, Node* ctx);
-VE_API Result call(const std::string& key, const Var& input = {});
+/// ctx null: builds context via context(key); deleted inside call when ctx was allocated by call.
+/// wait=false and asynchronous execution: pass non-null detachedOut; *detachedOut receives the Pipeline* (caller deletes pipeline and ctx after completion).
+/// The Var overload does not support detachedOut; use the Node* overload for fire-and-forget commands.
+VE_API Result call(const std::string& key, Node* ctx, bool wait = true, Pipeline** detachedOut = nullptr);
+VE_API Result call(const std::string& key, const Var& input = Var {}, bool wait = true);
 
 /// ctx null: Pipeline allocates context internally. Non-null: caller keeps ctx alive for the pipeline lifetime.
 VE_API Pipeline* run(const std::string& key, Node* ctx);

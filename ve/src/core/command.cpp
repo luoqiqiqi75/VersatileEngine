@@ -1,9 +1,14 @@
 // command.cpp - ve::Command, Step, global factory, and command:: namespace
 
 #include "ve/core/command.h"
+#include "ve/core/loop.h"
 #include "ve/core/node.h"
 #include "ve/core/log.h"
 #include "ve/core/pipeline.h"
+
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 
 namespace ve {
 
@@ -42,7 +47,11 @@ Pipeline* Command::pipeline() const
 {
     auto* pipe = new Pipeline(_name);
     for (const auto& s : _steps) {
-        pipe->add(s);
+        Step step = s;
+        if (!step.second) {
+            step.second = LoopRef::from(loop::main());
+        }
+        pipe->add(std::move(step));
     }
     return pipe;
 }
@@ -268,8 +277,12 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
 
 // --- execution ---
 
-Result call(const std::string& key, Node* ctx)
+Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut)
 {
+    if (detachedOut) {
+        *detachedOut = nullptr;
+    }
+
     if (!GlobalCommandFactory().has(key)) {
         return Result::fail(Var("not found: " + key));
     }
@@ -288,28 +301,66 @@ Result call(const std::string& key, Node* ctx)
         ctxToDelete = ctx;
     }
 
-    Result r = pipe->start(ctx);
-    Result lr = pipe->lastResult();
-    delete pipe;
-    if (ctxToDelete) {
-        delete ctxToDelete;
+    auto cleanup = [&]() {
+        delete pipe;
+        if (ctxToDelete) {
+            delete ctxToDelete;
+        }
+    };
+
+    if (wait) {
+        std::mutex              mtx;
+        std::condition_variable cv;
+        bool                    finished = false;
+
+        pipe->setResultHandler([&](const Result&) {
+            std::lock_guard<std::mutex> lk(mtx);
+            finished = true;
+            cv.notify_all();
+        });
+
+        Result r = pipe->start(ctx);
+
+        if (r.isAccepted()) {
+            std::unique_lock<std::mutex> lk(mtx);
+            while (!finished) {
+                cv.wait_for(lk, std::chrono::milliseconds(10));
+                const Pipeline::State st = pipe->state();
+                if (st == Pipeline::DONE || st == Pipeline::ERRORED || st == Pipeline::IDLE) {
+                    break;
+                }
+            }
+        }
+
+        Result lr = pipe->lastResult();
+        cleanup();
+        return lr;
     }
 
-    if (r.isAccepted()) {
-        return Result::fail(Var("sync call on async command: " + key));
+    Result r = pipe->start(ctx);
+
+    if (!r.isAccepted()) {
+        Result lr = pipe->lastResult();
+        cleanup();
+        return lr;
     }
-    return lr;
+
+    if (!detachedOut) {
+        pipe->stop();
+        cleanup();
+        return Result::fail(Var(
+            "command::call(..., wait=false) requires non-null Pipeline** when command is asynchronous"));
+    }
+
+    *detachedOut = pipe;
+    return Result::accept();
 }
 
-Result call(const std::string& key, const Var& input)
+Result call(const std::string& key, const Var& input, bool wait)
 {
-    if (!GlobalCommandFactory().has(key)) {
-        return Result::fail(Var("not found: " + key));
-    }
-
     Node* ctx = context(key);
     ctx->set(input);
-    Result r = call(key, ctx);
+    Result r = call(key, ctx, wait, nullptr);
     delete ctx;
     return r;
 }

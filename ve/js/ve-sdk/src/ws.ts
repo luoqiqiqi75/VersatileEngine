@@ -22,7 +22,8 @@ export class VeWsClient {
   private stateHandlers = new Set<WsStateHandler>();
 
   constructor(options: VeWsClientOptions = {}) {
-    this.url = options.url ?? 'ws://localhost:8081';
+    // Align with ve/program/ve.json ve/server/node/ws/config/port when using stock config.
+    this.url = options.url ?? 'ws://localhost:5081';
     this.reconnectInterval = options.reconnectInterval ?? 1000;
     this.maxReconnectInterval = options.maxReconnectInterval ?? 30000;
     this.currentInterval = this.reconnectInterval;

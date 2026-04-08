@@ -12,6 +12,7 @@
 namespace ve {
 
 class Node;
+class NodeSignalBridge;
 
 class VE_API NodeQObject : public QObject
 {
@@ -29,8 +30,7 @@ signals:
     void nodeChildRemoved(const QString& key, int overlap);
 
 private:
-    struct Bridge;
-    std::unique_ptr<Bridge> bridge_;
+    std::unique_ptr<NodeSignalBridge> bridge_;
     Node* node_ = nullptr;
 };
 

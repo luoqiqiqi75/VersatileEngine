@@ -1,3 +1,4 @@
+// [LEGACY] imol-based XService client - scheduled for removal after imol migration (Phase 6)
 #ifndef IMOL_XSERVICE_H
 #define IMOL_XSERVICE_H
 

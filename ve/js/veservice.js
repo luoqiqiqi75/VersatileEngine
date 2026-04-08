@@ -1,7 +1,8 @@
 "use strict";
 
 var VEService = function(wsUrl) {
-    this.address = wsUrl || "ws://127.0.0.1:8081";
+    // Default matches ve/program/ve.json ve/server/node/ws/config/port (5081). Override via argument or _ve_ws_url.
+    this.address = wsUrl || "ws://127.0.0.1:5081";
     this.transport = null;
 
     this.pendingRequests = new Map();
@@ -120,9 +121,24 @@ var VEService = function(wsUrl) {
 
             if (message.id !== undefined && this.pendingRequests.has(message.id)) {
                 var pending = this.pendingRequests.get(message.id);
+                // JSON command.run async: accepted (keep pending) then result
+                if (message.type === "accepted") {
+                    return;
+                }
+                if (message.type === "result") {
+                    this.pendingRequests.delete(message.id);
+                    if (message.ok) {
+                        pending.resolve(message.result !== undefined ? message.result : message);
+                    } else {
+                        pending.reject(new Error(message.msg || "command failed"));
+                    }
+                    return;
+                }
                 this.pendingRequests.delete(message.id);
                 if (message.type === "error") {
                     pending.reject(new Error(message.msg || "unknown error"));
+                } else if (message.type === "ok" && message.result !== undefined) {
+                    pending.resolve(message.result);
                 } else {
                     pending.resolve(message.value !== undefined ? message.value : message);
                 }
@@ -263,12 +279,16 @@ var VEService = function(wsUrl) {
         }
     };
 
-    this.command = function(name, args) {
+    // options.wait === true -> server blocks until command finishes (single {type:"ok"} frame).
+    // default wait false -> async on main loop: {type:"accepted"} then {type:"result", ok, result|msg}.
+    this.command = function(name, args, options) {
         if (!this.transport || !this.isConnected) {
             return Promise.reject(new Error("WebSocket not connected"));
         }
 
         var self = this;
+        var waitSync = options && options.wait === true;
+
         return new Promise(function(resolve, reject) {
             var id = self._generateRequestId();
 
@@ -311,13 +331,16 @@ var VEService = function(wsUrl) {
                 }
             }
 
+            var payload = {
+                cmd: "command.run",
+                name: name,
+                args: argsList,
+                id: id,
+                wait: waitSync
+            };
+
             try {
-                self.transport.send(JSON.stringify({
-                    cmd: "command.run",
-                    name: name,
-                    args: argsList,
-                    id: id
-                }));
+                self.transport.send(JSON.stringify(payload));
             } catch (error) {
                 self.pendingRequests.delete(id);
                 clearTimeout(timer);

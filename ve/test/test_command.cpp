@@ -6,7 +6,23 @@
 #include <ve/core/pipeline.h>
 #include <ve/core/node.h>
 
+#include <chrono>
+#include <thread>
+
 using namespace ve;
+
+static void wait_pipeline_terminal(Pipeline* p)
+{
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::seconds(2);
+    while (clock::now() < deadline) {
+        const auto s = p->state();
+        if (s != Pipeline::RUNNING && s != Pipeline::PAUSED) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
 
 // ============================================================================
 // Step tests
@@ -314,6 +330,7 @@ VE_TEST(command_ns_run) {
 
     Pipeline* pipe = command::run("_test_multi", Var());
     VE_ASSERT(pipe != nullptr);
+    wait_pipeline_terminal(pipe);
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 
@@ -328,6 +345,7 @@ VE_TEST(command_ns_step) {
 
     Pipeline* pipe = command::run("_test_inc", Var(10));
     VE_ASSERT(pipe != nullptr);
+    wait_pipeline_terminal(pipe);
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 

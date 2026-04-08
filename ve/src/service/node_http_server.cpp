@@ -3,6 +3,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
+#include "ve/core/pipeline.h"
 #include "ve/core/schema.h"
 #include "ve/core/log.h"
 
@@ -20,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace ve {
@@ -417,7 +419,29 @@ bool NodeHttpServer::start()
                 cmdBody = schema::exportAs<schema::VarS>(&reqNode);
             }
 
-            auto result = command::call(cmdKey, cmdBody);
+            const bool waitCmd = reqNode.get("wait").toBool(false);
+
+            Node*     cmdCtx = command::context(cmdKey);
+            cmdCtx->set(cmdBody);
+            Pipeline* detached = nullptr;
+            Result    result   = command::call(cmdKey, cmdCtx, waitCmd, waitCmd ? nullptr : &detached);
+
+            if (detached) {
+                detached->setResultHandler([cmdCtx, detached](const Result&) {
+                    delete detached;
+                    delete cmdCtx;
+                });
+                Node r("r");
+                r.set("ok", true);
+                r.set("accepted", true);
+                if (!reqNode.get("id").isNull()) {
+                    r.at("id")->set(reqNode.get("id"));
+                }
+                rep.fill_json(J(r), http::status::accepted);
+                return;
+            }
+
+            delete cmdCtx;
 
             Node r("r");
             if (result.isSuccess() || result.isAccepted()) {

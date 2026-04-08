@@ -3,15 +3,19 @@
 // Dual-mode protocol:
 //   1. MozHelper text: {channel}:{fn}:{info}:{key}:{param}
 //      Functions: g (get), s (set), t (trigger), w (watch), c (command)
-//   2. JSON request objects: {"cmd":"get","path":"...","value":"...","id":"..."}
+//   2. JSON: {"cmd":"get",...} etc. Auto-detect: first byte '{' -> JSON.
 //
-// Auto-detection: message starting with '{' -> JSON, otherwise -> text protocol.
+// JSON command.run:
+//   wait true  -> one frame {type:"ok"|"error", id?, result|msg} (blocks until pipeline done).
+//   wait false -> default; async: frame {type:"accepted", id?} then {type:"result", id?, ok, result|msg}.
+//   Sync completion (no main-loop defer): single {type:"ok",...} as with wait true.
 
 #include "ve/service/node_service.h"
 #include "subscribe_service.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/command.h"
+#include "ve/core/pipeline.h"
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
@@ -191,30 +195,180 @@ struct NodeWsServer::Private
     }
 
     template<typename SP>
-    void textCommand(SP& sp, uint64_t /*sid*/, const MozLine& m) {
+    void textCommand(SP& sp, uint64_t sid, const MozLine& m) {
         Var paramVar = m.param.empty() ? Var() : impl::json::parse(m.param);
 
         int64_t cmdId = 0;
         Var body;
+        bool waitCmd = false;
         if (paramVar.isDict()) {
             auto& dict = paramVar.toDict();
-            if (dict.has("id"))   cmdId = dict["id"].toInt64();
-            if (dict.has("body")) body  = dict["body"];
+            if (dict.has("id")) {
+                cmdId = dict["id"].toInt64();
+            }
+            if (dict.has("body")) {
+                body = dict["body"];
+            }
+            if (dict.has("wait")) {
+                waitCmd = dict["wait"].toBool();
+            }
         }
 
         if (!command::has(m.key)) {
-            Node r("r"); r.set("id", cmdId); r.set("error", "Unknown command: " + m.key);
+            Node r("r");
+            r.set("id", cmdId);
+            r.set("error", "Unknown command: " + m.key);
             sp->async_send(J(r));
             return;
         }
 
-        auto result = command::call(m.key, body);
+        if (waitCmd) {
+            auto result = command::call(m.key, body, true);
+            Node r("r");
+            r.set("id", cmdId);
+            if (result.isSuccess() || result.isAccepted()) {
+                r.at("c")->at(m.key)->set(result.content());
+            } else {
+                r.set("error", Var(result).toString());
+            }
+            sp->async_send(J(r));
+            return;
+        }
+
+        Node* ctx = command::context(m.key);
+        ctx->set(body);
+        Pipeline* detached = nullptr;
+        auto        result = command::call(m.key, ctx, false, &detached);
+        if (detached) {
+            std::string cmdKey = m.key;
+            detached->setResultHandler([sp, cmdId, cmdKey, ctx, detached](const Result& res) {
+                Node r2("r");
+                r2.set("id", cmdId);
+                r2.set("type", "result");
+                if (res.isSuccess() || res.isAccepted()) {
+                    r2.at("c")->at(cmdKey)->set(res.content());
+                } else {
+                    r2.set("error", Var(res).toString());
+                }
+                sp->async_send(J(r2));
+                delete detached;
+                delete ctx;
+            });
+
+            Node r("r");
+            r.set("id", cmdId);
+            r.set("type", "accepted");
+            r.set("accepted", true);
+            sp->async_send(J(r));
+            return;
+        }
+
+        delete ctx;
         Node r("r");
         r.set("id", cmdId);
         if (result.isSuccess() || result.isAccepted()) {
             r.at("c")->at(m.key)->set(result.content());
         } else {
             r.set("error", Var(result).toString());
+        }
+        sp->async_send(J(r));
+    }
+
+    /// JSON command.run with optional wait (default false = async two-frame when deferred to main loop).
+    template<typename SP>
+    void jsonCommandRun(SP& sp, Node& req)
+    {
+        std::string name = req.get("name").toString();
+        Var         idVar = req.get("id");
+
+        auto sendErr = [&](const std::string& msg) {
+            Node r("r");
+            r.set("type", "error");
+            r.set("msg", msg);
+            if (!idVar.isNull()) {
+                r.at("id")->set(idVar);
+            }
+            sp->async_send(J(r));
+        };
+
+        if (name.empty()) {
+            sendErr("command name required");
+            return;
+        }
+        if (!command::has(name)) {
+            sendErr("unknown command: " + name);
+            return;
+        }
+
+        Var args;
+        if (req.find("args")) {
+            args = schema::exportAs<schema::VarS>(req.find("args"));
+        }
+
+        const bool waitCmd = req.get("wait").toBool(false);
+
+        if (waitCmd) {
+            Result       result = command::call(name, args, true);
+            Node         r("r");
+            if (!idVar.isNull()) {
+                r.at("id")->set(idVar);
+            }
+            if (result.isSuccess() || result.isAccepted()) {
+                r.set("type", "ok");
+                r.at("result")->set(result.content());
+            } else {
+                r.set("type", "error");
+                r.set("msg", result.content().toString());
+            }
+            sp->async_send(J(r));
+            return;
+        }
+
+        Node*     ctx = command::context(name);
+        ctx->set(args);
+        Pipeline* detached = nullptr;
+        Result    r0       = command::call(name, ctx, false, &detached);
+
+        if (detached) {
+            detached->setResultHandler([sp, ctx, detached, idVar](const Result& res) {
+                Node out("r");
+                out.set("type", "result");
+                if (!idVar.isNull()) {
+                    out.at("id")->set(idVar);
+                }
+                if (res.isSuccess() || res.isAccepted()) {
+                    out.set("ok", true);
+                    out.at("result")->set(res.content());
+                } else {
+                    out.set("ok", false);
+                    out.set("msg", res.content().toString());
+                }
+                sp->async_send(J(out));
+                delete detached;
+                delete ctx;
+            });
+
+            Node acc("r");
+            acc.set("type", "accepted");
+            acc.set("accepted", true);
+            if (!idVar.isNull()) {
+                acc.at("id")->set(idVar);
+            }
+            sp->async_send(J(acc));
+            return;
+        }
+
+        delete ctx;
+        Node r("r");
+        if (!idVar.isNull()) {
+            r.at("id")->set(idVar);
+        }
+        if (r0.isSuccess() || r0.isAccepted()) {
+            r.set("type", "ok");
+            r.at("result")->set(r0.content());
+        } else {
+            r.set("type", "error");
+            r.set("msg", r0.content().toString());
         }
         sp->async_send(J(r));
     }
@@ -246,8 +400,11 @@ struct NodeWsServer::Private
             if (!req.get("id").isNull()) r.at("id")->set(req.get("id"));
             sp->async_send(J(r));
         }
+        else if (cmd == "command.run") {
+            jsonCommandRun(sp, req);
+        }
         else {
-            // Reuse shared handler
+            // Reuse shared handler (get/set/list/...; not command.run — handled above for WS)
             std::string response = handleNodeJsonCmd(root, &req);
             sp->async_send(std::move(response));
         }

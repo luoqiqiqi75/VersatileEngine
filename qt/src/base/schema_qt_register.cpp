@@ -1,31 +1,51 @@
-// schema_qt_register.cpp — Register Qt schema formats for terminal
-#include "ve/core/schema.h"
-#include "ve/core/node.h"
+// schema_qt_register.cpp — Register Qt schema formats for terminal commands
 #include "ve/qt/schema_qt.h"
+
 #include <QJsonDocument>
-#include <QByteArray>
 
-namespace ve::qt {
+namespace ve::schema {
+namespace {
 
-static void registerQtSchemaFormats()
-{
-    // Register qjson format
-    schema::registerSchemaFormat("qjson", {
+const bool qt_schema_formats_registered = []() {
+    // "qjson" — QJsonS via QJsonDocument string serialization (for runtime string-based registry)
+    registerSchemaFormat("qjson", {
         [](const Node* node) -> std::string {
-            auto doc = nodeToQJsonDoc(node);
-            auto ba = doc.toJson(QJsonDocument::Indented);
-            return std::string(ba.constData(), ba.size());
+            const QJsonValue jv = exportAs<QJsonS>(node);
+            QJsonDocument doc;
+            if (jv.isObject()) {
+                doc = QJsonDocument(jv.toObject());
+            } else if (jv.isArray()) {
+                doc = QJsonDocument(jv.toArray());
+            }
+            const QByteArray ba = doc.toJson(QJsonDocument::Indented);
+            return std::string(ba.constData(), static_cast<std::size_t>(ba.size()));
         },
         [](Node* node, const std::string& data) -> bool {
-            auto doc = QJsonDocument::fromJson(QByteArray::fromStdString(data));
-            return importQJsonInto(node, doc);
+            const QJsonDocument doc = QJsonDocument::fromJson(
+                QByteArray::fromRawData(data.data(), static_cast<int>(data.size())));
+            QJsonValue jv;
+            if (doc.isObject()) {
+                jv = doc.object();
+            } else if (doc.isArray()) {
+                jv = doc.array();
+            }
+            return importAs<QJsonS>(node, jv);
         }
     });
-}
 
-// Auto-register on module load
-static struct QtSchemaFormatRegistrar {
-    QtSchemaFormatRegistrar() { registerQtSchemaFormats(); }
-} _qt_schema_format_registrar;
+    // "qvariant" — QVariantS via JSON string for runtime registry
+    registerSchemaFormat("qvariant", {
+        [](const Node* node) -> std::string {
+            // Export as JSON string (QVariant has no canonical string form)
+            return exportAs<JsonS>(node);
+        },
+        [](Node* node, const std::string& data) -> bool {
+            return importAs<JsonS>(node, data);
+        }
+    });
 
-} // namespace ve::qt
+    return true;
+}();
+
+} // namespace
+} // namespace ve::schema

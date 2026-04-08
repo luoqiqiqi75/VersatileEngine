@@ -1,4 +1,5 @@
-﻿#include "xservice_client.h"
+﻿// [LEGACY] imol-based XService client - scheduled for removal after imol migration (Phase 6)
+#include "xservice_client.h"
 
 #include "imol/networkmanager.h"
 #include "imol/commandmanager.h"
