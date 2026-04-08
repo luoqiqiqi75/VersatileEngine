@@ -379,8 +379,8 @@ bool DynamicTypesupportBridge::initialize(const std::string& type, std::string& 
     }
 
     try {
-        p_->message_ts_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_cpp");
-        p_->message_ts = rclcpp::get_message_typesupport_handle(type, "rosidl_typesupport_cpp", *p_->message_ts_lib);
+        p_->message_ts_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_c");
+        p_->message_ts = rclcpp::get_message_typesupport_handle(type, "rosidl_typesupport_c", *p_->message_ts_lib);
 
         p_->introspection_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_introspection_c");
         p_->introspection_ts = rclcpp::get_message_typesupport_handle(
