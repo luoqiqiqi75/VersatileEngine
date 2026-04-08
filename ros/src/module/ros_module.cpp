@@ -21,12 +21,12 @@ namespace {
 
 Result okResult(const Var& content)
 {
-    return Result(Result::SUCCESS, content);
+    return Result::ok(content);
 }
 
 Result failResult(const std::string& message)
 {
-    return Result(Result::FAIL, Var(message));
+    return Result::fail(Var(message));
 }
 
 void writeNodeTree(Node* root, const std::string& path, const Var& value)
@@ -76,6 +76,8 @@ std::string argStringAt(const Var& args,
         return args.toString(def);
     return def;
 }
+
+inline Var ctxGet(Node* ctx) { return ctx ? ctx->get() : Var(); }
 
 } // namespace
 
@@ -136,15 +138,16 @@ private:
             return;
         commands_registered_ = true;
 
-        command::reg("ros.info", Step("ros.info", [this](const Var&) -> Result {
+        command::reg("ros.info", [this]() -> Result {
             return okResult(Var(buildInfo()));
-        }));
+        });
 
-        command::reg("ros.backend.list", Step("ros.backend.list", [](const Var&) -> Result {
+        command::reg("ros.backend.list", []() -> Result {
             return okResult(Var(ros::backendInfoList()));
-        }));
+        });
 
-        command::reg("ros.backend.info", Step("ros.backend.info", [](const Var& args) -> Result {
+        command::reg("ros.backend.info", [](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             std::string key_name = argString(args, "key");
             if (key_name.empty()) {
                 if (auto current = ros::defaultBackend())
@@ -155,36 +158,40 @@ private:
             if (auto current = ros::backend(key_name))
                 return okResult(Var(current->info()));
             return failResult("ros backend not found: " + key_name);
-        }));
+        });
 
-        command::reg("ros.parser.list", Step("ros.parser.list", [](const Var&) -> Result {
+        command::reg("ros.parser.list", []() -> Result {
             return okResult(Var(ros::parserInfoList()));
-        }));
+        });
 
-        command::reg("ros.env", Step("ros.env", [](const Var&) -> Result {
+        command::reg("ros.env", []() -> Result {
             return okResult(Var(ros::envInfo()));
-        }));
+        });
 
-        command::reg("ros.node.list", Step("ros.node.list", [this](const Var& args) -> Result {
+        command::reg("ros.node.list", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto result = ros::listNodes(argString(args, "filter"));
             writeNodeTree(n("ve/ros"), "runtime/nodes", Var(result));
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.topic.list", Step("ros.topic.list", [this](const Var& args) -> Result {
+        command::reg("ros.topic.list", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto result = ros::listTopics(argString(args, "filter"));
             writeNodeTree(n("ve/ros"), "runtime/topics", Var(result));
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.topic.info", Step("ros.topic.info", [](const Var& args) -> Result {
+        command::reg("ros.topic.info", [](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto topic_name = argStringAt(args, "name", 0);
             if (topic_name.empty())
                 return failResult("topic name is required");
             return okResult(Var(ros::topicInfo(topic_name)));
-        }));
+        });
 
-        command::reg("ros.topic.subscribe", Step("ros.topic.subscribe", [this](const Var& args) -> Result {
+        command::reg("ros.topic.subscribe", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             ros::TopicSubscriptionConfig config;
             config.name = argStringAt(args, "name", 0);
             config.topic = argStringAt(args, "topic", 1);
@@ -198,9 +205,10 @@ private:
             if (result.value("ok").toBool(false))
                 writeNodeTree(n("ve/ros"), "runtime/subscriptions/" + config.name, Var(result));
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.topic.unsubscribe", Step("ros.topic.unsubscribe", [this](const Var& args) -> Result {
+        command::reg("ros.topic.unsubscribe", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto name = argStringAt(args, "name", 0);
             if (name.empty())
                 return failResult("name is required");
@@ -208,9 +216,10 @@ private:
             if (result.value("ok").toBool(false))
                 n("ve/ros/runtime")->erase("subscriptions/" + name);
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.topic.publish", Step("ros.topic.publish", [this](const Var& args) -> Result {
+        command::reg("ros.topic.publish", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             ros::TopicPublishRequest request;
             request.topic = argStringAt(args, "topic", 0);
             request.type = argStringAt(args, "type", 1);
@@ -222,36 +231,41 @@ private:
             const auto result = ros::publishTopic(request);
             writeNodeTree(n("ve/ros"), "runtime/publications/last", Var(result));
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.service.list", Step("ros.service.list", [this](const Var& args) -> Result {
+        command::reg("ros.service.list", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto result = ros::listServices(argString(args, "filter"));
             writeNodeTree(n("ve/ros"), "runtime/services", Var(result));
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.service.info", Step("ros.service.info", [](const Var& args) -> Result {
+        command::reg("ros.service.info", [](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto service_name = argStringAt(args, "name", 0);
             if (service_name.empty())
                 return failResult("service name is required");
             return okResult(Var(ros::serviceInfo(service_name)));
-        }));
+        });
 
-        command::reg("ros.param.list", Step("ros.param.list", [this](const Var& args) -> Result {
+        command::reg("ros.param.list", [this](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto result = ros::listParams(argString(args, "node"));
             writeNodeTree(n("ve/ros"), "runtime/params", Var(result));
             return okResult(Var(result));
-        }));
+        });
 
-        command::reg("ros.param.get", Step("ros.param.get", [](const Var& args) -> Result {
+        command::reg("ros.param.get", [](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             const auto node_name = argStringAt(args, "node", 0);
             const auto param_name = argStringAt(args, "name", 1);
             if (node_name.empty() || param_name.empty())
                 return failResult("node/name is required");
             return okResult(Var(ros::getParam(node_name, param_name)));
-        }));
+        });
 
-        command::reg("ros.param.set", Step("ros.param.set", [](const Var& args) -> Result {
+        command::reg("ros.param.set", [](Node* ctx) -> Result {
+            const Var args = ctxGet(ctx);
             if (args.isDict()) {
                 const auto& dict = args.toDict();
                 const auto node_it = dict.find("node");
@@ -270,14 +284,14 @@ private:
                                                   ros::yaml::decode(list[2].toString()))));
             }
             return failResult("args must be {node,name,value} or [node, name, yaml_value]");
-        }));
+        });
 
-        command::reg("ros.runtime.refresh", Step("ros.runtime.refresh", [this](const Var&) -> Result {
+        command::reg("ros.runtime.refresh", [this]() -> Result {
             std::string error;
             if (!ros::refreshRuntime(n("ve/ros/runtime"), error))
                 return failResult(error);
             return okResult(Var(ros::runtimeInfo()));
-        }));
+        });
     }
 
     Var::DictV buildInfo() const

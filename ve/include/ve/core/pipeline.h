@@ -14,7 +14,7 @@
 //
 // Signals: CMD_DONE, CMD_ERROR (emitted on completion / failure)
 //
-// Each start() deep-copies the Step list for safe re-execution.
+// Each start() copies the Step list into a runtime queue for safe re-execution.
 // Steps returning ACCEPT pause the pipeline until finish() is called.
 
 #pragma once
@@ -38,11 +38,11 @@ public:
 
     // --- build ---
     Pipeline& add(const Step& step);
-    Pipeline& add(const std::string& name, Step::StepFn fn);
-    Pipeline& add(const std::string& name, Step::StepFn fn, LoopRef loop);
+
     int stepCount() const;
 
     // --- execution state machine ---
+    /// ctx null: allocates an empty context node (Pipeline owns; deleted in dtor). Non-null: caller owns ctx for pipeline lifetime.
     Result start(Node* ctx = nullptr);
     Result start(const Var& input);  // backward compat
     void   pause();

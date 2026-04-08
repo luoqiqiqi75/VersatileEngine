@@ -62,11 +62,18 @@ template<typename T> inline constexpr bool is_outputable_v = is_outputable<T>::v
 template<typename T> inline constexpr bool is_inputable_v = is_inputable<T>::value;
 
 // FnTraits<F> — unified callable introspection
+//
+// Non-decayed F (e.g. void (&)(int)) forwards to FnTraits<std::decay_t<F>> so function references
+// match Ret (*)(Args...) specializations. _t_functional is only used after decay.
 
 template<typename T> static decltype(&T::operator()) _t_functional(int);
 template<typename T> static void _t_functional(short);
 
-template<typename F> struct FnTraits : public FnTraits<decltype(_t_functional<F>(0))> {};
+template<typename F>
+struct FnTraits : public std::conditional_t<
+    std::is_same_v<F, std::decay_t<F>>,
+    FnTraits<decltype(_t_functional<F>(0))>,
+    FnTraits<std::decay_t<F>>> {};
 template<> struct FnTraits<void> { enum { IsFunction = false }; };
 
 template<typename Ret, typename... Args> struct FnTraits<Ret (*) (Args...)>
@@ -625,10 +632,7 @@ struct ResultT : std::pair<int, T>
         ACCEPT  =  1,
     };
 
-    using BaseT::BaseT;
-    ResultT(Code code) : BaseT(static_cast<int>(code), {}) {}
-    ResultT(int code) : BaseT(code, {}) {}
-    ResultT(bool ok, int err = FAIL) : BaseT(ok ? SUCCESS : err, {}) {}
+    ResultT() : BaseT(static_cast<int>(SUCCESS), T{}) {}
 
     int        code() const { return BaseT::first; }
     const T&   content() const { return BaseT::second; }
@@ -641,6 +645,14 @@ struct ResultT : std::pair<int, T>
     ResultT& setContent(T&& v)      { BaseT::second = std::move(v); return *this; }
 
     explicit operator bool() const { return isSuccess(); }
+
+    static ResultT ok(T content = {}) { return ResultT(static_cast<int>(SUCCESS), std::move(content)); }
+    static ResultT fail(T content = {}) { return ResultT(static_cast<int>(FAIL), std::move(content)); }
+    static ResultT fail(int code, T content = {}) { return ResultT(code < 0 ? code : static_cast<int>(FAIL), std::move(content)); }
+    static ResultT accept() { return ResultT(static_cast<int>(ACCEPT), T{}); }
+
+private:
+    ResultT(int c, T content) : BaseT(c, std::move(content)) {}
 };
 
 }

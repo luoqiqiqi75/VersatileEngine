@@ -255,7 +255,20 @@ void TerminalSession::Private::initCommands()
 
     cmds["ls"] = [](S& s, Args args) {
         auto f = parseFlags(args);
-        auto* t = s.target(args);
+        const int lp = f.posCount();
+        Node* t = nullptr;
+        if (lp == 0) {
+            t = s.cur;
+        } else if (lp == 1) {
+            t = s.resolve(f.pos(0));
+            if (!t) {
+                s.print("not found: " + f.pos(0) + "\n");
+                return;
+            }
+        } else {
+            s.print("usage: ls [path] [-t] [-l] [-n]\n");
+            return;
+        }
         if (f.has("tree", 't')) { s.print(t->dump()); return; }
         if (f.has("names", 'n')) {
             auto names = t->childNames();
@@ -302,7 +315,20 @@ void TerminalSession::Private::initCommands()
 
     auto getImpl = [](S& s, Args args) {
         auto f = parseFlags(args);
-        auto* t = s.target(args);
+        const int pc = f.posCount();
+        Node* t = nullptr;
+        if (pc == 0) {
+            t = s.cur;
+        } else if (pc == 1) {
+            t = s.resolve(f.pos(0));
+            if (!t) {
+                s.print("not found: " + f.pos(0) + "\n");
+                return;
+            }
+        } else {
+            s.print("usage: get [path] [-t]\n");
+            return;
+        }
         if (f.has("type", 't')) {
             s.print(t->get().isNull() ? "(none)\n" : std::string(varTypeName(t->get().type())) + "\n");
             return;
@@ -316,11 +342,51 @@ void TerminalSession::Private::initCommands()
 
     auto setImpl = [](S& s, Args args) {
         auto f = parseFlags(args);
-        auto* t = s.target(args);
-        if (f.has("null")) { t->set(Var()); s.print("value cleared\n"); return; }
-        auto raw = f.pos(1);
-        if (raw.empty()) { s.print("usage: set [path] <value> [--null]\n"); return; }
-        Var v = parseVar(raw);
+        const int pc = f.posCount();
+
+        if (f.has("null")) {
+            Node* t = nullptr;
+            if (pc == 0) {
+                t = s.cur;
+            } else if (pc == 1) {
+                t = s.resolve(f.pos(0));
+                if (!t) {
+                    s.print("not found: " + f.pos(0) + "\n");
+                    return;
+                }
+            } else {
+                s.print("usage: set [path] --null\n");
+                return;
+            }
+            t->set(Var());
+            s.print("value cleared\n");
+            return;
+        }
+
+        if (pc == 0) {
+            s.print("usage: set <value> | set [path] <value> [--null]\n");
+            return;
+        }
+
+        Node*       t = nullptr;
+        std::string valueRaw;
+        if (pc == 1) {
+            t = s.cur;
+            valueRaw = f.pos(0);
+        } else {
+            t = s.resolve(f.pos(0));
+            if (!t) {
+                s.print("not found: " + f.pos(0) + "\n");
+                return;
+            }
+            valueRaw = f.pos(1);
+            if (pc > 2) {
+                s.print("usage: set [path] <value>\n");
+                return;
+            }
+        }
+
+        Var v = parseVar(valueRaw);
         t->set(std::move(v));
         s.print("set: " + varPreview(t->get()) + "  (" + varTypeName(t->get().type()) + ")\n");
     };
@@ -565,9 +631,9 @@ void TerminalSession::Private::initCommands()
         }
         std::string out;
         out += "=== Node Commands ===\n";
-        out += "  ls [path] [-t] [-l] [-n]   list children / tree / details\n";
-        out += "  get [path] [-t]            get value or type\n";
-        out += "  set [path] <value> [--null] set or clear value\n";
+        out += "  ls [path] [-t] [-l] [-n]   list children / tree / details (default path: current)\n";
+        out += "  get [path] [-t]            get value or type (default path: current)\n";
+        out += "  set <value> | set [path] <value> [--null]  set or clear value (default: current)\n";
         out += "  mk <path> | -n NAME        create at path (relative to cur)\n";
         out += "  rm <path> [-i] [-n] [-c]   remove at path (relative to cur)\n";
         out += "  mv <src> [dest] [--at N]   reparent node\n";

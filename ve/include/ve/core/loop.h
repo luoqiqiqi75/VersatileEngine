@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// loop.h — Event loop framework (template, no inheritance)
+// loop.h — Event loop framework (LoopTraits + LoopRef on std::pair)
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -18,6 +18,8 @@
 // ----------------------------------------------------------------------------
 
 #pragma once
+
+#include <utility>
 
 #include "base.h"
 
@@ -46,52 +48,7 @@ namespace ve {
 template<typename T>
 struct LoopTraits;   // primary: intentionally undefined — specialize per backend
 
-
-// ============================================================================
-// LoopRef — type-erased loop handle
-// ============================================================================
-//
-// Lightweight value type for passing loops across template boundaries.
-// Primary use case: Object::connect() with queued dispatch.
-//
-//   obj.connect(SIG, observer, action, LoopRef(some_loop));
-//   // trigger → loop.post(action) instead of direct call
-//
-
-class LoopRef
-{
-    std::function<void(Task)> _post;
-    Alive _alive;   // loop's alive token — if false, _post is dangling
-
-public:
-    LoopRef() = default;
-
-    LoopRef(const LoopRef&) = default;
-    LoopRef(LoopRef&&) = default;
-    LoopRef& operator=(const LoopRef&) = default;
-    LoopRef& operator=(LoopRef&&) = default;
-
-    /// Implicit conversion from any Loop<T>
-    template<typename T, typename = std::enable_if_t<!std::is_same_v<std::decay_t<T>, LoopRef>>>
-    LoopRef(T& loop)
-        : _post([&loop](Task t) { loop.post(std::move(t)); })
-        , _alive(loop.alive()) {}
-
-    void post(Task task) const {
-        if (!_post || _alive.dead()) return;
-        _post(std::move(task));
-    }
-
-    void post(Alive token, Task task) const {
-        if (!_post || _alive.dead()) return;
-        if (!token) { _post(std::move(task)); return; }
-        _post([token = std::move(token), task = std::move(task)]() {
-            if (!token.dead()) task();
-        });
-    }
-
-    explicit operator bool() const { return !!_post; }
-};
+struct LoopRef;
 
 
 // ============================================================================
@@ -149,11 +106,79 @@ public:
     const std::string& name()       const { return _name; }
 
     // --- Implicit conversion to type-erased handle ---
-    operator LoopRef() { return LoopRef(*this); }
+    operator LoopRef();
 
     Loop(const Loop&) = delete;
     Loop& operator=(const Loop&) = delete;
 };
+
+
+namespace detail {
+
+template<typename U, typename = void>
+struct has_loop_ref_interface : std::false_type {};
+
+template<typename U>
+struct has_loop_ref_interface<U, std::void_t<
+    decltype(std::declval<U&>().post(std::declval<Task>())),
+    decltype(std::declval<const U&>().alive())
+>> : std::true_type {};
+
+template<typename U>
+inline constexpr bool has_loop_ref_interface_v = has_loop_ref_interface<std::decay_t<U>>::value;
+
+} // namespace detail
+
+
+// ============================================================================
+// LoopRef — type-erased loop handle
+// ============================================================================
+//
+// Extends std::pair<std::function<void(Task)>, Alive>: first = queue to loop, second = lifetime
+// (Alive false means first may be dangling). Prefer explicit two-arg ctor when wiring by hand.
+//
+// from(T&) binds to an object that exposes post(Task) and alive() (typically Loop<Backend>,
+// e.g. Loop<QEventLoop> after LoopTraits<QEventLoop> exists). It does not copy T; the
+// closure holds &loop until the LoopRef is destroyed. Only Alive is shared by value.
+//
+// Primary use cases:
+//   Object::connect() / once() with queued dispatch
+//   Pipeline Step async completion
+//   loop::post(LoopRef, ...)
+//
+//   obj.connect(SIG, observer, action, LoopRef::from(some_loop));
+//   // trigger → loop.post(action) instead of direct call
+//
+
+struct LoopRef : std::pair<std::function<void(Task)>, Alive>
+{
+    VE_INHERIT_CONSTRUCTOR(pair, LoopRef, std::pair<std::function<void(Task)>, Alive>)
+
+    template<typename T, typename = std::enable_if_t<
+        detail::has_loop_ref_interface_v<T> && !std::is_same_v<std::decay_t<T>, LoopRef>>>
+    static LoopRef from(T& loop) {
+        return LoopRef([&loop](Task t) { loop.post(std::move(t)); }, loop.alive());
+    }
+
+    void post(Task task) const {
+        if (!first || second.dead()) return;
+        first(std::move(task));
+    }
+
+    void post(Alive token, Task task) const {
+        if (!first || second.dead()) return;
+        if (!token) { first(std::move(task)); return; }
+        first([token = std::move(token), task = std::move(task)]() {
+            if (!token.dead()) task();
+        });
+    }
+
+    explicit operator bool() const { return static_cast<bool>(first); }
+};
+
+
+template<typename T>
+inline Loop<T>::operator LoopRef() { return LoopRef::from(*this); }
 
 
 // ============================================================================

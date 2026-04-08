@@ -7,42 +7,12 @@
 
 namespace ve {
 
-// ============================================================================
-// Step
-// ============================================================================
-
-Step::Step(StepFn fn)
-    : _fn(std::move(fn)) {}
-
-Step::Step(const std::string& name, StepFn fn)
-    : _name(name), _fn(std::move(fn)) {}
-
-Step::Step(const std::string& name, StepFn fn, LoopRef loop)
-    : _name(name), _fn(std::move(fn)), _loop(std::move(loop)) {}
-
-Result Step::exec(Node* ctx) const
+Result resultFromStepReturn(const Var& ret)
 {
-    if (!_fn) return Result(Result::FAIL, std::string("step has no function"));
-    return _fn(ctx);
-}
-
-Result Step::exec(const Var& input) const
-{
-    if (!_fn) return Result(Result::FAIL, std::string("step has no function"));
-    Node tmp("_input");
-    tmp.set(input);
-    return _fn(&tmp);
-}
-
-Step Step::clone() const
-{
-    Step copy;
-    copy._name = _name;
-    copy._fn = _fn;
-    copy._loop = _loop;
-    copy._inputDesc = _inputDesc;
-    copy._outputDesc = _outputDesc;
-    return copy;
+    if (ret.customIs<Result>()) {
+        return ret.as<Result>();
+    }
+    return Result::ok(ret);
 }
 
 // ============================================================================
@@ -60,11 +30,7 @@ Command::~Command()
     }
 }
 
-void Command::addStep(const Step& step)              { _steps.push_back(step); }
-void Command::addStep(const std::string& name, Step::StepFn fn)
-{ _steps.push_back(Step(name, std::move(fn))); }
-void Command::addStep(const std::string& name, Step::StepFn fn, LoopRef loop)
-{ _steps.push_back(Step(name, std::move(fn), std::move(loop))); }
+void Command::addStep(Step step) { _steps.push_back(std::move(step)); }
 
 const std::string& Command::name() const      { return _name; }
 int Command::stepCount() const                 { return static_cast<int>(_steps.size()); }
@@ -75,8 +41,9 @@ void Command::setHelp(const std::string& h)    { _help = h; }
 Pipeline* Command::pipeline() const
 {
     auto* pipe = new Pipeline(_name);
-    for (auto& s : _steps)
-        pipe->add(s.clone());
+    for (const auto& s : _steps) {
+        pipe->add(s);
+    }
     return pipe;
 }
 
@@ -97,47 +64,41 @@ CommandFactory& GlobalCommandFactory()
     return *s;
 }
 
+void registerStep(const std::string& key, Step step, const std::string& help)
+{
+    GlobalCommandFactory().insertOne(key, [key, st = std::move(step), help]() -> Command* {
+        auto* cmd = new Command(key);
+        cmd->addStep(std::move(st));
+        if (!help.empty()) {
+            cmd->setHelp(help);
+        }
+        return cmd;
+    });
+}
+
+void registerCommand(const std::string& key, std::function<void(Command&)> builder,
+                     const std::string& help)
+{
+    GlobalCommandFactory().insertOne(key, [key, builder = std::move(builder), help]() -> Command* {
+        auto* cmd = new Command(key);
+        builder(*cmd);
+        if (!help.empty()) {
+            cmd->setHelp(help);
+        }
+        return cmd;
+    });
+}
+
 // ============================================================================
 // command:: namespace
 // ============================================================================
 
 namespace command {
 
-// --- registration ---
-
-void reg(const std::string& key, Step::StepFn fn, const std::string& help)
-{
-    auto stepFn = std::move(fn);
-    auto helpStr = help;
-    GlobalCommandFactory().insertOne(key, [key, stepFn, helpStr]() -> Command* {
-        auto* cmd = new Command(key);
-        cmd->addStep(key, stepFn);
-        if (!helpStr.empty()) cmd->setHelp(helpStr);
-        return cmd;
-    });
-}
-
-void reg(const std::string& key, const Step& step, const std::string& help)
-{
-    auto s = step.clone();
-    auto helpStr = help;
-    GlobalCommandFactory().insertOne(key, [key, s, helpStr]() -> Command* {
-        auto* cmd = new Command(key);
-        cmd->addStep(s);
-        if (!helpStr.empty()) cmd->setHelp(helpStr);
-        return cmd;
-    });
-}
-
 void build(const std::string& key, std::function<void(Command&)> builder,
            const std::string& help)
 {
-    GlobalCommandFactory().insertOne(key, [key, builder, help]() -> Command* {
-        auto* cmd = new Command(key);
-        builder(*cmd);
-        if (!help.empty()) cmd->setHelp(help);
-        return cmd;
-    });
+    registerCommand(key, std::move(builder), help);
 }
 
 // --- context ---
@@ -310,21 +271,32 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
 Result call(const std::string& key, Node* ctx)
 {
     if (!GlobalCommandFactory().has(key)) {
-        return Result(Result::FAIL, Var("not found: " + key));
+        return Result::fail(Var("not found: " + key));
     }
 
     Command* cmd = GlobalCommandFactory().exec(key);
-    if (!cmd) return Result(Result::FAIL, Var("command factory returned null: " + key));
+    if (!cmd) {
+        return Result::fail(Var("command factory returned null: " + key));
+    }
 
     Pipeline* pipe = cmd->pipeline();
     delete cmd;
 
+    Node* ctxToDelete = nullptr;
+    if (!ctx) {
+        ctx = context(key);
+        ctxToDelete = ctx;
+    }
+
     Result r = pipe->start(ctx);
     Result lr = pipe->lastResult();
     delete pipe;
+    if (ctxToDelete) {
+        delete ctxToDelete;
+    }
 
     if (r.isAccepted()) {
-        return Result(Result::FAIL, Var("sync call on async command: " + key));
+        return Result::fail(Var("sync call on async command: " + key));
     }
     return lr;
 }
@@ -332,7 +304,7 @@ Result call(const std::string& key, Node* ctx)
 Result call(const std::string& key, const Var& input)
 {
     if (!GlobalCommandFactory().has(key)) {
-        return Result(Result::FAIL, Var("not found: " + key));
+        return Result::fail(Var("not found: " + key));
     }
 
     Node* ctx = context(key);
@@ -358,9 +330,16 @@ Pipeline* run(const std::string& key, Node* ctx)
 
 Pipeline* run(const std::string& key, const Var& input)
 {
-    Node* ctx = context(key);
-    ctx->set(input);
-    return run(key, ctx);
+    if (!GlobalCommandFactory().has(key)) return nullptr;
+
+    Command* cmd = GlobalCommandFactory().exec(key);
+    if (!cmd) return nullptr;
+
+    Pipeline* pipe = cmd->pipeline();
+    delete cmd;
+
+    pipe->start(input);
+    return pipe;
 }
 
 // --- query ---

@@ -3,23 +3,26 @@
 #include "ve/core/pipeline.h"
 #include "ve/core/node.h"
 #include "ve/core/factory.h"
+#include "ve/core/schema.h"
 
 namespace ve {
 
 struct Pipeline::Private
 {
-    Vector<Step>    steps;       // definition (template)
-    List<Step>      queue;       // runtime queue (copied from steps on start)
+    Vector<Step>    steps;
+    List<Step>      queue;
     State           state = IDLE;
     int             stepIndex = -1;
     Node*           context = nullptr;
     bool            ownsContext = false;
-    Result          lastResult = Result::SUCCESS;
+    Result          lastResult = Result::ok();
     ResultHandler   handler;
 
     void clearContext()
     {
-        if (ownsContext && context) { delete context; }
+        if (ownsContext && context) {
+            delete context;
+        }
         context = nullptr;
         ownsContext = false;
     }
@@ -38,18 +41,6 @@ Pipeline& Pipeline::add(const Step& step)
     return *this;
 }
 
-Pipeline& Pipeline::add(const std::string& name, Step::StepFn fn)
-{
-    _p->steps.push_back(Step(name, std::move(fn)));
-    return *this;
-}
-
-Pipeline& Pipeline::add(const std::string& name, Step::StepFn fn, LoopRef loop)
-{
-    _p->steps.push_back(Step(name, std::move(fn), std::move(loop)));
-    return *this;
-}
-
 int Pipeline::stepCount() const { return static_cast<int>(_p->steps.size()); }
 
 // --- execution state machine ---
@@ -58,16 +49,23 @@ Result Pipeline::start(Node* ctx)
 {
     _p->clearContext();
     _p->state = RUNNING;
+    if (!ctx) {
+        ctx = new Node("_ctx");
+        _p->ownsContext = true;
+    } else {
+        _p->ownsContext = false;
+    }
     _p->context = ctx;
     _p->stepIndex = 0;
-    _p->lastResult = Result::SUCCESS;
+    _p->lastResult = Result::ok();
 
     _p->queue.clear();
-    for (auto& s : _p->steps)
-        _p->queue.push_back(s.clone());
+    for (const auto& s : _p->steps) {
+        _p->queue.push_back(s);
+    }
 
     if (_p->queue.empty()) {
-        complete(DONE, CMD_DONE, Result::SUCCESS);
+        complete(DONE, CMD_DONE, Result::ok());
         return _p->lastResult;
     }
 
@@ -76,37 +74,42 @@ Result Pipeline::start(Node* ctx)
     if (_p->state == ERRORED) {
         return _p->lastResult;
     }
-    if (_p->state == RUNNING || _p->state == PAUSED)
-        return Result::ACCEPT;
+    if (_p->state == RUNNING || _p->state == PAUSED) {
+        return Result::accept();
+    }
     return _p->lastResult;
 }
 
 Result Pipeline::start(const Var& input)
 {
-    // Backward compat: create a temp context node with input as value
     auto* ctx = new Node("_input");
     ctx->set(input);
     auto r = start(ctx);
-    _p->ownsContext = true;  // Pipeline owns this temp node
+    _p->ownsContext = true;
     return r;
 }
 
 void Pipeline::pause()
 {
-    if (_p->state == RUNNING)
+    if (_p->state == RUNNING) {
         _p->state = PAUSED;
+    }
 }
 
 void Pipeline::resume()
 {
-    if (_p->state != PAUSED) return;
+    if (_p->state != PAUSED) {
+        return;
+    }
     _p->state = RUNNING;
     runNext();
 }
 
 void Pipeline::stop()
 {
-    if (_p->state == IDLE) return;
+    if (_p->state == IDLE) {
+        return;
+    }
     _p->queue.clear();
     _p->state = IDLE;
     _p->stepIndex = -1;
@@ -138,8 +141,9 @@ void Pipeline::setResultHandler(const ResultHandler& handler)
 Pipeline* Pipeline::clone() const
 {
     auto* copy = new Pipeline(name());
-    for (auto& s : _p->steps)
-        copy->_p->steps.push_back(s.clone());
+    for (const auto& s : _p->steps) {
+        copy->_p->steps.push_back(s);
+    }
     return copy;
 }
 
@@ -151,21 +155,37 @@ void Pipeline::runNext()
         Step step = std::move(_p->queue.front());
         _p->queue.pop_front();
 
-        if (step.loop()) {
+        const Var stepIn(Var(static_cast<void*>(_p->context)));
+
+        if (step.second) {
             auto alive = Alive::create();
             auto self = this;
             auto ctx = _p->context;
             auto stepFn = step;
-            step.loop().post([self, alive, stepFn, ctx]() {
-                if (alive.dead()) return;
-                Result r = stepFn.exec(ctx);
-                self->handleResult(r);
+            step.second.post([self, alive, stepFn, ctx]() {
+                if (alive.dead()) {
+                    return;
+                }
+                if (!stepFn.first.isCallable()) {
+                    self->handleResult(Result::fail(Var("step has no callable")));
+                    return;
+                }
+                Var ret = stepFn.first.invoke(Var(static_cast<void*>(ctx)));
+                self->handleResult(resultFromStepReturn(ret));
             });
             return;
         }
 
-        Result r = step.exec(_p->context);
-        if (r.isAccepted()) return;  // async - wait for external finish()
+        if (!step.first.isCallable()) {
+            complete(ERRORED, CMD_ERROR, Result::fail(Var("step has no callable")));
+            return;
+        }
+
+        Var ret = step.first.invoke(stepIn);
+        Result r = resultFromStepReturn(ret);
+        if (r.isAccepted()) {
+            return;
+        }
         if (r.isError()) {
             complete(ERRORED, CMD_ERROR, r);
             return;
@@ -181,7 +201,9 @@ void Pipeline::runNext()
 
 void Pipeline::handleResult(const Result& result)
 {
-    if (_p->state != RUNNING && _p->state != PAUSED) return;
+    if (_p->state != RUNNING && _p->state != PAUSED) {
+        return;
+    }
 
     if (result.isError()) {
         complete(ERRORED, CMD_ERROR, result);
@@ -196,24 +218,36 @@ void Pipeline::handleResult(const Result& result)
         return;
     }
 
-    if (_p->state == PAUSED) return;  // will continue on resume()
+    if (_p->state == PAUSED) {
+        return;
+    }
     _p->state = RUNNING;
     runNext();
 }
 
 void Pipeline::complete(State finalState, SignalT signal, const Result& result)
 {
+    Result out = result;
+    if (_p->context && finalState == DONE && signal == CMD_DONE) {
+        if (auto* rn = _p->context->find("_result", false)) {
+            out.setContent(schema::exportAs<schema::VarS>(rn));
+        }
+    }
+
     _p->state = finalState;
-    _p->lastResult = result;
+    _p->lastResult = std::move(out);
     _p->queue.clear();
 
-    if (signal == CMD_DONE)
-        trigger<CMD_DONE>(Var::custom(result));
-    else if (signal == CMD_ERROR)
-        trigger<CMD_ERROR>(Var::custom(result));
+    if (signal == CMD_DONE) {
+        trigger<CMD_DONE>(Var::custom(_p->lastResult));
+    }
+    else if (signal == CMD_ERROR) {
+        trigger<CMD_ERROR>(Var::custom(_p->lastResult));
+    }
 
-    if (_p->handler)
-        _p->handler(result);
+    if (_p->handler) {
+        _p->handler(_p->lastResult);
+    }
 }
 
 } // namespace ve

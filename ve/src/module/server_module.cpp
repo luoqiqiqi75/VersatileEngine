@@ -108,7 +108,7 @@ void ServerModule::registerFileCommands()
     command::reg("save", [data_root](Node* ctx) -> Result {
         auto args = ctx->get();
         if (!args.isList()) {
-            return Result(Result::FAIL, Var("Args must be a list"));
+            return Result::fail(Var("Args must be a list"));
         }
 
         std::vector<std::string> tokens;
@@ -122,7 +122,7 @@ void ServerModule::registerFileCommands()
             auto fmts = schema::schemaFormatNames();
             std::string out = "available formats: json, xml, bin, var";
             for (auto& fn : fmts) out += ", " + fn;
-            return Result(Result::FAIL, Var(out));
+            return Result::fail(Var(out));
         }
 
         // Resolve target: use _current from context if available
@@ -132,7 +132,7 @@ void ServerModule::registerFileCommands()
         std::string pathStr = f.pos(1);
         Node* target = pathStr.empty() ? base : base->find(pathStr);
         if (!target) {
-            return Result(Result::FAIL, Var("Node not found: " + pathStr));
+            return Result::fail(Var("Node not found: " + pathStr));
         }
 
         std::string file = f.get("file", 'f');
@@ -154,7 +154,7 @@ void ServerModule::registerFileCommands()
         } else if (schema::hasSchemaFormat(format)) {
             result = schema::exportSchemaFormat(format, target);
         } else {
-            return Result(Result::FAIL, Var("Unknown format: " + format));
+            return Result::fail(Var("Unknown format: " + format));
         }
 
         // Save to file or return content
@@ -168,9 +168,9 @@ void ServerModule::registerFileCommands()
                     oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(binResult[i]);
                 }
                 oss << "\n(" << std::dec << binResult.size() << " bytes)";
-                return Result(Result::SUCCESS, Var(oss.str()));
+                return Result::ok(Var(oss.str()));
             }
-            return Result(Result::SUCCESS, Var(result));
+            return Result::ok(Var(result));
         }
 
         // Save to file (relative to data_root)
@@ -181,26 +181,26 @@ void ServerModule::registerFileCommands()
             std::error_code ec;
             fs::create_directories(parent, ec);
             if (ec) {
-                return Result(Result::FAIL, Var("Failed to create directory: " + ec.message()));
+                return Result::fail(Var("Failed to create directory: " + ec.message()));
             }
         }
 
         if (isBin) {
             std::ofstream ofs(filepath, std::ios::binary);
             if (!ofs.is_open()) {
-                return Result(Result::FAIL, Var("Cannot write: " + filepath.string()));
+                return Result::fail(Var("Cannot write: " + filepath.string()));
             }
             ofs.write(reinterpret_cast<const char*>(binResult.data()), binResult.size());
             ofs.close();
-            return Result(Result::SUCCESS, Var("Saved to " + file + " (" + std::to_string(binResult.size()) + " bytes)"));
+            return Result::ok(Var("Saved to " + file + " (" + std::to_string(binResult.size()) + " bytes)"));
         } else {
             std::ofstream ofs(filepath);
             if (!ofs.is_open()) {
-                return Result(Result::FAIL, Var("Cannot write: " + filepath.string()));
+                return Result::fail(Var("Cannot write: " + filepath.string()));
             }
             ofs << result;
             ofs.close();
-            return Result(Result::SUCCESS, Var("Saved to " + file));
+            return Result::ok(Var("Saved to " + file));
         }
     }, "save <format> [path] [-f file]");
 
@@ -208,7 +208,7 @@ void ServerModule::registerFileCommands()
     command::reg("load", [data_root](Node* ctx) -> Result {
         auto args = ctx->get();
         if (!args.isList()) {
-            return Result(Result::FAIL, Var("Args must be a list"));
+            return Result::fail(Var("Args must be a list"));
         }
 
         std::vector<std::string> tokens;
@@ -219,7 +219,7 @@ void ServerModule::registerFileCommands()
 
         std::string format = f.pos(0);
         if (format.empty()) {
-            return Result(Result::FAIL, Var("Usage: load <format> [path] [-f file] [-i data]"));
+            return Result::fail(Var("Usage: load <format> [path] [-f file] [-i data]"));
         }
 
         // Resolve target: use _current from context if available
@@ -238,13 +238,13 @@ void ServerModule::registerFileCommands()
             fs::path filepath = fs::path(data_root) / file;
             std::ifstream ifs(filepath, format == "bin" ? std::ios::binary : std::ios::in);
             if (!ifs.is_open()) {
-                return Result(Result::FAIL, Var("Cannot read: " + filepath.string()));
+                return Result::fail(Var("Cannot read: " + filepath.string()));
             }
             content.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
         } else if (!importContent.empty()) {
             content = importContent;
         } else {
-            return Result(Result::FAIL, Var("Usage: load <format> [path] -f <file> | -i <data>"));
+            return Result::fail(Var("Usage: load <format> [path] -f <file> | -i <data>"));
         }
 
         // Import
@@ -258,13 +258,13 @@ void ServerModule::registerFileCommands()
         } else if (schema::hasSchemaFormat(format)) {
             ok = schema::importSchemaFormat(format, target, content);
         } else {
-            return Result(Result::FAIL, Var("Unknown format: " + format));
+            return Result::fail(Var("Unknown format: " + format));
         }
 
         if (ok) {
-            return Result(Result::SUCCESS, Var(file.empty() ? "Imported" : "Imported from " + file));
+            return Result::ok(Var(file.empty() ? "Imported" : "Imported from " + file));
         } else {
-            return Result(Result::FAIL, Var("Import failed (invalid " + format + ")"));
+            return Result::fail(Var("Import failed (invalid " + format + ")"));
         }
     }, "load <format> [path] [-f file] [-i data]");
 }

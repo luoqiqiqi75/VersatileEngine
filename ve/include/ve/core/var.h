@@ -9,7 +9,6 @@
 
 #include "base.h"
 #include "convert.h"
-#include <any>
 
 namespace ve {
 
@@ -118,11 +117,9 @@ public:
     }
 
     // callable — universal callable-to-CallableV conversion
-    // Adapts: Var(const Var&), Result(const Var&), void(), bool(), int(int), etc.
+    // Adapts: Var as raw Var, other single args via as<Arg0>(), multi-arg from List, Result -> custom<Result>
     template<typename F, std::enable_if_t<basic::Meta<std::decay_t<F>>::is_callable, int> = 0>
-    static Var callable(F&& fn) {
-        return Var(wrapCallable(std::forward<F>(fn)));
-    }
+    static Var callable(F&& fn) { return Var(wrapCallable(std::forward<F>(fn))); }
 
     Var(const Var& other);
     Var(Var&& other) noexcept;
@@ -263,48 +260,12 @@ private:
     void moveFrom(Var&& other);
     void destroy();
 
-    // wrapCallable — adapt any callable to CallableV = Var(const Var&)
     template<typename F>
-    static CallableV wrapCallable(F&& fn) {
-        using Traits = basic::FnTraits<std::decay_t<F>>;
-        using Ret = typename Traits::RetT;
+    static CallableV wrapCallable(F&& fn);
 
-        if constexpr (std::is_convertible_v<std::decay_t<F>, CallableV>) {
-            // Already Var(const Var&) — direct
-            return CallableV(std::forward<F>(fn));
-        }
-        else if constexpr (Traits::ArgCnt == 0) {
-            // void() / bool() / int() / etc.
-            return [f = std::decay_t<F>(std::forward<F>(fn))](const Var&) -> Var {
-                if constexpr (std::is_void_v<Ret>) { f(); return {}; }
-                else return Var(f());
-            };
-        }
-        else if constexpr (Traits::ArgCnt == 1) {
-            using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
-            if constexpr (std::is_same_v<Arg0, Var>) {
-                // Var(const Var&) with non-Var return -> wrap return
-                return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
-                    if constexpr (std::is_void_v<Ret>) { f(input); return {}; }
-                    else return Var(f(input));
-                };
-            }
-            else {
-                // T(SomeType) -> unpack via as<Arg0>
-                return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
-                    if constexpr (std::is_void_v<Ret>) { f(input.as<Arg0>()); return {}; }
-                    else return Var(f(input.as<Arg0>()));
-                };
-            }
-        }
-        else {
-            // Multi-arg: not auto-adaptable
-            static_assert(Traits::ArgCnt <= 1, "Cannot auto-adapt callable with >1 arguments to CallableV");
-            return nullptr;
-        }
-    }
+    template<typename F, std::size_t... I>
+    static CallableV wrapCallableIndexed(F&& fn, std::index_sequence<I...>);
 
-private:
     Type _type;
 
     union Storage {
@@ -320,5 +281,76 @@ private:
         CustomStorage*  _custom;
     } _storage;
 };
+
+using Result = ResultT<Var>;
+
+namespace detail {
+
+inline Var wrapCallableRet() { return Var(); }
+
+template<typename R>
+inline Var wrapCallableRet(R&& ret) {
+    using Ret = std::decay_t<R>;
+    if constexpr (std::is_same_v<Ret, Result>) {
+        return Var::custom(std::forward<R>(ret));
+    } else {
+        return Var(std::forward<R>(ret));
+    }
+}
+
+} // namespace detail
+
+template<typename F, std::size_t... I>
+inline Var::CallableV Var::wrapCallableIndexed(F&& fn, std::index_sequence<I...>) {
+    using Traits = basic::FnTraits<std::decay_t<F>>;
+    using FDecay = std::decay_t<F>;
+    return [f = FDecay(std::forward<F>(fn))](const Var& input) -> Var {
+        return detail::wrapCallableRet(f(input[I].template as<std::decay_t<typename Traits::template ArgAt<I>>>()...));
+    };
+}
+
+template<typename F>
+inline Var::CallableV Var::wrapCallable(F&& fn) {
+    using Traits = basic::FnTraits<std::decay_t<F>>;
+    using Ret = typename Traits::RetT;
+
+    if constexpr (std::is_convertible_v<std::decay_t<F>, CallableV>) {
+        return CallableV(std::forward<F>(fn));
+    } else if constexpr (Traits::ArgCnt == 0) {
+        return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
+            (void)input;
+            if constexpr (std::is_void_v<Ret>) {
+                f();
+                return detail::wrapCallableRet();
+            }
+            else {
+                return detail::wrapCallableRet(f());
+            }
+        };
+    } else if constexpr (Traits::ArgCnt == 1) {
+        using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
+        if constexpr (std::is_same_v<Arg0, Var>) {
+            return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
+                if constexpr (std::is_void_v<Ret>) {
+                    f(input);
+                    return detail::wrapCallableRet();
+                } else {
+                    return detail::wrapCallableRet(f(input));
+                }
+            };
+        } else {
+            return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
+                if constexpr (std::is_void_v<Ret>) {
+                    f(input.template as<Arg0>());
+                    return detail::wrapCallableRet();
+                } else {
+                    return detail::wrapCallableRet(f(input.template as<Arg0>()));
+                }
+            };
+        }
+    }  else {
+        return wrapCallableIndexed(std::forward<F>(fn), std::make_index_sequence<Traits::ArgCnt>{});
+    }
+}
 
 } // namespace ve

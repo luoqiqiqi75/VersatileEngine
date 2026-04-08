@@ -129,7 +129,7 @@ VE_TEST(loop_ref_dead_loop) {
         ref = loop;
         VE_ASSERT(!!ref);
     }  // loop destroyed here
-    // ref still "looks" valid (has _post) but loop is dead
+    // ref still "looks" valid (first non-empty) but loop is dead
     ref.post([] {});  // should not crash — alive check prevents call
 }
 
@@ -235,7 +235,7 @@ VE_TEST(loop_post_token_dead) {
     EventLoop loop("test", 1);
     std::atomic<int> val{0};
 
-    loop::post(LoopRef(loop), token, [&] { val.store(99); });
+    loop::post(LoopRef::from(loop), token, [&] { val.store(99); });
     token.kill();  // "dead" before task executes
 
     loop.start();
@@ -274,7 +274,7 @@ VE_TEST(loop_signal_observer_destroyed) {
     auto* observer = new Object("observer");
 
     std::atomic<int> val{0};
-    sender.connect<1>(observer, [&]() { val.store(1); }, LoopRef(loop));
+    sender.connect<1>(observer, [&]() { val.store(1); }, LoopRef::from(loop));
 
     sender.trigger<1>();
     for (int i = 0; i < 100 && val.load() == 0; ++i)
@@ -298,7 +298,7 @@ VE_TEST(loop_signal_sender_destroyed) {
     Object observer("observer");
 
     std::atomic<int> val{0};
-    sender->connect<1>(&observer, [&]() { val.store(1); }, LoopRef(loop));
+    sender->connect<1>(&observer, [&]() { val.store(1); }, LoopRef::from(loop));
 
     // queue task while loop is stopped, then destroy sender before starting
     sender->trigger<1>();
