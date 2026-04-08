@@ -1,5 +1,8 @@
+#include "dynamic_typesupport_bridge.h"
+
 #include "ve/ros/backend.h"
 #include "ve/core/schema.h"
+#include "ve/ros/yaml_schema.h"
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/parameter_client.hpp>
@@ -9,6 +12,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <thread>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -207,7 +211,7 @@ std::string normalizedPayloadFormat(std::string format)
     std::transform(format.begin(), format.end(), format.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
     });
-    return format.empty() ? "cdr_hex" : format;
+    return format.empty() ? "yaml" : format;
 }
 
 std::string runtimeNodeName()
@@ -230,6 +234,40 @@ Var::DictV makeResult(bool ok, std::string message)
     Var::DictV result;
     result["ok"] = Var(ok);
     result["message"] = Var(std::move(message));
+    return result;
+}
+
+Var::DictV decodedMessageResult(const rclcpp::SerializedMessage& message,
+                                const std::string& topic,
+                                const std::string& type,
+                                const std::string& payload_format,
+                                const std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>& bridge)
+{
+    Var::DictV result = makeResult(true, "topic message decoded");
+    result["topic"] = Var(topic);
+    result["type"] = Var(type);
+    result["payload_format"] = Var(payload_format);
+    result["size"] = Var(static_cast<int64_t>(message.size()));
+
+    const auto& raw = message.get_rcl_serialized_message();
+    if (payload_format == "cdr_hex") {
+        result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
+        return result;
+    }
+
+    Var decoded;
+    std::string error;
+    if (bridge && bridge->deserializeToVar(message, decoded, error)) {
+        result["value"] = decoded;
+        if (payload_format == "yaml")
+            result["yaml"] = Var(ve::ros::yaml::encode(decoded));
+        return result;
+    }
+
+    result["ok"] = Var(false);
+    result["message"] = Var(error);
+    result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
+    result["fallback_format"] = Var("cdr_hex");
     return result;
 }
 
@@ -284,6 +322,18 @@ public:
             node_ = std::make_shared<rclcpp::Node>(node_name_, node_namespace_, options);
             if (!node_->has_parameter("backend"))
                 node_->declare_parameter("backend", key());
+
+            rclcpp::ExecutorOptions exec_options;
+            exec_options.context = context_;
+            executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>(exec_options);
+            executor_->add_node(node_);
+            spinning_.store(true);
+            spin_thread_ = std::thread([this]() {
+                while (spinning_.load()) {
+                    executor_->spin_some();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            });
         } catch (const std::exception& e) {
             error = e.what();
             node_.reset();
@@ -299,6 +349,15 @@ public:
         std::lock_guard<std::mutex> lock(mu_);
         subscriptions_.clear();
         publishers_.clear();
+        spinning_.store(false);
+        if (executor_) {
+            executor_->cancel();
+            if (node_)
+                executor_->remove_node(node_);
+        }
+        if (spin_thread_.joinable())
+            spin_thread_.join();
+        executor_.reset();
         node_.reset();
         if (context_) {
             context_->shutdown("ve.ros shutdown");
@@ -427,8 +486,10 @@ public:
             return makeResult(false, "topic type is required");
 
         const std::string payload_format = normalizedPayloadFormat(config.payload_format);
-        if (payload_format != "cdr_hex")
-            return makeResult(false, "only cdr_hex payload format is supported in v1");
+        std::string bridge_error;
+        auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
+        if (payload_format != "cdr_hex" && !bridge->initialize(topic_type, bridge_error))
+            return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
 
         auto target_path = config.target_node;
         if (target_path.empty())
@@ -442,19 +503,17 @@ public:
              topic = config.topic,
              type = topic_type,
              target_path,
+             payload_format,
+             bridge,
              this](std::shared_ptr<rclcpp::SerializedMessage> message) {
                 Node payload("payload");
-                payload.set("topic", Var(topic));
-                payload.set("type", Var(type));
-                payload.set("format", Var("cdr_hex"));
-                payload.set("size", Var(static_cast<int64_t>(message->size())));
-                const auto& raw = message->get_rcl_serialized_message();
-                payload.set("data", Var(encodeHex(raw.buffer, raw.buffer_length)));
+                const auto decoded = decodedMessageResult(*message, topic, type, payload_format, bridge);
+                schema::importAs<schema::VarS>(&payload, Var(decoded), schema::ImportOptions{true, false, true});
 
                 if (!target_path.empty())
                     ve::n(target_path)->copy(&payload, true, true, true);
-                ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx")->set(
-                    ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx")->getInt64(0) + 1);
+                auto* rx = ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx");
+                rx->set(rx->getInt64(0) + 1);
             });
 
         SubscriptionInfo info;
@@ -499,12 +558,27 @@ public:
             return makeResult(false, "topic type is required");
 
         const std::string payload_format = normalizedPayloadFormat(request.payload_format);
-        if (payload_format != "cdr_hex")
-            return makeResult(false, "only cdr_hex payload format is supported in v1");
+        rclcpp::SerializedMessage message;
+        if (payload_format == "cdr_hex") {
+            std::vector<uint8_t> bytes;
+            if (!decodeHex(request.payload, bytes))
+                return makeResult(false, "invalid cdr_hex payload");
+            message.reserve(bytes.size());
+            auto & raw = message.get_rcl_serialized_message();
+            std::memcpy(raw.buffer, bytes.data(), bytes.size());
+            raw.buffer_length = bytes.size();
+        } else {
+            auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
+            std::string error;
+            if (!bridge->initialize(topic_type, error))
+                return makeResult(false, "failed to initialize dynamic bridge: " + error);
 
-        std::vector<uint8_t> bytes;
-        if (!decodeHex(request.payload, bytes))
-            return makeResult(false, "invalid cdr_hex payload");
+            const Var payload = payload_format == "yaml"
+                ? ve::ros::yaml::decode(request.payload)
+                : ve::ros::yaml::decode(request.payload);
+            if (!bridge->serializeFromVar(payload, message, error))
+                return makeResult(false, "failed to serialize payload: " + error);
+        }
 
         auto publisher = publishers_.value(request.topic, rclcpp::GenericPublisher::SharedPtr{});
         if (!publisher) {
@@ -512,20 +586,68 @@ public:
             publishers_.insertOne(request.topic, publisher);
         }
 
-        rclcpp::SerializedMessage message(bytes.size());
-        auto& raw = message.get_rcl_serialized_message();
-        if (bytes.size() > raw.buffer_capacity)
-            message.reserve(bytes.size());
-        std::memcpy(raw.buffer, bytes.data(), bytes.size());
-        raw.buffer_length = bytes.size();
-
         publisher->publish(message);
 
         Var::DictV result = makeResult(true, "topic publish ok");
         result["topic"] = Var(request.topic);
         result["type"] = Var(topic_type);
-        result["size"] = Var(static_cast<int64_t>(bytes.size()));
+        result["size"] = Var(static_cast<int64_t>(message.size()));
         result["payload_format"] = Var(payload_format);
+        return result;
+    }
+
+    Var::DictV onceTopic(const TopicOnceRequest& request) override
+    {
+        std::shared_ptr<rclcpp::Node> node;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!node_)
+                return makeResult(false, "rclcpp backend is not started");
+            node = node_;
+        }
+
+        if (request.topic.empty())
+            return makeResult(false, "topic is required");
+
+        const std::string topic_type = request.type.empty()
+            ? inferTopicTypeLocked(request.topic)
+            : request.type;
+        if (topic_type.empty())
+            return makeResult(false, "topic type is required");
+
+        const std::string payload_format = normalizedPayloadFormat(request.payload_format);
+        auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
+        std::string bridge_error;
+        if (payload_format != "cdr_hex" && !bridge->initialize(topic_type, bridge_error))
+            return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+
+        auto promise = std::make_shared<std::promise<Var::DictV>>();
+        auto future = promise->get_future();
+        auto delivered = std::make_shared<std::atomic<bool>>(false);
+
+        auto subscription = node->create_generic_subscription(
+            request.topic,
+            topic_type,
+            rclcpp::QoS(10),
+            [promise, delivered, topic = request.topic, type = topic_type, payload_format, bridge]
+            (std::shared_ptr<rclcpp::SerializedMessage> message) {
+                if (delivered->exchange(true))
+                    return;
+                promise->set_value(decodedMessageResult(*message, topic, type, payload_format, bridge));
+            });
+
+        const auto status = future.wait_for(std::chrono::milliseconds(request.timeout_ms));
+        if (status != std::future_status::ready)
+            return makeResult(false, "topic once timeout");
+
+        auto result = future.get();
+        if (result.value("ok").toBool(false) && !request.target_node.empty()) {
+            Node payload("payload");
+            schema::importAs<schema::VarS>(&payload, Var(result), schema::ImportOptions{true, false, true});
+            ve::n(request.target_node)->copy(&payload, true, true, true);
+            result["target_node"] = Var(request.target_node);
+        }
+        result["message"] = Var(result.value("ok").toBool(false) ? "topic once ok" : result.value("message").toString());
         return result;
     }
 
@@ -718,6 +840,9 @@ private:
     mutable std::mutex mu_;
     rclcpp::Context::SharedPtr context_;
     rclcpp::Node::SharedPtr node_;
+    rclcpp::Executor::SharedPtr executor_;
+    std::thread spin_thread_;
+    std::atomic<bool> spinning_{false};
     std::string node_name_;
     std::string node_namespace_;
     std::string node_full_name_;

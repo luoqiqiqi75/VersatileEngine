@@ -190,7 +190,7 @@ private:
             config.topic = argStringAt(args, "topic", 1);
             config.type = argStringAt(args, "type", 2);
             config.target_node = argString(args, "target_node");
-            config.payload_format = argStringAt(args, "payload_format", 3, "cdr_hex");
+            config.payload_format = argStringAt(args, "payload_format", 3, "yaml");
             if (config.name.empty() || config.topic.empty())
                 return failResult("name/topic is required");
 
@@ -215,12 +215,29 @@ private:
             request.topic = argStringAt(args, "topic", 0);
             request.type = argStringAt(args, "type", 1);
             request.payload = argStringAt(args, "payload", 2);
-            request.payload_format = argStringAt(args, "payload_format", 3, "cdr_hex");
+            request.payload_format = argStringAt(args, "payload_format", 3, "yaml");
             if (request.topic.empty() || request.payload.empty())
                 return failResult("topic/payload is required");
 
             const auto result = ros::publishTopic(request);
             writeNodeTree(n("ve/ros"), "runtime/publications/last", Var(result));
+            return okResult(Var(result));
+        }));
+
+        command::reg("ros.topic.once", Step("ros.topic.once", [this](const Var& args) -> Result {
+            ros::TopicOnceRequest request;
+            request.topic = argStringAt(args, "topic", 0);
+            request.type = argStringAt(args, "type", 1);
+            request.target_node = argString(args, "target_node");
+            request.payload_format = argStringAt(args, "payload_format", 2, "yaml");
+            const auto timeout_text = argString(args, "timeout_ms");
+            if (!timeout_text.empty())
+                request.timeout_ms = std::stoi(timeout_text);
+            if (request.topic.empty())
+                return failResult("topic is required");
+
+            const auto result = ros::onceTopic(request);
+            writeNodeTree(n("ve/ros"), "runtime/once/last", Var(result));
             return okResult(Var(result));
         }));
 
@@ -321,6 +338,7 @@ private:
         root->at("runtime/params");
         root->at("runtime/subscriptions");
         root->at("runtime/publications");
+        root->at("runtime/once");
         root->set("runtime/note", Var(
             "ve/ros v1 exposes runtime discovery and parameter APIs through backend-neutral entry points."));
     }

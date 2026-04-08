@@ -60,4 +60,16 @@ Var::DictV publishTopic(const TopicPublishRequest& request)
     return result;
 }
 
+Var::DictV onceTopic(const TopicOnceRequest& request)
+{
+    if (auto current = activeBackend())
+        return current->onceTopic(request);
+
+    Var::DictV result;
+    result["ok"] = Var(false);
+    result["message"] = Var("no active ROS backend");
+    result["topic"] = Var(request.topic);
+    return result;
+}
+
 } // namespace ve::ros

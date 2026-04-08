@@ -28,6 +28,7 @@ public:
     virtual Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) = 0;
     virtual Var::DictV unsubscribeTopic(const std::string& name) = 0;
     virtual Var::DictV publishTopic(const TopicPublishRequest& request) = 0;
+    virtual Var::DictV onceTopic(const TopicOnceRequest& request) = 0;
     virtual Var::ListV listServices(const std::string& filter = "") const = 0;
     virtual Var::DictV serviceInfo(const std::string& service) const = 0;
     virtual Var::DictV listParams(const std::string& node_name = "") const = 0;
