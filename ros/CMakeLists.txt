@@ -1,38 +1,60 @@
 # =============================================================================
-# ros/CMakeLists.txt - VE + ROS/DDS (FastDDS) -> libveros
-# Builds libveros (or vedds): ve::dds and ve::ros integration for Node <-> DDS
-# Unified include/ + src/ structure similar to qt/. No catkin/ament.
+# ros/CMakeLists.txt
+# Unified ve/ros module with backend-neutral public headers and pluggable
+# runtime implementations. Mainline backend is rclcpp; Fast DDS is optional.
 # =============================================================================
 
-find_package(fastrtps QUIET)
-find_package(fastcdr QUIET)
+option(VE_ROS_WITH_RCLCPP "Build ve/ros with rclcpp backend support" ON)
+option(VE_ROS_WITH_FASTDDS "Build ve/ros with Fast DDS backend support" ON)
 
-if(NOT fastrtps_FOUND OR NOT fastcdr_FOUND)
+set(_VE_ROS_HAS_RCLCPP OFF)
+set(_VE_ROS_HAS_FASTDDS OFF)
+
+if(VE_ROS_WITH_RCLCPP)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    find_package(ament_cmake QUIET)
+    if(Python3_FOUND AND ament_cmake_FOUND)
+        find_package(rclcpp QUIET)
+        if(rclcpp_FOUND)
+            set(_VE_ROS_HAS_RCLCPP ON)
+        endif()
+    endif()
+endif()
+
+if(VE_ROS_WITH_FASTDDS)
+    find_package(fastrtps QUIET)
+    find_package(fastcdr QUIET)
+    if(fastrtps_FOUND AND fastcdr_FOUND)
+        set(_VE_ROS_HAS_FASTDDS ON)
+    endif()
+endif()
+
+if(NOT _VE_ROS_HAS_RCLCPP AND NOT _VE_ROS_HAS_FASTDDS)
     message(STATUS "")
-    message(STATUS "[SKIP] libveros — fastrtps or fastcdr not found")
-    message(STATUS "       Install eProsima Fast DDS to enable.")
+    message(STATUS "[SKIP] libveros — neither rclcpp nor Fast DDS backends are available")
+    message(STATUS "       Source a ROS2 environment for rclcpp or install Fast DDS.")
     message(STATUS "")
     return()
 endif()
 
 message(STATUS "")
-message(STATUS "[libveros]  FastDDS (fastrtps ${fastrtps_VERSION}, fastcdr ${fastcdr_VERSION})")
+message(STATUS "[libveros]  unified ve/ros")
+if(_VE_ROS_HAS_RCLCPP)
+    message(STATUS "  + backend: rclcpp")
+endif()
+if(_VE_ROS_HAS_FASTDDS)
+    message(STATUS "  + backend: Fast DDS (${fastrtps_VERSION}, ${fastcdr_VERSION})")
+endif()
 
-# --- Output library name ---
 ve_resolve_library_target_name(VE_ROS_LIBRARY veros)
 set(VE_ROS_LIBRARY ${VE_ROS_LIBRARY} PARENT_SCOPE)
 
-# --- Create shared library ---
 add_library(${VE_ROS_LIBRARY} SHARED)
-
 target_compile_features(${VE_ROS_LIBRARY} PUBLIC cxx_std_17)
 target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_LIBRARY)
 
-# --- Link dependencies ---
 target_link_libraries(${VE_ROS_LIBRARY} PUBLIC VersatileEngine::ve)
-target_link_libraries(${VE_ROS_LIBRARY} PUBLIC fastrtps fastcdr)
 
-# yaml-cpp for CommandService YAML serialization
 ve_find_package(yaml-cpp
     GIT_REPO  https://github.com/jbeder/yaml-cpp.git
     GIT_TAG   0.8.0
@@ -44,29 +66,39 @@ ve_find_package(yaml-cpp
 )
 target_link_libraries(${VE_ROS_LIBRARY} PUBLIC yaml-cpp::yaml-cpp)
 
-# ==========================================================
-# Public headers — single unified include/
-# ==========================================================
 target_include_directories(${VE_ROS_LIBRARY} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-
-# ==========================================================
-# Library sources using ve_collect (now works with new structure)
-# ==========================================================
-ve_collect(${CMAKE_CURRENT_SOURCE_DIR} _VEROS)
-
-target_sources(${VE_ROS_LIBRARY} PRIVATE ${_VEROS_ALL})
-
-# PRIVATE include for src/ headers (if any internal .h)
 target_include_directories(${VE_ROS_LIBRARY} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-message(STATUS "  + ve::dds (Participant, DynamicTypes, Bridge, Topic, Service)")
-message(STATUS "  + ve::ros (CommandService, RosModule, data helpers)")
-message(STATUS "  + Unified include/ve/ros/ + src/{dds,service,module,data}/")
-message(STATUS "")
+file(GLOB_RECURSE _ROS_PUBLIC_HEADERS include/ve/ros/*.h)
+file(GLOB_RECURSE _ROS_BASE_SRC src/base/*.cpp src/base/*.h)
+file(GLOB_RECURSE _ROS_MODULE_SRC src/module/*.cpp src/module/*.h)
+file(GLOB_RECURSE _ROS_SERVICE_SRC src/service/*.cpp src/service/*.h)
 
-# Optional program/ for example modules or bridge DLLs
-# add_subdirectory(program) if VE_BUILD_ROS_PROGRAM or similar
+target_sources(${VE_ROS_LIBRARY} PRIVATE
+    ${_ROS_PUBLIC_HEADERS}
+    ${_ROS_BASE_SRC}
+    ${_ROS_MODULE_SRC}
+    ${_ROS_SERVICE_SRC}
+)
+
+if(_VE_ROS_HAS_RCLCPP)
+    file(GLOB_RECURSE _ROS_RCLCPP_SRC src/backend/rclcpp/*.cpp src/backend/rclcpp/*.h)
+    target_sources(${VE_ROS_LIBRARY} PRIVATE ${_ROS_RCLCPP_SRC})
+    ament_target_dependencies(${VE_ROS_LIBRARY} PUBLIC rclcpp)
+    target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_RCLCPP=1)
+endif()
+
+if(_VE_ROS_HAS_FASTDDS)
+    file(GLOB_RECURSE _ROS_FASTDDS_SRC src/backend/fastdds/*.cpp src/backend/fastdds/*.h)
+    target_sources(${VE_ROS_LIBRARY} PRIVATE ${_ROS_FASTDDS_SRC})
+    target_link_libraries(${VE_ROS_LIBRARY} PUBLIC fastrtps fastcdr)
+    target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_FASTDDS=1)
+endif()
+
+message(STATUS "  + public headers: include/ve/ros/*.h")
+message(STATUS "  + source tree: src/base, src/backend/*, src/module, src/service")
+message(STATUS "")
