@@ -251,6 +251,13 @@ VE_API bool        has(const std::string& key);
 VE_API Strings     keys();
 VE_API std::string help(const std::string& key);
 
+// --- callable bridge ---
+// Invoke a Var-stored callable with Node* context
+// Converts Node* to Var(pointer) for Var::invoke()
+inline Var invoke(const Var& callable, Node* ctx = nullptr) {
+    return callable.invoke(Var(static_cast<void*>(ctx)));
+}
+
 } // namespace command
 
 } // namespace ve

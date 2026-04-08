@@ -177,9 +177,11 @@ public:
     void silentAll(bool on);
 
     // --- activate (signal bubbling) ---
-    // Triggers NODE_ACTIVATED on this node, then bubbles up to each watching ancestor.
-    // SILENT on any node in the chain stops emission + bubbling at that node.
-    // WATCHING on parent controls whether the bubble continues upward.
+    // Emits NODE_ACTIVATED on this node, then bubbles to parent while parent->isWatching().
+    // Insert/remove/clear/set call activate only when this node isWatching()
+    // Value change bubbling to ancestors therefore requires watch on the node that changed unless
+    // you call activate() explicitly.
+    // SILENT stops emission + bubbling at that node.
     void activate(SignalT signal, Node* source = nullptr);
 
     // --- debug ---

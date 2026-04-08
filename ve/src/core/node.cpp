@@ -290,7 +290,7 @@ bool Node::insert(Node* child, int index)
     }
 
     trigger<NODE_ADDED>(key, 0);
-    activate(NODE_ADDED, this);
+    if (isWatching()) activate(NODE_ADDED, this);
     return true;
 }
 
@@ -355,7 +355,7 @@ bool Node::insert(const Nodes& children, int index)
     }
 
     trigger<NODE_ADDED>(firstKey, batch - 1);
-    activate(NODE_ADDED, this);
+    if (isWatching()) activate(NODE_ADDED, this);
     return true;
 }
 
@@ -423,7 +423,7 @@ Node* Node::take(Node* child)
     }
 
     trigger<NODE_REMOVED>(key, 0);
-    activate(NODE_REMOVED, this);
+    if (isWatching()) activate(NODE_REMOVED, this);
     return child;
 }
 
@@ -455,7 +455,7 @@ void Node::clear(bool auto_delete)
     }
     if (cnt > 0) {
         trigger<NODE_REMOVED>(std::string("#0"), cnt - 1);
-        activate(NODE_REMOVED, this);
+        if (isWatching()) activate(NODE_REMOVED, this);
     }
 }
 
@@ -784,9 +784,7 @@ void Node::activate(SignalT signal, Node* source)
     if (isSilent()) return;  // silent: suppress emission + stop bubbling
 
     // Trigger NODE_ACTIVATED on this node with (signal, source)
-    Object::trigger(NODE_ACTIVATED, Var(Var::ListV{
-        Var(signal), Var(static_cast<void*>(source))
-    }));
+    trigger<NODE_ACTIVATED>(Var::ListV{signal, static_cast<void*>(source)});
 
     // Bubble up to parent only if parent is watching
     if (auto* p = parent()) {
@@ -825,7 +823,7 @@ Node* Node::set(const Var& v)
     }
     // nv now holds old value, trigger signals outside lock
     trigger<NODE_CHANGED>(v, nv);
-    activate(NODE_CHANGED, this);
+    if (isWatching()) activate(NODE_CHANGED, this);
     return this;
 }
 
@@ -839,7 +837,7 @@ Node* Node::set(Var&& v)
     }
     // nv now holds old value, trigger signals outside lock
     trigger<NODE_CHANGED>(sig, nv);
-    activate(NODE_CHANGED, this);
+    if (isWatching()) activate(NODE_CHANGED, this);
     return this;
 }
 

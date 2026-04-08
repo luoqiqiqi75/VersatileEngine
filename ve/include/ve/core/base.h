@@ -204,6 +204,15 @@ template<typename T> struct Meta
     static constexpr bool is_abstract    = std::is_abstract_v<BareT>;
     static constexpr bool is_polymorphic = std::is_polymorphic_v<BareT>;
 
+    // callable
+    static constexpr bool is_function_ptr        = std::is_pointer_v<NoCVRefT>
+                                                && std::is_function_v<std::remove_pointer_t<NoCVRefT>>;
+    static constexpr bool is_member_function_ptr = std::is_member_function_pointer_v<NoCVRefT>;
+    static constexpr bool is_callable            = FnTraits<NoCVRefT>::IsFunction;
+    static constexpr bool is_raw_pointer         = std::is_pointer_v<NoCVRefT>
+                                                && !is_function_ptr
+                                                && !is_string;
+
     static constexpr size_t typeSize() {
         if constexpr (is_void) return 0;
         else return sizeof(T);
@@ -216,20 +225,22 @@ template<typename T> struct Meta
     static std::string describe() {
         std::string s = typeName();
         std::string q;
-        if (is_const)    q += "const ";
-        if (is_volatile) q += "volatile ";
-        if (is_lref)     q += "& ";
-        if (is_rref)     q += "&& ";
-        if (is_ptr)      q += "* ";
+        if constexpr (is_const)    q += "const ";
+        if constexpr (is_volatile) q += "volatile ";
+        if constexpr (is_lref)     q += "& ";
+        if constexpr (is_rref)     q += "&& ";
+        if constexpr (is_ptr)      q += "* ";
         if (!q.empty()) q.pop_back();
 
         std::string c;
-        if      (is_void)       c = "void";
-        else if (is_integral)   c = "integral";
-        else if (is_floating)   c = "floating";
-        else if (is_enum)       c = "enum";
-        else if (is_class)      c = "class";
-        else if (is_ptr && !is_class) c = "pointer";
+        if      constexpr (is_void)         c = "void";
+        else if constexpr (is_callable)     c = "callable";
+        else if constexpr (is_integral)     c = "integral";
+        else if constexpr (is_floating)     c = "floating";
+        else if constexpr (is_enum)         c = "enum";
+        else if constexpr (is_class)        c = "class";
+        else if constexpr (is_raw_pointer)  c = "pointer";
+        else if constexpr (is_ptr)          c = "pointer";
 
         if constexpr (!is_void) {
             c += ", " + std::to_string(typeSize()) + "B";
@@ -287,6 +298,12 @@ template<typename T> struct is_smart_pointer<std::shared_ptr<T>> : std::true_typ
 template<typename T> struct is_smart_pointer<std::unique_ptr<T>> : std::true_type {};
 template<typename T> struct is_smart_pointer<std::weak_ptr<T>> : std::true_type {};
 template<typename T> inline constexpr bool is_smart_pointer_v = is_smart_pointer<T>::value;
+
+// callable / pointer classification (from Meta<T>)
+
+template<typename T> inline constexpr bool is_callable_v     = Meta<T>::is_callable;
+template<typename T> inline constexpr bool is_function_ptr_v = Meta<T>::is_function_ptr;
+template<typename T> inline constexpr bool is_raw_pointer_v  = Meta<T>::is_raw_pointer;
 
 // SFINAE helpers for function signature matching
 

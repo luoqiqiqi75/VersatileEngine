@@ -149,6 +149,9 @@ VE_TEST(node_signal_data_changed_bubbles) {
     Node root("root");
     root.watch(true);
     auto* child = root.append("child");
+    // ve does not inherit watch on append (unlike imol ModuleObject). activate() from set()
+    // is only invoked when the node whose value changes is watching.
+    child->watch(true);
 
     int64_t sig = -1;
     void* src = nullptr;

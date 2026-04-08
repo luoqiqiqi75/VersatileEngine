@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// var.h — Var: high-performance variant type (replaces QVariant)
+// var.h — ve::Var : 16-byte variant (NONE/BOOL/INT/DOUBLE/STRING/BIN/LIST/DICT/POINTER/CALLABLE/CUSTOM)
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -7,15 +7,19 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
+#include "base.h"
 #include "convert.h"
+#include <any>
 
 namespace ve {
 
-class VE_API Var {
+class VE_API Var
+{
 public:
-    using ListV   = ve::Vector<Var>;
-    using DictV   = ve::Dict<Var>;
+    using ListV   = Vector<Var>;
+    using DictV   = Dict<Var>;
     using CustomV = std::any;
+    using CallableV = std::function<Var(const Var&)>;
 
     struct CustomStorage {
         std::any value;
@@ -33,6 +37,7 @@ public:
         LIST,
         DICT,
         POINTER,
+        CALLABLE,
         CUSTOM
     };
 
@@ -47,17 +52,17 @@ public:
     Var(std::string&& v);
     Var(const Bytes& v);
     Var(Bytes&& v);
-    explicit Var(void* ptr);
+    Var(void* ptr);
     Var(const ListV& v);
     Var(ListV&& v);
     Var(const DictV& v);
     Var(DictV&& v);
+    Var(CallableV fn);
 
-    // Block implicit pointer-to-bool conversion for non-char pointers
+    // Block implicit pointer-to-bool conversion for non-char/void data pointers
+    // Function pointers are allowed (routed to callable via template ctor)
     template<typename T, std::enable_if_t<
-        std::is_pointer_v<T>
-        && !std::is_same_v<T, const char*>
-        && !std::is_same_v<T, char*>
+        basic::Meta<T>::is_raw_pointer
         && !std::is_same_v<T, void*>, int> = 0>
     Var(T) = delete;
 
@@ -86,6 +91,8 @@ public:
         } else if constexpr (basic::Meta<T>::is_string) {
             _type = STRING;
             _storage._str = new std::string(v);
+        } else if constexpr (basic::Meta<T>::is_callable) {
+            *this = Var::callable(v);
         } else {
             *this = Var::custom(v);
         }
@@ -110,6 +117,13 @@ public:
         return result;
     }
 
+    // callable — universal callable-to-CallableV conversion
+    // Adapts: Var(const Var&), Result(const Var&), void(), bool(), int(int), etc.
+    template<typename F, std::enable_if_t<basic::Meta<std::decay_t<F>>::is_callable, int> = 0>
+    static Var callable(F&& fn) {
+        return Var(wrapCallable(std::forward<F>(fn)));
+    }
+
     Var(const Var& other);
     Var(Var&& other) noexcept;
     Var& operator=(const Var& other);
@@ -129,11 +143,15 @@ public:
     bool isList() const { return _type == LIST; }
     bool isDict() const { return _type == DICT; }
     bool isPointer() const { return _type == POINTER; }
+    bool isCallable() const { return _type == CALLABLE; }
     bool isCustom() const { return _type == CUSTOM; }
 
     const std::type_info& customType() const;
     bool customIs(const std::type_info& ti) const;
     template<typename T> bool customIs() const { return customIs(typeid(T)); }
+
+    // callable invoke
+    Var invoke(const Var& input = {}) const;
 
     // value extraction (type-safe, returns default on mismatch)
     bool toBool(bool def = false) const;
@@ -149,6 +167,9 @@ public:
     DictV& toDict();
     void* toPointer() const;
 
+    const CallableV& toCallable() const;
+    CallableV& toCallable();
+
     const CustomV& toCustom() const;
     CustomV& toCustom();
 
@@ -161,7 +182,7 @@ public:
         return std::any_cast<T>(&_storage._custom->value);
     }
 
-    // as<T>() — fast extraction: basic types → direct, CUSTOM → any_cast
+    // as<T>() — fast extraction: basic types -> direct, CUSTOM -> any_cast
     template<typename T>
     std::decay_t<T> as() const {
         using U = std::decay_t<T>;
@@ -181,7 +202,7 @@ public:
         }
     }
 
-    // to<T>(def) — safe conversion: NONE → def, basic → direct, else → any_cast + string intermediate
+    // to<T>(def) — safe conversion: NONE -> def, basic -> direct, else -> any_cast + string intermediate
     template<typename T>
     T to(const T& def = T{}) const {
         if (_type == NONE) return def;
@@ -217,6 +238,7 @@ public:
     Var& fromDict(const DictV& v);
     Var& fromDict(DictV&& v);
     Var& fromPointer(void* ptr);
+    Var& fromCallable(CallableV fn);
     Var& fromCustom(CustomV v);
 
     template<typename T>
@@ -241,6 +263,47 @@ private:
     void moveFrom(Var&& other);
     void destroy();
 
+    // wrapCallable — adapt any callable to CallableV = Var(const Var&)
+    template<typename F>
+    static CallableV wrapCallable(F&& fn) {
+        using Traits = basic::FnTraits<std::decay_t<F>>;
+        using Ret = typename Traits::RetT;
+
+        if constexpr (std::is_convertible_v<std::decay_t<F>, CallableV>) {
+            // Already Var(const Var&) — direct
+            return CallableV(std::forward<F>(fn));
+        }
+        else if constexpr (Traits::ArgCnt == 0) {
+            // void() / bool() / int() / etc.
+            return [f = std::decay_t<F>(std::forward<F>(fn))](const Var&) -> Var {
+                if constexpr (std::is_void_v<Ret>) { f(); return {}; }
+                else return Var(f());
+            };
+        }
+        else if constexpr (Traits::ArgCnt == 1) {
+            using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
+            if constexpr (std::is_same_v<Arg0, Var>) {
+                // Var(const Var&) with non-Var return -> wrap return
+                return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
+                    if constexpr (std::is_void_v<Ret>) { f(input); return {}; }
+                    else return Var(f(input));
+                };
+            }
+            else {
+                // T(SomeType) -> unpack via as<Arg0>
+                return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
+                    if constexpr (std::is_void_v<Ret>) { f(input.as<Arg0>()); return {}; }
+                    else return Var(f(input.as<Arg0>()));
+                };
+            }
+        }
+        else {
+            // Multi-arg: not auto-adaptable
+            static_assert(Traits::ArgCnt <= 1, "Cannot auto-adapt callable with >1 arguments to CallableV");
+            return nullptr;
+        }
+    }
+
 private:
     Type _type;
 
@@ -253,6 +316,7 @@ private:
         Bytes*          _bin;
         ListV*          _list;
         DictV*          _dict;
+        CallableV*      _callable;
         CustomStorage*  _custom;
     } _storage;
 };
