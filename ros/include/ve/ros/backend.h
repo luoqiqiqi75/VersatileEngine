@@ -34,15 +34,6 @@ public:
     virtual Var::DictV getParam(const std::string& node_name, const std::string& name) const = 0;
     virtual Var::DictV setParam(const std::string& node_name, const std::string& name, const Var& value) const = 0;
 
-    virtual bool supportsCommandService() const { return false; }
-    virtual bool startCommandService(const std::string& prefix, std::string& error)
-    {
-        (void)prefix;
-        error = "command service is not supported by backend: " + key();
-        return false;
-    }
-    virtual void stopCommandService() {}
-
     Var::DictV info() const;
 };
 
