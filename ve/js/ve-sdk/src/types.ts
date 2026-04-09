@@ -32,20 +32,54 @@ export interface HealthResponse {
   uptime_s: number;
 }
 
-/** WebSocket outgoing command */
+/** WebSocket outgoing command (subset; see veservice.js for full command.run + wait) */
 export interface WsCommand {
-  cmd: 'get' | 'set' | 'subscribe' | 'unsubscribe';
+  cmd: 'get' | 'set' | 'subscribe' | 'unsubscribe' | 'command.run';
   path?: string;
   value?: VarValue;
+  id?: number;
+  name?: string;
+  args?: VarValue[];
+  wait?: boolean;
 }
 
-/** WebSocket incoming message */
-export interface WsMessage {
-  type: 'data' | 'ok' | 'subscribed' | 'unsubscribed' | 'event' | 'error';
-  path?: string;
-  value?: VarValue;
-  error?: string;
+/**
+ * WebSocket JSON frames from ve::service::NodeWsServer (see node_ws_server.cpp).
+ * VeWsClient in ws.ts only forwards raw objects; use veservice.js or a custom handler for Promise/command.run.
+ */
+export type WsMessage =
+  | { type: 'data'; path?: string; value?: VarValue; id?: number }
+  | { type: 'ok'; result?: VarValue; id?: number }
+  | { type: 'error'; msg?: string; id?: number }
+  | { type: 'subscribed' | 'unsubscribed'; path?: string; id?: number }
+  | { type: 'event'; path?: string; value?: VarValue }
+  | { type: 'accepted'; accepted?: boolean; id?: number }
+  | { type: 'result'; ok: boolean; result?: VarValue; msg?: string; id?: number };
+
+/** GET /api/cmd */
+export interface CommandListResponse {
+  commands: { name: string; help: string }[];
 }
+
+/** POST /api/cmd/{key} — sync result */
+export interface CommandRunOkResponse {
+  ok: true;
+  result: VarValue;
+  id?: VarValue;
+}
+
+/** POST /api/cmd/{key} — async accepted (wait false, command deferred to main loop) */
+export interface CommandRunAcceptedResponse {
+  ok: true;
+  accepted: true;
+  id?: VarValue;
+}
+
+export interface CommandRunErrorResponse {
+  error: string;
+}
+
+export type CommandRunResponse = CommandRunOkResponse | CommandRunAcceptedResponse | CommandRunErrorResponse;
 
 /** Response from POST /api/tree/{path} */
 export interface TreeImportResponse {

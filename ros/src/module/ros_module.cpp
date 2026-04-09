@@ -39,46 +39,6 @@ void writeNodeTree(Node* root, const std::string& path, const Var& value)
     schema::importAs<schema::VarS>(target, value);
 }
 
-std::string argString(const Var& args, const std::string& key = "", const std::string& def = "")
-{
-    if (args.isString())
-        return args.toString(def);
-    if (args.isList()) {
-        const auto& list = args.toList();
-        return list.empty() ? def : list.front().toString(def);
-    }
-    if (args.isDict() && !key.empty()) {
-        const auto& dict = args.toDict();
-        auto it = dict.find(key);
-        if (it != dict.end())
-            return it->second.toString(def);
-    }
-    return def;
-}
-
-std::string argStringAt(const Var& args,
-                        const std::string& key,
-                        int positional_index,
-                        const std::string& def = "")
-{
-    if (args.isDict() && !key.empty()) {
-        const auto& dict = args.toDict();
-        auto it = dict.find(key);
-        if (it != dict.end())
-            return it->second.toString(def);
-    }
-    if (args.isList()) {
-        const auto& list = args.toList();
-        if (positional_index >= 0 && positional_index < static_cast<int>(list.size()))
-            return list[static_cast<std::size_t>(positional_index)].toString(def);
-    }
-    if (positional_index == 0 && args.isString())
-        return args.toString(def);
-    return def;
-}
-
-inline Var ctxGet(Node* ctx) { return ctx ? ctx->get() : Var(); }
-
 } // namespace
 
 class RosModule : public Module
@@ -147,8 +107,8 @@ private:
         });
 
         command::reg("ros.backend.info", [](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            std::string key_name = argString(args, "key");
+            auto a = command::args(ctx);
+            std::string key_name = a.string("key");
             if (key_name.empty()) {
                 if (auto current = ros::defaultBackend())
                     key_name = current->key();
@@ -169,35 +129,35 @@ private:
         });
 
         command::reg("ros.node.list", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto result = ros::listNodes(argString(args, "filter"));
+            auto a = command::args(ctx);
+            const auto result = ros::listNodes(a.string("filter"));
             writeNodeTree(n("ve/ros"), "runtime/nodes", Var(result));
             return okResult(Var(result));
         });
 
         command::reg("ros.topic.list", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto result = ros::listTopics(argString(args, "filter"));
+            auto a = command::args(ctx);
+            const auto result = ros::listTopics(a.string("filter"));
             writeNodeTree(n("ve/ros"), "runtime/topics", Var(result));
             return okResult(Var(result));
         });
 
         command::reg("ros.topic.info", [](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto topic_name = argStringAt(args, "name", 0);
+            auto a = command::args(ctx);
+            const auto topic_name = a.string("name");
             if (topic_name.empty())
                 return failResult("topic name is required");
             return okResult(Var(ros::topicInfo(topic_name)));
         });
 
         command::reg("ros.topic.subscribe", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
+            auto a = command::args(ctx);
             ros::TopicSubscriptionConfig config;
-            config.name = argStringAt(args, "name", 0);
-            config.topic = argStringAt(args, "topic", 1);
-            config.type = argStringAt(args, "type", 2);
-            config.target_node = argString(args, "target_node");
-            config.payload_format = argStringAt(args, "payload_format", 3, "cdr_hex");
+            config.name = a.string("name");
+            config.topic = a.string("topic");
+            config.type = a.string("type");
+            config.target_node = a.string("target_node");
+            config.payload_format = a.string("payload_format", "cdr_hex");
             if (config.name.empty() || config.topic.empty())
                 return failResult("name/topic is required");
 
@@ -208,8 +168,8 @@ private:
         });
 
         command::reg("ros.topic.unsubscribe", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto name = argStringAt(args, "name", 0);
+            auto a = command::args(ctx);
+            const auto name = a.string("name");
             if (name.empty())
                 return failResult("name is required");
             const auto result = ros::unsubscribeTopic(name);
@@ -219,12 +179,12 @@ private:
         });
 
         command::reg("ros.topic.publish", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
+            auto a = command::args(ctx);
             ros::TopicPublishRequest request;
-            request.topic = argStringAt(args, "topic", 0);
-            request.type = argStringAt(args, "type", 1);
-            request.payload = argStringAt(args, "payload", 2);
-            request.payload_format = argStringAt(args, "payload_format", 3, "cdr_hex");
+            request.topic = a.string("topic");
+            request.type = a.string("type");
+            request.payload = a.string("payload");
+            request.payload_format = a.string("payload_format", "cdr_hex");
             if (request.topic.empty() || request.payload.empty())
                 return failResult("topic/payload is required");
 
@@ -234,56 +194,46 @@ private:
         });
 
         command::reg("ros.service.list", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto result = ros::listServices(argString(args, "filter"));
+            auto a = command::args(ctx);
+            const auto result = ros::listServices(a.string("filter"));
             writeNodeTree(n("ve/ros"), "runtime/services", Var(result));
             return okResult(Var(result));
         });
 
         command::reg("ros.service.info", [](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto service_name = argStringAt(args, "name", 0);
+            auto a = command::args(ctx);
+            const auto service_name = a.string("name");
             if (service_name.empty())
                 return failResult("service name is required");
             return okResult(Var(ros::serviceInfo(service_name)));
         });
 
         command::reg("ros.param.list", [this](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto result = ros::listParams(argString(args, "node"));
+            auto a = command::args(ctx);
+            const auto result = ros::listParams(a.string("node"));
             writeNodeTree(n("ve/ros"), "runtime/params", Var(result));
             return okResult(Var(result));
         });
 
         command::reg("ros.param.get", [](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            const auto node_name = argStringAt(args, "node", 0);
-            const auto param_name = argStringAt(args, "name", 1);
+            auto a = command::args(ctx);
+            const auto node_name = a.string("node");
+            const auto param_name = a.string("name");
             if (node_name.empty() || param_name.empty())
                 return failResult("node/name is required");
             return okResult(Var(ros::getParam(node_name, param_name)));
         });
 
         command::reg("ros.param.set", [](Node* ctx) -> Result {
-            const Var args = ctxGet(ctx);
-            if (args.isDict()) {
-                const auto& dict = args.toDict();
-                const auto node_it = dict.find("node");
-                const auto name_it = dict.find("name");
-                const auto value_it = dict.find("value");
-                if (node_it == dict.end() || name_it == dict.end() || value_it == dict.end())
-                    return failResult("node/name/value is required");
-                return okResult(Var(ros::setParam(node_it->second.toString(),
-                                                  name_it->second.toString(),
-                                                  value_it->second)));
-            }
-            if (args.isList() && args.toList().size() >= 3) {
-                const auto& list = args.toList();
-                return okResult(Var(ros::setParam(list[0].toString(),
-                                                  list[1].toString(),
-                                                  ros::yaml::decode(list[2].toString()))));
-            }
-            return failResult("args must be {node,name,value} or [node, name, yaml_value]");
+            auto a = command::args(ctx);
+            auto node_name = a.string("node");
+            auto param_name = a.string("name");
+            Var value = a.var("value");
+            if (node_name.empty() || param_name.empty() || value.isNull())
+                return failResult("node/name/value is required");
+            if (value.isString())
+                value = ros::yaml::decode(value.toString());
+            return okResult(Var(ros::setParam(node_name, param_name, value)));
         });
 
         command::reg("ros.runtime.refresh", [this]() -> Result {

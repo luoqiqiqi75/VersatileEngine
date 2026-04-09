@@ -5,6 +5,7 @@
 
 #include "terminal_session.h"
 #include "ve/core/command.h"
+#include "ve/core/pipeline.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"
@@ -129,6 +130,7 @@ struct TerminalSession::Private
     std::vector<Node*> orphans;
     std::string output;
     std::unordered_map<std::string, CmdFn> cmds;
+    TerminalSession::AsyncOutputFn asyncOutput;
 
     std::string currentPath() const { return cur->path(root); }
 
@@ -682,6 +684,11 @@ TerminalSession::TerminalSession(Node* root)
 
 TerminalSession::~TerminalSession() = default;
 
+void TerminalSession::setAsyncOutput(AsyncOutputFn fn)
+{
+    _p->asyncOutput = std::move(fn);
+}
+
 std::string TerminalSession::execute(const std::string& line)
 {
     _p->output.clear();
@@ -704,12 +711,62 @@ std::string TerminalSession::execute(const std::string& line)
     }
 
     // Fallback: user-registered global commands
+    // "async cmd ..." runs with wait=false; otherwise wait=true (default)
+    bool asyncMode = false;
+    if (cmd == "async" && args.size() > 1) {
+        asyncMode = true;
+        args.erase(args.begin());
+        cmd = args[0];
+    }
+
     if (command::has(cmd)) {
         Node* ctx = command::context(cmd, s.cur);
         Var::ListV list;
         for (size_t i = 1; i < args.size(); ++i)
             list.push_back(Var(args[i]));
         ctx->set(list.empty() ? Var() : Var(std::move(list)));
+        // parseArgs runs automatically inside call()
+
+        if (asyncMode) {
+            Pipeline* detached = nullptr;
+            auto r = command::call(cmd, ctx, false, &detached);
+
+            if (detached) {
+                auto asyncOut = s.asyncOutput;
+                std::string cmdName = cmd;
+                detached->setResultHandler([asyncOut, ctx, detached, cmdName](const Result& res) {
+                    std::string text;
+                    if (res.isSuccess() || res.isAccepted()) {
+                        if (!res.content().isNull())
+                            text = res.content().toString();
+                    } else {
+                        text = Var(res).toString();
+                    }
+                    if (asyncOut && !text.empty()) {
+                        if (text.back() != '\n')
+                            text.push_back('\n');
+                        asyncOut("\x1b[33m[" + cmdName + "]\x1b[0m " + text);
+                    }
+                    delete detached;
+                    delete ctx;
+                });
+                s.print("accepted\n");
+                return s.output;
+            }
+
+            // Command completed synchronously despite async request
+            if (r.isSuccess() || r.isAccepted()) {
+                auto& content = r.content();
+                if (!content.isNull())
+                    s.print(content.toString());
+            } else {
+                s.print(Var(r).toString() + "\n");
+            }
+            delete ctx;
+            return s.output;
+        }
+
+        // Default: synchronous execution
         auto r = command::call(cmd, ctx);
         if (r.isSuccess() || r.isAccepted()) {
             auto& content = r.content();

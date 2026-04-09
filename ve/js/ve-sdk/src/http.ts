@@ -1,4 +1,13 @@
-import type { HealthResponse, NodeResponse, NodeSetResponse, TreeNode, TreeImportResponse, VarValue } from './types';
+import type {
+  HealthResponse,
+  NodeResponse,
+  NodeSetResponse,
+  TreeNode,
+  TreeImportResponse,
+  VarValue,
+  CommandListResponse,
+  CommandRunResponse,
+} from './types';
 
 export class VeHttpClient {
   private base: string;
@@ -27,6 +36,28 @@ export class VeHttpClient {
 
   async health(): Promise<HealthResponse> {
     return this.request('/health');
+  }
+
+  /** GET /api/cmd — registered command names and help text */
+  async listCommands(): Promise<CommandListResponse> {
+    return this.request('/api/cmd');
+  }
+
+  /**
+   * POST /api/cmd/{cmdKey} — run a ve::command (e.g. save, load).
+   * Default wait false → may return 202 { ok, accepted } when execution is async on main loop.
+   * Pass wait: true to block until the pipeline finishes (same worker; avoid on HTTP from hot paths if possible).
+   */
+  async runCommand(
+    cmdKey: string,
+    body: { args?: VarValue[]; wait?: boolean; id?: VarValue } = {},
+  ): Promise<CommandRunResponse> {
+    const key = encodeURIComponent(cmdKey.replace(/^\/+/, ''));
+    return this.request(`/api/cmd/${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 
   async getNode(path = ''): Promise<NodeResponse> {

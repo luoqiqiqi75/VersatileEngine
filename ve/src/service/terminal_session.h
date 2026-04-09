@@ -1,6 +1,7 @@
 // terminal_session.h — internal: per-connection REPL state (used only by TerminalServer)
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,6 +15,8 @@ namespace service {
 class TerminalSession
 {
 public:
+    using AsyncOutputFn = std::function<void(const std::string&)>;
+
     explicit TerminalSession(Node* root);
     ~TerminalSession();
 
@@ -21,6 +24,8 @@ public:
     std::string prompt() const;
     std::vector<std::string> complete(const std::string& partial);
     const std::vector<std::string>& history() const;
+
+    void setAsyncOutput(AsyncOutputFn fn);
 
     Node* root() const;
     Node* current() const;

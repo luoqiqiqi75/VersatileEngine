@@ -12,4 +12,9 @@ export type {
   WsCommand,
   WsMessage,
   VeSdkConfig,
+  CommandListResponse,
+  CommandRunResponse,
+  CommandRunOkResponse,
+  CommandRunAcceptedResponse,
+  CommandRunErrorResponse,
 } from './types';

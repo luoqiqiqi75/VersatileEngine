@@ -211,7 +211,7 @@ public:
 
     Node* at(int index, bool use_shadow = true) { return atKey(index, use_shadow); }
     Node* at(const std::string& name, int overlap, bool use_shadow = true) { return atKey(name, overlap, use_shadow); }
-    Node* at(std::string_view path, bool use_shadow = true) { return atPath(path, use_shadow); }
+    Node* at(const std::string& path, bool use_shadow = true) { return atPath(path, use_shadow); }
 
     // subpath usage
     Var get(int index) const { if (auto n = child(index)) return n->value(); return Var {}; }

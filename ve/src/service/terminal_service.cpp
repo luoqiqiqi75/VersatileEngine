@@ -341,6 +341,24 @@ bool TerminalReplServer::start()
         std::string welcome =
             std::string(banner()) + std::string(title()) + cs->editor->renderedLine();
 
+        // Wire async command output for this connection
+        cs->session->setAsyncOutput([this, key](const std::string& text) {
+            _p->server.post([this, key, text]() {
+                std::lock_guard<std::mutex> lock(_p->mtx);
+                auto it = _p->connections.find(key);
+                if (it == _p->connections.end()) return;
+                auto* cs = it->second.get();
+                std::string out;
+                out += "\r\x1b[K";
+                out += toTcpText(text);
+                out += renderEditorLine(*cs->editor, false);
+                _p->server.foreach_session([&](auto& sp) {
+                    if (sp->hash_key() == key)
+                        sp->async_send(out);
+                });
+            });
+        });
+
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             _p->connections[key] = std::move(cs);
@@ -746,6 +764,17 @@ int TerminalStdioClient::run()
     if (!_p->session) {
         _p->session = std::make_unique<TerminalSession>(_p->root);
         _p->editor = std::make_unique<TerminalLineEditor>(_p->session.get(), TerminalLineEditor::Mode::CONTROLLED);
+        // Wire async command output for stdio
+        _p->session->setAsyncOutput([this](const std::string& text) {
+            std::cout << "\r\x1b[K" << text;
+            if (!text.empty() && text.back() != '\n')
+                std::cout << '\n';
+            std::cout << _p->editor->renderedLine() << "\x1b[K";
+            size_t back = _p->editor->line().size() - _p->editor->cursor();
+            if (back > 0)
+                std::cout << "\x1b[" << back << 'D';
+            std::cout.flush();
+        });
     }
 
     if (!_p->console_prepared) {

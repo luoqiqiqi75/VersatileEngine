@@ -249,17 +249,19 @@ VE_TEST(command_basic) {
 
 VE_TEST(command_pipeline_creation) {
     int order_val = 0;
-    Command cmd("test");
-    cmd.addStep([&order_val](const Var&) -> Result { order_val = 1; return Result::ok(); });
 
-    Pipeline* pipe = cmd.pipeline();
-    VE_ASSERT(pipe != nullptr);
-    VE_ASSERT_EQ(pipe->stepCount(), 1);
+    // Build pipeline directly (no LoopRef) so the step runs synchronously.
+    Pipeline pipe("test");
+    pipe.add(Step([&order_val](const Var&) -> Result {
+        order_val = 1;
+        return Result::ok();
+    }));
 
-    pipe->start();
+    VE_ASSERT_EQ(pipe.stepCount(), 1);
+
+    pipe.start();
     VE_ASSERT_EQ(order_val, 1);
-    VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
-    delete pipe;
+    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
 }
 
 VE_TEST(command_help_metadata) {

@@ -5,10 +5,7 @@
 #include "ve/core/node.h"
 #include "ve/core/log.h"
 #include "ve/core/pipeline.h"
-
-#include <chrono>
-#include <condition_variable>
-#include <mutex>
+#include "parse_util.h"
 
 namespace ve {
 
@@ -129,150 +126,194 @@ Node* context(const std::string& key, Node* currentNode)
     return ctx;
 }
 
-// --- argument parsing ---
+// --- argument parsing (state-machine, declare-driven) ---
 
-// Lightweight flag parser (self-contained, mirrors terminal_util.h logic)
-namespace {
-
-struct ParsedFlags {
-    std::vector<std::pair<std::string, std::string>> named;
-    std::vector<std::string> positional;
-};
-
-bool isInt(const std::string& s)
+// Build lookup tables from declare node.
+// paramOrder: positional params (no _short), in declare child order.
+// shortMap:   short-char -> param name (has _short).
+// longNames:  all param names (for --name matching).
+static void buildDeclInfo(const Node* decl,
+                          std::vector<std::string>& paramOrder,
+                          std::map<std::string, std::string>& shortMap,
+                          std::set<std::string>& longNames)
 {
-    if (s.empty()) return false;
-    size_t start = (s[0] == '-' || s[0] == '+') ? 1 : 0;
-    if (start >= s.size()) return false;
-    for (size_t i = start; i < s.size(); ++i) {
-        if (!std::isdigit(static_cast<unsigned char>(s[i]))) return false;
-    }
-    return true;
-}
-
-bool isDouble(const std::string& s)
-{
-    if (s.empty()) return false;
-    bool dot = false;
-    size_t start = (s[0] == '-' || s[0] == '+') ? 1 : 0;
-    if (start >= s.size()) return false;
-    for (size_t i = start; i < s.size(); ++i) {
-        if (s[i] == '.') { if (dot) return false; dot = true; }
-        else if (!std::isdigit(static_cast<unsigned char>(s[i]))) return false;
-    }
-    return dot;
-}
-
-Var parseValue(const std::string& raw)
-{
-    if (raw == "null")  return Var();
-    if (raw == "true")  return Var(true);
-    if (raw == "false") return Var(false);
-    if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"')
-        return Var(raw.substr(1, raw.size() - 2));
-    if (isInt(raw))    return Var(static_cast<std::int64_t>(std::stoll(raw)));
-    if (isDouble(raw)) return Var(std::stod(raw));
-    return Var(raw);
-}
-
-ParsedFlags parseFlags(const std::vector<std::string>& args, int startIdx)
-{
-    ParsedFlags f;
-    bool endOfFlags = false;
-    for (size_t i = startIdx; i < args.size(); ++i) {
-        auto& a = args[i];
-        if (endOfFlags) {
-            f.positional.push_back(a);
-            continue;
-        }
-        if (a == "--") {
-            endOfFlags = true;
-            continue;
-        }
-        if (a.size() > 2 && a[0] == '-' && a[1] == '-') {
-            auto eq = a.find('=', 2);
-            if (eq != std::string::npos) {
-                f.named.push_back({a.substr(2, eq - 2), a.substr(eq + 1)});
-            } else if (i + 1 < args.size() && !args[i + 1].empty() && args[i + 1][0] != '-') {
-                f.named.push_back({a.substr(2), args[++i]});
-            } else {
-                f.named.push_back({a.substr(2), ""});
-            }
-        } else if (a.size() > 1 && a[0] == '-' && !isInt(a) && !isDouble(a)) {
-            for (size_t j = 1; j < a.size(); ++j) {
-                std::string key(1, a[j]);
-                if (j == a.size() - 1 && i + 1 < args.size() && !args[i + 1].empty() && args[i + 1][0] != '-') {
-                    f.named.push_back({key, args[++i]});
-                } else {
-                    f.named.push_back({key, ""});
-                }
-            }
+    if (!decl) return;
+    for (auto* param : *decl) {
+        const auto& nm = param->name();
+        if (nm.empty() || nm[0] == '_') continue;
+        longNames.insert(nm);
+        if (auto* shortNode = param->find("_short", false)) {
+            std::string s = shortNode->getString();
+            if (!s.empty()) shortMap[s] = nm;
         } else {
-            f.positional.push_back(a);
+            paramOrder.push_back(nm);
         }
     }
-    return f;
 }
-
-} // anonymous namespace
 
 bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
 {
     if (!ctx) return false;
 
-    // Build maps from declare node metadata (via shadow)
     const Node* decl = ctx->shadow();
 
-    std::map<int, std::string> posMap;         // _pos index -> param name
-    std::map<std::string, std::string> shortMap; // short char -> param name
+    std::vector<std::string> paramOrder;
+    std::map<std::string, std::string> shortMap;
+    std::set<std::string> longNames;
+    buildDeclInfo(decl, paramOrder, shortMap, longNames);
 
+    std::string currentTarget;
+    int posIndex = 0;
+
+    auto isKeyword = [&](const std::string& token) -> std::string {
+        if (token.size() < 2 || token[0] != '-') return {};
+        if (parse::isInt(token) || parse::isDouble(token)) return {};
+        if (token[1] == '-') {
+            // --name or --name=value
+            auto eq = token.find('=', 2);
+            std::string name = (eq != std::string::npos) ? token.substr(2, eq - 2) : token.substr(2);
+            if (longNames.count(name)) return name;
+            return {};
+        }
+        // -x (single char short flag)
+        if (token.size() == 2) {
+            std::string key(1, token[1]);
+            auto it = shortMap.find(key);
+            if (it != shortMap.end()) return it->second;
+        }
+        return {};
+    };
+
+    for (size_t i = static_cast<size_t>(startIdx); i < args.size(); ++i) {
+        const auto& token = args[i];
+
+        // Check --name=value form
+        if (token.size() > 2 && token[0] == '-' && token[1] == '-') {
+            auto eq = token.find('=', 2);
+            if (eq != std::string::npos) {
+                std::string name = token.substr(2, eq - 2);
+                if (longNames.count(name)) {
+                    currentTarget.clear();
+                    ctx->at(name, false)->set(parse::parseValue(token.substr(eq + 1)));
+                    continue;
+                }
+            }
+        }
+
+        // Check if token is a keyword (-f or --file)
+        std::string matched = isKeyword(token);
+        if (!matched.empty()) {
+            currentTarget = matched;
+            continue;
+        }
+
+        // Token is a value
+        if (!currentTarget.empty()) {
+            // Assign to the current flag target
+            ctx->at(currentTarget, false)->set(parse::parseValue(token));
+            currentTarget.clear();
+        } else if (posIndex < static_cast<int>(paramOrder.size())) {
+            // Assign to next positional param
+            ctx->at(paramOrder[posIndex], false)->set(parse::parseValue(token));
+            ++posIndex;
+        } else {
+            // Extra positional: store as anonymous child
+            ctx->at(ctx->count(), false)->set(parse::parseValue(token));
+        }
+    }
+
+    // A trailing flag with no value becomes a boolean true
+    if (!currentTarget.empty()) {
+        ctx->at(currentTarget, false)->set(true);
+    }
+
+    return true;
+}
+
+// --- parseArgs(Var) overload ---
+
+bool parseArgs(Node* ctx, const Var& input)
+{
+    if (!ctx) return false;
+    if (input.isNull()) return true;
+
+    if (input.isDict()) {
+        for (auto& [key, val] : input.toDict()) {
+            if (!key.empty() && key[0] != '_')
+                ctx->at(key, false)->set(val);
+        }
+        return true;
+    }
+
+    if (input.isList()) {
+        std::vector<std::string> strs;
+        strs.reserve(input.toList().size());
+        for (auto& item : input.toList())
+            strs.push_back(item.toString());
+        return parseArgs(ctx, strs, 0);
+    }
+
+    // Scalar: store as first positional param
+    const Node* decl = ctx->shadow();
     if (decl) {
         for (auto* param : *decl) {
             const auto& nm = param->name();
             if (nm.empty() || nm[0] == '_') continue;
-
-            if (auto* posNode = param->find("_pos", false)) {
-                posMap[posNode->getInt(-1)] = nm;
-            }
-            if (auto* shortNode = param->find("_short", false)) {
-                std::string s = shortNode->getString();
-                if (s.size() == 1) shortMap[s] = nm;
+            if (!param->find("_short", false)) {
+                ctx->at(nm, false)->set(input);
+                return true;
             }
         }
     }
-
-    // Parse flags
-    auto flags = parseFlags(args, startIdx);
-
-    // Map positional args to named params
-    for (int i = 0; i < static_cast<int>(flags.positional.size()); ++i) {
-        auto it = posMap.find(i);
-        if (it != posMap.end()) {
-            ctx->at(it->second)->set(parseValue(flags.positional[i]));
-        } else {
-            // No positional mapping, store as #N
-            ctx->at(i)->set(parseValue(flags.positional[i]));
-        }
-    }
-
-    // Map named flags to params
-    for (auto& [flag, value] : flags.named) {
-        // Resolve short flag to param name
-        std::string paramName;
-        if (flag.size() == 1) {
-            auto it = shortMap.find(flag);
-            if (it != shortMap.end()) paramName = it->second;
-        }
-        if (paramName.empty()) paramName = flag;
-
-        if (value.empty()) {
-            ctx->at(paramName)->set(true);  // boolean flag
-        } else {
-            ctx->at(paramName)->set(parseValue(value));
-        }
-    }
-
+    ctx->at(0, false)->set(input);
     return true;
+}
+
+// --- Args accessor ---
+
+Args args(Node* ctx) { return Args(ctx); }
+
+Var Args::var(const std::string& key, const Var& def) const
+{
+    if (!ctx || key.empty()) return def;
+    // use_shadow=true: falls back to declare default values
+    if (auto* n = ctx->find(key)) {
+        Var v = n->get();
+        if (!v.isNull()) return v;
+    }
+    return def;
+}
+
+std::string Args::string(const std::string& key, const std::string& def) const
+{
+    Var v = var(key);
+    return v.isNull() ? def : v.toString(def);
+}
+
+int64_t Args::integer(const std::string& key, int64_t def) const
+{
+    Var v = var(key);
+    return v.isNull() ? def : v.toInt64(def);
+}
+
+double Args::number(const std::string& key, double def) const
+{
+    Var v = var(key);
+    return v.isNull() ? def : v.toDouble(def);
+}
+
+bool Args::flag(const std::string& key, bool def) const
+{
+    Var v = var(key);
+    return v.isNull() ? def : v.toBool(def);
+}
+
+bool Args::has(const std::string& key) const
+{
+    if (!ctx || key.empty()) return false;
+    // use_shadow=false: only check if user explicitly set this param
+    auto* n = ctx->find(key, false);
+    return n && !n->get().isNull();
 }
 
 // --- execution ---
@@ -299,6 +340,15 @@ Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut
     if (!ctx) {
         ctx = context(key);
         ctxToDelete = ctx;
+    }
+
+    // Auto-parse raw input on ctx (LIST/DICT/scalar → named child nodes)
+    // Raw value is kept on ctx for backward compat (commands reading ctx->get()).
+    {
+        Var raw = ctx->get();
+        if (!raw.isNull()) {
+            parseArgs(ctx, raw);
+        }
     }
 
     auto cleanup = [&]() {
@@ -359,7 +409,8 @@ Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut
 Result call(const std::string& key, const Var& input, bool wait)
 {
     Node* ctx = context(key);
-    ctx->set(input);
+    if (!input.isNull())
+        ctx->set(input);  // raw input; auto-parseArgs in call(key, ctx, ...) will handle it
     Result r = call(key, ctx, wait, nullptr);
     delete ctx;
     return r;

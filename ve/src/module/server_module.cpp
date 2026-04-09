@@ -12,7 +12,6 @@
 #include "ve/service/node_service.h"
 #include "ve/service/bin_service.h"
 #include "ve/service/terminal_service.h"
-#include "../service/terminal_util.h"
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -104,20 +103,25 @@ void ServerModule::registerFileCommands()
 {
     auto data_root = _data_root;
 
-    // save <format> [path] [-f file] [--compact] [--ignore-private]
+    // Declare parameter metadata for save/load
+    // Positional params: ordered children without _short
+    // Named params: children with _short
+    auto* saveDecl = node::root()->at("ve/command/declare/save");
+    saveDecl->at("format");
+    saveDecl->at("path");
+    saveDecl->at("file")->set("_short", "f");
+
+    auto* loadDecl = node::root()->at("ve/command/declare/load");
+    loadDecl->at("format");
+    loadDecl->at("path");
+    loadDecl->at("file")->set("_short", "f");
+    loadDecl->at("inline")->set("_short", "i");
+
+    // save <format> [path] [-f file]
     command::reg("save", [data_root](Node* ctx) -> Result {
-        auto args = ctx->get();
-        if (!args.isList()) {
-            return Result::fail(Var("Args must be a list"));
-        }
+        auto a = command::args(ctx);
 
-        std::vector<std::string> tokens;
-        for (auto& item : args.toList()) {
-            tokens.push_back(item.toString());
-        }
-        auto f = detail::parseFlags(tokens, 0);
-
-        std::string format = f.pos(0);
+        std::string format = a.string("format");
         if (format.empty()) {
             auto fmts = schema::schemaFormatNames();
             std::string out = "available formats: json, xml, bin, var";
@@ -129,13 +133,13 @@ void ServerModule::registerFileCommands()
         Node* current = static_cast<Node*>(ctx->get("_current").toPointer());
         Node* base = current ? current : node::root();
 
-        std::string pathStr = f.pos(1);
+        std::string pathStr = a.string("path");
         Node* target = pathStr.empty() ? base : base->find(pathStr);
         if (!target) {
             return Result::fail(Var("Node not found: " + pathStr));
         }
 
-        std::string file = f.get("file", 'f');
+        std::string file = a.string("file");
 
         // Export
         std::string result;
@@ -206,18 +210,9 @@ void ServerModule::registerFileCommands()
 
     // load <format> [path] [-f file] [-i data]
     command::reg("load", [data_root](Node* ctx) -> Result {
-        auto args = ctx->get();
-        if (!args.isList()) {
-            return Result::fail(Var("Args must be a list"));
-        }
+        auto a = command::args(ctx);
 
-        std::vector<std::string> tokens;
-        for (auto& item : args.toList()) {
-            tokens.push_back(item.toString());
-        }
-        auto f = detail::parseFlags(tokens, 0);
-
-        std::string format = f.pos(0);
+        std::string format = a.string("format");
         if (format.empty()) {
             return Result::fail(Var("Usage: load <format> [path] [-f file] [-i data]"));
         }
@@ -226,11 +221,11 @@ void ServerModule::registerFileCommands()
         Node* current = static_cast<Node*>(ctx->get("_current").toPointer());
         Node* base = current ? current : node::root();
 
-        std::string pathStr = f.pos(1);
+        std::string pathStr = a.string("path");
         Node* target = pathStr.empty() ? base : base->at(pathStr);
 
-        std::string file = f.get("file", 'f');
-        std::string importContent = f.get("inline", 'i');
+        std::string file = a.string("file");
+        std::string importContent = a.string("inline");
 
         // Read content
         std::string content;

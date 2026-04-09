@@ -18,8 +18,6 @@
 
 #pragma once
 
-#include <utility>
-
 #include "loop.h"
 #include "node.h"
 #include "var.h"
@@ -188,6 +186,29 @@ VE_API Node* context(const std::string& key, Node* currentNode = nullptr);
 VE_API Node* declareNode(const std::string& key);
 
 VE_API bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx = 0);
+
+VE_API bool parseArgs(Node* ctx, const Var& input);
+
+// ============================================================================
+// Args — lightweight accessor for parsed command arguments
+// ============================================================================
+//
+// Reads from ctx child nodes (populated by parseArgs).
+// Key lookup with positional fallback for commands without declare metadata.
+
+struct VE_API Args {
+    Node* ctx;
+    explicit Args(Node* c) : ctx(c) {}
+
+    std::string string(const std::string& key, const std::string& def = "") const;
+    int64_t     integer(const std::string& key, int64_t def = 0) const;
+    double      number(const std::string& key, double def = 0.0) const;
+    bool        flag(const std::string& key, bool def = false) const;
+    Var         var(const std::string& key, const Var& def = {}) const;
+    bool        has(const std::string& key) const;
+};
+
+VE_API Args args(Node* ctx);
 
 VE_API bool        has(const std::string& key);
 VE_API Strings     keys();
