@@ -116,6 +116,14 @@ public:
         dict["topic"] = Var(request.topic);
         return dict;
     }
+    Var::DictV onceTopic(const TopicOnceRequest& request) override
+    {
+        Var::DictV dict;
+        dict["ok"] = Var(false);
+        dict["message"] = Var("Fast DDS generic once is not implemented in v1");
+        dict["topic"] = Var(request.topic);
+        return dict;
+    }
 
     Var::ListV listServices(const std::string&) const override { return {}; }
     Var::DictV serviceInfo(const std::string& service) const override

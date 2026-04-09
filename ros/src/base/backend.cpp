@@ -88,6 +88,14 @@ public:
         result["topic"] = Var(request.topic);
         return result;
     }
+    Var::DictV onceTopic(const TopicOnceRequest& request) override
+    {
+        Var::DictV result;
+        result["ok"] = Var(false);
+        result["message"] = Var("Fast DDS placeholder backend does not implement topic once");
+        result["topic"] = Var(request.topic);
+        return result;
+    }
     Var::ListV listServices(const std::string&) const override { return {}; }
     Var::DictV serviceInfo(const std::string&) const override { return {}; }
     Var::DictV listParams(const std::string&) const override { return {}; }

@@ -3,7 +3,7 @@
 // Official runtime entry point for ve/ros:
 //   - selects and starts a backend
 //   - exposes discovery + parameter commands
-//   - keeps runtime state under ve/ros/runtime/*
+//   - keeps runtime state under ve/ros/*
 
 #include "ve/core/command.h"
 #include "ve/core/log.h"
@@ -39,6 +39,99 @@ void writeNodeTree(Node* root, const std::string& path, const Var& value)
     schema::importAs<schema::VarS>(target, value);
 }
 
+void writeRosMirror(const std::string& path, const Var& value)
+{
+    auto* root = n("ve/ros");
+    writeNodeTree(root, path, value);
+}
+
+void writeNamedNodeList(const std::string& path, const Var::ListV& list)
+{
+    auto* root = n("ve/ros");
+    auto* target = root->at(path);
+    target->clear();
+    target->set(Var());
+
+    for (const auto& item : list) {
+        if (!item.isDict()) {
+            target->append("")->set(item);
+            continue;
+        }
+        const auto& dict = item.toDict();
+        auto it = dict.find("name");
+        const std::string key = (it != dict.end() && !it->second.toString().empty())
+            ? it->second.toString()
+            : "node";
+        Node temp(key);
+        schema::importAs<schema::VarS>(&temp, item, schema::ImportOptions{true, true, true});
+        target->append(key)->copy(&temp, true, true, true);
+    }
+}
+
+std::string normalizeNamedPath(std::string key, const std::string& def = "item")
+{
+    if (key.empty())
+        return def;
+    while (!key.empty() && key.front() == '/')
+        key.erase(key.begin());
+    while (!key.empty() && key.back() == '/')
+        key.pop_back();
+    return key.empty() ? def : key;
+}
+
+void writeNamedPathList(const std::string& path, const Var::ListV& list, const std::string& key_field)
+{
+    auto* root = n("ve/ros");
+    auto* target = root->at(path);
+    target->clear();
+    target->set(Var());
+
+    for (const auto& item : list) {
+        if (!item.isDict()) {
+            target->append("")->set(item);
+            continue;
+        }
+        const auto& dict = item.toDict();
+        auto it = dict.find(key_field);
+        const std::string key = normalizeNamedPath(
+            (it != dict.end() && !it->second.toString().empty()) ? it->second.toString() : "",
+            "item");
+        Node temp("temp");
+        schema::importAs<schema::VarS>(&temp, item, schema::ImportOptions{true, true, true});
+        target->at(key)->copy(&temp, true, true, true);
+    }
+}
+
+bool looksLikeInt(const std::string& text)
+{
+    if (text.empty())
+        return false;
+    std::size_t start = (text[0] == '-' || text[0] == '+') ? 1 : 0;
+    if (start >= text.size())
+        return false;
+    for (std::size_t i = start; i < text.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(text[i])))
+            return false;
+    }
+    return true;
+}
+
+bool looksLikePayloadFormat(const std::string& text)
+{
+    return text == "yaml" || text == "var" || text == "cdr_hex";
+}
+
+std::string inferTopicType(const std::string& topic)
+{
+    const auto info = ros::topicInfo(topic);
+    if (!info.value("ok").toBool(false))
+        return "";
+    const auto types = info.value("types");
+    if (!types.isList() || types.toList().empty())
+        return "";
+    return types.toList().front().toString();
+}
+
 } // namespace
 
 class RosModule : public Module
@@ -71,10 +164,10 @@ protected:
         const std::string requested_backend = node()->get("config/backend").toString();
 
         std::string error;
-        if (!ros::activateBackend(requested_backend, n("ve/ros/runtime"), error)) {
+        if (!ros::activateBackend(requested_backend, n("ve/ros"), error)) {
             active_backend_.clear();
             syncRuntimeState("error");
-            n("ve/ros/runtime/last_error")->set(Var(error));
+            n("ve/ros/last_error")->set(Var(error));
             veLogW << "[ve.ros] failed to activate backend: " << error;
             return;
         }
@@ -100,11 +193,11 @@ private:
 
         command::reg("ros.info", [this]() -> Result {
             return okResult(Var(buildInfo()));
-        });
+        }, "Show ros backend, env and cached runtime summary.");
 
         command::reg("ros.backend.list", []() -> Result {
             return okResult(Var(ros::backendInfoList()));
-        });
+        }, "List registered ros backends.");
 
         command::reg("ros.backend.info", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -118,29 +211,29 @@ private:
             if (auto current = ros::backend(key_name))
                 return okResult(Var(current->info()));
             return failResult("ros backend not found: " + key_name);
-        });
+        }, "Show backend details.");
 
         command::reg("ros.parser.list", []() -> Result {
             return okResult(Var(ros::parserInfoList()));
-        });
+        }, "List registered ros payload parsers.");
 
         command::reg("ros.env", []() -> Result {
             return okResult(Var(ros::envInfo()));
-        });
+        }, "Show ROS-related environment variables.");
 
         command::reg("ros.node.list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listNodes(a.string("filter"));
-            writeNodeTree(n("ve/ros"), "runtime/nodes", Var(result));
+            writeNamedNodeList("nodes", result);
             return okResult(Var(result));
-        });
+        }, "List ROS nodes.");
 
         command::reg("ros.topic.list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listTopics(a.string("filter"));
-            writeNodeTree(n("ve/ros"), "runtime/topics", Var(result));
+            writeNamedPathList("topics", result, "name");
             return okResult(Var(result));
-        });
+        }, "List ROS topics.");
 
         command::reg("ros.topic.info", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -148,7 +241,7 @@ private:
             if (topic_name.empty())
                 return failResult("topic name is required");
             return okResult(Var(ros::topicInfo(topic_name)));
-        });
+        }, "Show ROS topic details.");
 
         command::reg("ros.topic.subscribe", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -157,15 +250,15 @@ private:
             config.topic = a.string("topic");
             config.type = a.string("type");
             config.target_node = a.string("target_node");
-            config.payload_format = a.string("payload_format", "cdr_hex");
+            config.payload_format = a.string("payload_format", "yaml");
             if (config.name.empty() || config.topic.empty())
                 return failResult("name/topic is required");
 
             const auto result = ros::subscribeTopic(config);
             if (result.value("ok").toBool(false))
-                writeNodeTree(n("ve/ros"), "runtime/subscriptions/" + config.name, Var(result));
+                writeRosMirror("subscriptions/" + config.name, Var(result));
             return okResult(Var(result));
-        });
+        }, "Subscribe to a topic.");
 
         command::reg("ros.topic.unsubscribe", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -173,10 +266,11 @@ private:
             if (name.empty())
                 return failResult("name is required");
             const auto result = ros::unsubscribeTopic(name);
-            if (result.value("ok").toBool(false))
-                n("ve/ros/runtime")->erase("subscriptions/" + name);
+            if (result.value("ok").toBool(false)) {
+                n("ve/ros")->erase("subscriptions/" + name);
+            }
             return okResult(Var(result));
-        });
+        }, "Remove a named topic subscription.");
 
         command::reg("ros.topic.publish", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -184,21 +278,61 @@ private:
             request.topic = a.string("topic");
             request.type = a.string("type");
             request.payload = a.string("payload");
-            request.payload_format = a.string("payload_format", "cdr_hex");
+            request.payload_format = a.string("payload_format", "yaml");
             if (request.topic.empty() || request.payload.empty())
                 return failResult("topic/payload is required");
 
             const auto result = ros::publishTopic(request);
-            writeNodeTree(n("ve/ros"), "runtime/publications/last", Var(result));
+            writeRosMirror("publications/last", Var(result));
             return okResult(Var(result));
-        });
+        }, "Publish to a topic.");
+
+        command::reg("ros.topic.once", [this](Node* ctx) -> Result {
+            auto a = command::args(ctx);
+            ros::TopicOnceRequest request;
+            request.topic = a.string("topic");
+            request.target_node = a.string("target_node");
+
+            // type can be inferred from topic if not given
+            std::string type_str = a.string("type");
+            std::string fmt_str = a.string("payload_format", "yaml");
+            std::string timeout_str = a.string("timeout_ms");
+
+            // Handle ambiguous positional: type vs payload_format vs timeout_ms
+            if (!type_str.empty() && (looksLikePayloadFormat(type_str) || looksLikeInt(type_str))) {
+                // "type" slot actually holds a format or timeout
+                if (looksLikePayloadFormat(type_str)) fmt_str = type_str;
+                else if (looksLikeInt(type_str)) timeout_str = type_str;
+                type_str.clear();
+            }
+
+            request.type = type_str;
+            request.payload_format = fmt_str;
+
+            if (request.topic.empty())
+                return failResult("topic is required");
+
+            if (!timeout_str.empty()) {
+                try { request.timeout_ms = std::stoi(timeout_str); }
+                catch (...) { return failResult("timeout_ms must be an integer"); }
+            }
+
+            if (request.type.empty())
+                request.type = inferTopicType(request.topic);
+            if (request.type.empty())
+                return failResult("cannot infer topic type; specify [type] explicitly");
+
+            const auto result = ros::onceTopic(request);
+            writeRosMirror("once/last", Var(result));
+            return okResult(Var(result));
+        }, "Wait for one message.");
 
         command::reg("ros.service.list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listServices(a.string("filter"));
-            writeNodeTree(n("ve/ros"), "runtime/services", Var(result));
+            writeNamedPathList("services", result, "name");
             return okResult(Var(result));
-        });
+        }, "List ROS services.");
 
         command::reg("ros.service.info", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -206,14 +340,14 @@ private:
             if (service_name.empty())
                 return failResult("service name is required");
             return okResult(Var(ros::serviceInfo(service_name)));
-        });
+        }, "Show ROS service details.");
 
         command::reg("ros.param.list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listParams(a.string("node"));
-            writeNodeTree(n("ve/ros"), "runtime/params", Var(result));
+            writeRosMirror("params", Var(result));
             return okResult(Var(result));
-        });
+        }, "List ROS parameters.");
 
         command::reg("ros.param.get", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -222,7 +356,7 @@ private:
             if (node_name.empty() || param_name.empty())
                 return failResult("node/name is required");
             return okResult(Var(ros::getParam(node_name, param_name)));
-        });
+        }, "Get one ROS parameter.");
 
         command::reg("ros.param.set", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
@@ -234,20 +368,20 @@ private:
             if (value.isString())
                 value = ros::yaml::decode(value.toString());
             return okResult(Var(ros::setParam(node_name, param_name, value)));
-        });
+        }, "Set one ROS parameter.");
 
         command::reg("ros.runtime.refresh", [this]() -> Result {
             std::string error;
-            if (!ros::refreshRuntime(n("ve/ros/runtime"), error))
+            if (!ros::refreshRuntime(n("ve/ros"), error))
                 return failResult(error);
             return okResult(Var(ros::runtimeInfo()));
-        });
+        }, "Refresh cached ROS lists under ve/ros.");
     }
 
     Var::DictV buildInfo() const
     {
         Var::DictV dict;
-        dict["state"] = Var(n("ve/ros/runtime/state")->getString());
+        dict["state"] = Var(n("ve/ros/state")->getString());
         dict["domain_id"] = Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0)));
         dict["service_prefix"] = Var(node()->get("config/service_prefix").toString("ve"));
         dict["backend_requested"] = Var(node()->get("config/backend").toString());
@@ -259,10 +393,10 @@ private:
         dict["backends"] = Var(ros::backendInfoList());
         dict["parsers"] = Var(ros::parserInfoList());
         dict["env"] = Var(ros::envInfo());
-        dict["nodes"] = n("ve/ros/runtime/nodes")->get();
-        dict["topics"] = n("ve/ros/runtime/topics")->get();
-        dict["services"] = n("ve/ros/runtime/services")->get();
-        dict["params"] = n("ve/ros/runtime/params")->get();
+        dict["nodes"] = n("ve/ros/nodes")->get();
+        dict["topics"] = n("ve/ros/topics")->get();
+        dict["services"] = n("ve/ros/services")->get();
+        dict["params"] = n("ve/ros/params")->get();
         dict["note"] = Var(node()->get("config/note").toString());
         return dict;
     }
@@ -271,22 +405,22 @@ private:
     {
         auto* root = n("ve/ros");
         root->set("state", Var(state));
-        root->set("runtime/state", Var(state));
-        root->set("runtime/domain_id", Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0))));
-        root->set("runtime/service_prefix", Var(node()->get("config/service_prefix").toString("ve")));
-        root->set("runtime/backend_requested", Var(node()->get("config/backend").toString()));
-        root->set("runtime/backend_active", Var(active_backend_));
-        writeNodeTree(root, "runtime/backends", Var(ros::backendInfoList()));
-        writeNodeTree(root, "runtime/parsers", Var(ros::parserInfoList()));
-        writeNodeTree(root, "runtime/env", Var(ros::envInfo()));
-        root->at("runtime/nodes");
-        root->at("runtime/topics");
-        root->at("runtime/services");
-        root->at("runtime/params");
-        root->at("runtime/subscriptions");
-        root->at("runtime/publications");
-        root->set("runtime/note", Var(
-            "ve/ros v1 exposes runtime discovery and parameter APIs through backend-neutral entry points."));
+        root->set("domain_id", Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0))));
+        root->set("service_prefix", Var(node()->get("config/service_prefix").toString("ve")));
+        root->set("backend_requested", Var(node()->get("config/backend").toString()));
+        root->set("backend_active", Var(active_backend_));
+        writeNodeTree(root, "backends", Var(ros::backendInfoList()));
+        writeNodeTree(root, "parsers", Var(ros::parserInfoList()));
+        writeNodeTree(root, "env", Var(ros::envInfo()));
+        root->at("nodes");
+        root->at("topics");
+        root->at("services");
+        root->at("params");
+        root->at("subscriptions");
+        root->at("publications");
+        root->at("once");
+        root->set("note", Var(
+            "ve/ros exposes discovery and parameter APIs through backend-neutral entry points."));
     }
 };
 
