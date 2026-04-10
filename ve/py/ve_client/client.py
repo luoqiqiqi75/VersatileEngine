@@ -35,16 +35,16 @@ class VeClient:
     Usage:
         # TCP JSON (default, pure stdlib)
         client = VeClient()
-        client = VeClient("tcp://localhost:5082")
+        client = VeClient("tcp://localhost:12200")
 
         # HTTP REST
-        client = VeClient("http://localhost:5080")
+        client = VeClient("http://localhost:12000")
 
         # JSON-RPC
-        client = VeClient("http://localhost:5080", transport="jsonrpc")
+        client = VeClient("http://localhost:12000", transport="jsonrpc")
 
         # MessagePack (high-performance)
-        client = VeClient("tcp://localhost:5065", transport="msgpack")
+        client = VeClient("tcp://localhost:11000", transport="msgpack")
 
         # Operations
         client.get("/config/port")
@@ -52,7 +52,7 @@ class VeClient:
         client.list("/")
     """
 
-    def __init__(self, url: str = "tcp://localhost:5082",
+    def __init__(self, url: str = "tcp://localhost:12200",
                  transport: str = None, timeout: int = 30):
         """
         Args:
@@ -80,10 +80,10 @@ class VeClient:
         scheme, host, port = parse_url(url)
 
         if name == "tcp":
-            port = port or 5082
+            port = port or 12200
             return TcpJsonTransport(host, port, timeout)
         elif name == "msgpack":
-            port = port or 5065
+            port = port or 11000
             return MsgPackTransport(host, port, timeout)
         elif name == "http":
             base_url = url if "://" in url else f"http://{url}"

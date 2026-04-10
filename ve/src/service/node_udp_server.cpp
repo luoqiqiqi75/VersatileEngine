@@ -13,6 +13,7 @@
 #include "ve/core/command.h"
 #include "ve/core/schema.h"
 #include "ve/core/log.h"
+#include "server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -35,7 +36,7 @@ extern std::string handleNodeJsonCmd(Node* root, Node* reqNode);
 struct NodeUdpServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 5083;
+    uint16_t port = 12300;
     asio2::udp_server server;
 };
 
@@ -70,12 +71,7 @@ bool NodeUdpServer::start()
         session_ptr->async_send(response);
     });
 
-    bool ok = _p->server.start("0.0.0.0", _p->port);
-    if (ok)
-        veLogIs("NodeUdpServer started on port", _p->port);
-    else
-        veLogEs("NodeUdpServer failed to start on port", _p->port);
-    return ok;
+    return startServerWithPortFallback(_p->server, "NodeUdpServer", _p->port);
 }
 
 void NodeUdpServer::stop()

@@ -23,7 +23,7 @@ type CommandCallResponse = {
   id?: number;
 };
 
-const VE_HTTP_BASE = (process.env.VE_HTTP_BASE ?? "http://127.0.0.1:8080").replace(/\/$/, "");
+const VE_HTTP_BASE = (process.env.VE_HTTP_BASE ?? "http://127.0.0.1:12000").replace(/\/$/, "");
 
 const VE_PING_TOOL = "ve_ping";
 

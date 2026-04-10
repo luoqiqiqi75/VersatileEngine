@@ -25,7 +25,7 @@
         "http": {
           "enable": true,
           "config": {
-            "port": 8080,
+            "port": 12000,
             "static_root": "./webapp",
             "default_file": "index.html"
           }
@@ -33,7 +33,7 @@
         "ws": {
           "enable": true,
           "config": {
-            "port": 8081
+            "port": 12100
           }
         }
       },
@@ -41,7 +41,7 @@
         "repl": {
           "enable": true,
           "config": {
-            "port": 5061
+            "port": 10000
           }
         }
       },
@@ -49,7 +49,7 @@
         "tcp": {
           "enable": false,
           "config": {
-            "port": 5065
+            "port": 11000
           }
         }
       }
@@ -80,8 +80,8 @@
   "browser": {
     "config": {
       "static_root": "./webapp",
-      "http_port": 8080,
-      "ws_port": 8081
+      "http_port": 12000,
+      "ws_port": 12100
     }
   }
 }

@@ -52,9 +52,9 @@ void ClientModule::ready()
     } else if (remote_enabled) {
         Node* tcp = node()->at("terminal/tcp");
         std::string host = tcp->at("config/host")->getString("127.0.0.1");
-        int port = tcp->at("config/port")->getInt(5061);
+        int port = tcp->at("config/port")->getInt(10000);
         if (port <= 0 || port > 65535) {
-            port = 5061;
+            port = 10000;
         }
 
         tcp_ = std::make_unique<service::TerminalTcpClient>(host, static_cast<uint16_t>(port));

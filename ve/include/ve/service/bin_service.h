@@ -9,12 +9,7 @@
 #include "ve/global.h"
 #include "ve/core/var.h"
 
-#include <atomic>
 #include <cstdint>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <vector>
 
 namespace ve {
 
@@ -40,7 +35,7 @@ VE_API bool  tryPopFrame(Bytes& buf, uint8_t& flag, Var& outVar);
 class VE_API BinTcpServer
 {
 public:
-    explicit BinTcpServer(Node* root, uint16_t port = 5065);
+    explicit BinTcpServer(Node* root, uint16_t port);
     ~BinTcpServer();
 
     bool start();

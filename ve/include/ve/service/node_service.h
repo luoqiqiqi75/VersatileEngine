@@ -3,8 +3,6 @@
 
 #include "ve/global.h"
 #include <cstdint>
-#include <memory>
-#include <string>
 
 namespace ve {
 
@@ -15,7 +13,7 @@ namespace service {
 class VE_API NodeHttpServer
 {
 public:
-    explicit NodeHttpServer(Node* root, uint16_t port = 5080);
+    explicit NodeHttpServer(Node* root, uint16_t port);
     ~NodeHttpServer();
 
     void setStaticRoot(const std::string& dirPath);
@@ -32,7 +30,7 @@ private:
 class VE_API NodeWsServer
 {
 public:
-    explicit NodeWsServer(Node* root, uint16_t port = 5081);
+    explicit NodeWsServer(Node* root, uint16_t port);
     ~NodeWsServer();
 
     bool start();
@@ -47,7 +45,7 @@ private:
 class VE_API NodeTcpServer
 {
 public:
-    explicit NodeTcpServer(Node* root, uint16_t port = 5082);
+    explicit NodeTcpServer(Node* root, uint16_t port);
     ~NodeTcpServer();
 
     bool start();
@@ -62,7 +60,7 @@ private:
 class VE_API NodeUdpServer
 {
 public:
-    explicit NodeUdpServer(Node* root, uint16_t port = 5083);
+    explicit NodeUdpServer(Node* root, uint16_t port);
     ~NodeUdpServer();
 
     bool start();

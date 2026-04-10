@@ -6,6 +6,7 @@
 #include "ve/core/pipeline.h"
 #include "ve/core/schema.h"
 #include "ve/core/log.h"
+#include "server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -160,7 +161,7 @@ enum JsonRpcError
 struct NodeHttpServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 5080;
+    uint16_t port = 12000;
     asio2::http_server server;
     std::chrono::steady_clock::time_point startTime;
 
@@ -480,12 +481,7 @@ bool NodeHttpServer::start()
             rep.fill_json(jsonError("not found"), http::status::not_found);
         });
 
-    bool ok = _p->server.start("0.0.0.0", _p->port);
-    if (ok)
-        veLogIs("NodeHttpServer started on port", _p->port);
-    else
-        veLogEs("NodeHttpServer failed to start on port", _p->port);
-    return ok;
+    return startServerWithPortFallback(_p->server, "NodeHttpServer", _p->port);
 }
 
 void NodeHttpServer::stop()

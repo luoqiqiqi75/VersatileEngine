@@ -19,6 +19,7 @@
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
+#include "server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -92,7 +93,7 @@ static MozLine parseMozLine(const std::string& raw)
 struct NodeWsServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 5081;
+    uint16_t port = 12100;
 
     asio2::ws_server server;
     std::atomic<int> connCount{0};
@@ -497,12 +498,7 @@ bool NodeWsServer::start()
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
 
-    bool ok = _p->server.start("0.0.0.0", _p->port);
-    if (ok)
-        veLogIs("NodeWsServer started on port", _p->port);
-    else
-        veLogEs("NodeWsServer failed to start on port", _p->port);
-    return ok;
+    return startServerWithPortFallback(_p->server, "NodeWsServer", _p->port);
 }
 
 void NodeWsServer::stop()

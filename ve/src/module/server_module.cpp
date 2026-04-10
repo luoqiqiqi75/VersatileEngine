@@ -24,15 +24,17 @@ namespace fs = std::filesystem;
 template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port)
 {
     int port = n->get("config/port").toInt(default_port);
+    int maxRetry = n->get("config/max_retry").toInt(100);
 
-    server = std::make_unique<T>(node::root(), port);
-
-    if (server->start()) { // self logging
-        n->set("runtime/port", port);
-        n->set("runtime/listening", true);
-    } else {
-        n->set("runtime/listening", false);
+    for (int i = 0; i <= maxRetry; ++i) {
+        server = std::make_unique<T>(node::root(), static_cast<uint16_t>(port + i));
+        if (server->start()) {
+            n->set("runtime/port", port + i);
+            n->set("runtime/listening", true);
+            return;
+        }
     }
+    n->set("runtime/listening", false);
 }
 template<typename T> void closeServer(std::unique_ptr<T>& server, Node* n)
 {
@@ -68,24 +70,26 @@ private:
 template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server, Node* n, int default_port)
 {
     int port = n->get("config/port").toInt(default_port);
-
-    server = std::make_unique<service::NodeHttpServer>(node::root(), port);
+    int maxRetry = n->get("config/max_retry").toInt(100);
 
     std::string static_root = n->get("config/static_root").toString();
-    if (!static_root.empty()) {
-        veLogD << "[ve/service/node/http] static root: " << static_root;
-        server->setStaticRoot(static_root);
-    }
-
     std::string default_file = n->get("config/default_file").toString();
-    if (!default_file.empty()) server->setDefaultFile(default_file);
 
-    if (server->start()) {
-        n->set("runtime/port", port);
-        n->set("runtime/listening", true);
-    } else {
-        n->set("runtime/listening", false);
+    for (int i = 0; i <= maxRetry; ++i) {
+        server = std::make_unique<service::NodeHttpServer>(node::root(), static_cast<uint16_t>(port + i));
+        if (!static_root.empty()) {
+            veLogD << "[ve/service/node/http] static root: " << static_root;
+            server->setStaticRoot(static_root);
+        }
+        if (!default_file.empty()) server->setDefaultFile(default_file);
+
+        if (server->start()) {
+            n->set("runtime/port", port + i);
+            n->set("runtime/listening", true);
+            return;
+        }
     }
+    n->set("runtime/listening", false);
 }
 
 void ServerModule::init() {
@@ -265,12 +269,12 @@ void ServerModule::registerFileCommands()
 }
 
 void ServerModule::ready() {
-    if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 5080);
-    if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 5081);
-    if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 5082);
-    if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 5083);
-    if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 5065);
-    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 5061);
+    if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 12000);
+    if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100);
+    if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 12200);
+    if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 12300);
+    if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000);
+    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000);
 }
 
 void ServerModule::deinit() {

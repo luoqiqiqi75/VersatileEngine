@@ -75,7 +75,7 @@ struct Options {
     // Enable the remote terminal client via ve/client/terminal/tcp/enabled.
     bool remote_terminal = false;
     std::string remote_host = "127.0.0.1";
-    int remote_port = 5061;
+    int remote_port = 10000;
     int  pool_threads = 4;
     int    argc = 0;
     char** argv = nullptr;

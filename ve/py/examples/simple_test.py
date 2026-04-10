@@ -11,7 +11,7 @@ def main():
     client = VeClient()
 
     if not client.ping():
-        print("Cannot connect to VE server at localhost:5082")
+        print("Cannot connect to VE server at localhost:12200")
         print("Make sure ve.exe is running")
         sys.exit(1)
 

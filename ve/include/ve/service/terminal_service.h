@@ -3,8 +3,6 @@
 
 #include "ve/global.h"
 #include <cstdint>
-#include <memory>
-#include <string>
 
 namespace ve {
 

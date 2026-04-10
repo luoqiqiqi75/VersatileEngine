@@ -166,7 +166,7 @@ class JsonRpcTransport(Transport):
 class TcpJsonTransport(Transport):
     """TCP JSON transport: newline-delimited JSON over persistent TCP connection."""
 
-    def __init__(self, host: str, port: int = 5082, timeout: int = 30):
+    def __init__(self, host: str, port: int = 12200, timeout: int = 30):
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -280,7 +280,7 @@ class TcpJsonTransport(Transport):
 class MsgPackTransport(Transport):
     """MessagePack binary transport: frame-based protocol over TCP."""
 
-    def __init__(self, host: str, port: int = 5065, timeout: int = 30):
+    def __init__(self, host: str, port: int = 11000, timeout: int = 30):
         if msgpack is None:
             raise ImportError("msgpack required: pip install msgpack")
         self.host = host

@@ -39,48 +39,48 @@ children = client.list("/")
 ## Transports
 
 ### TCP JSON (Default)
-- **Port**: 5082
+- **Port**: 12200
 - **Protocol**: Newline-delimited JSON over TCP
 - **Dependencies**: None (pure stdlib)
 - **Features**: Persistent connection, subscribe support
 - **Use case**: Default choice, embedded systems, scripts
 
 ```python
-client = VeClient()  # tcp://localhost:5082
-client = VeClient("tcp://localhost:5082")
+client = VeClient()  # tcp://localhost:12200
+client = VeClient("tcp://localhost:12200")
 ```
 
 ### HTTP REST
-- **Port**: 5080
+- **Port**: 12000
 - **Protocol**: REST API
 - **Dependencies**: `requests`
 - **Features**: Stateless, curl-compatible
 - **Use case**: One-off queries, debugging
 
 ```python
-client = VeClient("http://localhost:5080", transport="http")
+client = VeClient("http://localhost:12000", transport="http")
 ```
 
 ### JSON-RPC 2.0
-- **Port**: 5080
+- **Port**: 12000
 - **Protocol**: JSON-RPC 2.0 over HTTP
 - **Dependencies**: `requests`
 - **Features**: Standard protocol, library support
 - **Use case**: Standard JSON-RPC clients
 
 ```python
-client = VeClient("http://localhost:5080", transport="jsonrpc")
+client = VeClient("http://localhost:12000", transport="jsonrpc")
 ```
 
 ### MessagePack Binary
-- **Port**: 5065
+- **Port**: 11000
 - **Protocol**: Frame-based MessagePack over TCP
 - **Dependencies**: `msgpack`
 - **Features**: Highest performance, smallest payload
 - **Use case**: High-frequency data, performance-critical
 
 ```python
-client = VeClient("tcp://localhost:5065", transport="msgpack")
+client = VeClient("tcp://localhost:11000", transport="msgpack")
 ```
 
 ## API

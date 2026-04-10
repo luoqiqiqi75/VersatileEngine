@@ -79,15 +79,15 @@ void BrowserModule::init()
 
 void BrowserModule::ready()
 {
-    int hp = node()->find("config/http_port")->getInt(8080);
+    int hp = node()->find("config/http_port")->getInt(12000);
     if (hp <= 0) {
-        hp = 8080;
+        hp = 12000;
     }
     hp = ve::n("ve/server/node/http/runtime/port")->getInt(hp);
 
-    int wp = node()->find("config/ws_port")->getInt(8081);
+    int wp = node()->find("config/ws_port")->getInt(12100);
     if (wp <= 0) {
-        wp = 8081;
+        wp = 12100;
     }
     wp = ve::n("ve/server/node/ws/runtime/port")->getInt(wp);
 

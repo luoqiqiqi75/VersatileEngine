@@ -18,7 +18,7 @@
           "enabled": false,
           "config": {
             "host": "127.0.0.1",
-            "port": 5061
+            "port": 10000
           }
         }
       }
@@ -28,31 +28,31 @@
       "node": {
         "http": {
           "enable": true,
-          "config": { "port": 5080 }
+          "config": { "port": 12000 }
         },
         "ws": {
           "enable": true,
-          "config": { "port": 5081 }
+          "config": { "port": 12100 }
         },
         "tcp": {
           "enable": true,
-          "config": { "port": 5082 }
+          "config": { "port": 12200 }
         },
         "udp": {
           "enable": true,
-          "config": { "port": 5083 }
+          "config": { "port": 12300 }
         }
       },
       "terminal": {
         "repl": {
           "enable": true,
-          "config": { "port": 5061 }
+          "config": { "port": 10000 }
         }
       },
       "bin": {
         "tcp": {
           "enable": true,
-          "config": { "port": 5065 }
+          "config": { "port": 11000 }
         }
       }
     }

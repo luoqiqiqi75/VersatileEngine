@@ -14,6 +14,7 @@
 #include "ve/core/schema.h"
 #include "ve/core/impl/bin.h"
 #include "ve/core/log.h"
+#include "server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -56,7 +57,7 @@ static Bytes makeNotify(const std::string& path, const Var& value)
 struct BinTcpServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 5065;
+    uint16_t port = 11000;
 
     asio2::tcp_server server;
     std::mutex mtx;
@@ -246,12 +247,7 @@ bool BinTcpServer::start()
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
 
-    bool ok = _p->server.start("0.0.0.0", _p->port);
-    if (ok)
-        veLogIs("BinTcpServer started on port", _p->port);
-    else
-        veLogEs("BinTcpServer failed to start on port", _p->port);
-    return ok;
+    return startServerWithPortFallback(_p->server, "BinTcpServer", _p->port);
 }
 
 void BinTcpServer::stop()

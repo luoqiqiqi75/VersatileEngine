@@ -8,6 +8,7 @@
 #include "ve/core/node.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
+#include "server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -252,7 +253,7 @@ struct TerminalStdioClient::Private
 struct TerminalTcpClient::Private
 {
     std::string host = "127.0.0.1";
-    uint16_t port = 5061;
+    uint16_t port = 10000;
     asio2::tcp_client client;
     std::atomic<bool> connected{false};
     std::atomic<bool> stop_requested{false};
@@ -299,8 +300,7 @@ struct TerminalReplServer::Private
 {
     Node*    root = nullptr;
     bool     ownsRoot = false;
-    uint16_t port = 5061;
-    uint16_t maxRetry = 10;
+    uint16_t port = 10000;
 
     asio2::tcp_server server;
     std::mutex mtx;
@@ -466,18 +466,7 @@ bool TerminalReplServer::start()
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
 
-    uint16_t p = _p->port;
-    for (uint16_t i = 0; i <= _p->maxRetry; ++i) {
-        if (_p->server.start("0.0.0.0", p)) {
-            _p->port = p;
-            veLogIs("Terminal started on port", p);
-            return true;
-        }
-        veLogEs("Terminal port", p, "unavailable, trying next");
-        ++p;
-    }
-    veLogEs("Terminal failed after", _p->maxRetry + 1, "attempts");
-    return false;
+    return startServerWithPortFallback(_p->server, "TerminalReplServer", _p->port);
 }
 
 void TerminalReplServer::stop()

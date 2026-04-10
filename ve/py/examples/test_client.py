@@ -62,12 +62,12 @@ def test_subscribe_tcp():
 
     # Subscriber connection
     sub = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sub.connect(("localhost", 5082))
+    sub.connect(("localhost", 12200))
     sub.settimeout(3)
 
     # Writer connection (separate)
     wr = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    wr.connect(("localhost", 5082))
+    wr.connect(("localhost", 12200))
     wr.settimeout(3)
 
     # Subscribe
@@ -117,7 +117,7 @@ def main():
     # 1. TCP JSON (default, fastest, zero deps)
     try:
         client = VeClient()
-        results["TCP JSON"] = test_transport("TCP JSON (tcp://localhost:5082)", client)
+        results["TCP JSON"] = test_transport("TCP JSON (tcp://localhost:12200)", client)
         client.close()
     except Exception as e:
         print(f"  TCP JSON: ERROR - {e}")
@@ -125,8 +125,8 @@ def main():
 
     # 2. HTTP REST
     try:
-        client = VeClient("http://localhost:5080", transport="http")
-        results["HTTP REST"] = test_transport("HTTP REST (http://localhost:5080)", client)
+        client = VeClient("http://localhost:12000", transport="http")
+        results["HTTP REST"] = test_transport("HTTP REST (http://localhost:12000)", client)
         client.close()
     except Exception as e:
         print(f"  HTTP REST: ERROR - {e}")
@@ -134,8 +134,8 @@ def main():
 
     # 3. JSON-RPC
     try:
-        client = VeClient("http://localhost:5080", transport="jsonrpc")
-        results["JSON-RPC"] = test_transport("JSON-RPC (http://localhost:5080/jsonrpc)", client)
+        client = VeClient("http://localhost:12000", transport="jsonrpc")
+        results["JSON-RPC"] = test_transport("JSON-RPC (http://localhost:12000/jsonrpc)", client)
         client.close()
     except Exception as e:
         print(f"  JSON-RPC: ERROR - {e}")
@@ -143,8 +143,8 @@ def main():
 
     # 4. MessagePack
     try:
-        client = VeClient("tcp://localhost:5065", transport="msgpack")
-        results["MessagePack"] = test_transport("MessagePack (tcp://localhost:5065)", client)
+        client = VeClient("tcp://localhost:11000", transport="msgpack")
+        results["MessagePack"] = test_transport("MessagePack (tcp://localhost:11000)", client)
         client.close()
     except Exception as e:
         print(f"  MessagePack: ERROR - {e}")

@@ -1,12 +1,12 @@
 # Smoke-test VE HTTP / WebSocket / optional TCP REPL after starting ve.exe with ve/program/ve.json.
 # Usage (from repo root):
 #   .\ve\scripts\verify-repl-http-ws.ps1
-#   .\ve\scripts\verify-repl-http-ws.ps1 -HttpPort 5080 -WsPort 5081 -ReplPort 5061
+#   .\ve\scripts\verify-repl-http-ws.ps1 -HttpPort 12000 -WsPort 12100 -ReplPort 10000
 
 param(
-    [int] $HttpPort = 5080,
-    [int] $WsPort = 5081,
-    [int] $ReplPort = 5061,
+    [int] $HttpPort = 12000,
+    [int] $WsPort = 12100,
+    [int] $ReplPort = 10000,
     [switch] $SkipRepl
 )
 

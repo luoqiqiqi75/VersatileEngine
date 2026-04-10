@@ -1,8 +1,8 @@
 "use strict";
 
 var VEService = function(wsUrl) {
-    // Default matches ve/program/ve.json ve/server/node/ws/config/port (5081). Override via argument or _ve_ws_url.
-    this.address = wsUrl || "ws://127.0.0.1:5081";
+    // Default matches ve/program/ve.json ve/server/node/ws/config/port (12100). Override via argument or _ve_ws_url.
+    this.address = wsUrl || "ws://127.0.0.1:12100";
     this.transport = null;
 
     this.pendingRequests = new Map();

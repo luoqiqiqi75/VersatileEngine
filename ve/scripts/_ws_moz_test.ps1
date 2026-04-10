@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$uri = [Uri]"ws://127.0.0.1:5081/"
+$uri = [Uri]"ws://127.0.0.1:12100/"
 $ws = New-Object System.Net.WebSockets.ClientWebSocket
 $null = $ws.ConnectAsync($uri, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
 $moz = ':c::save:{"id":99,"body":["json","/ve"]}'

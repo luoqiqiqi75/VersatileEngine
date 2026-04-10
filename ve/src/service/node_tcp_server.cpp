@@ -14,6 +14,7 @@
 #include "ve/core/command.h"
 #include "ve/core/schema.h"
 #include "ve/core/log.h"
+#include "server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -136,7 +137,7 @@ std::string handleNodeJsonCmd(Node* root, Node* reqNode)
 struct NodeTcpServer::Private
 {
     Node*    root = nullptr;
-    uint16_t port = 5082;
+    uint16_t port = 12200;
 
     asio2::tcp_server server;
     std::mutex mtx;
@@ -278,12 +279,7 @@ bool NodeTcpServer::start()
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
 
-    bool ok = _p->server.start("0.0.0.0", _p->port);
-    if (ok)
-        veLogIs("NodeTcpServer started on port", _p->port);
-    else
-        veLogEs("NodeTcpServer failed to start on port", _p->port);
-    return ok;
+    return startServerWithPortFallback(_p->server, "NodeTcpServer", _p->port);
 }
 
 void NodeTcpServer::stop()

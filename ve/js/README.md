@@ -58,7 +58,7 @@ pnpm add @ve/sdk
 ```ts
 import { VeHttpClient } from '@ve/sdk';
 
-const ve = new VeHttpClient('http://127.0.0.1:5080');
+const ve = new VeHttpClient('http://127.0.0.1:12000');
 
 await ve.health();
 const nodes = await ve.getNode('ve/entry/module');
@@ -93,7 +93,7 @@ await ve.runCommand('save', { args: ['json', '/ve'], wait: false });
 ```html
 <script src="path/to/veservice.js"></script>
 <script>
-  _ve_ws_url = 'ws://127.0.0.1:5081';
+  _ve_ws_url = 'ws://127.0.0.1:12100';
 </script>
 ```
 

@@ -70,7 +70,7 @@ class l {
     n(this, "intentionalClose", !1);
     n(this, "messageHandlers", /* @__PURE__ */ new Set());
     n(this, "stateHandlers", /* @__PURE__ */ new Set());
-    this.url = e.url ?? "ws://localhost:8081", this.reconnectInterval = e.reconnectInterval ?? 1e3, this.maxReconnectInterval = e.maxReconnectInterval ?? 3e4, this.currentInterval = this.reconnectInterval;
+    this.url = e.url ?? "ws://localhost:12100", this.reconnectInterval = e.reconnectInterval ?? 1e3, this.maxReconnectInterval = e.maxReconnectInterval ?? 3e4, this.currentInterval = this.reconnectInterval;
   }
   get connected() {
     var e;

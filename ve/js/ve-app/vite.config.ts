@@ -8,15 +8,15 @@ export default defineConfig({
     proxy: {
       // Match ve/program/ve.json ve/server/node/http|ws config when using stock dev config.
       '/api': {
-        target: 'http://localhost:5080',
+        target: 'http://localhost:12000',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:5080',
+        target: 'http://localhost:12000',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:5081',
+        target: 'ws://localhost:12100',
         ws: true,
         rewrite: (path) => path.replace(/^\/ws/, ''),
       },

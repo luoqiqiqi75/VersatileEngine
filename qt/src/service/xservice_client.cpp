@@ -515,7 +515,7 @@ XService::XService(QObject *parent) : Module("ve.qt.service.client"), _p(new Pri
     mobj()->set(nullptr, "connected", false);
     mobj()->set(nullptr, "timeout", 1600);
     mobj()->set(nullptr, "host.ip", "127.0.0.1");
-    mobj()->set(nullptr, "host.port", 5061);
+    mobj()->set(nullptr, "host.port", 10000);
     mobj()->set(nullptr, "trigger.connect", QVariant())->set(nullptr, "trigger.disconnect", QVariant());
     mobj()->set(nullptr, "proto.imol.version", QVariant())->set(nullptr, "proto.imol.data", QVariant())->set(nullptr, "proto.imol.command", QVariant())
             ->set(nullptr, "proto.data", QVariant())->set(nullptr, "proto.command", QVariant());
