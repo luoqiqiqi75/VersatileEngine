@@ -65,7 +65,7 @@ save bin /data -f data.bin           # Binary format
 save var /config                     # Var format (JSON-stringified)
 
 # HTTP
-curl -X POST http://localhost:5080/api/cmd/save \
+curl -X POST http://localhost:12000/api/cmd/save \
   -d '{"args": ["json", "/config", "-f", "config.json"]}'
 
 # WebSocket (JavaScript)
@@ -84,7 +84,7 @@ load json /config -f config.json           # From file
 load json /config -i '{"key":"value"}'     # Inline data
 
 # HTTP
-curl -X POST http://localhost:5080/api/cmd/load \
+curl -X POST http://localhost:12000/api/cmd/load \
   -d '{"args": ["json", "/config", "-f", "config.json"]}'
 
 # WebSocket (JavaScript)
@@ -171,12 +171,12 @@ command::reg("mycommand", [](const Var& args) -> Result {
 
 | Service | Port | Protocol | Use Case |
 |---------|------|----------|----------|
-| HTTP | 5080 | REST + JSON-RPC | Browser, curl |
-| WebSocket | 5081 | JSON | Real-time web apps |
-| TCP | 5082 | JSON + newline | Scripts, IoT |
-| UDP | 5083 | JSON datagram | Telemetry |
-| Binary TCP | 5065 | MessagePack | High-performance IPC |
-| Terminal REPL | 5061 | Text commands | Interactive debugging |
+| HTTP | 12000 | REST + JSON-RPC | Browser, curl |
+| WebSocket | 12100 | JSON | Real-time web apps |
+| TCP | 12200 | JSON + newline | Scripts, IoT |
+| UDP | 12300 | JSON datagram | Telemetry |
+| Binary TCP | 11000 | MessagePack | High-performance IPC |
+| Terminal REPL | 10000 | Text commands | Interactive debugging |
 
 ## Module Registration
 

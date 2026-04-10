@@ -74,10 +74,10 @@ The VE layer exists to map those worlds into one shared tree and one consistent 
 The same process can expose:
 
 - direct in-process C++ access through `ve::n()`
-- terminal debugging on TCP port `5061`
-- HTTP node inspection on port `8080`
-- WebSocket subscriptions on port `8081`
-- binary IPC on port `5065`
+- terminal debugging on TCP port `10000`
+- HTTP node inspection on port `12000`
+- WebSocket subscriptions on port `12100`
+- binary IPC on port `11000`
 
 That is the practical payoff of the architecture: the tree is not only a model, it is the runtime control surface.
 
@@ -302,8 +302,8 @@ int main(int argc, char* argv[]) {
 Connect to the built-in terminal via TCP:
 
 ```bash
-# netcat / telnet to port 5061
-nc localhost 5061
+# netcat / telnet to port 10000
+nc localhost 10000
 
 ve> ls /robot
 state/
@@ -427,13 +427,16 @@ VersatileEngine/
 
 | Service | Port | Protocol | Description |
 |---------|------|----------|-------------|
-| Terminal | 5061 | TCP text | REPL with tab completion |
-| HTTP | 8080 | HTTP | REST-like Node access + static files |
-| WebSocket | 8081 | WS JSON | Real-time Node change push |
-| TCP Binary | 5065 | CBS | High-efficiency binary IPC |
+| Terminal | 10000 | TCP text | REPL with tab completion |
+| HTTP | 12000 | HTTP | REST-like Node access + static files |
+| WebSocket | 12100 | WS JSON | Real-time Node change push |
+| TCP Binary | 11000 | CBS | High-efficiency binary IPC |
+
+Port rule: **first three digits** = service family (fixed); **last two** increment on bind failure. See [docs/SERVICE.md](docs/SERVICE.md) (*Port numbering*).
 
 ## Documentation
 
+- [Service Reference](docs/SERVICE.md)
 - [Design Guide](docs/DESIGN.md)
 - [Core API Guide](docs/CORE.md)
 - [Coding Style](docs/CODING_STYLE.md)
