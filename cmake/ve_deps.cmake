@@ -50,8 +50,35 @@ add_library(ve_dep_asio2 INTERFACE)
 target_include_directories(ve_dep_asio2 INTERFACE
     "${VE_DEPS_ASIO2_ROOT}/include"
     "${VE_DEPS_3RD}"
+    "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/include"
 )
+target_compile_definitions(ve_dep_asio2 INTERFACE ASIO2_ENABLE_SSL)
 target_link_libraries(ve_dep_asio2 INTERFACE ve_dep_asio)
+
+# OpenSSL prebuilt (bundled in asio2/3rd/openssl/prebuilt)
+if(WIN32)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/windows/x64")
+    else()
+        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/windows/x86")
+    endif()
+    target_link_libraries(ve_dep_asio2 INTERFACE
+        "${_VE_OPENSSL_DIR}/libssl.lib"
+        "${_VE_OPENSSL_DIR}/libcrypto.lib"
+        Crypt32
+    )
+elseif(UNIX)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/linux/x64")
+    else()
+        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/linux/x86")
+    endif()
+    target_link_libraries(ve_dep_asio2 INTERFACE
+        "${_VE_OPENSSL_DIR}/libssl.a"
+        "${_VE_OPENSSL_DIR}/libcrypto.a"
+    )
+endif()
+unset(_VE_OPENSSL_DIR)
 
 # --- simdjson (sources under deps/simdjson, same layout as other bundled deps) ---
 # Upstream uses add_library(simdjson ...) without STATIC; type follows BUILD_SHARED_LIBS.

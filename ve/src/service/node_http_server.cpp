@@ -12,6 +12,11 @@
 #pragma warning(push, 0)
 #endif
 #include <asio2/http/http_server.hpp>
+#include <asio2/http/http_client.hpp>
+#include <asio2/http/detail/http_url.hpp>
+#if defined(ASIO2_ENABLE_SSL) || defined(ASIO2_USE_SSL)
+#include <asio2/http/https_client.hpp>
+#endif
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
@@ -168,7 +173,17 @@ struct NodeHttpServer::Private
     std::string staticRoot;
     std::string defaultFile = "index.html";
 
+    struct ProxyRule {
+        std::string prefix;      // e.g. "/imou-api"
+        std::string targetHost;  // e.g. "openapi.lechange.cn"
+        std::string targetPort;  // e.g. "443"
+        std::string targetPath;  // e.g. "/openapi"
+        bool        isHttps = false;
+    };
+    std::vector<ProxyRule> proxyRules;
+
     bool tryServeFile(const std::string& reqPath, http::web_response& rep);
+    bool tryProxy(http::web_request& req, http::web_response& rep);
 
     // JSON-RPC 2.0
     std::string handleJsonRpc(const std::string& requestJson);
@@ -221,6 +236,82 @@ bool NodeHttpServer::Private::tryServeFile(const std::string& reqPathIn, http::w
 // NodeHttpServer
 // ============================================================================
 
+bool NodeHttpServer::Private::tryProxy(http::web_request& req, http::web_response& rep)
+{
+    std::string reqTarget = std::string(req.target());
+    std::string reqPath   = std::string(req.path());
+
+    for (const auto& rule : proxyRules) {
+        if (reqPath.size() < rule.prefix.size()) continue;
+        if (reqPath.substr(0, rule.prefix.size()) != rule.prefix) continue;
+        if (reqPath.size() > rule.prefix.size() && reqPath[rule.prefix.size()] != '/') continue;
+
+        std::string remaining = reqTarget.substr(rule.prefix.size());
+        std::string upstreamTarget = rule.targetPath + remaining;
+        if (upstreamTarget.empty() || upstreamTarget[0] != '/') upstreamTarget = "/" + upstreamTarget;
+
+        http::web_request upstream;
+        upstream.method(req.method());
+        upstream.target(upstreamTarget);
+        upstream.version(11);
+
+        static const std::vector<std::string> hopByHop = {
+            "host", "connection", "keep-alive", "transfer-encoding",
+            "te", "trailer", "upgrade", "proxy-authorization"
+        };
+        for (auto const& field : req.base()) {
+            std::string nameLower(field.name_string());
+            for (auto& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            bool skip = false;
+            for (const auto& h : hopByHop) { if (nameLower == h) { skip = true; break; } }
+            if (!skip) upstream.set(field.name_string(), field.value());
+        }
+        upstream.set(http::field::host, rule.targetHost);
+        upstream.body() = std::string(req.body());
+        upstream.prepare_payload();
+
+        auto timeout = std::chrono::seconds(30);
+        http::web_response upstream_resp;
+
+        if (rule.isHttps) {
+#if defined(ASIO2_ENABLE_SSL) || defined(ASIO2_USE_SSL)
+            upstream_resp = asio2::https_client::execute(
+                rule.targetHost, rule.targetPort, upstream, timeout);
+#else
+            veLogWs("[http proxy] HTTPS proxy not compiled in:", rule.prefix);
+            rep.fill_text("HTTPS proxy not supported in this build", http::status::not_implemented);
+            return true;
+#endif
+        } else {
+            upstream_resp = asio2::http_client::execute(
+                rule.targetHost, rule.targetPort, upstream, timeout);
+        }
+
+        if (asio2::get_last_error()) {
+            veLogWs("[http proxy] upstream error:", rule.prefix, "->",
+                    rule.targetHost, ":", asio2::last_error_msg());
+            rep.fill_text("Proxy upstream error: " + asio2::last_error_msg(),
+                          http::status::bad_gateway);
+            return true;
+        }
+
+        rep.result(upstream_resp.result());
+        for (auto const& field : upstream_resp.base()) {
+            std::string nameLower(field.name_string());
+            for (auto& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (nameLower == "connection" || nameLower == "keep-alive" ||
+                nameLower == "transfer-encoding" || nameLower == "te" ||
+                nameLower == "trailer" || nameLower == "upgrade")
+                continue;
+            rep.set(field.name_string(), field.value());
+        }
+        rep.body() = upstream_resp.body();
+        rep.prepare_payload();
+        return true;
+    }
+    return false;
+}
+
 NodeHttpServer::NodeHttpServer(Node* root, uint16_t port)
     : _p(std::make_unique<Private>())
 {
@@ -243,6 +334,22 @@ void NodeHttpServer::setStaticRoot(const std::string& dirPath)
 void NodeHttpServer::setDefaultFile(const std::string& filename)
 {
     _p->defaultFile = filename;
+}
+
+void NodeHttpServer::addProxyRule(const std::string& prefix, const std::string& target)
+{
+    http::url u(target);
+    Private::ProxyRule rule;
+    rule.prefix     = prefix;
+    rule.targetHost = std::string(u.host());
+    rule.targetPort = std::string(u.port());
+    rule.targetPath = std::string(u.path());
+    rule.isHttps    = asio2::iequals(u.schema(), "https");
+    // strip trailing slash from targetPath so concatenation is clean
+    while (rule.targetPath.size() > 1 && rule.targetPath.back() == '/')
+        rule.targetPath.pop_back();
+    veLogDs("[http proxy] rule:", prefix, "->", target);
+    _p->proxyRules.push_back(std::move(rule));
 }
 
 bool NodeHttpServer::start()
@@ -474,9 +581,10 @@ bool NodeHttpServer::start()
             rep.fill_json(schema::exportAs<schema::JsonS>(&r, compactJson), http::status::ok);
         });
 
-    // Static file fallback
+    // Static file fallback + proxy
     _p->server.bind_not_found(
         [this](http::web_request& req, http::web_response& rep) {
+            if (_p->tryProxy(req, rep)) return;
             if (_p->tryServeFile(std::string(req.path()), rep)) return;
             rep.fill_json(jsonError("not found"), http::status::not_found);
         });
