@@ -246,7 +246,9 @@ void Pipeline::complete(State finalState, SignalT signal, const Result& result)
     }
 
     if (_p->handler) {
-        _p->handler(_p->lastResult);
+        auto h = std::move(_p->handler);
+        Result res = _p->lastResult;
+        h(res);
     }
 }
 

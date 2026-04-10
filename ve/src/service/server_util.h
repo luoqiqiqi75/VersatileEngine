@@ -45,9 +45,9 @@ bool startServerWithPortFallback(Server& server, const std::string& serverName, 
     for (uint16_t p = startPort; p <= endPort; ++p) {
         if (server.start("0.0.0.0", p)) {
             if (p != startPort) {
-                veLogWs("{} started on fallback port {} (default {} failed)", serverName, p, startPort);
+                veLogWs << serverName << "started on fallback port" << p;
             } else {
-                veLogIs("{} started on port", serverName, p);
+                veLogIs << serverName << "started on port" << p;
             }
             port = p; // Update the port to the actually bound one
             return true;
@@ -55,9 +55,9 @@ bool startServerWithPortFallback(Server& server, const std::string& serverName, 
     }
 
     if (startPort == endPort) {
-        veLogEs("{} failed to start on port", serverName, startPort);
+        veLogE << serverName << " failed to start on port " << startPort;
     } else {
-        veLogEs("{} failed to start on any port between {} and {}", serverName, startPort, endPort);
+        veLogE << serverName << " failed to start on any port between " << startPort << " and " << endPort;
     }
     return false;
 }
