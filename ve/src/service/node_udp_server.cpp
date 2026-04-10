@@ -71,7 +71,8 @@ bool NodeUdpServer::start()
         session_ptr->async_send(response);
     });
 
-    return startServerWithPortFallback(_p->server, "NodeUdpServer", _p->port);
+    ve::service::disableWindowsPortReuse(_p->server);
+    return _p->server.start("0.0.0.0", _p->port);
 }
 
 void NodeUdpServer::stop()

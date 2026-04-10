@@ -141,6 +141,7 @@ template<typename... Ts> inline void es(Ts... ts) { veLogEs(std::forward<Ts>(ts)
 
 template<typename... Ts> inline void d(Ts... ts) { veLogD(std::forward<Ts>(ts)...); };
 template<typename... Ts> inline void ds(Ts... ts) { veLogDs(std::forward<Ts>(ts)...); };
+
 namespace internal { template<int> inline auto genCnt() { static std::atomic_uint64_t cnt = 0; return cnt++; } }
 template<int I = 0, typename... Ts> inline void cnt(Ts... ts) { veLogDs(internal::genCnt<I>(), std::forward<Ts>(ts)...); };
 template<int N = 40, char C = '-'> inline void line() { static std::string str(N, C); veLogD(str); }

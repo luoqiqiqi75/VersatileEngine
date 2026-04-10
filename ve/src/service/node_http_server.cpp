@@ -481,7 +481,8 @@ bool NodeHttpServer::start()
             rep.fill_json(jsonError("not found"), http::status::not_found);
         });
 
-    return startServerWithPortFallback(_p->server, "NodeHttpServer", _p->port);
+    ve::service::disableWindowsPortReuse(_p->server);
+    return _p->server.start("0.0.0.0", _p->port);
 }
 
 void NodeHttpServer::stop()

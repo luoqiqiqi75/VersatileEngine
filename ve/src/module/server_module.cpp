@@ -21,20 +21,37 @@ namespace ve {
 
 namespace fs = std::filesystem;
 
-template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port)
+template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port, const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
-    int maxRetry = n->get("config/max_retry").toInt(100);
+    int maxRetry = n->get("config/max_retry").toInt(-1);
+    
+    int endPort = port;
+    if (maxRetry >= 0) {
+        endPort = port + maxRetry;
+    } else if ((port % 100) == 0) {
+        endPort = port + 99;
+    }
 
-    for (int i = 0; i <= maxRetry; ++i) {
-        server = std::make_unique<T>(node::root(), static_cast<uint16_t>(port + i));
+    for (int p = port; p <= endPort; ++p) {
+        server = std::make_unique<T>(node::root(), static_cast<uint16_t>(p));
         if (server->start()) {
-            n->set("runtime/port", port + i);
+            n->set("runtime/port", p);
             n->set("runtime/listening", true);
+            if (p != port) {
+                veLogWs(name, "started on fallback port", p, "(default", port, "failed)");
+            } else {
+                veLogIs(name, "started on port", p);
+            }
             return;
         }
     }
     n->set("runtime/listening", false);
+    if (port == endPort) {
+        veLogEs(name, "failed to start on port", port);
+    } else {
+        veLogEs(name, "failed to start on any port between", port, "and", endPort);
+    }
 }
 template<typename T> void closeServer(std::unique_ptr<T>& server, Node* n)
 {
@@ -67,16 +84,23 @@ private:
     void deinit() override;
 };
 
-template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server, Node* n, int default_port)
+template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server, Node* n, int default_port, const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
-    int maxRetry = n->get("config/max_retry").toInt(100);
+    int maxRetry = n->get("config/max_retry").toInt(-1);
+    
+    int endPort = port;
+    if (maxRetry >= 0) {
+        endPort = port + maxRetry;
+    } else if ((port % 100) == 0) {
+        endPort = port + 99;
+    }
 
     std::string static_root = n->get("config/static_root").toString();
     std::string default_file = n->get("config/default_file").toString();
 
-    for (int i = 0; i <= maxRetry; ++i) {
-        server = std::make_unique<service::NodeHttpServer>(node::root(), static_cast<uint16_t>(port + i));
+    for (int p = port; p <= endPort; ++p) {
+        server = std::make_unique<service::NodeHttpServer>(node::root(), static_cast<uint16_t>(p));
         if (!static_root.empty()) {
             veLogD << "[ve/service/node/http] static root: " << static_root;
             server->setStaticRoot(static_root);
@@ -84,12 +108,22 @@ template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server,
         if (!default_file.empty()) server->setDefaultFile(default_file);
 
         if (server->start()) {
-            n->set("runtime/port", port + i);
+            n->set("runtime/port", p);
             n->set("runtime/listening", true);
+            if (p != port) {
+                veLogWs(name, "started on fallback port", p, "(default", port, "failed)");
+            } else {
+                veLogIs(name, "started on port", p);
+            }
             return;
         }
     }
     n->set("runtime/listening", false);
+    if (port == endPort) {
+        veLogEs(name, "failed to start on port", port);
+    } else {
+        veLogEs(name, "failed to start on any port between", port, "and", endPort);
+    }
 }
 
 void ServerModule::init() {
@@ -269,12 +303,12 @@ void ServerModule::registerFileCommands()
 }
 
 void ServerModule::ready() {
-    if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 12000);
-    if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100);
-    if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 12200);
-    if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 12300);
-    if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000);
-    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000);
+    if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 12000, "NodeHttpServer");
+    if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100, "NodeWsServer");
+    if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 12200, "NodeTcpServer");
+    if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 12300, "NodeUdpServer");
+    if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000, "BinTcpServer");
+    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
 }
 
 void ServerModule::deinit() {

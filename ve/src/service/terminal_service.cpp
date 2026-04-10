@@ -466,7 +466,8 @@ bool TerminalReplServer::start()
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
 
-    return startServerWithPortFallback(_p->server, "TerminalReplServer", _p->port);
+    ve::service::disableWindowsPortReuse(_p->server);
+    return _p->server.start("0.0.0.0", _p->port);
 }
 
 void TerminalReplServer::stop()
