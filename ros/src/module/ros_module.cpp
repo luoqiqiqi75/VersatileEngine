@@ -191,6 +191,46 @@ private:
             return;
         commands_registered_ = true;
 
+        command::declareNode("ros.backend.info")->at("key");
+        command::declareNode("ros.node.list")->at("filter");
+        command::declareNode("ros.topic.list")->at("filter");
+        command::declareNode("ros.topic.info")->at("name");
+
+        auto* subscribe_decl = command::declareNode("ros.topic.subscribe");
+        subscribe_decl->at("name");
+        subscribe_decl->at("topic");
+        subscribe_decl->at("type");
+        subscribe_decl->at("target_node");
+        subscribe_decl->at("payload_format");
+
+        command::declareNode("ros.topic.unsubscribe")->at("name");
+
+        auto* publish_decl = command::declareNode("ros.topic.publish");
+        publish_decl->at("topic");
+        publish_decl->at("type");
+        publish_decl->at("payload");
+        publish_decl->at("payload_format");
+
+        auto* once_decl = command::declareNode("ros.topic.once");
+        once_decl->at("topic");
+        once_decl->at("target_node");
+        once_decl->at("type");
+        once_decl->at("payload_format");
+        once_decl->at("timeout_ms");
+
+        command::declareNode("ros.service.list")->at("filter");
+        command::declareNode("ros.service.info")->at("name");
+        command::declareNode("ros.param.list")->at("node");
+
+        auto* param_get_decl = command::declareNode("ros.param.get");
+        param_get_decl->at("node");
+        param_get_decl->at("name");
+
+        auto* param_set_decl = command::declareNode("ros.param.set");
+        param_set_decl->at("node");
+        param_set_decl->at("name");
+        param_set_decl->at("value");
+
         command::reg("ros.info", [this]() -> Result {
             return okResult(Var(buildInfo()));
         }, "Show ros backend, env and cached runtime summary.");

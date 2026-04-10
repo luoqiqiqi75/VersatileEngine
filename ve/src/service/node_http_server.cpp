@@ -422,7 +422,7 @@ bool NodeHttpServer::start()
             const bool waitCmd = reqNode.get("wait").toBool(false);
 
             Node*     cmdCtx = command::context(cmdKey);
-            cmdCtx->set(cmdBody);
+            command::parseArgs(cmdCtx, cmdBody);
             Pipeline* detached = nullptr;
             Result    result   = command::call(cmdKey, cmdCtx, waitCmd, waitCmd ? nullptr : &detached);
 

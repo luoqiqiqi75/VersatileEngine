@@ -46,6 +46,64 @@ template<> inline bool parse(const Result& r, std::string& s)
 }
 }
 
+namespace command_detail {
+
+inline Var parsedArgsFromContext(Node* ctx)
+{
+    if (!ctx || ctx->empty())
+        return Var();
+
+    bool has_named = false;
+    bool has_anon = false;
+    for (auto* child : *ctx) {
+        if (!child)
+            continue;
+        if (child->name().empty())
+            has_anon = true;
+        else
+            has_named = true;
+    }
+
+    if (!has_named && ctx->count() == 1)
+        return ctx->first()->get();
+    if (!has_named)
+        return Var(ctx->toList());
+    if (!has_anon)
+        return Var(ctx->toDict());
+    return Var(ctx->toList());
+}
+
+template<typename F>
+auto prepareStepFn(F&& fn)
+{
+    using Traits = basic::FnTraits<std::decay_t<F>>;
+
+    if constexpr (Traits::ArgCnt == 1) {
+        using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
+        if constexpr (std::is_same_v<Arg0, Node*> || std::is_same_v<Arg0, const Node*>) {
+            return std::decay_t<F>(std::forward<F>(fn));
+        } else {
+            auto callable = Var::callable(std::forward<F>(fn));
+            return [callable = std::move(callable)](Node* ctx) -> Var {
+                if (!ctx)
+                    return callable.invoke(Var());
+                if constexpr (std::is_same_v<Arg0, Var>)
+                    return callable.invoke(parsedArgsFromContext(ctx));
+                return callable.invoke(Var(ctx->toList()));
+            };
+        }
+    } else if constexpr (Traits::ArgCnt > 1) {
+        auto callable = Var::callable(std::forward<F>(fn));
+        return [callable = std::move(callable)](Node* ctx) -> Var {
+            return callable.invoke(ctx ? Var(ctx->toList()) : Var());
+        };
+    } else {
+        return std::decay_t<F>(std::forward<F>(fn));
+    }
+}
+
+} // namespace command_detail
+
 // ============================================================================
 // Step - Var(CALLABLE) + optional LoopRef (std::pair: first = fn, second = loop)
 // ============================================================================
@@ -92,7 +150,7 @@ public:
     template<typename F, Step::EnableIfFn<F> = 0>
     void addStep(F&& fn, LoopRef lr = {})
     {
-        _steps.push_back(Step(Var::callable(std::forward<F>(fn)), std::move(lr)));
+        _steps.push_back(Step(std::forward<F>(fn), std::move(lr)));
     }
 
     const std::string& name() const;
@@ -134,13 +192,13 @@ VE_API void registerStep(const std::string& key, Step step, const std::string& h
 template<typename F, Step::EnableIfFn<F> = 0>
 void registerStep(const std::string& key, F&& fn, const std::string& help = "")
 {
-    registerStep(key, Step(std::forward<F>(fn)), help);
+    registerStep(key, Step(command_detail::prepareStepFn(std::forward<F>(fn))), help);
 }
 
 template<typename F, Step::EnableIfFn<F> = 0>
 void registerStep(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
 {
-    registerStep(key, Step(std::forward<F>(fn), std::move(loop)), help);
+    registerStep(key, Step(command_detail::prepareStepFn(std::forward<F>(fn)), std::move(loop)), help);
 }
 
 VE_API void registerCommand(const std::string& key,
@@ -182,6 +240,8 @@ VE_API Pipeline* run(const std::string& key, Node* ctx);
 VE_API Pipeline* run(const std::string& key, const Var& input = {});
 
 VE_API Node* context(const std::string& key, Node* currentNode = nullptr);
+inline Node* current(Node* ctx) { return ctx ? static_cast<Node*>(ctx->get().toPointer()) : nullptr; }
+inline const Node* current(const Node* ctx) { return ctx ? static_cast<const Node*>(ctx->get().toPointer()) : nullptr; }
 
 VE_API Node* declareNode(const std::string& key);
 
@@ -193,8 +253,8 @@ VE_API bool parseArgs(Node* ctx, const Var& input);
 // Args — lightweight accessor for parsed command arguments
 // ============================================================================
 //
-// Reads from ctx child nodes (populated by parseArgs).
-// Key lookup with positional fallback for commands without declare metadata.
+// Reads from ctx child nodes populated by parseArgs().
+// Positional mapping to named params is driven by declare metadata.
 
 struct VE_API Args {
     Node* ctx;

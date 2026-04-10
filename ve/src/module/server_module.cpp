@@ -129,8 +129,8 @@ void ServerModule::registerFileCommands()
             return Result::fail(Var(out));
         }
 
-        // Resolve target: use _current from context if available
-        Node* current = static_cast<Node*>(ctx->get("_current").toPointer());
+        // Resolve target from the command context when available.
+        Node* current = command::current(ctx);
         Node* base = current ? current : node::root();
 
         std::string pathStr = a.string("path");
@@ -217,8 +217,8 @@ void ServerModule::registerFileCommands()
             return Result::fail(Var("Usage: load <format> [path] [-f file] [-i data]"));
         }
 
-        // Resolve target: use _current from context if available
-        Node* current = static_cast<Node*>(ctx->get("_current").toPointer());
+        // Resolve target from the command context when available.
+        Node* current = command::current(ctx);
         Node* base = current ? current : node::root();
 
         std::string pathStr = a.string("path");

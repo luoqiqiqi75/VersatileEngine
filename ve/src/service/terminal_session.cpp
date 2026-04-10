@@ -724,8 +724,7 @@ std::string TerminalSession::execute(const std::string& line)
         Var::ListV list;
         for (size_t i = 1; i < args.size(); ++i)
             list.push_back(Var(args[i]));
-        ctx->set(list.empty() ? Var() : Var(std::move(list)));
-        // parseArgs runs automatically inside call()
+        command::parseArgs(ctx, list.empty() ? Var() : Var(std::move(list)));
 
         if (asyncMode) {
             Pipeline* detached = nullptr;

@@ -275,9 +275,8 @@ VE_TEST(command_help_metadata) {
 // ============================================================================
 
 VE_TEST(step_factory_register_and_exec) {
-    command::reg("_test_greet", [](Node* n) -> Result {
-        Var v = n ? n->get() : Var();
-        return Result::ok(Var("hello " + v.toString()));
+    command::reg("_test_greet", [](const std::string& v) -> Result {
+        return Result::ok(Var("hello " + v));
     });
     VE_ASSERT(command::has("_test_greet"));
 
@@ -309,8 +308,8 @@ VE_TEST(command_factory_register_and_exec) {
 // ============================================================================
 
 VE_TEST(command_ns_reg_and_call) {
-    command::reg("_test_echo", [](Node* n) -> Result {
-        return Result::ok(n ? n->get() : Var());
+    command::reg("_test_echo", [](int value) -> Result {
+        return Result::ok(Var(value));
     }, "echo input");
 
     VE_ASSERT(command::has("_test_echo"));
@@ -340,9 +339,8 @@ VE_TEST(command_ns_run) {
 }
 
 VE_TEST(command_ns_step) {
-    command::reg("_test_inc", [](Node* n) -> Result {
-        Var v = n ? n->get() : Var();
-        return Result::ok(Var(v.toInt() + 1));
+    command::reg("_test_inc", [](int value) -> Result {
+        return Result::ok(Var(value + 1));
     });
 
     Pipeline* pipe = command::run("_test_inc", Var(10));
@@ -395,6 +393,48 @@ VE_TEST(command_ns_not_found) {
 
     Pipeline* pipe = command::run("_test_nonexistent");
     VE_ASSERT(pipe == nullptr);
+}
+
+VE_TEST(command_context_keeps_current_out_of_children) {
+    Node current("current");
+    Node* ctx = command::context("_test_ctx_meta", &current);
+
+    VE_ASSERT_EQ(command::current(ctx), &current);
+    VE_ASSERT_EQ(ctx->count(), 0);
+
+    delete ctx;
+}
+
+VE_TEST(command_parse_args_with_current_keeps_positional_index_zero) {
+    Node current("current");
+    Node* ctx = command::context("_test_ctx_parse", &current);
+
+    VE_ASSERT(command::parseArgs(ctx, std::vector<std::string>{"hello"}));
+    VE_ASSERT_EQ(ctx->get(0).toString(), "hello");
+    VE_ASSERT_EQ(ctx->count(), 1);
+    VE_ASSERT_EQ(command::current(ctx), &current);
+
+    delete ctx;
+}
+
+VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
+    auto* decl = node::root()->at("ve/command/declare/_test_declared_args");
+    decl->at("topic");
+    decl->at("target_node");
+
+    Node* positionalCtx = command::context("_test_declared_args");
+    VE_ASSERT(command::parseArgs(positionalCtx, std::vector<std::string>{"/robot_states", "/target"}));
+    auto positionalArgs = command::args(positionalCtx);
+    VE_ASSERT_EQ(positionalArgs.string("topic"), "/robot_states");
+    VE_ASSERT_EQ(positionalArgs.string("target_node"), "/target");
+    delete positionalCtx;
+
+    Node* namedCtx = command::context("_test_declared_args");
+    VE_ASSERT(command::parseArgs(namedCtx, std::vector<std::string>{"--topic", "/robot_states", "--target_node", "/target"}));
+    auto namedArgs = command::args(namedCtx);
+    VE_ASSERT_EQ(namedArgs.string("topic"), "/robot_states");
+    VE_ASSERT_EQ(namedArgs.string("target_node"), "/target");
+    delete namedCtx;
 }
 
 // ============================================================================
