@@ -75,6 +75,9 @@ template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server,
     std::string static_root = n->get("config/static_root").toString();
     std::string default_file = n->get("config/default_file").toString();
 
+    // Proxy rules: config/proxy = [{ "prefix": "/foo", "target": "https://..." }, ...]
+    Node* proxy_node = n->find("config/proxy");
+
     for (int i = 0; i <= maxRetry; ++i) {
         server = std::make_unique<service::NodeHttpServer>(node::root(), static_cast<uint16_t>(port + i));
         if (!static_root.empty()) {
@@ -82,7 +85,14 @@ template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server,
             server->setStaticRoot(static_root);
         }
         if (!default_file.empty()) server->setDefaultFile(default_file);
-
+        if (proxy_node) {
+            for (Node* rule : proxy_node->children()) {
+                std::string pfx = rule->get("prefix").toString();
+                std::string tgt = rule->get("target").toString();
+                if (!pfx.empty() && !tgt.empty())
+                    server->addProxyRule(pfx, tgt);
+            }
+        }
         if (server->start()) {
             n->set("runtime/port", port + i);
             n->set("runtime/listening", true);
