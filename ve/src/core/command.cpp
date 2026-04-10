@@ -111,7 +111,7 @@ void build(const std::string& key, std::function<void(Command&)> builder,
 
 Node* declareNode(const std::string& key)
 {
-    return node::root()->find("ve/command/declare/" + key, false);
+    return node::root()->at("ve/command/declare/" + key, false);
 }
 
 Node* context(const std::string& key, Node* currentNode)
@@ -120,9 +120,7 @@ Node* context(const std::string& key, Node* currentNode)
     if (auto* decl = declareNode(key)) {
         ctx->setShadow(decl);
     }
-    if (currentNode) {
-        ctx->at("_current")->set(Var(static_cast<void*>(currentNode)));
-    }
+    ctx->set(Var(static_cast<void*>(currentNode)));
     return ctx;
 }
 
@@ -154,6 +152,8 @@ static void buildDeclInfo(const Node* decl,
 bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
 {
     if (!ctx) return false;
+
+    ctx->clear();
 
     const Node* decl = ctx->shadow();
 
@@ -235,6 +235,8 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
 bool parseArgs(Node* ctx, const Var& input)
 {
     if (!ctx) return false;
+
+    ctx->clear();
     if (input.isNull()) return true;
 
     if (input.isDict()) {
@@ -342,15 +344,6 @@ Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut
         ctxToDelete = ctx;
     }
 
-    // Auto-parse raw input on ctx (LIST/DICT/scalar → named child nodes)
-    // Raw value is kept on ctx for backward compat (commands reading ctx->get()).
-    {
-        Var raw = ctx->get();
-        if (!raw.isNull()) {
-            parseArgs(ctx, raw);
-        }
-    }
-
     auto cleanup = [&]() {
         delete pipe;
         if (ctxToDelete) {
@@ -409,8 +402,7 @@ Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut
 Result call(const std::string& key, const Var& input, bool wait)
 {
     Node* ctx = context(key);
-    if (!input.isNull())
-        ctx->set(input);  // raw input; auto-parseArgs in call(key, ctx, ...) will handle it
+    parseArgs(ctx, input);
     Result r = call(key, ctx, wait, nullptr);
     delete ctx;
     return r;

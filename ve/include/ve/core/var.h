@@ -340,11 +340,12 @@ inline Var::CallableV Var::wrapCallable(F&& fn) {
             };
         } else {
             return [f = std::decay_t<F>(std::forward<F>(fn))](const Var& input) -> Var {
+                const Var& arg = input.isList() ? input[0] : input;
                 if constexpr (std::is_void_v<Ret>) {
-                    f(input.template as<Arg0>());
+                    f(arg.template as<Arg0>());
                     return detail::wrapCallableRet();
                 } else {
-                    return detail::wrapCallableRet(f(input.template as<Arg0>()));
+                    return detail::wrapCallableRet(f(arg.template as<Arg0>()));
                 }
             };
         }

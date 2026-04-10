@@ -236,7 +236,7 @@ struct NodeWsServer::Private
         }
 
         Node* ctx = command::context(m.key);
-        ctx->set(body);
+        command::parseArgs(ctx, body);
         Pipeline* detached = nullptr;
         auto        result = command::call(m.key, ctx, false, &detached);
         if (detached) {
@@ -325,7 +325,7 @@ struct NodeWsServer::Private
         }
 
         Node*     ctx = command::context(name);
-        ctx->set(args);
+        command::parseArgs(ctx, args);
         Pipeline* detached = nullptr;
         Result    r0       = command::call(name, ctx, false, &detached);
 
