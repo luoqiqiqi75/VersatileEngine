@@ -2,7 +2,6 @@
 #pragma once
 
 #include "ve/global.h"
-#include "ve/service/ports.h"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -16,7 +15,7 @@ namespace service {
 class VE_API TerminalReplServer
 {
 public:
-    explicit TerminalReplServer(Node* root = nullptr, uint16_t port = kDefaultTerminalReplPort);
+    explicit TerminalReplServer(Node* root, uint16_t port);
     ~TerminalReplServer();
 
     bool     start();
@@ -50,7 +49,7 @@ private:
 class VE_API TerminalTcpClient
 {
 public:
-    explicit TerminalTcpClient(const std::string& host = "127.0.0.1", uint16_t port = kDefaultTerminalReplPort);
+    explicit TerminalTcpClient(const std::string& host, uint16_t port);
     ~TerminalTcpClient();
 
     // Connect to the remote terminal, forward local console input, and block

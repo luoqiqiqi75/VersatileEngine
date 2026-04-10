@@ -46,64 +46,6 @@ template<> inline bool parse(const Result& r, std::string& s)
 }
 }
 
-namespace command_detail {
-
-inline Var parsedArgsFromContext(Node* ctx)
-{
-    if (!ctx || ctx->empty())
-        return Var();
-
-    bool has_named = false;
-    bool has_anon = false;
-    for (auto* child : *ctx) {
-        if (!child)
-            continue;
-        if (child->name().empty())
-            has_anon = true;
-        else
-            has_named = true;
-    }
-
-    if (!has_named && ctx->count() == 1)
-        return ctx->first()->get();
-    if (!has_named)
-        return Var(ctx->toList());
-    if (!has_anon)
-        return Var(ctx->toDict());
-    return Var(ctx->toList());
-}
-
-template<typename F>
-auto prepareStepFn(F&& fn)
-{
-    using Traits = basic::FnTraits<std::decay_t<F>>;
-
-    if constexpr (Traits::ArgCnt == 1) {
-        using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
-        if constexpr (std::is_same_v<Arg0, Node*> || std::is_same_v<Arg0, const Node*>) {
-            return std::decay_t<F>(std::forward<F>(fn));
-        } else {
-            auto callable = Var::callable(std::forward<F>(fn));
-            return [callable = std::move(callable)](Node* ctx) -> Var {
-                if (!ctx)
-                    return callable.invoke(Var());
-                if constexpr (std::is_same_v<Arg0, Var>)
-                    return callable.invoke(parsedArgsFromContext(ctx));
-                return callable.invoke(Var(ctx->toList()));
-            };
-        }
-    } else if constexpr (Traits::ArgCnt > 1) {
-        auto callable = Var::callable(std::forward<F>(fn));
-        return [callable = std::move(callable)](Node* ctx) -> Var {
-            return callable.invoke(ctx ? Var(ctx->toList()) : Var());
-        };
-    } else {
-        return std::decay_t<F>(std::forward<F>(fn));
-    }
-}
-
-} // namespace command_detail
-
 // ============================================================================
 // Step - Var(CALLABLE) + optional LoopRef (std::pair: first = fn, second = loop)
 // ============================================================================
@@ -131,6 +73,44 @@ struct VE_API Step : std::pair<Var, LoopRef>
     }
 
     explicit operator bool() const { return first.isCallable(); }
+
+    // --- callable wrapping for command registration ---
+
+    template<typename F, size_t... I>
+    static auto wrapMultiArg(F&& fn, std::index_sequence<I...>)
+    {
+        auto callable = Var::callable(std::forward<F>(fn));
+        return [callable = std::move(callable)](Node* ctx) -> Var {
+            Var::ListV args;
+            args.reserve(sizeof...(I));
+            if (ctx) {
+                ((args.push_back(ctx->at(static_cast<int>(I), true)
+                    ? ctx->at(static_cast<int>(I), true)->get() : Var())), ...);
+            } else {
+                ((args.push_back(Var()), (void)I), ...);
+            }
+            return callable.invoke(Var(std::move(args)));
+        };
+    }
+
+    template<typename F>
+    static auto wrap(F&& fn)
+    {
+        using Traits = basic::FnTraits<std::decay_t<F>>;
+
+        if constexpr (Traits::ArgCnt == 0) {
+            return std::decay_t<F>(std::forward<F>(fn));
+        } else if constexpr (Traits::ArgCnt == 1) {
+            using Arg0 = std::decay_t<typename Traits::template ArgAt<0>>;
+            if constexpr (std::is_same_v<Arg0, Node*> || std::is_same_v<Arg0, const Node*>) {
+                return std::decay_t<F>(std::forward<F>(fn));
+            } else {
+                return wrapMultiArg(std::forward<F>(fn), std::index_sequence<0>{});
+            }
+        } else {
+            return wrapMultiArg(std::forward<F>(fn), std::make_index_sequence<Traits::ArgCnt>{});
+        }
+    }
 };
 
 VE_API Result resultFromStepReturn(const Var& ret);
@@ -192,13 +172,13 @@ VE_API void registerStep(const std::string& key, Step step, const std::string& h
 template<typename F, Step::EnableIfFn<F> = 0>
 void registerStep(const std::string& key, F&& fn, const std::string& help = "")
 {
-    registerStep(key, Step(command_detail::prepareStepFn(std::forward<F>(fn))), help);
+    registerStep(key, Step(Step::wrap(std::forward<F>(fn))), help);
 }
 
 template<typename F, Step::EnableIfFn<F> = 0>
 void registerStep(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
 {
-    registerStep(key, Step(command_detail::prepareStepFn(std::forward<F>(fn)), std::move(loop)), help);
+    registerStep(key, Step(Step::wrap(std::forward<F>(fn)), std::move(loop)), help);
 }
 
 VE_API void registerCommand(const std::string& key,

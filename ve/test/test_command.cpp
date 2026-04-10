@@ -438,6 +438,87 @@ VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
 }
 
 // ============================================================================
+// wrapStepCallable — Form 2 tests (plain callable, not Node* ctx)
+// ============================================================================
+
+VE_TEST(step_form2_multi_arg_int) {
+    command::reg("_test_add", [](int a, int b) { return a + b; });
+    auto r = command::call("_test_add", Var(Var::ListV{Var(3), Var(4)}));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.content().toInt(), 7);
+    GlobalCommandFactory().erase("_test_add");
+}
+
+VE_TEST(step_form2_multi_arg_result) {
+    command::reg("_test_div", [](int a, int b) -> Result {
+        if (b == 0) return Result::fail(Var("div by zero"));
+        return Result::ok(Var(a / b));
+    });
+    auto r1 = command::call("_test_div", Var(Var::ListV{Var(10), Var(2)}));
+    VE_ASSERT(r1.isSuccess());
+    VE_ASSERT_EQ(r1.content().toInt(), 5);
+
+    auto r2 = command::call("_test_div", Var(Var::ListV{Var(1), Var(0)}));
+    VE_ASSERT(r2.isError());
+    GlobalCommandFactory().erase("_test_div");
+}
+
+VE_TEST(step_form2_single_string) {
+    command::reg("_test_hi", [](const std::string& name) {
+        return std::string("hi ") + name;
+    });
+    auto r = command::call("_test_hi", Var("alice"));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.content().toString(), "hi alice");
+    GlobalCommandFactory().erase("_test_hi");
+}
+
+VE_TEST(step_form2_void_no_args) {
+    int called = 0;
+    command::reg("_test_noop", [&called]() { ++called; });
+    auto r = command::call("_test_noop");
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(called, 1);
+    GlobalCommandFactory().erase("_test_noop");
+}
+
+VE_TEST(step_form2_var_return) {
+    command::reg("_test_ping", []() -> Var { return Var("pong"); });
+    auto r = command::call("_test_ping");
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.content().toString(), "pong");
+    GlobalCommandFactory().erase("_test_ping");
+}
+
+VE_TEST(step_form2_double_args) {
+    command::reg("_test_sum", [](double a, double b) { return a + b; });
+    auto r = command::call("_test_sum", Var(Var::ListV{Var(1.5), Var(2.5)}));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.content().toDouble(), 4.0);
+    GlobalCommandFactory().erase("_test_sum");
+}
+
+VE_TEST(step_form2_single_arg_via_call) {
+    // single-arg via command::call(key, Var) — parseArgs puts value in child
+    command::reg("_test_double_it", [](int x) { return x * 2; });
+    auto r = command::call("_test_double_it", Var(21));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.content().toInt(), 42);
+    GlobalCommandFactory().erase("_test_double_it");
+}
+
+VE_TEST(step_form2_single_arg_ctx_child) {
+    // single-arg: value in ctx child at index 0
+    command::reg("_test_negate", [](int x) { return -x; });
+    Node* ctx = command::context("_test_negate");
+    ctx->at(0, false)->set(Var(7));
+    auto r = command::call("_test_negate", ctx);
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.content().toInt(), -7);
+    GlobalCommandFactory().erase("_test_negate");
+}
+
+// ============================================================================
 // Object::once tests
 // ============================================================================
 
