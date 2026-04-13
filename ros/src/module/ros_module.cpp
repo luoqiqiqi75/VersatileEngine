@@ -191,55 +191,55 @@ private:
             return;
         commands_registered_ = true;
 
-        command::declareNode("ros.backend.info")->at("key");
-        command::declareNode("ros.node.list")->at("filter");
-        command::declareNode("ros.topic.list")->at("filter");
-        command::declareNode("ros.topic.info")->at("name");
+        command::declareNode("ros/backend/info")->at("key");
+        command::declareNode("ros/node/list")->at("filter");
+        command::declareNode("ros/topic/list")->at("filter");
+        command::declareNode("ros/topic/info")->at("name");
 
-        auto* subscribe_decl = command::declareNode("ros.topic.subscribe");
+        auto* subscribe_decl = command::declareNode("ros/topic/subscribe");
         subscribe_decl->at("name");
         subscribe_decl->at("topic");
         subscribe_decl->at("type");
         subscribe_decl->at("target_node");
         subscribe_decl->at("payload_format");
 
-        command::declareNode("ros.topic.unsubscribe")->at("name");
+        command::declareNode("ros/topic/unsubscribe")->at("name");
 
-        auto* publish_decl = command::declareNode("ros.topic.publish");
+        auto* publish_decl = command::declareNode("ros/topic/publish");
         publish_decl->at("topic");
         publish_decl->at("type");
         publish_decl->at("payload");
         publish_decl->at("payload_format");
 
-        auto* once_decl = command::declareNode("ros.topic.once");
+        auto* once_decl = command::declareNode("ros/topic/once");
         once_decl->at("topic");
         once_decl->at("target_node");
         once_decl->at("type");
         once_decl->at("payload_format");
         once_decl->at("timeout_ms");
 
-        command::declareNode("ros.service.list")->at("filter");
-        command::declareNode("ros.service.info")->at("name");
-        command::declareNode("ros.param.list")->at("node");
+        command::declareNode("ros/service/list")->at("filter");
+        command::declareNode("ros/service/info")->at("name");
+        command::declareNode("ros/param/list")->at("node");
 
-        auto* param_get_decl = command::declareNode("ros.param.get");
+        auto* param_get_decl = command::declareNode("ros/param/get");
         param_get_decl->at("node");
         param_get_decl->at("name");
 
-        auto* param_set_decl = command::declareNode("ros.param.set");
+        auto* param_set_decl = command::declareNode("ros/param/set");
         param_set_decl->at("node");
         param_set_decl->at("name");
         param_set_decl->at("value");
 
-        command::reg("ros.info", [this]() -> Result {
+        command::reg("ros/info", [this]() -> Result {
             return okResult(Var(buildInfo()));
         }, "Show ros backend, env and cached runtime summary.");
 
-        command::reg("ros.backend.list", []() -> Result {
+        command::reg("ros/backend/list", []() -> Result {
             return okResult(Var(ros::backendInfoList()));
         }, "List registered ros backends.");
 
-        command::reg("ros.backend.info", [](Node* ctx) -> Result {
+        command::reg("ros/backend/info", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
             std::string key_name = a.string("key");
             if (key_name.empty()) {
@@ -253,29 +253,29 @@ private:
             return failResult("ros backend not found: " + key_name);
         }, "Show backend details.");
 
-        command::reg("ros.parser.list", []() -> Result {
+        command::reg("ros/parser/list", []() -> Result {
             return okResult(Var(ros::parserInfoList()));
         }, "List registered ros payload parsers.");
 
-        command::reg("ros.env", []() -> Result {
+        command::reg("ros/env", []() -> Result {
             return okResult(Var(ros::envInfo()));
         }, "Show ROS-related environment variables.");
 
-        command::reg("ros.node.list", [this](Node* ctx) -> Result {
+        command::reg("ros/node/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listNodes(a.string("filter"));
             writeNamedNodeList("nodes", result);
             return okResult(Var(result));
         }, "List ROS nodes.");
 
-        command::reg("ros.topic.list", [this](Node* ctx) -> Result {
+        command::reg("ros/topic/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listTopics(a.string("filter"));
             writeNamedPathList("topics", result, "name");
             return okResult(Var(result));
         }, "List ROS topics.");
 
-        command::reg("ros.topic.info", [](Node* ctx) -> Result {
+        command::reg("ros/topic/info", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto topic_name = a.string("name");
             if (topic_name.empty())
@@ -283,7 +283,7 @@ private:
             return okResult(Var(ros::topicInfo(topic_name)));
         }, "Show ROS topic details.");
 
-        command::reg("ros.topic.subscribe", [this](Node* ctx) -> Result {
+        command::reg("ros/topic/subscribe", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             ros::TopicSubscriptionConfig config;
             config.name = a.string("name");
@@ -300,7 +300,7 @@ private:
             return okResult(Var(result));
         }, "Subscribe to a topic.");
 
-        command::reg("ros.topic.unsubscribe", [this](Node* ctx) -> Result {
+        command::reg("ros/topic/unsubscribe", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto name = a.string("name");
             if (name.empty())
@@ -312,7 +312,7 @@ private:
             return okResult(Var(result));
         }, "Remove a named topic subscription.");
 
-        command::reg("ros.topic.publish", [this](Node* ctx) -> Result {
+        command::reg("ros/topic/publish", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             ros::TopicPublishRequest request;
             request.topic = a.string("topic");
@@ -327,7 +327,7 @@ private:
             return okResult(Var(result));
         }, "Publish to a topic.");
 
-        command::reg("ros.topic.once", [this](Node* ctx) -> Result {
+        command::reg("ros/topic/once", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             ros::TopicOnceRequest request;
             request.topic = a.string("topic");
@@ -367,14 +367,14 @@ private:
             return okResult(Var(result));
         }, "Wait for one message.");
 
-        command::reg("ros.service.list", [this](Node* ctx) -> Result {
+        command::reg("ros/service/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listServices(a.string("filter"));
             writeNamedPathList("services", result, "name");
             return okResult(Var(result));
         }, "List ROS services.");
 
-        command::reg("ros.service.info", [](Node* ctx) -> Result {
+        command::reg("ros/service/info", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto service_name = a.string("name");
             if (service_name.empty())
@@ -382,14 +382,14 @@ private:
             return okResult(Var(ros::serviceInfo(service_name)));
         }, "Show ROS service details.");
 
-        command::reg("ros.param.list", [this](Node* ctx) -> Result {
+        command::reg("ros/param/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listParams(a.string("node"));
             writeRosMirror("params", Var(result));
             return okResult(Var(result));
         }, "List ROS parameters.");
 
-        command::reg("ros.param.get", [](Node* ctx) -> Result {
+        command::reg("ros/param/get", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto node_name = a.string("node");
             const auto param_name = a.string("name");
@@ -398,7 +398,7 @@ private:
             return okResult(Var(ros::getParam(node_name, param_name)));
         }, "Get one ROS parameter.");
 
-        command::reg("ros.param.set", [](Node* ctx) -> Result {
+        command::reg("ros/param/set", [](Node* ctx) -> Result {
             auto a = command::args(ctx);
             auto node_name = a.string("node");
             auto param_name = a.string("name");
@@ -410,7 +410,7 @@ private:
             return okResult(Var(ros::setParam(node_name, param_name, value)));
         }, "Set one ROS parameter.");
 
-        command::reg("ros.runtime.refresh", [this]() -> Result {
+        command::reg("ros/runtime/refresh", [this]() -> Result {
             std::string error;
             if (!ros::refreshRuntime(n("ve/ros"), error))
                 return failResult(error);
