@@ -58,8 +58,9 @@ public:
     Var(DictV&& v);
     Var(CallableV fn);
 
-    // Block implicit pointer-to-bool conversion for non-char/void data pointers
-    // Function pointers are allowed (routed to callable via template ctor)
+    // Block implicit pointer-to-bool conversion for non-char/void data pointers.
+    // Function pointers are allowed (routed to callable via template ctor).
+    // Data pointers must be stored explicitly via Var(static_cast<void*>(p)).
     template<typename T, std::enable_if_t<
         basic::Meta<T>::is_raw_pointer
         && !std::is_same_v<T, void*>, int> = 0>
@@ -183,13 +184,13 @@ public:
     template<typename T>
     std::decay_t<T> as() const {
         using U = std::decay_t<T>;
-        if constexpr (std::is_same_v<U, Var>)               return *this;
-        else if constexpr (std::is_same_v<U, bool>)          return toBool();
-        else if constexpr (std::is_same_v<U, int>)           return toInt();
-        else if constexpr (std::is_integral_v<U>)             return static_cast<U>(toInt64());
-        else if constexpr (std::is_floating_point_v<U>)       return static_cast<U>(toDouble());
-        else if constexpr (std::is_same_v<U, std::string>)    return toString();
-        else if constexpr (std::is_pointer_v<U>)              return static_cast<U>(toPointer());
+        if constexpr (std::is_same_v<U, Var>)                  return *this;
+        else if constexpr (std::is_same_v<U, bool>)             return toBool();
+        else if constexpr (std::is_same_v<U, int>)              return toInt();
+        else if constexpr (std::is_integral_v<U>)               return static_cast<U>(toInt64());
+        else if constexpr (std::is_floating_point_v<U>)         return static_cast<U>(toDouble());
+        else if constexpr (std::is_same_v<U, std::string>)      return toString();
+        else if constexpr (basic::Meta<U>::is_raw_pointer)      return static_cast<U>(toPointer());
         else {
             if (_type == CUSTOM && _storage._custom) {
                 if (auto* p = std::any_cast<U>(&_storage._custom->value))
@@ -199,13 +200,14 @@ public:
         }
     }
 
-    // to<T>(def) — safe conversion: NONE -> def, basic -> direct, else -> any_cast + string intermediate
     template<typename T>
     T to(const T& def = T{}) const {
         if (_type == NONE) return def;
         using U = std::decay_t<T>;
-        if constexpr (std::is_same_v<U, Var> || basic::Meta<U>::is_numeric
-                      || basic::Meta<U>::is_string || std::is_pointer_v<U>) {
+        if constexpr (std::is_same_v<U, Var>
+                   || basic::Meta<U>::is_numeric
+                   || basic::Meta<U>::is_string
+                   || basic::Meta<U>::is_raw_pointer) {
             return as<T>();
         } else {
             if (_type == CUSTOM && _storage._custom) {
@@ -293,6 +295,8 @@ inline Var wrapCallableRet(R&& ret) {
     using Ret = std::decay_t<R>;
     if constexpr (std::is_same_v<Ret, Result>) {
         return Var::custom(std::forward<R>(ret));
+    } else if constexpr (basic::Meta<Ret>::is_raw_pointer) {
+        return Var(static_cast<void*>(ret));
     } else {
         return Var(std::forward<R>(ret));
     }

@@ -1,7 +1,7 @@
 // node.h — ve::Node
 #pragma once
 
-#include "factory.h"
+#include "object.h"
 #include "schema.h"
 
 namespace ve {

@@ -304,13 +304,15 @@ static void loadPlugins()
 static void buildModuleGraph(Vector<ModuleSlot>& slots)
 {
     auto& factory = globalModuleFactory();
-    auto& pri_map = globalModulePriority();
 
     Hash<int> base_pri;
-    for (const auto& kv : factory) {
-        const std::string& key = kv.first;
-
-        int priority = pri_map.has(key) ? pri_map[key] : 100;
+    for (const auto& key : factory::keys("module")) {
+        auto* nd = factory.node(key);
+        int priority = 100;
+        if (nd) {
+            if (auto* pn = nd->find("priority", false))
+                priority = pn->getInt(100);
+        }
         bool enabled = true;
 
         Node* mn = node::root()->find(keyToPath(key));
@@ -468,7 +470,12 @@ void init()
             veLogI << "[ve::entry] Creating module: " << slot.key;
         }
         try {
-            slot.instance = factory.produce(slot.key);
+            slot.instance = factory.exec<Module*>(slot.key);
+            // cache instance on the factory node
+            if (slot.instance) {
+                if (auto* nd = factory.node(slot.key))
+                    nd->at("instance")->set(Var(static_cast<void*>(slot.instance)));
+            }
         } catch (const std::exception& e) {
             veLogE << "[ve::entry] Module create failed (" << slot.key << "): " << e.what();
         }
@@ -749,7 +756,7 @@ bool load(const std::string& path)
     info.path   = path;
     info.name   = name;
     info.handle = handle;
-    info.api_version = version::manager().has(name) ? version::number(name) : 0;
+    info.api_version = version::number(name);
 
     pluginList().push_back(std::move(info));
     veLogI << "[ve::plugin] Loaded: " << path;

@@ -17,9 +17,7 @@ static void wait_pipeline_terminal(Pipeline* p)
     const auto deadline = clock::now() + std::chrono::seconds(2);
     while (clock::now() < deadline) {
         const auto s = p->state();
-        if (s != Pipeline::RUNNING && s != Pipeline::PAUSED) {
-            return;
-        }
+        if (s != Pipeline::RUNNING && s != Pipeline::PAUSED) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
@@ -85,6 +83,25 @@ VE_TEST(step_multi_arg_list) {
     Result r = resultFromStepReturn(s.exec(Var(std::move(args))));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), 7);
+}
+
+// Step::writeTo / addToPipeline round-trip
+VE_TEST(step_write_to_node) {
+    Node nd("test_step_node");
+    int called = 0;
+    Step s([&called]() -> Result { ++called; return Result::ok(Var(42)); });
+    s.writeTo(&nd);
+
+    VE_ASSERT(nd.get().isCallable());
+
+    Pipeline pipe("p");
+    Step::addToPipeline(&nd, pipe);
+    VE_ASSERT_EQ(pipe.stepCount(), 1);
+
+    pipe.start();
+    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
+    VE_ASSERT_EQ(called, 1);
+    VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 42);
 }
 
 // ============================================================================
@@ -235,22 +252,27 @@ VE_TEST(pipeline_clone) {
 }
 
 // ============================================================================
-// Command tests
+// Command tests (factory-node backed)
 // ============================================================================
 
 VE_TEST(command_basic) {
-    Command cmd("deploy");
-    cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-    cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+    command::build("_test_deploy", [](Command& cmd) {
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+        VE_ASSERT_EQ(cmd.name(), "_test_deploy");
+        VE_ASSERT_EQ(cmd.stepCount(), 2);
+    });
+    // Verify stored in factory node tree
+    auto* nd = GlobalCommandFactory().node("_test_deploy");
+    VE_ASSERT(nd != nullptr);
+    VE_ASSERT(nd->find("steps", false) != nullptr);
+    VE_ASSERT_EQ(nd->find("steps", false)->count(), 2);
 
-    VE_ASSERT_EQ(cmd.name(), "deploy");
-    VE_ASSERT_EQ(cmd.stepCount(), 2);
+    GlobalCommandFactory().erase("_test_deploy");
 }
 
 VE_TEST(command_pipeline_creation) {
     int order_val = 0;
-
-    // Build pipeline directly (no LoopRef) so the step runs synchronously.
     Pipeline pipe("test");
     pipe.add(Step([&order_val](const Var&) -> Result {
         order_val = 1;
@@ -258,49 +280,88 @@ VE_TEST(command_pipeline_creation) {
     }));
 
     VE_ASSERT_EQ(pipe.stepCount(), 1);
-
     pipe.start();
     VE_ASSERT_EQ(order_val, 1);
     VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
 }
 
 VE_TEST(command_help_metadata) {
-    Command cmd("greet");
-    cmd.setHelp("say hello");
-    VE_ASSERT_EQ(cmd.help(), "say hello");
+    command::build("_test_greet_help", [](Command& cmd) {
+        cmd.setHelp("say hello");
+    });
+    VE_ASSERT_EQ(command::help("_test_greet_help"), "say hello");
+    GlobalCommandFactory().erase("_test_greet_help");
+}
+
+VE_TEST(command_build_pipeline) {
+    command::build("_test_build_pipe", [](Command& cmd) {
+        cmd.addStep([](const Var&) -> Result { return Result::ok(Var(42)); });
+    });
+    auto* nd = GlobalCommandFactory().node("_test_build_pipe");
+    VE_ASSERT(nd != nullptr);
+
+    // Use addToPipeline directly (no loop::main() default) for synchronous test
+    Pipeline pipe("p");
+    Step::addToPipeline(nd->find("steps", false)->child(0), pipe);
+    VE_ASSERT_EQ(pipe.stepCount(), 1);
+    pipe.start();
+    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
+    VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 42);
+
+    GlobalCommandFactory().erase("_test_build_pipe");
 }
 
 // ============================================================================
-// Factory tests
+// Factory node structure tests
 // ============================================================================
 
-VE_TEST(step_factory_register_and_exec) {
-    command::reg("_test_greet", [](const std::string& v) -> Result {
-        return Result::ok(Var("hello " + v));
-    });
-    VE_ASSERT(command::has("_test_greet"));
+VE_TEST(factory_node_layout_single_step) {
+    command::reg("_test_layout_single", [](int x) -> Result {
+        return Result::ok(Var(x * 3));
+    }, "triple it");
 
-    auto r = command::call("_test_greet", Var("world"));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toString(), "hello world");
+    auto* nd = GlobalCommandFactory().node("_test_layout_single");
+    VE_ASSERT(nd != nullptr);
+    VE_ASSERT(nd->get().isCallable());
+    VE_ASSERT(nd->find("steps", false) == nullptr);
+    VE_ASSERT_EQ(nd->find("help", false)->getString(), "triple it");
 
-    GlobalCommandFactory().erase("_test_greet");
+    GlobalCommandFactory().erase("_test_layout_single");
 }
 
-VE_TEST(command_factory_register_and_exec) {
-    GlobalCommandFactory().insertOne("_test_deploy", []() -> Command* {
-        auto* cmd = new Command("_test_deploy");
-        cmd->addStep([](const Var&) -> Result { return Result::ok(); });
-        return cmd;
-    });
-    VE_ASSERT(GlobalCommandFactory().has("_test_deploy"));
+VE_TEST(factory_node_layout_multi_step) {
+    command::build("_test_layout_multi", [](Command& cmd) {
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+    }, "three steps");
 
-    Command* cmd = GlobalCommandFactory().exec("_test_deploy");
-    VE_ASSERT(cmd != nullptr);
-    VE_ASSERT_EQ(cmd->stepCount(), 1);
-    delete cmd;
+    auto* nd = GlobalCommandFactory().node("_test_layout_multi");
+    VE_ASSERT(nd != nullptr);
+    VE_ASSERT(!nd->get().isCallable());
+    auto* steps = nd->find("steps", false);
+    VE_ASSERT(steps != nullptr);
+    VE_ASSERT_EQ(steps->count(), 3);
+    VE_ASSERT_EQ(nd->find("help", false)->getString(), "three steps");
 
-    GlobalCommandFactory().erase("_test_deploy");
+    GlobalCommandFactory().erase("_test_layout_multi");
+}
+
+VE_TEST(factory_node_lookup) {
+    command::reg("_test_lookup_a", []() -> Result { return Result::ok(); });
+    command::reg("_test_lookup_b", []() -> Result { return Result::ok(); });
+
+    VE_ASSERT(command::has("_test_lookup_a"));
+    VE_ASSERT(command::has("_test_lookup_b"));
+    VE_ASSERT(!command::has("_test_lookup_nonexistent"));
+
+    // node() exposes the factory node directly
+    VE_ASSERT(GlobalCommandFactory().node("_test_lookup_a") != nullptr);
+    VE_ASSERT(GlobalCommandFactory().node("_test_lookup_nonexistent") == nullptr);
+
+    GlobalCommandFactory().erase("_test_lookup_a");
+    GlobalCommandFactory().erase("_test_lookup_b");
+    VE_ASSERT(!command::has("_test_lookup_a"));
 }
 
 // ============================================================================
@@ -322,11 +383,9 @@ VE_TEST(command_ns_reg_and_call) {
 }
 
 VE_TEST(command_ns_run) {
-    GlobalCommandFactory().insertOne("_test_multi", []() -> Command* {
-        auto* cmd = new Command("_test_multi");
-        cmd->addStep([](const Var&) -> Result { return Result::ok(); });
-        cmd->addStep([](const Var&) -> Result { return Result::ok(); });
-        return cmd;
+    command::build("_test_multi", [](Command& cmd) {
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
+        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
     });
 
     Pipeline* pipe = command::run("_test_multi", Var());
@@ -357,14 +416,16 @@ VE_TEST(register_step_with_loopref) {
     loop.start();
     registerStep("_test_regstep_lr", [](Node*) -> Result { return Result::ok(Var(1)); },
                  LoopRef::from(loop), "lr help");
+
     VE_ASSERT(command::has("_test_regstep_lr"));
     VE_ASSERT_EQ(command::help("_test_regstep_lr"), "lr help");
 
-    Command* cmd = GlobalCommandFactory().exec("_test_regstep_lr");
-    VE_ASSERT(cmd != nullptr);
-    VE_ASSERT_EQ(cmd->stepCount(), 1);
-    VE_ASSERT(static_cast<bool>(cmd->steps()[0].second));
-    delete cmd;
+    // LoopRef stored in "loop" child node as CUSTOM
+    auto* nd = GlobalCommandFactory().node("_test_regstep_lr");
+    VE_ASSERT(nd != nullptr);
+    auto* loop_nd = nd->find("loop", false);
+    VE_ASSERT(loop_nd != nullptr);
+    VE_ASSERT(loop_nd->get().customIs<LoopRef>());
 
     loop.stop();
     GlobalCommandFactory().erase("_test_regstep_lr");
@@ -375,13 +436,15 @@ VE_TEST(command_reg_with_loopref) {
     loop.start();
     command::reg("_test_reg_ns_lr", [](Node*) -> Result { return Result::ok(); },
                  LoopRef::from(loop), "with loop");
+
     VE_ASSERT(command::has("_test_reg_ns_lr"));
     VE_ASSERT_EQ(command::help("_test_reg_ns_lr"), "with loop");
 
-    Command* cmd = GlobalCommandFactory().exec("_test_reg_ns_lr");
-    VE_ASSERT(cmd != nullptr);
-    VE_ASSERT(static_cast<bool>(cmd->steps()[0].second));
-    delete cmd;
+    auto* nd = GlobalCommandFactory().node("_test_reg_ns_lr");
+    VE_ASSERT(nd != nullptr);
+    auto* loop_nd = nd->find("loop", false);
+    VE_ASSERT(loop_nd != nullptr);
+    VE_ASSERT(loop_nd->get().customIs<LoopRef>());
 
     loop.stop();
     GlobalCommandFactory().erase("_test_reg_ns_lr");
@@ -418,7 +481,7 @@ VE_TEST(command_parse_args_with_current_keeps_positional_index_zero) {
 }
 
 VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
-    auto* decl = node::root()->at("ve/command/declare/_test_declared_args");
+    auto* decl = command::declareNode("_test_declared_args");
     decl->at("topic");
     decl->at("target_node");
 
@@ -435,10 +498,12 @@ VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
     VE_ASSERT_EQ(namedArgs.string("topic"), "/robot_states");
     VE_ASSERT_EQ(namedArgs.string("target_node"), "/target");
     delete namedCtx;
+
+    GlobalCommandFactory().erase("_test_declared_args");
 }
 
 // ============================================================================
-// wrapStepCallable — Form 2 tests (plain callable, not Node* ctx)
+// Step::wrap form tests
 // ============================================================================
 
 VE_TEST(step_form2_multi_arg_int) {
@@ -499,7 +564,6 @@ VE_TEST(step_form2_double_args) {
 }
 
 VE_TEST(step_form2_single_arg_via_call) {
-    // single-arg via command::call(key, Var) — parseArgs puts value in child
     command::reg("_test_double_it", [](int x) { return x * 2; });
     auto r = command::call("_test_double_it", Var(21));
     VE_ASSERT(r.isSuccess());
@@ -508,7 +572,6 @@ VE_TEST(step_form2_single_arg_via_call) {
 }
 
 VE_TEST(step_form2_single_arg_ctx_child) {
-    // single-arg: value in ctx child at index 0
     command::reg("_test_negate", [](int x) { return -x; });
     Node* ctx = command::context("_test_negate");
     ctx->at(0, false)->set(Var(7));

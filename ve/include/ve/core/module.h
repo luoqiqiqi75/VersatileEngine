@@ -24,7 +24,7 @@
 
 #pragma once
 
-#include "node.h"
+#include "factory.h"
 
 namespace ve {
 
@@ -87,28 +87,41 @@ protected:
     void deinit() override { if (auto f = f_.value(DEINIT, NULL)) f(); }
 };
 
-using ModuleFactory = Factory<Module*()>;
+using ModuleFactory = Factory;
 VE_API ModuleFactory& globalModuleFactory();
-VE_API Dict<int>& globalModulePriority();
 
 template<class C>
 inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
     const std::string& key, int priority = 100, int ver = 0)
 {
-    globalModuleFactory().insertOne(key, [=] () -> Module* {
-        return new C(key);
-    });
-    if (priority != 100)
-        globalModulePriority()[key] = priority;
-    if (ver > 0)
-        version::manager().insertOne(key, [=] () -> int { return ver; });
+    globalModuleFactory().reg(key, Var::callable([=]() -> Module* { return new C(key); }));
+    if (priority != 100) {
+        auto* nd = globalModuleFactory().node(key);
+        if (nd) nd->at("priority")->set(Var(priority));
+    }
+    if (ver > 0) {
+        auto* nd = globalModuleFactory().node(key);
+        if (nd) nd->at("version")->set(Var(ver));
+        version::reg(key, ver);
+    }
 }
 
 namespace module {
 
-inline Module* instance(const std::string& key) { return globalModuleFactory().instance(key); }
-template<typename T> inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::string& key)
-{ return static_cast<T*>(instance(key)); }
+inline Module* instance(const std::string& key)
+{
+    auto* nd = globalModuleFactory().node(key);
+    if (!nd) return nullptr;
+    if (auto* inst = nd->find("instance", false))
+        return static_cast<Module*>(inst->get().toPointer());
+    return nullptr;
+}
+
+template<typename T>
+inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::string& key)
+{
+    return static_cast<T*>(instance(key));
+}
 
 }
 

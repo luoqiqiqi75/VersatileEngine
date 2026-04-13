@@ -38,40 +38,8 @@ void Module::deinit() {}
 
 ModuleFactory& globalModuleFactory()
 {
-    static ModuleFactory i("ve::g_module_factory");
-    return i;
+    return factory::get("module");
 }
-
-Dict<int>& globalModulePriority()
-{
-    static Dict<int> m;
-    return m;
-}
-
-// ============================================================================
-// ve::version
-// ============================================================================
-
-namespace version {
-
-Manager& manager()
-{
-    static Manager m("ve::version_manager");
-    return m;
-}
-
-int number(const std::string& key)
-{
-    return manager().exec(key);
-}
-
-bool check(const std::string& key, int min_api)
-{
-    if (!manager().has(key)) return false;
-    return manager().exec(key) >= min_api;
-}
-
-} // namespace version
 
 }
 

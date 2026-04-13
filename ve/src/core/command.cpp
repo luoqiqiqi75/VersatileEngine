@@ -1,4 +1,4 @@
-// command.cpp - ve::Command, Step, global factory, and command:: namespace
+// command.cpp - ve::Step, ve::Command, command:: namespace
 
 #include "ve/core/command.h"
 #include "ve/core/loop.h"
@@ -18,81 +18,131 @@ Result resultFromStepReturn(const Var& ret)
 }
 
 // ============================================================================
+// Step
+// ============================================================================
+
+void Step::writeTo(Node* nd) const
+{
+    if (!nd) return;
+    nd->set(first);
+    if (second)
+        nd->at("loop")->set(Var::custom(second));
+}
+
+void Step::addToPipeline(Node* nd, Pipeline& pipe)
+{
+    if (!nd || !nd->get().isCallable()) return;
+    LoopRef lr;
+    if (auto* ln = nd->find("loop", false))
+        lr = ln->get().as<LoopRef>();
+    // No default to loop::main() — empty LoopRef means synchronous inline execution.
+    // Pipeline::runNext() dispatches async only when step.second is set.
+    pipe.add(Step(nd->get(), std::move(lr)));
+}
+
+// ============================================================================
 // Command
 // ============================================================================
 
-Command::Command(const std::string& name) : _name(name) {}
+Command::Command(Node* factory_node) : _nd(factory_node) {}
 
-Command::~Command()
+const std::string& Command::name() const
 {
-    if (_node) {
-        auto* p = _node->parent();
-        if (p) p->remove(_node);
-        else delete _node;
-    }
+    static std::string empty;
+    return _nd ? _nd->name() : empty;
 }
 
-void Command::addStep(Step step) { _steps.push_back(std::move(step)); }
-
-const std::string& Command::name() const      { return _name; }
-int Command::stepCount() const                 { return static_cast<int>(_steps.size()); }
-const Vector<Step>& Command::steps() const     { return _steps; }
-const std::string& Command::help() const       { return _help; }
-void Command::setHelp(const std::string& h)    { _help = h; }
-
-Pipeline* Command::pipeline() const
+void Command::addStep(Step step)
 {
-    auto* pipe = new Pipeline(_name);
-    for (const auto& s : _steps) {
-        Step step = s;
-        if (!step.second) {
-            step.second = LoopRef::from(loop::main());
-        }
-        pipe->add(std::move(step));
+    if (!_nd) return;
+    auto* steps_nd = _nd->at("steps");
+    int idx = steps_nd->count();
+    auto* sn = steps_nd->at(idx);
+    step.writeTo(sn);
+}
+
+void Command::setHelp(const std::string& h)
+{
+    if (_nd && !h.empty())
+        _nd->at("help")->set(Var(h));
+}
+
+std::string Command::help() const
+{
+    if (!_nd) return {};
+    if (auto* h = _nd->find("help", false))
+        return h->getString();
+    return {};
+}
+
+int Command::stepCount() const
+{
+    if (!_nd) return 0;
+    if (_nd->get().isCallable()) return 1;
+    if (auto* s = _nd->find("steps", false)) return s->count();
+    return 0;
+}
+
+Node* Command::declare()
+{
+    return _nd ? _nd->at("declare") : nullptr;
+}
+
+Pipeline* Command::build() const
+{
+    if (!_nd) return nullptr;
+    auto* pipe = new Pipeline(name());
+
+    auto addStep = [&](Node* sn) {
+        if (!sn || !sn->get().isCallable()) return;
+        LoopRef lr;
+        if (auto* ln = sn->find("loop", false))
+            lr = ln->get().as<LoopRef>();
+        // Default to loop::main() so commands dispatched from services
+        // (HTTP/WS/TCP) run on the main event loop.
+        if (!lr) lr = LoopRef::from(loop::main());
+        pipe->add(Step(sn->get(), std::move(lr)));
+    };
+
+    if (_nd->get().isCallable()) {
+        addStep(_nd);
+    } else if (auto* steps_nd = _nd->find("steps", false)) {
+        for (auto* sn : *steps_nd)
+            addStep(sn);
+    }
+
+    if (pipe->stepCount() == 0) {
+        delete pipe;
+        return nullptr;
     }
     return pipe;
-}
-
-Node* Command::node() const
-{
-    if (!_node)
-        _node = new Node(_name);
-    return _node;
 }
 
 // ============================================================================
 // Global factory
 // ============================================================================
 
-CommandFactory& GlobalCommandFactory()
+Factory& GlobalCommandFactory()
 {
-    static CommandFactory* s = new CommandFactory("GlobalCommandFactory");
-    return *s;
+    return factory::get("cmd");
 }
 
 void registerStep(const std::string& key, Step step, const std::string& help)
 {
-    GlobalCommandFactory().insertOne(key, [key, st = std::move(step), help]() -> Command* {
-        auto* cmd = new Command(key);
-        cmd->addStep(std::move(st));
-        if (!help.empty()) {
-            cmd->setHelp(help);
-        }
-        return cmd;
-    });
+    auto* nd = GlobalCommandFactory().ensureNode(key);
+    step.writeTo(nd);
+    if (!help.empty())
+        nd->at("help")->set(Var(help));
 }
 
 void registerCommand(const std::string& key, std::function<void(Command&)> builder,
                      const std::string& help)
 {
-    GlobalCommandFactory().insertOne(key, [key, builder = std::move(builder), help]() -> Command* {
-        auto* cmd = new Command(key);
-        builder(*cmd);
-        if (!help.empty()) {
-            cmd->setHelp(help);
-        }
-        return cmd;
-    });
+    auto* nd = GlobalCommandFactory().ensureNode(key);
+    Command cmd(nd);
+    builder(cmd);
+    if (!help.empty())
+        cmd.setHelp(help);
 }
 
 // ============================================================================
@@ -111,14 +161,16 @@ void build(const std::string& key, std::function<void(Command&)> builder,
 
 Node* declareNode(const std::string& key)
 {
-    return node::root()->at("ve/command/declare/" + key, false);
+    return GlobalCommandFactory().ensureNode(key)->at("declare");
 }
 
 Node* context(const std::string& key, Node* currentNode)
 {
     auto* ctx = new Node("_ctx");
-    if (auto* decl = declareNode(key)) {
-        ctx->setShadow(decl);
+    auto* nd = GlobalCommandFactory().node(key);
+    if (nd) {
+        if (auto* decl = nd->find("declare", false))
+            ctx->setShadow(decl);
     }
     ctx->set(Var(static_cast<void*>(currentNode)));
     return ctx;
@@ -126,10 +178,6 @@ Node* context(const std::string& key, Node* currentNode)
 
 // --- argument parsing (state-machine, declare-driven) ---
 
-// Build lookup tables from declare node.
-// paramOrder: positional params (no _short), in declare child order.
-// shortMap:   short-char -> param name (has _short).
-// longNames:  all param names (for --name matching).
 static void buildDeclInfo(const Node* decl,
                           std::vector<std::string>& paramOrder,
                           std::map<std::string, std::string>& shortMap,
@@ -169,13 +217,11 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
         if (token.size() < 2 || token[0] != '-') return {};
         if (parse::isInt(token) || parse::isDouble(token)) return {};
         if (token[1] == '-') {
-            // --name or --name=value
             auto eq = token.find('=', 2);
             std::string name = (eq != std::string::npos) ? token.substr(2, eq - 2) : token.substr(2);
             if (longNames.count(name)) return name;
             return {};
         }
-        // -x (single char short flag)
         if (token.size() == 2) {
             std::string key(1, token[1]);
             auto it = shortMap.find(key);
@@ -187,7 +233,7 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
     for (size_t i = static_cast<size_t>(startIdx); i < args.size(); ++i) {
         const auto& token = args[i];
 
-        // Check --name=value form
+        // --name=value inline form
         if (token.size() > 2 && token[0] == '-' && token[1] == '-') {
             auto eq = token.find('=', 2);
             if (eq != std::string::npos) {
@@ -200,37 +246,29 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
             }
         }
 
-        // Check if token is a keyword (-f or --file)
         std::string matched = isKeyword(token);
         if (!matched.empty()) {
             currentTarget = matched;
             continue;
         }
 
-        // Token is a value
         if (!currentTarget.empty()) {
-            // Assign to the current flag target
             ctx->at(currentTarget, false)->set(parse::parseValue(token));
             currentTarget.clear();
         } else if (posIndex < static_cast<int>(paramOrder.size())) {
-            // Assign to next positional param
             ctx->at(paramOrder[posIndex], false)->set(parse::parseValue(token));
             ++posIndex;
         } else {
-            // Extra positional: store as anonymous child
             ctx->at(ctx->count(), false)->set(parse::parseValue(token));
         }
     }
 
-    // A trailing flag with no value becomes a boolean true
     if (!currentTarget.empty()) {
         ctx->at(currentTarget, false)->set(true);
     }
 
     return true;
 }
-
-// --- parseArgs(Var) overload ---
 
 bool parseArgs(Node* ctx, const Var& input)
 {
@@ -255,7 +293,7 @@ bool parseArgs(Node* ctx, const Var& input)
         return parseArgs(ctx, strs, 0);
     }
 
-    // Scalar: store as first positional param
+    // scalar: store as first positional param
     const Node* decl = ctx->shadow();
     if (decl) {
         for (auto* param : *decl) {
@@ -272,8 +310,6 @@ bool parseArgs(Node* ctx, const Var& input)
 }
 
 // --- Args accessor ---
-
-Args args(Node* ctx) { return Args(ctx); }
 
 Var Args::var(const std::string& key, const Var& def) const
 {
@@ -318,25 +354,20 @@ bool Args::has(const std::string& key) const
     return n && !n->get().isNull();
 }
 
+Args args(Node* ctx) { return Args(ctx); }
+
 // --- execution ---
 
 Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut)
 {
-    if (detachedOut) {
-        *detachedOut = nullptr;
-    }
+    if (detachedOut) *detachedOut = nullptr;
 
-    if (!GlobalCommandFactory().has(key)) {
-        return Result::fail(Var("not found: " + key));
-    }
+    auto* nd = GlobalCommandFactory().node(key);
+    if (!nd) return Result::fail(Var("not found: " + key));
 
-    Command* cmd = GlobalCommandFactory().exec(key);
-    if (!cmd) {
-        return Result::fail(Var("command factory returned null: " + key));
-    }
-
-    Pipeline* pipe = cmd->pipeline();
-    delete cmd;
+    Command cmd(nd);
+    Pipeline* pipe = cmd.build();
+    if (!pipe) return Result::fail(Var("command has no steps: " + key));
 
     Node* ctxToDelete = nullptr;
     if (!ctx) {
@@ -346,15 +377,13 @@ Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut
 
     auto cleanup = [&]() {
         delete pipe;
-        if (ctxToDelete) {
-            delete ctxToDelete;
-        }
+        if (ctxToDelete) delete ctxToDelete;
     };
 
     if (wait) {
-        std::mutex              mtx;
+        std::mutex mtx;
         std::condition_variable cv;
-        bool                    finished = false;
+        bool finished = false;
 
         pipe->setResultHandler([&](const Result&) {
             std::lock_guard<std::mutex> lk(mtx);
@@ -410,28 +439,22 @@ Result call(const std::string& key, const Var& input, bool wait)
 
 Pipeline* run(const std::string& key, Node* ctx)
 {
-    if (!GlobalCommandFactory().has(key)) return nullptr;
-
-    Command* cmd = GlobalCommandFactory().exec(key);
-    if (!cmd) return nullptr;
-
-    Pipeline* pipe = cmd->pipeline();
-    delete cmd;
-
+    auto* nd = GlobalCommandFactory().node(key);
+    if (!nd) return nullptr;
+    Command cmd(nd);
+    auto* pipe = cmd.build();
+    if (!pipe) return nullptr;
     pipe->start(ctx);
     return pipe;
 }
 
 Pipeline* run(const std::string& key, const Var& input)
 {
-    if (!GlobalCommandFactory().has(key)) return nullptr;
-
-    Command* cmd = GlobalCommandFactory().exec(key);
-    if (!cmd) return nullptr;
-
-    Pipeline* pipe = cmd->pipeline();
-    delete cmd;
-
+    auto* nd = GlobalCommandFactory().node(key);
+    if (!nd) return nullptr;
+    Command cmd(nd);
+    auto* pipe = cmd.build();
+    if (!pipe) return nullptr;
     pipe->start(input);
     return pipe;
 }
@@ -440,33 +463,20 @@ Pipeline* run(const std::string& key, const Var& input)
 
 bool has(const std::string& key)
 {
-    return GlobalCommandFactory().has(key);
+    return GlobalCommandFactory().node(key) != nullptr;
 }
 
 Strings keys()
 {
-    return GlobalCommandFactory().keys();
+    return factory::keys("cmd");
 }
 
 std::string help(const std::string& key)
 {
-    // Try declare node first
-    if (auto* decl = declareNode(key)) {
-        if (auto* h = decl->find("_help", false)) {
-            return h->getString();
-        }
-    }
-
-    // Fall back to Command help string
-    if (GlobalCommandFactory().has(key)) {
-        Command* cmd = GlobalCommandFactory().exec(key);
-        if (cmd) {
-            std::string h = cmd->help();
-            delete cmd;
-            return h;
-        }
-    }
-
+    auto* nd = GlobalCommandFactory().node(key);
+    if (!nd) return {};
+    if (auto* h = nd->find("help", false))
+        return h->getString();
     return {};
 }
 

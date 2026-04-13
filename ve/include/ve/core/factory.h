@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include "object.h"
+#include "node.h"
+#include "loop.h"
 
 namespace ve {
 
@@ -75,8 +76,8 @@ private:
 //
 // Usage (in .cpp only):
 //   struct Children : Pooled<Children> { ... };
-//   auto* c = new Children();   // → Pool<Children>
-//   delete c;                   // → Pool<Children>
+//   auto* c = new Children();   // -> Pool<Children>
+//   delete c;                   // -> Pool<Children>
 //
 template<typename T>
 struct Pooled
@@ -184,49 +185,108 @@ public:
 #define VE_DECLARE_SHARED_POOL_PRIVATE struct Private; ve::SharedPoolPtr<Private> _p;
 
 // ============================================================================
-// Factory<Signature> - named function registry with cache
+// Factory - Node-based named callable registry
 // ============================================================================
-
-template<class Signature>
-class Factory : public Object, public Dict<std::function<Signature>>
+//
+// Each Factory instance owns a subtree under /ve/factory/{name}/.
+// Registered items are child nodes whose value is Var::CALLABLE.
+// Metadata hangs as child nodes: help, loop, declare/.
+//
+// Key format: slash-separated path, e.g. "ros/topic/list"
+// Dots in keys are automatically converted to slashes.
+//
+class VE_API Factory : public Object
 {
-public:
-    using FunctionT = std::function<Signature>;
-    using FnTraitsT = basic::FnTraits<FunctionT>;
-    using RetT      = typename FnTraitsT::RetT;
+    VE_DECLARE_UNIQUE_PRIVATE
 
 public:
-    explicit Factory(const std::string& name) : Object(name) {}
-    virtual ~Factory() {}
+    explicit Factory(const std::string& name);
+    ~Factory();
 
-    template<typename... Params>
-    RetT exec(const std::string& key, Params&&... params) { return this->has(key) ? (*this)[key](std::forward<Params>(params)...) : RetT{}; }
-    RetT exec(const std::string& key) { return this->has(key) ? (*this)[key]() : RetT{}; }
+    // Register a callable under key. Dots converted to slashes.
+    void reg(const std::string& key, Var callable,
+             const std::string& help = {}, LoopRef lr = {});
 
-    template<typename T, typename... Params>
-    T execAs(const std::string& key, Params&&... params) { return static_cast<T>(exec(key, std::forward<Params>(params)...)); }
+    // Look up the node for key (nullptr if not found).
+    Node* node(const std::string& key) const;
 
-    template<typename... Params>
-    RetT produce(const std::string& key, Params&&... params) {
-        RetT ret = exec(key, std::forward<Params>(params)...);
-        _cache[key] = ret;
-        return ret;
+    // Ensure node exists for key (creates if missing).
+    Node* ensureNode(const std::string& key);
+
+    // Remove the node for key (and its subtree).
+    void erase(const std::string& key);
+
+    // The root node of this factory (/ve/factory/{name}).
+    Node* root() const;
+
+    // Typed call: pack params into Var, invoke, unpack result.
+    // Pointer params are cast to void*; pointer return types use toPointer().
+    // Fallback: RetT{} when key not found.
+    template<typename RetT = Var, typename... Params>
+    RetT exec(const std::string& key, Params&&... params) const
+    {
+        auto* nd = node(key);
+        if (!nd || !nd->get().isCallable()) return RetT{};
+        Var result = nd->get().invoke(_packArgs(std::forward<Params>(params)...));
+        return result.as<RetT>();
     }
 
-    RetT instance(const std::string& key) { return _cache.value(key, RetT{}); }
-
 private:
-    Dict<RetT> _cache;
+    template<typename T>
+    static Var _toVar(T&& v)
+    {
+        using DT = std::decay_t<T>;
+        if constexpr (basic::Meta<DT>::is_raw_pointer)
+            return Var(static_cast<void*>(v));
+        else
+            return Var(std::forward<T>(v));
+    }
+
+    template<typename... Params>
+    static Var _packArgs(Params&&... params)
+    {
+        if constexpr (sizeof...(Params) == 0) {
+            return Var{};
+        } else if constexpr (sizeof...(Params) == 1) {
+            Var _arr[] = { _toVar(std::forward<Params>(params))... };
+            return _arr[0];
+        } else {
+            return Var(Var::ListV{_toVar(std::forward<Params>(params))...});
+        }
+    }
 };
 
 // ============================================================================
-// ve::version - named version registry (Factory<int()>)
+// ve::factory - global factory registry
+// ============================================================================
+//
+// All factories live under /ve/factory/ in the global node tree.
+// Each named factory (e.g. "cmd", "module") is a child node there.
+//
+
+namespace factory {
+
+// Get or create a named factory (singleton per name).
+VE_API Factory& get(const std::string& name);
+
+// Root node /ve/factory.
+VE_API Node* root();
+
+// Enumerate registered keys under /ve/factory/{factory_name}/.
+// A node is a registered entry if its value is CALLABLE or it has a "steps" child.
+// Known metadata names (help, loop, declare, steps, priority, version, instance)
+// are not traversed.
+VE_API Strings keys(const std::string& factory_name);
+
+} // namespace factory
+
+// ============================================================================
+// ve::version - named version registry (stored under /ve/factory/version/)
 // ============================================================================
 
 namespace version {
 
-using Manager = Factory<int()>;
-VE_API Manager& manager();
+VE_API void reg(const std::string& key, int ver);
 VE_API int  number(const std::string& key);
 VE_API bool check(const std::string& key, int min_api);
 
@@ -235,4 +295,4 @@ VE_API bool check(const std::string& key, int min_api);
 }
 
 #define VE_REGISTER_VERSION(Key, Ver) \
-    VE_AUTO_RUN(ve::version::manager().insertOne(#Key, [] () -> int { return Ver; });)
+    VE_AUTO_RUN(ve::version::reg(#Key, Ver);)

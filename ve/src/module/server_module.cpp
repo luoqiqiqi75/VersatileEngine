@@ -158,14 +158,12 @@ void ServerModule::registerFileCommands()
     auto data_root = _data_root;
 
     // Declare parameter metadata for save/load
-    // Positional params: ordered children without _short
-    // Named params: children with _short
-    auto* saveDecl = node::root()->at("ve/command/declare/save");
+    auto* saveDecl = command::declareNode("save");
     saveDecl->at("format");
     saveDecl->at("path");
     saveDecl->at("file")->set("_short", "f");
 
-    auto* loadDecl = node::root()->at("ve/command/declare/load");
+    auto* loadDecl = command::declareNode("load");
     loadDecl->at("format");
     loadDecl->at("path");
     loadDecl->at("file")->set("_short", "f");
