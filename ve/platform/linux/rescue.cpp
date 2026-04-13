@@ -258,7 +258,8 @@ static void CrashSignalHandler(int sig, siginfo_t* info, void* /*context*/)
 
     const std::string crashLog = oss.str();
     // Write to stderr (signal-safe write)
-    write(STDERR_FILENO, crashLog.c_str(), crashLog.size());
+    const ssize_t ignored = write(STDERR_FILENO, crashLog.c_str(), crashLog.size());
+    (void)ignored;
 
     // Re-raise with default handler
     signal(sig, SIG_DFL);

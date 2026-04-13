@@ -55,7 +55,9 @@ target_include_directories(ve_dep_asio2 INTERFACE
 target_compile_definitions(ve_dep_asio2 INTERFACE ASIO2_ENABLE_SSL)
 target_link_libraries(ve_dep_asio2 INTERFACE ve_dep_asio)
 
-# OpenSSL prebuilt (bundled in asio2/3rd/openssl/prebuilt)
+# OpenSSL:
+# - Linux/macOS prefer system packages so the correct architecture is selected.
+# - Bundled prebuilts remain a fallback when they match the current platform.
 if(WIN32)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/windows/x64")
@@ -67,16 +69,43 @@ if(WIN32)
         "${_VE_OPENSSL_DIR}/libcrypto.lib"
         Crypt32
     )
-elseif(UNIX)
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/linux/x64")
+elseif(UNIX AND NOT APPLE)
+    find_package(OpenSSL QUIET)
+    if(OpenSSL_FOUND)
+        target_link_libraries(ve_dep_asio2 INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+        message(STATUS "  asio2 SSL  (system OpenSSL)")
     else()
-        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/linux/x86")
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+            set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/linux/x64")
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+            set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/linux/x86")
+        endif()
+
+        if(DEFINED _VE_OPENSSL_DIR AND EXISTS "${_VE_OPENSSL_DIR}/libssl.a" AND EXISTS "${_VE_OPENSSL_DIR}/libcrypto.a")
+            target_link_libraries(ve_dep_asio2 INTERFACE
+                "${_VE_OPENSSL_DIR}/libssl.a"
+                "${_VE_OPENSSL_DIR}/libcrypto.a"
+            )
+            message(STATUS "  asio2 SSL  (bundled OpenSSL: ${_VE_OPENSSL_DIR})")
+        else()
+            message(FATAL_ERROR
+                "OpenSSL not found for ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}. "
+                "Install the system OpenSSL development package or provide matching bundled libraries.")
+        endif()
     endif()
-    target_link_libraries(ve_dep_asio2 INTERFACE
-        "${_VE_OPENSSL_DIR}/libssl.a"
-        "${_VE_OPENSSL_DIR}/libcrypto.a"
-    )
+elseif(APPLE)
+    find_package(OpenSSL QUIET)
+    if(OpenSSL_FOUND)
+        target_link_libraries(ve_dep_asio2 INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+        message(STATUS "  asio2 SSL  (system OpenSSL)")
+    else()
+        set(_VE_OPENSSL_DIR "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/prebuilt/mac")
+        target_link_libraries(ve_dep_asio2 INTERFACE
+            "${_VE_OPENSSL_DIR}/libssl.a"
+            "${_VE_OPENSSL_DIR}/libcrypto.a"
+        )
+        message(STATUS "  asio2 SSL  (bundled OpenSSL: ${_VE_OPENSSL_DIR})")
+    endif()
 endif()
 unset(_VE_OPENSSL_DIR)
 
