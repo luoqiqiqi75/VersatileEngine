@@ -12,23 +12,13 @@
 #pragma warning(push, 0)
 #endif
 #include <asio2/http/http_server.hpp>
-#include <asio2/http/http_client.hpp>
-#include <asio2/http/detail/http_url.hpp>
-#if defined(ASIO2_ENABLE_SSL) || defined(ASIO2_USE_SSL)
-#include <asio2/http/https_client.hpp>
-#endif
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 
-#include <chrono>
 #include <algorithm>
-#include <cctype>
-#include <filesystem>
-#include <fstream>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 
 namespace ve {
 namespace service {
@@ -43,81 +33,6 @@ static std::string strip_prefix(std::string_view path, std::string_view prefix)
         path.remove_prefix(prefix.size());
     while (!path.empty() && path.front() == '/') path.remove_prefix(1);
     return std::string(path);
-}
-
-static const std::unordered_map<std::string, std::string>& mimeTypes()
-{
-    static const std::unordered_map<std::string, std::string> m = {
-        {".html",  "text/html"},
-        {".htm",   "text/html"},
-        {".css",   "text/css"},
-        {".js",    "application/javascript"},
-        {".json",  "application/json"},
-        {".xml",   "application/xml"},
-        {".txt",   "text/plain"},
-        {".csv",   "text/csv"},
-        {".png",   "image/png"},
-        {".jpg",   "image/jpeg"},
-        {".jpeg",  "image/jpeg"},
-        {".gif",   "image/gif"},
-        {".svg",   "image/svg+xml"},
-        {".ico",   "image/x-icon"},
-        {".webp",  "image/webp"},
-        {".woff",  "font/woff"},
-        {".woff2", "font/woff2"},
-        {".ttf",   "font/ttf"},
-        {".otf",   "font/otf"},
-        {".eot",   "application/vnd.ms-fontobject"},
-        {".mp3",   "audio/mpeg"},
-        {".mp4",   "video/mp4"},
-        {".webm",  "video/webm"},
-        {".wasm",  "application/wasm"},
-        {".pdf",   "application/pdf"},
-        {".zip",   "application/zip"},
-        {".map",   "application/json"},
-    };
-    return m;
-}
-
-static std::string mimeForPath(const std::string& path)
-{
-    auto dot = path.rfind('.');
-    if (dot != std::string::npos) {
-        std::string ext = path.substr(dot);
-        for (auto& c : ext) { c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
-        auto it = mimeTypes().find(ext);
-        if (it != mimeTypes().end()) {
-            return it->second;
-        }
-    }
-    return "application/octet-stream";
-}
-
-static bool isBrowserOptionalProbe(const std::string& rel)
-{
-    std::string s = rel;
-    for (char& c : s) {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    if (s == "favicon.ico" || s == "robots.txt") return true;
-    if (s.rfind("apple-touch-icon", 0) == 0) return true;
-    if (s.rfind("android-chrome", 0) == 0) return true;
-    return false;
-}
-
-static bool isPathSafe(const std::string& relPath)
-{
-    if (relPath.find("..") != std::string::npos) return false;
-    if (relPath.find('\\') != std::string::npos) return false;
-    if (!relPath.empty() && relPath[0] == '/') return false;
-    return true;
-}
-
-static std::string readFileBytes(const std::filesystem::path& filepath)
-{
-    std::ifstream f(filepath, std::ios::binary);
-    if (!f.is_open()) return {};
-    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
 // ============================================================================
@@ -170,147 +85,15 @@ struct NodeHttpServer::Private
     asio2::http_server server;
     std::chrono::steady_clock::time_point startTime;
 
-    std::string staticRoot;
-    std::string defaultFile = "index.html";
-
-    struct ProxyRule {
-        std::string prefix;      // e.g. "/imou-api"
-        std::string targetHost;  // e.g. "openapi.lechange.cn"
-        std::string targetPort;  // e.g. "443"
-        std::string targetPath;  // e.g. "/openapi"
-        bool        isHttps = false;
-    };
-    std::vector<ProxyRule> proxyRules;
-
-    bool tryServeFile(const std::string& reqPath, http::web_response& rep);
-    bool tryProxy(http::web_request& req, http::web_response& rep);
-
     // JSON-RPC 2.0
     std::string handleJsonRpc(const std::string& requestJson);
     std::string jrpcResponse(const Var& id, const Var& result);
     std::string jrpcError(const Var& id, int code, const std::string& message);
 };
 
-bool NodeHttpServer::Private::tryServeFile(const std::string& reqPathIn, http::web_response& rep)
-{
-    if (staticRoot.empty()) return false;
-
-    std::string reqPath = reqPathIn;
-    {
-        const auto cut = reqPath.find_first_of("?#");
-        if (cut != std::string::npos) reqPath.erase(cut);
-    }
-
-    std::string rel = reqPath;
-    while (!rel.empty() && rel[0] == '/') rel.erase(rel.begin());
-    if (rel.empty()) rel = defaultFile;
-
-    if (!isPathSafe(rel)) return false;
-
-    namespace fs = std::filesystem;
-    const fs::path full = (fs::path(staticRoot) / rel).lexically_normal();
-
-    std::error_code ec;
-    if (!fs::is_regular_file(full, ec)) {
-        if (!isBrowserOptionalProbe(rel)) {
-            veLogWs("[http] static file missing or not a file:", full.string(),
-                    ec ? ec.message().c_str() : "");
-        }
-        return false;
-    }
-
-    std::string content = readFileBytes(full);
-    if (content.empty()) {
-        const auto sz = fs::file_size(full, ec);
-        if (!ec && sz > 0) {
-            veLogWs("[http] static file open/read failed:", full.string());
-            return false;
-        }
-    }
-
-    rep.fill_text(std::move(content), http::status::ok, mimeForPath(rel));
-    return true;
-}
-
 // ============================================================================
 // NodeHttpServer
 // ============================================================================
-
-bool NodeHttpServer::Private::tryProxy(http::web_request& req, http::web_response& rep)
-{
-    std::string reqTarget = std::string(req.target());
-    std::string reqPath   = std::string(req.path());
-
-    for (const auto& rule : proxyRules) {
-        if (reqPath.size() < rule.prefix.size()) continue;
-        if (reqPath.substr(0, rule.prefix.size()) != rule.prefix) continue;
-        if (reqPath.size() > rule.prefix.size() && reqPath[rule.prefix.size()] != '/') continue;
-
-        std::string remaining = reqTarget.substr(rule.prefix.size());
-        std::string upstreamTarget = rule.targetPath + remaining;
-        if (upstreamTarget.empty() || upstreamTarget[0] != '/') upstreamTarget = "/" + upstreamTarget;
-
-        http::web_request upstream;
-        upstream.method(req.method());
-        upstream.target(upstreamTarget);
-        upstream.version(11);
-
-        static const std::vector<std::string> hopByHop = {
-            "host", "connection", "keep-alive", "transfer-encoding",
-            "te", "trailer", "upgrade", "proxy-authorization"
-        };
-        for (auto const& field : req.base()) {
-            std::string nameLower(field.name_string());
-            for (auto& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            bool skip = false;
-            for (const auto& h : hopByHop) { if (nameLower == h) { skip = true; break; } }
-            if (!skip) upstream.set(field.name_string(), field.value());
-        }
-        upstream.set(http::field::host, rule.targetHost);
-        upstream.body() = std::string(req.body());
-        upstream.prepare_payload();
-
-        auto timeout = std::chrono::seconds(30);
-        http::web_response upstream_resp;
-
-        if (rule.isHttps) {
-#if defined(ASIO2_ENABLE_SSL) || defined(ASIO2_USE_SSL)
-            upstream_resp = asio2::https_client::execute(
-                rule.targetHost, rule.targetPort, upstream, timeout);
-#else
-            veLogWs("[http proxy] HTTPS proxy not compiled in:", rule.prefix);
-            rep.fill_text("HTTPS proxy not supported in this build", http::status::not_implemented);
-            return true;
-#endif
-        } else {
-            upstream_resp = asio2::http_client::execute(
-                rule.targetHost, rule.targetPort, upstream, timeout);
-        }
-
-        if (asio2::get_last_error()) {
-            veLogWs("[http proxy] upstream error:", rule.prefix, "->",
-                    rule.targetHost, ":", asio2::last_error_msg());
-            rep.fill_text("Proxy upstream error: " + asio2::last_error_msg(),
-                          http::status::bad_gateway);
-            return true;
-        }
-
-        rep.result(upstream_resp.result());
-        for (auto const& field : upstream_resp.base()) {
-            std::string nameLower(field.name_string());
-            for (auto& c : nameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (nameLower == "connection" || nameLower == "keep-alive" ||
-                nameLower == "transfer-encoding" || nameLower == "te" ||
-                nameLower == "trailer" || nameLower == "upgrade")
-                continue;
-            rep.set(field.name_string(), field.value());
-        }
-        rep.body() = upstream_resp.body();
-        rep.prepare_payload();
-        return true;
-    }
-    return false;
-}
 
 NodeHttpServer::NodeHttpServer(Node* root, uint16_t port)
     : _p(std::make_unique<Private>())
@@ -322,34 +105,6 @@ NodeHttpServer::NodeHttpServer(Node* root, uint16_t port)
 NodeHttpServer::~NodeHttpServer()
 {
     stop();
-}
-
-void NodeHttpServer::setStaticRoot(const std::string& dirPath)
-{
-    std::string s = dirPath;
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-    _p->staticRoot = std::move(s);
-}
-
-void NodeHttpServer::setDefaultFile(const std::string& filename)
-{
-    _p->defaultFile = filename;
-}
-
-void NodeHttpServer::addProxyRule(const std::string& prefix, const std::string& target)
-{
-    http::url u(target);
-    Private::ProxyRule rule;
-    rule.prefix     = prefix;
-    rule.targetHost = std::string(u.host());
-    rule.targetPort = std::string(u.port());
-    rule.targetPath = std::string(u.path());
-    rule.isHttps    = asio2::iequals(u.schema(), "https");
-    // strip trailing slash from targetPath so concatenation is clean
-    while (rule.targetPath.size() > 1 && rule.targetPath.back() == '/')
-        rule.targetPath.pop_back();
-    veLogDs("[http proxy] rule:", prefix, "->", target);
-    _p->proxyRules.push_back(std::move(rule));
 }
 
 bool NodeHttpServer::start()
@@ -372,13 +127,6 @@ bool NodeHttpServer::start()
         [this](http::web_request& req, http::web_response& rep) {
             std::string response = _p->handleJsonRpc(std::string(req.body()));
             rep.fill_json(std::move(response), http::status::ok);
-        });
-
-    // GET /
-    _p->server.bind<http::verb::get>("/",
-        [this](http::web_request& req, http::web_response& rep) {
-            if (_p->tryServeFile(std::string(req.path()), rep)) return;
-            rep.fill_json(jsonError("not found"), http::status::not_found);
         });
 
     // GET /api/node/* — get node as tree (value if leaf, subtree if has children)
@@ -498,7 +246,6 @@ bool NodeHttpServer::start()
     // POST /api/cmd/*
     _p->server.bind<http::verb::post>("/api/cmd/*",
         [this](http::web_request& req, http::web_response& rep) {
-            // Parse request body
             Node reqNode("req");
             std::string bodyStr(req.body());
             if (!bodyStr.empty()) {
@@ -581,12 +328,9 @@ bool NodeHttpServer::start()
             rep.fill_json(schema::exportAs<schema::JsonS>(&r, compactJson), http::status::ok);
         });
 
-    // Static file fallback + proxy
     _p->server.bind_not_found(
-        [this](http::web_request& req, http::web_response& rep) {
-            if (_p->tryProxy(req, rep)) return;
-            if (_p->tryServeFile(std::string(req.path()), rep)) return;
-            rep.fill_json(jsonError("not found"), http::status::not_found);
+        [](http::web_request&, http::web_response& rep) {
+            rep.fill_json("{\"error\":\"not found\"}", http::status::not_found);
         });
 
     ve::service::disableWindowsPortReuse(_p->server);
@@ -610,7 +354,6 @@ bool NodeHttpServer::isRunning() const
 std::string NodeHttpServer::Private::handleJsonRpc(const std::string& requestJson)
 {
     try {
-        // Parse request
         Node req("req");
         if (!schema::importAs<schema::JsonS>(&req, requestJson)) {
             return jrpcError(Var(), JRpcParseError, "Parse error");
@@ -629,7 +372,6 @@ std::string NodeHttpServer::Private::handleJsonRpc(const std::string& requestJso
 
         Node* paramsNode = req.find("params");
 
-        // Route to handler
         if (method == "node.get") {
             std::string path = paramsNode ? paramsNode->get("path").toString() : "";
             Node* node = root->find(path);

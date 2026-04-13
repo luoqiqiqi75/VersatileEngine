@@ -16,10 +16,6 @@ public:
     explicit NodeHttpServer(Node* root, uint16_t port);
     ~NodeHttpServer();
 
-    void setStaticRoot(const std::string& dirPath);
-    void setDefaultFile(const std::string& filename);
-    void addProxyRule(const std::string& prefix, const std::string& target);
-
     bool start();
     void stop();
     bool isRunning() const;

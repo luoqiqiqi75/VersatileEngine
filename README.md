@@ -4,7 +4,7 @@
  /\   /\ ___
  \ \ / /| __|
   \ v / | __|
-   \_/  |___|  VersatileEngine
+   \_/  |___|  VersatileEngine (aka VeryEasy)
 ```
 
 **A reactive data tree and glue layer for C++ systems**
@@ -15,11 +15,14 @@
 
 ---
 
-VersatileEngine (**VE**) is a pure C++17 core plus a set of adapters and services built around one idea:
+VersatileEngine (**VE**, aka **VeryEasy**) is a pure C++17 core plus a set of adapters and services built around one idea:
 **the running system should expose a single observable node tree instead of a pile of private state and ad hoc glue code**.
 
 VE is not meant to replace Qt, ROS, DDS, web stacks, or your application framework.
 It is meant to connect them through one inspectable model.
+
+The nickname **VeryEasy** reflects the design philosophy: **99% configuration through JSON → Node tree, minimal C++ code**.
+Modules focus on business logic, not configuration plumbing. `ve.exe + config.json` gets you running without writing a single line of C++.
 
 Detailed design lineage is in [docs/HISTORY.md](docs/HISTORY.md).
 

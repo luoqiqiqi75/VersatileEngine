@@ -10,6 +10,7 @@
 #include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"
 #include "ve/service/node_service.h"
+#include "ve/service/static_service.h"
 #include "ve/service/bin_service.h"
 #include "ve/service/terminal_service.h"
 #include <fstream>
@@ -70,6 +71,7 @@ class ServerModule : public Module
     std::unique_ptr<service::NodeUdpServer> _node_udp_s;
     std::unique_ptr<service::BinTcpServer> _bin_tcp_s;
     std::unique_ptr<service::TerminalReplServer> _terminal_repl_s;
+    std::unique_ptr<service::StaticServer> _static_s;
 
     std::string _data_root = "./data";
 
@@ -84,37 +86,41 @@ private:
     void deinit() override;
 };
 
-template<> void openServer(std::unique_ptr<ve::service::NodeHttpServer>& server, Node* n, int default_port, const std::string& name)
+template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
+                           Node* n, int default_port, const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
     int maxRetry = n->get("config/max_retry").toInt(-1);
-    
+
     int endPort = port;
     if (maxRetry >= 0) {
         endPort = port + maxRetry;
-    } else if ((port % 100) == 0) {
-        endPort = port + 99;
+    } else if ((port % 10) == 0) {
+        endPort = port + 9;
     }
 
-    std::string static_root = n->get("config/static_root").toString();
-    std::string default_file = n->get("config/default_file").toString();
-
-    // Proxy rules: config/proxy = [{ "prefix": "/foo", "target": "https://..." }, ...]
-    Node* proxy_node = n->find("config/proxy");
+    Node* mounts_node = n->find("config/mounts");
 
     for (int p = port; p <= endPort; ++p) {
-        server = std::make_unique<service::NodeHttpServer>(node::root(), static_cast<uint16_t>(p));
-        if (!static_root.empty()) {
-            veLogD << "[ve/service/node/http] static root: " << static_root;
-            server->setStaticRoot(static_root);
-        }
-        if (!default_file.empty()) server->setDefaultFile(default_file);
-        if (proxy_node) {
-            for (Node* rule : proxy_node->children()) {
-                std::string pfx = rule->get("prefix").toString();
-                std::string tgt = rule->get("target").toString();
-                if (!pfx.empty() && !tgt.empty())
-                    server->addProxyRule(pfx, tgt);
+        server = std::make_unique<service::StaticServer>(static_cast<uint16_t>(p));
+        if (mounts_node) {
+            for (Node* mount : mounts_node->children()) {
+                std::string prefix      = mount->get("prefix").toString("/");
+                std::string root        = mount->get("root").toString();
+                std::string default_file = mount->get("default_file").toString("index.html");
+                bool spa_fallback       = mount->get("spa_fallback").toBool(false);
+                if (!root.empty()) {
+                    server->addMount(prefix, root, default_file, spa_fallback);
+                }
+                Node* proxy_node = mount->find("proxy");
+                if (proxy_node) {
+                    for (Node* rule : proxy_node->children()) {
+                        std::string pfx = rule->get("prefix").toString();
+                        std::string tgt = rule->get("target").toString();
+                        if (!pfx.empty() && !tgt.empty())
+                            server->addMountProxy(prefix, pfx, tgt);
+                    }
+                }
             }
         }
         if (server->start()) {
@@ -313,12 +319,13 @@ void ServerModule::registerFileCommands()
 }
 
 void ServerModule::ready() {
+    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
+    if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000, "BinTcpServer");
     if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 12000, "NodeHttpServer");
     if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100, "NodeWsServer");
     if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 12200, "NodeTcpServer");
     if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 12300, "NodeUdpServer");
-    if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000, "BinTcpServer");
-    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
+    if (node()->get("static/enable").toBool(false)) openServer(_static_s, node()->at("static"), 12400, "StaticServer");
 }
 
 void ServerModule::deinit() {
@@ -328,6 +335,7 @@ void ServerModule::deinit() {
     closeServer(_node_udp_s, node()->at("node/udp"));
     closeServer(_bin_tcp_s, node()->at("bin/tcp"));
     closeServer(_terminal_repl_s, node()->at("terminal/repl"));
+    closeServer(_static_s, node()->at("static"));
 }
 
 }

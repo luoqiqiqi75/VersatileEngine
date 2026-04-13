@@ -17,6 +17,9 @@ Default listen ports use **five-digit decimal** values. The **first three digits
 | `121` | 12100–12199 | Node WebSocket |
 | `122` | 12200–12299 | Node TCP (JSON + newline) |
 | `123` | 12300–12399 | Node UDP |
+| `124` | 12400–12499 | Static (frontend dist hosting) |
+
+Note: StaticServer uses a 10-port retry window (`…0`–`…9`) rather than the standard 100-port window.
 
 ## Services Overview
 
@@ -28,6 +31,7 @@ Default listen ports use **five-digit decimal** values. The **first three digits
 | NodeUdpServer | UDP | 12300 | JSON datagram | No | Fire-and-forget, telemetry |
 | BinTcpServer | TCP | 11000 | MessagePack frames | Yes | High-performance IPC |
 | TerminalReplServer | TCP | 10000 | Text commands | No | Interactive debugging |
+| StaticServer | HTTP | 12400 | Static files + proxy | No | Frontend dist hosting (disabled by default) |
 
 All services are enabled by default. Configure via `ve.json`:
 

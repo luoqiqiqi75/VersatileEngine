@@ -8,7 +8,6 @@ public:
     explicit BrowserModule(const std::string& name);
 
 protected:
-    void init() override;
     void ready() override;
     void deinit() override;
 };

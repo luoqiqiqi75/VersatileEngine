@@ -1,87 +1,38 @@
 {
   "ve": {
     "entry": {
-      "verbose": false,
       "plugins": [
         { "path": "libveqt.dll" },
         { "path": "veqtbrowser.dll" }
       ]
     },
-    "core": {
-      "priority": 0,
-      "config": {
-        "log": {
-          "level": "info",
-          "app": "ve"
-        },
-        "rescue": {
-          "enabled": true
-        }
-      }
-    },
     "server": {
-      "priority": 50,
-      "node": {
-        "http": {
-          "enable": true,
-          "config": {
-            "port": 12000,
-            "static_root": "./webapp",
-            "default_file": "index.html"
-          }
-        },
-        "ws": {
-          "enable": true,
-          "config": {
-            "port": 12100
-          }
-        }
-      },
-      "terminal": {
-        "repl": {
-          "enable": true,
-          "config": {
-            "port": 10000
-          }
-        }
-      },
-      "bin": {
-        "tcp": {
-          "enable": false,
-          "config": {
-            "port": 11000
-          }
+      "static": {
+        "enable": true,
+        "config": {
+          "mounts": [
+            {
+              "prefix": "/",
+              "root": "./webapp",
+              "spa_fallback": true
+            }
+          ]
         }
       }
     },
     "qt": {
-      "priority": 5,
       "config": {
         "app_type": "gui",
         "attr": {
-          "ShareOpenGLContexts": true,
-          "Use96Dpi": false
-        },
-        "log": {
-          "install_qt_message_handler": true,
-          "bridge_imol_log_signals": true,
-          "bridge_imol_log_export": true
+          "ShareOpenGLContexts": true
         }
       },
       "launch": {
-        "priority": 6,
         "config": {
           "type": "qml",
           "main_qml": "qrc:/qml/Main.qml"
         }
       }
-    }
-  },
-  "browser": {
-    "config": {
-      "static_root": "./webapp",
-      "http_port": 12000,
-      "ws_port": 12100
     }
   }
 }
