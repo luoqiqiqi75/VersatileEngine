@@ -1167,3 +1167,4 @@ AGENTS.md
 .cursorrules
 .cursor/
 .claude/
+*.d.ts.map

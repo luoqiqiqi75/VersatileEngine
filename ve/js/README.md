@@ -8,7 +8,7 @@
 
 | 路径 | 说明 |
 |------|------|
-| `ve-sdk/` | TypeScript 库：`VeHttpClient`（`fetch`）、`VeWsClient`（薄封装）。构建后发布名 **`@ve/sdk`**（见该目录 `package.json`）。 |
+| `ve-sdk/` | TypeScript 库：`VeHttpClient`（`fetch`）、`VeWsClient`（WebSocket）、`VeBinTcpClient`（MessagePack binary TCP）。构建后发布名 **`@ve/sdk`**（见该目录 `package.json`）。 |
 | `veservice.js` | 浏览器用 **WebSocket** 客户端（Promise、`get` / `command` / `subscribe`），协议与 `node_ws_server` JSON 一致。 |
 | `ve-mcp/` | Cursor MCP 适配器，内部用 HTTP 调 `/api/cmd`。 |
 | `ve-app/` | React 管理端（独立前端工程）。 |
@@ -107,6 +107,66 @@ await ve.runCommand('save', { args: ['json', '/ve'], wait: false });
 - **可以用 TS**：本地一个 Node 服务用 `VeHttpClient` 调 VE，完全可行；很多集成场景 **瓶颈在业务逻辑**，不在 HTTP 这一跳。
 - **何时考虑 WebSocket**：需要 **推送**（订阅节点变化）、或希望 **长连接少握手**、或高频小消息时，可再用 **`veservice.js` 协议**（或自写与 `node_ws_server` 相同的 JSON）连 `ws://...`。VE 进程里 HTTP 与 WS **并行**，按场景选用即可。
 - **若将来要极致 IPC**：那是另一条路线（命名管道、共享内存、自定义 DLL 导出），与「用 TS 写服务」不矛盾；当前官方集成路径就是 **HTTP + 可选 WS**。
+- **高性能 IPC**：`VeBinTcpClient` 通过 **MessagePack 帧协议**（端口 11000）直连 VE 的 `BinTcpServer`，延迟 ~50μs，支持 **subscribe** 推送。适合 Node.js 后端服务与 VE 进程间的高频通信。
+
+---
+
+## `VeBinTcpClient`（MessagePack Binary TCP）
+
+Server-side（Node.js / Bun / Deno）专用的高性能 IPC 客户端，协议与 C++ `BinTcpClient` 和 Python `MsgPackTransport` 完全一致。
+
+**零外部依赖** — msgpack 编解码内置，无需安装 `@msgpack/msgpack`。
+
+```ts
+import { VeBinTcpClient } from '@ve/sdk';
+
+const client = new VeBinTcpClient({ host: '127.0.0.1', port: 11000 });
+await client.connect();
+
+// Get / Set
+const power = await client.get('movax/robot/global/state/power');
+await client.set('test/value', 42);
+
+// List children
+const children = await client.list('movax/robot');
+
+// Run command
+const result = await client.command('movax.robot.power.on');
+
+// Subscribe (real-time push via NOTIFY frames)
+const unsub = await client.subscribe('movax/robot/global/state/power', (path, value) => {
+  console.log(`${path} changed:`, value);
+});
+
+// Connection state
+client.onConnectionChange((connected) => {
+  console.log('Connection:', connected ? 'up' : 'down');
+});
+
+// Cleanup
+unsub();      // unsubscribe
+client.close(); // disconnect
+```
+
+### Frame protocol
+
+```
+[flag:1][length:4 LE][payload: MessagePack]
+```
+
+| Flag | Value | Direction |
+|------|-------|-----------|
+| REQUEST | 0x00 | client → server |
+| RESPONSE | 0x40 | server → client |
+| NOTIFY | 0x80 | server → client (subscription push) |
+| ERROR | 0xC0 | server → client |
+
+### Features
+
+- Auto-reconnect with exponential backoff
+- Automatic re-subscribe on reconnect
+- Request timeout (default 30s)
+- Full subscribe support (real-time NOTIFY frames)
 
 ---
 

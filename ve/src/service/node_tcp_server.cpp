@@ -65,18 +65,31 @@ std::string handleNodeJsonCmd(Node* root, Node* reqNode)
             resp.set("msg", "path required");
             return nodeToJson(resp);
         }
-        Node* target = root->at(path);
-        if (!target) {
-            resp.set("type", "error");
-            resp.set("msg", "cannot create node");
-            return nodeToJson(resp);
-        }
-        Node* valNode = reqNode->find("value");
-        if (valNode) {
+        if (reqNode->has("value")) {
+            // Set with value (even if value is null)
+            Node* target = root->at(path);
+            if (!target) {
+                resp.set("type", "error");
+                resp.set("msg", "cannot create node");
+                return nodeToJson(resp);
+            }
+            Node* valNode = reqNode->find("value");
             target->copy(valNode);
+            resp.set("type", "ok");
+            resp.set("path", target->path(root));
+        } else {
+            // No value field at all = trigger
+            Node* target = root->find(path);
+            if (!target) {
+                resp.set("type", "error");
+                resp.set("msg", "not found");
+                return nodeToJson(resp);
+            }
+            target->trigger<Node::NODE_CHANGED>();
+            if (target->isWatching()) target->activate(Node::NODE_CHANGED, target);
+            resp.set("type", "ok");
+            resp.set("path", target->path(root));
         }
-        resp.set("type", "ok");
-        resp.set("path", target->path(root));
         return nodeToJson(resp);
     }
     else if (cmd == "list") {

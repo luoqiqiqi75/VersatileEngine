@@ -79,15 +79,14 @@ Body: JSON value
 
 curl -X PUT http://localhost:12000/api/node/test -H "Content-Type: application/json" -d '42'
 # {"ok":true,"path":"test"}
-```
 
-**Trigger node**
-```bash
-POST /api/node/{path}
-Body: optional JSON value
+# Note: Empty body = trigger NODE_CHANGED without setting value
+curl -X PUT http://localhost:12000/api/node/test
+# {"ok":true,"path":"test"}
 
-curl -X POST http://localhost:12000/api/node/test/trigger
-# {"ok":true,"path":"test/trigger"}
+# Note: "null" or "{}" body = clear node value (set to null)
+curl -X PUT http://localhost:12000/api/node/test -H "Content-Type: application/json" -d 'null'
+# {"ok":true,"path":"test"}
 ```
 
 **Get subtree**
@@ -275,6 +274,14 @@ Connect to `ws://localhost:12100` and send JSON messages:
 ```json
 {"cmd":"set","path":"/test","value":42,"id":2}
 -> {"type":"ok","path":"test","id":2}
+
+// Trigger (no value field = fire NODE_CHANGED without setting)
+{"cmd":"set","path":"/test","id":5}
+-> {"type":"ok","path":"test","id":5}
+
+// Clear value (value=null)
+{"cmd":"set","path":"/test","value":null,"id":6}
+-> {"type":"ok","path":"test","id":6}
 ```
 
 **List**
@@ -480,11 +487,11 @@ All operations use `command::call(op, args)` internally. Standard ops:
 
 | Op | Args | Description |
 |----|------|-------------|
-| `get` | `[path]` | Get node value |
-| `set` | `[path, value]` | Set node value |
-| `ls` | `[path]` | List children |
-| `subscribe` | path | Subscribe to changes |
-| `unsubscribe` | path | Unsubscribe |
+| `get` | `path` | Get node value |
+| `set` | `path`, `data=value` | Set node value (if `data` omitted = trigger) |
+| `ls` | `path` | List children |
+| `subscribe` | `path` | Subscribe to changes |
+| `unsubscribe` | `path` | Unsubscribe |
 
 ### Push Notifications
 
@@ -539,23 +546,14 @@ nc localhost 10000
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `ls` | `ls [path]` | List children |
-| `get` | `get path [from to]` | Get node value |
-| `set` | `set path value` | Set node value |
-| `info` | `info [path]` | Node info (type, children count) |
-| `add` | `add path [value]` | Create node |
-| `rm` | `rm path` | Remove node |
-| `mv` | `mv src dst` | Move node |
-| `mk` | `mk path` | Create path |
-| `find` | `find pattern` | Find nodes by pattern |
-| `erase` | `erase path` | Erase node and children |
-| `json` | `json [path]` | Export subtree as JSON |
-| `child` | `child path` | List child names |
-| `shadow` | `shadow path` | Show shadow info |
-| `watch` | `watch path` | Watch node changes |
-| `iter` | `iter path` | Iterate children |
-| `schema` | `schema path` | Show schema |
-| `cmd` | `cmd name [args]` | Run named command |
+| `ls` | `ls [path] [-t] [-l] [-n]` | List children / tree / details |
+| `get` | `get [path] [-t]` | Get node value or type |
+| `set` | `set [path] <value> [--null] [-t/--trigger]` | Set value, clear (--null), or trigger (-t) |
+| `mk` | `mk <path>` | Create node at path |
+| `rm` | `rm <path>` | Remove node at path |
+| `mv` | `mv <src> [dest]` | Move node |
+| `cp` | `cp <src> [dest]` | Copy subtree |
+| `schema`| `schema <fmt> [path]` | Export/import subtree |
 | `help` | `help [cmd]` | Show help |
 
 ---
@@ -600,14 +598,36 @@ client = VeClient("http://localhost:12000")
 # JSON-RPC transport
 client = VeClient("http://localhost:12000", transport="jsonrpc")
 
+# TCP JSON transport (with subscribe support)
+client = VeClient("localhost:12200", transport="tcp_json")
+
+# Binary MessagePack transport (high-performance)
+client = VeClient("localhost:11000", transport="msgpack")
+
 # Operations
 client.get("/config")         # Get node value
 client.set("/test", 42)       # Set node value
 client.list("/")              # List children
 client.tree("/config")        # Get subtree
-client.command("ls", {})      # Run command
+client.trigger("/test")       # Trigger NODE_CHANGED without setting
+client.command("save", {})    # Run command
 client.ping()                 # Health check
+
+# Subscribe (TCP/MsgPack only)
+def on_change(path, value):
+    print(f"{path} changed: {value}")
+unsub = client.subscribe("/config", on_change)
+unsub()  # Unsubscribe
 ```
+
+### Trigger vs Set
+
+**Key distinction:**
+- `set(path, value)` - Set the node's value
+- `set(path, null)` or `set(path, {})` - Clear the node's value
+- `trigger(path)` - Fire NODE_CHANGED signal without changing the value
+  - Implemented as `set(path)` with **no value field** (TCP/MsgPack) or **empty body** (HTTP)
+  - Useful for notifying watchers without modifying data
 
 ---
 

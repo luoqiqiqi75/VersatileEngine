@@ -1,6 +1,8 @@
 export { VeHttpClient } from './http';
 export { VeWsClient } from './ws';
-export type { WsMessageHandler, WsStateHandler, VeWsClientOptions } from './ws';
+export { VeBinTcpClient } from './bin';
+export type { WsNotifyHandler, WsStateHandler, VeWsClientOptions } from './ws';
+export type { NotifyHandler, ConnectionHandler, VeBinTcpClientOptions } from './bin';
 export type {
   VarType,
   VarValue,

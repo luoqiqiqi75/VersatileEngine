@@ -178,7 +178,12 @@ bool NodeHttpServer::start()
                 return;
             }
             std::string body(req.body());
-            if (!body.empty()) {
+            if (body.empty()) {
+                // Empty body = trigger
+                target->trigger<Node::NODE_CHANGED>();
+                if (target->isWatching()) target->activate(Node::NODE_CHANGED, target);
+            } else {
+                // body != empty = set (including "null" or "{}" for clear)
                 Node tmp("tmp");
                 if (schema::importAs<schema::JsonS>(&tmp, body)) {
                     if (tmp.count() > 0) {
@@ -187,9 +192,6 @@ bool NodeHttpServer::start()
                         target->set(tmp.get());
                     }
                 }
-            } else {
-                // Empty body = trigger only, set same value to emit signal
-                target->set(target->get());
             }
             rep.fill_json(jsonOk(target->path(_p->root)), http::status::ok);
         });
