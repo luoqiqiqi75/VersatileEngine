@@ -648,8 +648,19 @@ void TerminalSession::Private::initCommands()
         auto f = parseFlags(args);
         auto specific = f.pos(0);
         if (!specific.empty()) {
-            auto h = command::help(specific);
-            s.print(h.empty() ? "unknown command: " + specific + "\n" : specific + ": " + h + "\n");
+            // Accept both "ros topic once" (space) and "ros/topic/once" (slash)
+            std::string key = specific;
+            // Collect remaining positional args as additional words
+            for (int pi = 1; ; ++pi) {
+                auto w = f.pos(pi);
+                if (w.empty()) break;
+                key += "/" + w;
+            }
+            std::replace(key.begin(), key.end(), ' ', '/');
+            auto h = command::help(key);
+            std::string displayKey = key;
+            std::replace(displayKey.begin(), displayKey.end(), '/', ' ');
+            s.print(h.empty() ? "unknown command: " + displayKey + "\n" : displayKey + ": " + h + "\n");
             return;
         }
         std::string out;
@@ -682,8 +693,10 @@ void TerminalSession::Private::initCommands()
             out += "\n=== User Commands ===\n";
             for (auto& k : userCmds) {
                 auto h = command::help(k);
-                out += "  " + k;
-                if (!h.empty()) { int pad = 22 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
+                std::string displayK = k;
+                std::replace(displayK.begin(), displayK.end(), '/', ' ');
+                out += "  " + displayK;
+                if (!h.empty()) { int pad = 22 - (int)displayK.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
                 out += "\n";
             }
         }
@@ -740,20 +753,38 @@ std::string TerminalSession::execute(const std::string& line)
         cmd = args[0];
     }
 
-    if (command::has(cmd)) {
-        Node* ctx = command::context(cmd, s.cur);
+    // Try multi-word command: "ros topic once" -> "ros/topic/once"
+    std::string resolvedCmd = cmd;
+    size_t cmdWordCount = 1;
+    if (!command::has(resolvedCmd)) {
+        for (size_t i = 2; i <= args.size(); ++i) {
+            std::string candidate;
+            for (size_t j = 0; j < i; ++j) {
+                if (j > 0) candidate += "/";
+                candidate += args[j];
+            }
+            if (command::has(candidate)) {
+                resolvedCmd = candidate;
+                cmdWordCount = i;
+                break;
+            }
+        }
+    }
+
+    if (command::has(resolvedCmd)) {
+        Node* ctx = command::context(resolvedCmd, s.cur);
         Var::ListV list;
-        for (size_t i = 1; i < args.size(); ++i)
+        for (size_t i = cmdWordCount; i < args.size(); ++i)
             list.push_back(Var(args[i]));
         command::parseArgs(ctx, list.empty() ? Var() : Var(std::move(list)));
 
         if (asyncMode) {
             Pipeline* detached = nullptr;
-            auto r = command::call(cmd, ctx, false, &detached);
+            auto r = command::call(resolvedCmd, ctx, false, &detached);
 
             if (detached) {
                 auto asyncOut = s.asyncOutput;
-                std::string cmdName = cmd;
+                std::string cmdName = resolvedCmd;
                 detached->setResultHandler([asyncOut, ctx, detached, cmdName](const Result& res) {
                     std::string text;
                     if (res.isSuccess() || res.isAccepted()) {
@@ -787,7 +818,7 @@ std::string TerminalSession::execute(const std::string& line)
         }
 
         // Default: synchronous execution
-        auto r = command::call(cmd, ctx);
+        auto r = command::call(resolvedCmd, ctx);
         if (r.isSuccess() || r.isAccepted()) {
             auto& content = r.content();
             if (!content.isNull())
@@ -799,7 +830,7 @@ std::string TerminalSession::execute(const std::string& line)
         return s.output;
     }
 
-    s.print("unknown: " + cmd + "  (type 'help')\n");
+    s.print("unknown: " + resolvedCmd + "  (type 'help')\n");
     return s.output;
 }
 
@@ -830,23 +861,119 @@ std::string TerminalSession::prompt() const
 
 std::vector<std::string> TerminalSession::complete(const std::string& partial)
 {
-    size_t wordStart = partial.find_last_of(' ');
-    bool completingCmd = (wordStart == std::string::npos);
-    std::string prefix = completingCmd ? partial : partial.substr(wordStart + 1);
+    auto tokens = split(partial);
+    bool endsWithSpace = !partial.empty() && std::isspace(static_cast<unsigned char>(partial.back()));
 
-    if (completingCmd) {
+    // Determine if we're still completing the command name portion.
+    // We're in command-completion mode if:
+    //   - no tokens yet, or
+    //   - the typed tokens (so far) don't yet form a known command
+    //     AND the last character is not a space (still typing the command)
+    //   - OR the typed tokens form a known prefix and we're extending it
+
+    // Build the "command prefix" from all tokens if not ending with space
+    // e.g. "ros top" -> try "ros/top" as prefix for command matching
+    // e.g. "ros topic " -> "ros/topic" is a known command, switch to arg completion
+
+    // Check if current tokens (joined) form a complete known command
+    auto joinTokens = [](const std::vector<std::string>& t, size_t count) {
+        std::string s;
+        for (size_t i = 0; i < count; ++i) {
+            if (i > 0) s += "/";
+            s += t[i];
+        }
+        return s;
+    };
+
+    // Find longest prefix of tokens that is a known command
+    size_t knownCmdWords = 0;
+    for (size_t i = tokens.size(); i >= 1; --i) {
+        if (command::has(joinTokens(tokens, i))) {
+            knownCmdWords = i;
+            break;
+        }
+    }
+
+    // Check if first token is a built-in command
+    bool firstIsBuiltin = false;
+    if (!tokens.empty()) {
+        auto& first = tokens[0];
+        firstIsBuiltin = (_p->cmds.find(first) != _p->cmds.end()) ||
+                         first == "quit" || first == "exit";
+    }
+
+    // cmdIsComplete: command portion is fully determined, now completing arguments
+    // - known command + space after it (ready for first arg)
+    // - known command + more tokens after it (completing a later arg)
+    // - built-in command (always single word) + space or more tokens
+    bool cmdIsComplete = ((knownCmdWords > 0) &&
+                          (endsWithSpace || knownCmdWords < tokens.size())) ||
+                         (firstIsBuiltin && (endsWithSpace || tokens.size() > 1));
+
+    if (!cmdIsComplete) {
+        // Still completing the command name
+        // The prefix to match against is tokens joined with "/"
+        std::string cmdPrefix = tokens.empty() ? "" : joinTokens(tokens, tokens.size());
+        if (endsWithSpace && !tokens.empty()) {
+            // e.g. "ros " - tokens=["ros"], space at end: prefix is "ros/"
+            cmdPrefix = joinTokens(tokens, tokens.size()) + "/";
+        }
+
         std::vector<std::string> matches;
-        for (auto& [name, _] : _p->cmds)
-            if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0)
-                matches.push_back(name);
-        for (auto& name : command::keys())
-            if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0)
-                matches.push_back(name);
-        if (std::string("quit").compare(0, prefix.size(), prefix) == 0) matches.push_back("quit");
-        if (std::string("exit").compare(0, prefix.size(), prefix) == 0) matches.push_back("exit");
+
+        // Built-in single-word commands (only if no "/" in prefix)
+        if (cmdPrefix.find('/') == std::string::npos) {
+            for (auto& [name, _] : _p->cmds) {
+                if (name.size() >= cmdPrefix.size() && name.compare(0, cmdPrefix.size(), cmdPrefix) == 0)
+                    matches.push_back(name);
+            }
+            if (std::string("quit").compare(0, cmdPrefix.size(), cmdPrefix) == 0) matches.push_back("quit");
+            if (std::string("exit").compare(0, cmdPrefix.size(), cmdPrefix) == 0) matches.push_back("exit");
+        }
+
+        // Multi-word commands from command::keys()
+        // Convert slash-separated keys to space-separated display
+        for (auto& key : command::keys()) {
+            // key is like "ros/topic/once"
+            // Convert to space form for comparison: "ros/topic/once" -> "ros topic once"
+            std::string keySpace = key;
+            std::replace(keySpace.begin(), keySpace.end(), '/', ' ');
+
+            // cmdPrefix may contain "/" (from joinTokens) - convert to space for comparison
+            std::string prefixSpace = cmdPrefix;
+            std::replace(prefixSpace.begin(), prefixSpace.end(), '/', ' ');
+
+            if (keySpace.size() >= prefixSpace.size() && keySpace.compare(0, prefixSpace.size(), prefixSpace) == 0) {
+                // Return the next word after the prefix
+                // e.g. prefix="ros ", key="ros topic once" -> next completion word is "ros topic"
+                // We want to return the space-separated form up to the next space after prefix
+                size_t nextSpace = keySpace.find(' ', prefixSpace.size());
+                std::string completion;
+                if (nextSpace == std::string::npos) {
+                    completion = keySpace; // full command
+                } else {
+                    completion = keySpace.substr(0, nextSpace); // up to next word boundary
+                }
+                matches.push_back(completion);
+            }
+        }
+
         std::sort(matches.begin(), matches.end());
         matches.erase(std::unique(matches.begin(), matches.end()), matches.end());
         return matches;
+    }
+
+    // Command is complete - complete the next argument as a node path
+    // If ends with space, start fresh; otherwise complete the last token
+    std::string prefix;
+    size_t effectiveCmdWords = knownCmdWords > 0 ? knownCmdWords : (firstIsBuiltin ? 1 : 0);
+
+    if (endsWithSpace) {
+        prefix = "";
+    } else if (tokens.size() > effectiveCmdWords) {
+        prefix = tokens.back();
+    } else {
+        prefix = "";
     }
     return completeNodePath(_p->root, _p->cur, prefix);
 }
