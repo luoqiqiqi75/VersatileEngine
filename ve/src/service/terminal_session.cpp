@@ -365,8 +365,29 @@ void TerminalSession::Private::initCommands()
             return;
         }
 
+        if (f.has("trigger", 't')) {
+            // Trigger mode
+            Node* t = nullptr;
+            if (pc == 0) {
+                t = s.cur;
+            } else if (pc == 1) {
+                t = s.resolve(f.pos(0));
+                if (!t) {
+                    s.print("not found: " + f.pos(0) + "\n");
+                    return;
+                }
+            } else {
+                s.print("usage: set [path] --trigger\n");
+                return;
+            }
+            t->trigger<Node::NODE_CHANGED>();
+            if (t->isWatching()) t->activate(Node::NODE_CHANGED, t);
+            s.print("triggered: " + nodeSummary(t) + "\n");
+            return;
+        }
+
         if (pc == 0) {
-            s.print("usage: set <value> | set [path] <value> [--null]\n");
+            s.print("usage: set [path] <value> [--null] [--trigger/-t]\n");
             return;
         }
 
@@ -635,7 +656,7 @@ void TerminalSession::Private::initCommands()
         out += "=== Node Commands ===\n";
         out += "  ls [path] [-t] [-l] [-n]   list children / tree / details (default path: current)\n";
         out += "  get [path] [-t]            get value or type (default path: current)\n";
-        out += "  set <value> | set [path] <value> [--null]  set or clear value (default: current)\n";
+        out += "  set [path] <value> [--null] [-t|--trigger]  set value, clear, or trigger (default: current)\n";
         out += "  mk <path> | -n NAME        create at path (relative to cur)\n";
         out += "  rm <path> [-i] [-n] [-c]   remove at path (relative to cur)\n";
         out += "  mv <src> [dest] [--at N]   reparent node\n";

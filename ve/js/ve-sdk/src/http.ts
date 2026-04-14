@@ -73,6 +73,13 @@ export class VeHttpClient {
     });
   }
 
+  /** POST /api/node/{path} — fire NODE_CHANGED on the node. */
+  async triggerNode(path: string): Promise<NodeSetResponse> {
+    return this.request(`/api/node/${path}`, {
+      method: 'POST',
+    });
+  }
+
   async getTree(path = ''): Promise<TreeNode> {
     const p = path ? `/${path}` : '';
     return this.request(`/api/tree${p}`);

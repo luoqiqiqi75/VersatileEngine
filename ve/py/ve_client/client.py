@@ -1,9 +1,9 @@
 """Unified VersatileEngine client."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from .transports import (
     Transport, HttpRestTransport, JsonRpcTransport,
-    TcpJsonTransport, MsgPackTransport
+    TcpJsonTransport, MsgPackTransport, NotifyCallback
 )
 
 
@@ -49,17 +49,19 @@ class VeClient:
         # Operations
         client.get("/config/port")
         client.set("/test", 42)
+        client.trigger("/test")
         client.list("/")
+
+        # Subscribe (TCP JSON and MsgPack only)
+        unsub = client.subscribe("/test", lambda path, value: print(f"{path} = {value}"))
+        unsub()  # unsubscribe
+
+        # Command
+        client.command("ros/topic/list", {"args": []})
     """
 
     def __init__(self, url: str = "tcp://localhost:12200",
                  transport: str = None, timeout: int = 30):
-        """
-        Args:
-            url: Server URL (tcp://host:port, http://host:port)
-            transport: Override transport ("tcp", "http", "jsonrpc", "msgpack")
-            timeout: Request timeout in seconds
-        """
         if transport is None:
             transport = self._detect_transport(url)
 
@@ -70,10 +72,7 @@ class VeClient:
         scheme, _, _ = parse_url(url)
         if scheme in ("http", "https"):
             return "http"
-        elif scheme == "tcp":
-            return "tcp"
-        else:
-            return "tcp"
+        return "tcp"
 
     @staticmethod
     def _create_transport(name: str, url: str, timeout: int) -> Transport:
@@ -102,6 +101,10 @@ class VeClient:
         """Set node value at path."""
         return self._transport.set(path, value)
 
+    def trigger(self, path: str) -> bool:
+        """Trigger NODE_CHANGED on node (re-fire signal without changing value)."""
+        return self._transport.trigger(path)
+
     def list(self, path: str = "/") -> List[Dict]:
         """List children at path."""
         return self._transport.list(path)
@@ -113,6 +116,18 @@ class VeClient:
     def command(self, name: str, args: Optional[Dict] = None) -> Any:
         """Run a command."""
         return self._transport.command(name, args)
+
+    def subscribe(self, path: str, callback: NotifyCallback) -> Callable[[], None]:
+        """Subscribe to node changes. Returns an unsubscribe function.
+
+        callback(path: str, value: Any) is called on each NODE_CHANGED event.
+        Supported on TCP JSON and MsgPack transports.
+        """
+        return self._transport.subscribe(path, callback)
+
+    def unsubscribe(self, path: str) -> None:
+        """Remove all subscriptions for a path."""
+        self._transport.unsubscribe(path)
 
     def ping(self) -> bool:
         """Test connection."""

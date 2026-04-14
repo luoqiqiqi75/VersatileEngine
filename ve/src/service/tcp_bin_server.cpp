@@ -135,12 +135,19 @@ struct BinTcpServer::Private
         if (op == "set") {
             Node* target = path.empty() ? root : root->at(path);
             if (!target) { send(-1, Var("cannot create")); return; }
-            Var data = dict.has("data") ? dict["data"] : Var();
-            if (data.isBin()) {
-                auto bin = data.toBin();
-                schema::importAs<schema::BinS>(target, bin.data(), bin.size());
+            if (dict.has("data")) {
+                // Set with data
+                Var data = dict["data"];
+                if (data.isBin()) {
+                    auto bin = data.toBin();
+                    schema::importAs<schema::BinS>(target, bin.data(), bin.size());
+                } else {
+                    target->set(data);
+                }
             } else {
-                target->set(data);
+                // Set without data = trigger
+                target->trigger<Node::NODE_CHANGED>();
+                if (target->isWatching()) target->activate(Node::NODE_CHANGED, target);
             }
             send(0, Var(true));
             return;
