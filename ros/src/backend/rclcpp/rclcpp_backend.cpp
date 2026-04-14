@@ -715,8 +715,34 @@ public:
         if (!node_)
             return makeResult(false, "rclcpp backend is not started");
 
+        auto listOneNode = [this](const std::string& name) {
+            auto client = std::make_shared<rclcpp::AsyncParametersClient>(node_, name);
+            if (!client->wait_for_service(std::chrono::milliseconds(500))) {
+                return makeResult(false, "parameter service not ready");
+            }
+
+            auto future = client->list_parameters({}, 0);
+            if (future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready) {
+                return makeResult(false, "param list timeout");
+            }
+
+            const auto listed = future.get();
+            Var::DictV res = makeResult(true, "param list ok");
+            res["node"] = Var(name);
+            Var::ListV names;
+            Var::ListV raw_names;
+            for (const auto& n : listed.names) {
+                raw_names.push_back(Var(n));
+                if (!isInternalParamName(n))
+                    names.push_back(Var(n));
+            }
+            res["params"] = Var(std::move(names));
+            res["params_raw"] = Var(std::move(raw_names));
+            return res;
+        };
+
         if (!node_name.empty())
-            return listParamsForNodeLocked(normalizeRemoteNodeName(node_name));
+            return listOneNode(normalizeRemoteNodeName(node_name));
 
         Var::DictV result = makeResult(true, "param list ok");
         Var::DictV nodes_dict;
@@ -724,7 +750,7 @@ public:
             if (isRuntimeHelperNode(name, ns))
                 continue;
             const std::string full = fqNodeName(name, ns);
-            nodes_dict[full] = listParamsForNodeLocked(full);
+            nodes_dict[full] = listOneNode(full);
         }
         result["nodes"] = Var(std::move(nodes_dict));
         return result;
@@ -739,12 +765,16 @@ public:
         if (normalized_node_name.empty() || name.empty())
             return makeResult(false, "node/name is required");
 
-        auto client = makeParamClientLocked(normalized_node_name);
+        auto client = std::make_shared<rclcpp::AsyncParametersClient>(node_, normalized_node_name);
         if (!client->wait_for_service(std::chrono::milliseconds(1000)))
             return makeResult(false, "parameter service not ready");
 
+        auto future = client->get_parameters({name});
+        if (future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready)
+            return makeResult(false, "param get timeout");
+
+        const auto params = future.get();
         Var::DictV result = makeResult(true, "param get ok");
-        const auto params = client->get_parameters({name}, std::chrono::milliseconds(1000));
         if (params.empty()) {
             result["ok"] = Var(false);
             result["message"] = Var("parameter not found");
@@ -770,12 +800,15 @@ public:
         if (!varToParameterValue(value, parameter_value, error))
             return makeResult(false, error);
 
-        auto client = makeParamClientLocked(normalized_node_name);
+        auto client = std::make_shared<rclcpp::AsyncParametersClient>(node_, normalized_node_name);
         if (!client->wait_for_service(std::chrono::milliseconds(1000)))
             return makeResult(false, "parameter service not ready");
 
-        auto results = client->set_parameters({rclcpp::Parameter(name, parameter_value)},
-                                              std::chrono::milliseconds(1000));
+        auto future = client->set_parameters({rclcpp::Parameter(name, parameter_value)});
+        if (future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready)
+            return makeResult(false, "param set timeout");
+
+        const auto results = future.get();
         Var::DictV result = makeResult(!results.empty() && results.front().successful,
                                        results.empty() ? "parameter set failed" : results.front().reason);
         result["node"] = Var(normalized_node_name);
@@ -800,41 +833,6 @@ private:
         if (it == topics.end() || it->second.empty())
             return "";
         return it->second.front();
-    }
-
-    std::shared_ptr<rclcpp::SyncParametersClient> makeParamClientLocked(const std::string& node_name) const
-    {
-        rclcpp::ExecutorOptions options;
-        options.context = context_;
-        auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>(options);
-        return std::make_shared<rclcpp::SyncParametersClient>(executor, node_, node_name);
-    }
-
-    Var::DictV listParamsForNodeLocked(const std::string& node_name) const
-    {
-        Var::DictV result = makeResult(false, "param list failed");
-        result["node"] = Var(node_name);
-
-        auto client = makeParamClientLocked(node_name);
-        if (!client->wait_for_service(std::chrono::milliseconds(500))) {
-            result["message"] = Var("parameter service not ready");
-            return result;
-        }
-
-        const auto listed = client->list_parameters({}, 100, std::chrono::milliseconds(1000));
-        Var::ListV names;
-        Var::ListV raw_names;
-        for (const auto& name : listed.names)
-        {
-            raw_names.push_back(Var(name));
-            if (!isInternalParamName(name))
-                names.push_back(Var(name));
-        }
-        result["ok"] = Var(true);
-        result["message"] = Var("param list ok");
-        result["params"] = Var(std::move(names));
-        result["params_raw"] = Var(std::move(raw_names));
-        return result;
     }
 
     mutable std::mutex mu_;
