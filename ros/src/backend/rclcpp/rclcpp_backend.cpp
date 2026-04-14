@@ -13,6 +13,7 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -346,6 +347,10 @@ public:
 
     void stop() override
     {
+        {
+            std::lock_guard<std::mutex> lock(param_clients_mu_);
+            param_clients_.clear();
+        }
         std::lock_guard<std::mutex> lock(mu_);
         subscriptions_.clear();
         publishers_.clear();
@@ -711,62 +716,79 @@ public:
 
     Var::DictV listParams(const std::string& node_name = "") const override
     {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!node_)
-            return makeResult(false, "rclcpp backend is not started");
+        std::shared_ptr<rclcpp::Node> node;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!node_)
+                return makeResult(false, "rclcpp backend is not started");
+            node = node_;
+        }
 
-        auto listOneNode = [this](const std::string& name) {
-            auto client = std::make_shared<rclcpp::AsyncParametersClient>(node_, name);
-            if (!client->wait_for_service(std::chrono::milliseconds(500))) {
+        // Specific node: return param names + values
+        if (!node_name.empty()) {
+            const std::string nn = normalizeRemoteNodeName(node_name);
+            auto client = paramClient(node, nn);
+            if (!client)
                 return makeResult(false, "parameter service not ready");
-            }
 
-            auto future = client->list_parameters({}, 0);
-            if (future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready) {
+            auto list_future = client->list_parameters({}, 0);
+            if (list_future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready)
                 return makeResult(false, "param list timeout");
+
+            Var::ListV param_names;
+            std::vector<std::string> names_to_get;
+            for (const auto& n : list_future.get().names) {
+                if (!isInternalParamName(n)) {
+                    param_names.push_back(Var(n));
+                    names_to_get.push_back(n);
+                }
             }
 
-            const auto listed = future.get();
-            Var::DictV res = makeResult(true, "param list ok");
-            res["node"] = Var(name);
-            Var::ListV names;
-            Var::ListV raw_names;
-            for (const auto& n : listed.names) {
-                raw_names.push_back(Var(n));
-                if (!isInternalParamName(n))
-                    names.push_back(Var(n));
+            Var::DictV params_dict;
+            if (!names_to_get.empty()) {
+                auto get_future = client->get_parameters(names_to_get);
+                if (get_future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready) {
+                    const auto values = get_future.get();
+                    for (std::size_t i = 0; i < values.size() && i < names_to_get.size(); ++i)
+                        params_dict[names_to_get[i]] = parameterValueToVar(values[i].get_parameter_value());
+                }
             }
-            res["params"] = Var(std::move(names));
-            res["params_raw"] = Var(std::move(raw_names));
-            return res;
-        };
 
-        if (!node_name.empty())
-            return listOneNode(normalizeRemoteNodeName(node_name));
+            Var::DictV result = makeResult(true, "param list ok");
+            result["node"] = Var(nn);
+            result["params"] = Var(std::move(param_names));
+            result["values"] = Var(std::move(params_dict));
+            return result;
+        }
 
+        // No node specified: just return node names (don't query params)
         Var::DictV result = makeResult(true, "param list ok");
-        Var::DictV nodes_dict;
-        for (const auto& [name, ns] : node_->get_node_graph_interface()->get_node_names_and_namespaces()) {
+        Var::ListV nodes_list;
+        for (const auto& [name, ns] : node->get_node_graph_interface()->get_node_names_and_namespaces()) {
             if (isRuntimeHelperNode(name, ns))
                 continue;
-            const std::string full = fqNodeName(name, ns);
-            nodes_dict[full] = listOneNode(full);
+            nodes_list.push_back(Var(fqNodeName(name, ns)));
         }
-        result["nodes"] = Var(std::move(nodes_dict));
+        result["nodes"] = Var(std::move(nodes_list));
         return result;
     }
 
     Var::DictV getParam(const std::string& node_name, const std::string& name) const override
     {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!node_)
-            return makeResult(false, "rclcpp backend is not started");
+        std::shared_ptr<rclcpp::Node> node;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!node_)
+                return makeResult(false, "rclcpp backend is not started");
+            node = node_;
+        }
+
         const std::string normalized_node_name = normalizeRemoteNodeName(node_name);
         if (normalized_node_name.empty() || name.empty())
             return makeResult(false, "node/name is required");
 
-        auto client = std::make_shared<rclcpp::AsyncParametersClient>(node_, normalized_node_name);
-        if (!client->wait_for_service(std::chrono::milliseconds(1000)))
+        auto client = paramClient(node, normalized_node_name);
+        if (!client)
             return makeResult(false, "parameter service not ready");
 
         auto future = client->get_parameters({name});
@@ -788,9 +810,14 @@ public:
 
     Var::DictV setParam(const std::string& node_name, const std::string& name, const Var& value) const override
     {
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!node_)
-            return makeResult(false, "rclcpp backend is not started");
+        std::shared_ptr<rclcpp::Node> node;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!node_)
+                return makeResult(false, "rclcpp backend is not started");
+            node = node_;
+        }
+
         const std::string normalized_node_name = normalizeRemoteNodeName(node_name);
         if (normalized_node_name.empty() || name.empty())
             return makeResult(false, "node/name is required");
@@ -800,8 +827,8 @@ public:
         if (!varToParameterValue(value, parameter_value, error))
             return makeResult(false, error);
 
-        auto client = std::make_shared<rclcpp::AsyncParametersClient>(node_, normalized_node_name);
-        if (!client->wait_for_service(std::chrono::milliseconds(1000)))
+        auto client = paramClient(node, normalized_node_name);
+        if (!client)
             return makeResult(false, "parameter service not ready");
 
         auto future = client->set_parameters({rclcpp::Parameter(name, parameter_value)});
@@ -835,7 +862,32 @@ private:
         return it->second.front();
     }
 
+    // Get or create a cached AsyncParametersClient for the given node.
+    // Caller must NOT hold mu_ (wait_for_service blocks).
+    std::shared_ptr<rclcpp::AsyncParametersClient> paramClient(
+        const std::shared_ptr<rclcpp::Node>& node,
+        const std::string& remote_node_name) const
+    {
+        {
+            std::lock_guard<std::mutex> lock(param_clients_mu_);
+            auto it = param_clients_.find(remote_node_name);
+            if (it != param_clients_.end())
+                return it->second;
+        }
+
+        auto client = std::make_shared<rclcpp::AsyncParametersClient>(node, remote_node_name);
+        if (!client->wait_for_service(std::chrono::milliseconds(1000)))
+            return nullptr;
+
+        {
+            std::lock_guard<std::mutex> lock(param_clients_mu_);
+            param_clients_[remote_node_name] = client;
+        }
+        return client;
+    }
+
     mutable std::mutex mu_;
+    mutable std::mutex param_clients_mu_;
     rclcpp::Context::SharedPtr context_;
     rclcpp::Node::SharedPtr node_;
     rclcpp::Executor::SharedPtr executor_;
@@ -846,6 +898,7 @@ private:
     std::string node_full_name_;
     Dict<SubscriptionInfo> subscriptions_;
     Dict<rclcpp::GenericPublisher::SharedPtr> publishers_;
+    mutable std::unordered_map<std::string, std::shared_ptr<rclcpp::AsyncParametersClient>> param_clients_;
 };
 
 const bool registered = []() {

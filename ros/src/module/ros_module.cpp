@@ -265,14 +265,28 @@ private:
             auto a = command::args(ctx);
             const auto result = ros::listNodes(a.string("filter"));
             writeNamedNodeList("nodes", result);
-            return okResult(Var(result));
+            Var::ListV names;
+            for (const auto& item : result) {
+                if (item.isDict())
+                    names.push_back(item.toDict().value("full_name"));
+                else
+                    names.push_back(item);
+            }
+            return okResult(Var(std::move(names)));
         }, "List ROS nodes.");
 
         command::reg("ros/topic/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listTopics(a.string("filter"));
             writeNamedPathList("topics", result, "name");
-            return okResult(Var(result));
+            Var::ListV names;
+            for (const auto& item : result) {
+                if (item.isDict())
+                    names.push_back(item.toDict().value("name"));
+                else
+                    names.push_back(item);
+            }
+            return okResult(Var(std::move(names)));
         }, "List ROS topics.");
 
         command::reg("ros/topic/info", [](Node* ctx) -> Result {
@@ -371,7 +385,14 @@ private:
             auto a = command::args(ctx);
             const auto result = ros::listServices(a.string("filter"));
             writeNamedPathList("services", result, "name");
-            return okResult(Var(result));
+            Var::ListV names;
+            for (const auto& item : result) {
+                if (item.isDict())
+                    names.push_back(item.toDict().value("name"));
+                else
+                    names.push_back(item);
+            }
+            return okResult(Var(std::move(names)));
         }, "List ROS services.");
 
         command::reg("ros/service/info", [](Node* ctx) -> Result {
@@ -385,20 +406,58 @@ private:
         command::reg("ros/param/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto result = ros::listParams(a.string("node"));
-            writeRosMirror("params", Var(result));
-            return okResult(Var(result));
-        }, "List ROS parameters.");
+            if (!result.value("ok").toBool(false))
+                return failResult(result.value("message").toString("param list failed"));
 
-        command::reg("ros/param/get", [](Node* ctx) -> Result {
+            auto* params_root = n("ve/ros/params");
+
+            if (a.string("node").empty()) {
+                // No node: result has nodes list ["/NodeA", "/NodeB", ...]
+                // Just return the node names; actual params fetched per-node
+                const auto& nodes = result.value("nodes");
+                if (nodes.isList()) {
+                    for (const auto& nn : nodes.toList())
+                        params_root->at(normalizeNamedPath(nn.toString(), "node"));
+                }
+                return okResult(nodes);
+            } else {
+                // Specific node: result has params list + values dict
+                const std::string nn = result.value("node").toString();
+                auto* node_n = params_root->at(normalizeNamedPath(nn, "node"));
+
+                const auto& values = result.value("values");
+                if (values.isDict()) {
+                    for (const auto& [pname, pval] : values.toDict())
+                        node_n->at(pname)->set(pval);
+                }
+
+                Var::ListV names;
+                const auto& params = result.value("params");
+                if (params.isList()) {
+                    for (const auto& pname : params.toList())
+                        names.push_back(Var(nn + "/" + pname.toString()));
+                }
+                return okResult(Var(std::move(names)));
+            }
+        }, "List ROS parameters. Without node: list nodes. With node: params + values.");
+
+        command::reg("ros/param/get", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             const auto node_name = a.string("node");
             const auto param_name = a.string("name");
             if (node_name.empty() || param_name.empty())
                 return failResult("node/name is required");
-            return okResult(Var(ros::getParam(node_name, param_name)));
+
+            const auto result = ros::getParam(node_name, param_name);
+            if (result.value("ok").toBool(false)) {
+                const std::string nn = result.value("node").toString();
+                auto* params_root = n("ve/ros/params");
+                params_root->at(normalizeNamedPath(nn, "node"))->at(param_name)->set(result.value("value"));
+            }
+            return okResult(Var(result));
         }, "Get one ROS parameter.");
 
-        command::reg("ros/param/set", [](Node* ctx) -> Result {
+        command::reg("ros/param/set", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);
             auto node_name = a.string("node");
             auto param_name = a.string("name");
@@ -407,7 +466,14 @@ private:
                 return failResult("node/name/value is required");
             if (value.isString())
                 value = ros::yaml::decode(value.toString());
-            return okResult(Var(ros::setParam(node_name, param_name, value)));
+
+            const auto result = ros::setParam(node_name, param_name, value);
+            if (result.value("ok").toBool(false)) {
+                const std::string nn = result.value("node").toString();
+                auto* params_root = n("ve/ros/params");
+                params_root->at(normalizeNamedPath(nn, "node"))->at(param_name)->set(value);
+            }
+            return okResult(Var(result));
         }, "Set one ROS parameter.");
 
         command::reg("ros/runtime/refresh", [this]() -> Result {
