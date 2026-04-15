@@ -400,27 +400,25 @@ void TerminalSession::Private::initCommands()
             return;
         }
 
-        if (pc == 0) {
-            s.print("usage: set [path] <value> [--null] [--trigger/-t]\n");
-            return;
-        }
-
         Node*       t = nullptr;
         std::string valueRaw;
-        if (pc == 1) {
+
+        if (pc == 0) {
+            t = s.cur;
+            valueRaw = "";
+        } else if (pc == 1) {
             t = s.cur;
             valueRaw = f.pos(0);
-        } else {
+        } else if (pc == 2) {
             t = s.resolve(f.pos(0));
             if (!t) {
                 s.print("not found: " + f.pos(0) + "\n");
                 return;
             }
             valueRaw = f.pos(1);
-            if (pc > 2) {
-                s.print("usage: set [path] <value>\n");
-                return;
-            }
+        } else {
+            s.print("usage: set [path] [value] [--null] [--trigger/-t]\n");
+            return;
         }
 
         Var v = parseVar(valueRaw);
