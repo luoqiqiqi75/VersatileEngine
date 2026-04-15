@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cctype>
 
 namespace ve {
 
@@ -79,6 +81,7 @@ public:
     using Module::Module;
 
     void registerFileCommands();
+    void registerSearchCommand();
 
 private:
     void init() override;
@@ -151,6 +154,7 @@ void ServerModule::init() {
 
     _data_root = node()->get("file_io/data_root").toString("./data");
     registerFileCommands();
+    registerSearchCommand();
 }
 
 void ServerModule::registerFileCommands()
@@ -314,6 +318,112 @@ void ServerModule::registerFileCommands()
             return Result::fail(Var("Import failed (invalid " + format + ")"));
         }
     }, "load <format> [path] [-f file] [-i data]");
+}
+
+// ============================================================================
+// search command - fuzzy node tree search
+// ============================================================================
+
+static bool globMatch(const std::string& pattern, const std::string& str)
+{
+    size_t pi = 0, si = 0;
+    size_t starP = std::string::npos, starS = 0;
+    while (si < str.size()) {
+        if (pi < pattern.size() && (pattern[pi] == str[si] || pattern[pi] == '?')) {
+            ++pi; ++si;
+        } else if (pi < pattern.size() && pattern[pi] == '*') {
+            starP = pi++; starS = si;
+        } else if (starP != std::string::npos) {
+            pi = starP + 1; si = ++starS;
+        } else {
+            return false;
+        }
+    }
+    while (pi < pattern.size() && pattern[pi] == '*') ++pi;
+    return pi == pattern.size();
+}
+
+static std::string toLower(const std::string& str)
+{
+    std::string result = str;
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return result;
+}
+
+void ServerModule::registerSearchCommand()
+{
+    auto* decl = command::declareNode("search");
+    decl->at("pattern");
+    decl->at("root");
+    decl->at("key")->set("_short", "k");
+    decl->at("value")->set("_short", "v");
+    decl->at("path")->set("_short", "p");
+    decl->at("top")->set("_short", "n");
+    decl->at("ignore-case")->set("_short", "i");
+
+    command::reg("search", [](Node* ctx) -> Result {
+        auto a = command::args(ctx);
+
+        std::string pattern = a.string("pattern");
+        if (pattern.empty()) {
+            return Result::fail(Var("Usage: search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N]"));
+        }
+
+        std::string rootPath = a.string("root");
+        bool matchKey   = a.flag("key");
+        bool matchValue = a.flag("value");
+        bool matchPath  = a.flag("path");
+        bool ignoreCase = a.flag("ignore-case");
+        int  topN       = static_cast<int>(a.integer("top", 10));
+
+        if (!matchKey && !matchValue && !matchPath) matchKey = true;
+
+        // Normalize pattern for case-insensitive search
+        if (ignoreCase) pattern = toLower(pattern);
+
+        Node* root = (rootPath.empty() || rootPath == "/")
+            ? node::root()
+            : node::root()->find(rootPath);
+        if (!root) return Result::fail(Var("root not found: " + rootPath));
+
+        std::string rootPrefix = (root == node::root()) ? "" : root->path();
+        Var::ListV results;
+
+        std::function<void(Node*, const std::string&)> walk =
+            [&](Node* n, const std::string& currentPath) {
+                if (static_cast<int>(results.size()) >= topN) return;
+
+                for (int i = 0; i < n->count(); ++i) {
+                    if (static_cast<int>(results.size()) >= topN) return;
+                    Node* c = n->child(i);
+                    if (c->get().isCallable()) continue;
+
+                    std::string childPath = currentPath.empty()
+                        ? c->name() : currentPath + "/" + c->name();
+
+                    bool hit = false;
+                    if (matchKey) {
+                        std::string keyToMatch = ignoreCase ? toLower(c->name()) : c->name();
+                        if (keyToMatch.find(pattern) != std::string::npos) hit = true;
+                    }
+                    if (!hit && matchValue && !c->get().isNull()) {
+                        std::string valueToMatch = ignoreCase ? toLower(c->get().toString()) : c->get().toString();
+                        if (valueToMatch.find(pattern) != std::string::npos) hit = true;
+                    }
+                    if (!hit && matchPath) {
+                        std::string pathToMatch = ignoreCase ? toLower(childPath) : childPath;
+                        if (globMatch(pattern, pathToMatch)) hit = true;
+                    }
+
+                    if (hit) results.push_back(Var(childPath));
+                    walk(c, childPath);
+                }
+            };
+
+        walk(root, rootPrefix);
+        return Result::ok(Var(std::move(results)));
+    }, "search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N]");
 }
 
 void ServerModule::ready() {

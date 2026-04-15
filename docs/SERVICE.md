@@ -158,6 +158,16 @@ curl -X POST http://localhost:12000/api/cmd/ls \
   - `-f file`: load from server filesystem
   - `-i data`: import from inline string
 
+- `search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N]` - Fuzzy search node tree
+  - `pattern`: search string (substring match)
+  - `root`: subtree to search under (default: `/`)
+  - `--key` / `-k`: match node key names (default mode)
+  - `--value` / `-v`: match node string values
+  - `--path` / `-p`: match full path with glob (`*` = any sequence, `?` = single char)
+  - `--ignore-case` / `-i`: case-insensitive matching
+  - `--top N` / `-n N`: return at most N results (default: 10)
+  - Flags are not mutually exclusive; `--key --value` searches both
+
 Examples:
 ```bash
 # Save to file
@@ -175,6 +185,22 @@ curl -X POST http://localhost:12000/api/cmd/load \
 # Load inline
 curl -X POST http://localhost:12000/api/cmd/load \
   -d '{"args": ["json", "/config", "-i", "{\"key\":\"value\"}"]}'
+
+# Search for key names containing "port"
+curl -X POST http://localhost:12000/api/cmd/search \
+  -d '{"args": ["port", "/", "--top", "5"], "wait": true}'
+
+# Search for value "12000"
+curl -X POST http://localhost:12000/api/cmd/search \
+  -d '{"args": ["12000", "/", "--value"], "wait": true}'
+
+# Search for paths matching "*/runtime/port"
+curl -X POST http://localhost:12000/api/cmd/search \
+  -d '{"args": ["*/runtime/port", "/", "--path"], "wait": true}'
+
+# Search for "PORT" case-insensitively
+curl -X POST http://localhost:12000/api/cmd/search \
+  -d '{"args": ["PORT", "/", "--ignore-case"], "wait": true}'
 ```
 
 **Health check**
