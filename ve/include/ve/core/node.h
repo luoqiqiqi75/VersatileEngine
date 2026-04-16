@@ -287,7 +287,7 @@ public:
     template<typename ListT> Node* fromList(const ListT& l)
     {
         for (std::size_t i = 0; i < l.size(); i++) {
-            set(l.size() - i - 1, l[i]);
+            set(l.size() - i - 1, l[l.size() - i - 1]);
         }
         return set(get());
     }
