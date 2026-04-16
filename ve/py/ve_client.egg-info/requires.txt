@@ -1,0 +1,14 @@
+
+[all]
+requests>=2.25.0
+msgpack>=1.0.0
+websockets>=10.0
+
+[http]
+requests>=2.25.0
+
+[msgpack]
+msgpack>=1.0.0
+
+[ws]
+websockets>=10.0

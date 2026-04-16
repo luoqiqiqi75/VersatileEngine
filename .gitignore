@@ -15,6 +15,7 @@ local.properties
 
 # Log/OS Files
 *.log
+log/
 
 # Android Studio generated files and folders
 captures/
@@ -681,10 +682,10 @@ xcuserdata/
 mono_crash.*
 
 # Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
+#[Dd]ebug/
+#[Dd]ebugPublic/
+#[Rr]elease/
+#[Rr]eleases/
 # x64/
 # x86/
 #[Ww][Ii][Nn]32/
@@ -1052,15 +1053,15 @@ FodyWeavers.xsd
 
 *~
 *.autosave
-*.a
+# *.a
 *.core
 *.moc
 *.o
 *.obj
 *.orig
 *.rej
-*.so
-*.so.*
+# *.so
+# *.so.*
 *_pch.h.cpp
 *_resource.rc
 # *.qm
@@ -1153,6 +1154,7 @@ docs/internal/
 # node_modules/ 已在上方 VisualStudio 区覆盖（line ~945）
 # ------------------------------------------------------------
 js/packages/*/dist/
+ve/js/*/dist/
 js/.vite/
 js/packages/*/.vite/
 *.tsbuildinfo
@@ -1164,3 +1166,5 @@ CLAUDE.md
 AGENTS.md
 .cursorrules
 .cursor/
+.claude/
+*.d.ts.map

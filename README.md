@@ -1,13 +1,13 @@
-# Versatile Engine
+# VersatileEngine
 
 ```
  /\   /\ ___
  \ \ / /| __|
   \ v / | __|
-   \_/  |___|  VersatileEngine
+   \_/  |___|  VersatileEngine (aka VeryEasy)
 ```
 
-**Cross-domain, cross-language, cross-platform reactive data middleware**
+**A reactive data tree and glue layer for C++ systems**
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPLv3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/std/the-standard)
@@ -15,53 +15,100 @@
 
 ---
 
-> **v2.0 - Pure C++17 Core Complete**
->
-> The core layer (`libve`) is now a **pure C++17 implementation with zero Qt dependency**. It includes `ve::Var` (16-byte variant), `ve::Node` (reactive data tree with 535 unit tests), Command system (20+ built-in commands), Service layer (Terminal/HTTP/WebSocket/TCP Binary), Module lifecycle, and Entry orchestration. Qt/ROS/RTT adapters are optional.
+VersatileEngine (**VE**, aka **VeryEasy**) is a pure C++17 core plus a set of adapters and services built around one idea:
+**the running system should expose a single observable node tree instead of a pile of private state and ad hoc glue code**.
 
----
+VE is not meant to replace Qt, ROS, DDS, web stacks, or your application framework.
+It is meant to connect them through one inspectable model.
 
-## Introduction
+The nickname **VeryEasy** reflects the design philosophy: **99% configuration through JSON → Node tree, minimal C++ code**.
+Modules focus on business logic, not configuration plumbing. `ve.exe + config.json` gets you running without writing a single line of C++.
 
-VersatileEngine (**VE**) is a C++17 reactive data middleware framework that provides a **hierarchical, observable data tree** with cross-language/cross-process IPC capabilities.
+Detailed design lineage is in [docs/HISTORY.md](docs/HISTORY.md).
 
-Core philosophy: **"Everything is a node"** - all data is organized in a global tree. Modules read/write data via paths and respond to changes via signals, communicating indirectly through data nodes rather than direct coupling.
+## Why VE
 
-VE has been battle-tested in commercial projects across multiple domains:
-
-| Domain | Project | Period |
-|--------|---------|--------|
-| Industrial Robotics | RobotAssist (ROKAE) | 2015-2017 |
-| Humanoid Robotics | CyberOne, MozHMI (LCCR) | 2020-2024 |
-| Medical Imaging | Bezier (Surgical Navigation) | 2022-2023 |
-| Embedded HMI | PDS-HMI (Inspection System) | 2023 |
-| Web Frontend | MozHMI Web Console | 2024 |
-| Multi-protocol | MozHMI (MovaX 2.0) | 2025-present |
-
-## Features
-
-- **Reactive data tree** - `ve::Node` with `ve::Var` values, signal propagation (bubbling), and path addressing
-- **Rich signal system** - `NODE_CHANGED` (value), `NODE_ACTIVATED` (subtree bubbling), `NODE_ADDED`/`NODE_REMOVED` (child lifecycle)
-- **Command system** - `Step`/`Pipeline`/`Command` abstraction + 20+ built-in commands (`ls`/`get`/`set`/`json`/`find`/...)
-- **Service layer** - Terminal REPL (TCP 5061), HTTP API (8080), WebSocket push (8081), TCP Binary CBS (5065)
-- **Multiple serialization** - JSON (simdjson) / Binary (CBS) / Schema-based import/export
-- **Module lifecycle** - `NONE -> INIT -> READY -> DEINIT`, plugin loading, topological sort
-- **Event loop** - Asio-based `EventLoop` + `LoopRef` for cross-thread dispatch
-- **IPC communication** - CBS binary protocol (C++<->C++), WebSocket JSON (C++<->JS), DDS bridge (FastDDS)
-- **Cross-platform** - Windows / Linux / macOS, with crash capture & diagnostics
-- **High performance** - `child(index)` 590x faster, `iterator` 135x faster, `indexOf` 42x faster than Qt-based legacy
+- **Data tree as system bus**: `ve::Node` is both state storage and observation surface.
+- **Glue layer, not forced rewrite**: adapters translate existing systems into the node tree instead of imposing a new business framework.
+- **Same model for local and remote access**: C++, Terminal, HTTP, WebSocket, binary IPC, and DDS all talk to the same tree.
+- **Runtime-first debugging**: production processes can be inspected with terminal commands, HTTP, or WebSocket without custom debug tooling.
 
 ## Architecture
 
 ```
 +-----------------------------------------------------------------+
-|  Adapter Layer                                   cpp/ js/ py/    |
-|    cpp/qt/ (Qt/QML)  |  js/ (WebSocket/JS)  |  cpp/ros/ (DDS)  |
+|  Programs and Adapters                           qt/ ros/ rtt/   |
+|  Qt and QML | DDS and ROS | RTT and xcore | JS and tools        |
 +-----------------------------------------------------------------+
-|  Service Layer                                   core/service/   |
+|  Service Layer                                   ve/service/     |
+|  Terminal REPL | HTTP API | WebSocket push | TCP Binary IPC     |
++-----------------------------------------------------------------+
+|  Core Layer                              ve/ (pure C++17)       |
+|  Node | Var | Object | Command | Module | Entry | Loop          |
++-----------------------------------------------------------------+
+```
+
+## Distinctive Ideas
+
+### Data Tree as Bus
+
+All durable runtime state lives in a hierarchical tree. A node has:
+
+- a name
+- a value (`ve::Var`)
+- ordered children
+- change, add, remove, and bubble signals
+
+Modules do not need direct references to each other when they can agree on paths such as `ve/robot/state/power` or `browser/session/current`.
+
+### Glue Layer Instead of Framework Rewrite
+
+VE works best when each technology keeps doing what it is good at:
+
+- **Core C++** owns domain logic and deterministic runtime behavior.
+- **Qt and QML** own native desktop or embedded UI concerns.
+- **ROS and DDS** own robotics transport and distributed topics.
+- **Web clients** consume the same state through HTTP or WebSocket.
+
+The VE layer exists to map those worlds into one shared tree and one consistent set of commands.
+
+### One Runtime, Many Surfaces
+
+The same process can expose:
+
+- direct in-process C++ access through `ve::n()`
+- terminal debugging on TCP port `10000`
+- HTTP node inspection on port `12000`
+- WebSocket subscriptions on port `12100`
+- binary IPC on port `11000`
+
+That is the practical payoff of the architecture: the tree is not only a model, it is the runtime control surface.
+
+### Minimal Application Shape
+
+The smallest VE application is a normal `main()` plus configuration:
+
+```cpp
+#include <ve/entry.h>
+
+int main(int argc, char* argv[]) {
+    return ve::entry::exec(argc, argv);
+}
+```
+
+`ve::entry` loads configuration into the node tree, loads plugins, creates modules, enters the main loop, and shuts everything down in reverse order.
+
+## Architecture
+
+```
++-----------------------------------------------------------------+
+|  Ecosystem Layer                              qt/ ros/ rtt/      |
+|    qt/ (Qt/QML)  |  ve/js/ (WebSocket/JS)  |  ros/ (DDS)       |
++-----------------------------------------------------------------+
+|  Service Layer                                   ve/service/     |
 |    Terminal (TCP)  |  HTTP  |  WebSocket  |  TCP Binary (CBS)   |
 +-----------------------------------------------------------------+
-|  Core Layer                           core/ (pure C++17, no Qt) |
+|  Core Layer                              ve/ (pure C++17, no Qt) |
 |    ve::Node (data tree)    |  ve::Var (16B variant)             |
 |    ve::Command (20+ cmds)  |  ve::Module (lifecycle)            |
 |    ve::Object (signal/slot)|  ve::Entry (orchestration)         |
@@ -107,10 +154,10 @@ ve::n("/robot")
 
 - **Compiler**: C++17 capable (MSVC 2019+, GCC 7+, Clang 5+)
 - **CMake**: 3.15 or later
-- **Qt** (optional): 5.12+ or 6.x (only needed for `cpp/qt/` adapter modules)
-- **FastDDS** (optional): fastrtps + fastcdr (only needed for `cpp/ros/` DDS adapter)
+- **Qt** (optional): 5.12+ or 6.x (only needed for `qt/` modules)
+- **FastDDS** (optional): fastrtps + fastcdr (only needed for `ros/` DDS adapter)
 
-> All other dependencies (asio2, asio, spdlog, fmt, cereal, yaml-cpp, pugixml, nlohmann/json) are bundled in `deps/` and require no separate installation.
+> All other dependencies (asio2, asio, spdlog, fmt, cereal, simdjson) are bundled in `deps/` and require no separate installation.
 
 ### Building
 
@@ -132,10 +179,12 @@ cmake --build build_test --target ve_test --config Debug
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `VE_BUILD_TEST` | OFF | Build `core/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
-| `VE_BUILD_QT` | ON | Build `cpp/qt/` -> `libveqt` (needs Qt5/Qt6) |
-| `VE_BUILD_DDS` | OFF | Build `cpp/ros/` -> `libvedds` (needs FastDDS) |
-| `VE_BUILD_RTT` | ON | Build `cpp/rtt/` -> `libvertt` (pure C++) |
+| `VE_BUILD_TEST` | ON | Build `ve/test/` -> `ve_test` executable (pure C++, no deps beyond libve) |
+| `VE_BUILD_EXAMPLE` | ON | Build example module DLLs (ve_example, etc.) |
+| `VE_BUILD_QT` | ON | Build `qt/` -> `libveqt` (needs Qt5/Qt6) |
+| `VE_BUILD_DDS` | ON | Build `ros/` -> `libvedds` (needs FastDDS) |
+| `VE_BUILD_RTT` | ON | Build `rtt/` -> `libvertt` (pure C++) |
+| `VE_INSTALL` | OFF | Install VE library, headers and CMake config |
 
 Local per-developer overrides go in `cmake/_local.cmake` (gitignored):
 
@@ -146,12 +195,29 @@ set(VE_BUILD_QT   OFF CACHE BOOL "" FORCE)
 
 ### Integration
 
-As a subdirectory:
+**As a subdirectory** (default: no install; parent builds and links VE in-tree):
 
 ```cmake
 add_subdirectory(path/to/VersatileEngine)
-target_link_libraries(your_target PRIVATE VE_CORE_LIBRARY)
+target_link_libraries(your_target PRIVATE ve)  # and optionally vedds if VE_BUILD_DDS=ON
 ```
+
+**Install and use via find_package** (set `VE_INSTALL=ON` when building VE as top-level):
+
+```bash
+cd VersatileEngine && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DVE_INSTALL=ON
+cmake --build . && cmake --install .
+```
+
+Then in another project:
+
+```cmake
+find_package(VersatileEngine REQUIRED)
+target_link_libraries(myapp PRIVATE VersatileEngine::ve)
+```
+
+**`VE_INSTALL`** defaults to **OFF** (friendly to `add_subdirectory`). Set to ON when you want to install VE from a top-level build.
 
 ## Usage Examples
 
@@ -179,8 +245,8 @@ state->connect(ve::Node::NODE_ACTIVATED, myObj, [](const ve::Var& args) {
     // triggered when any descendant changes
 });
 
-// Dot-path accessor (alternative)
-auto* speed = ve::d("robot.config.speed");
+// Slash-path accessor (shorthand)
+auto* speed = ve::n("robot/config/speed");
 speed->set(ve::Var(1.5));
 ```
 
@@ -216,11 +282,21 @@ VE_REGISTER_MODULE(my_module, MyModule)
 #include <ve/entry.h>
 
 int main(int argc, char* argv[]) {
-    ve::entry::setup("config.yaml");
+    return ve::entry::exec(argc, argv);
+}
+```
+
+Or step-by-step:
+
+```cpp
+#include <ve/entry.h>
+
+int main(int argc, char* argv[]) {
+    ve::entry::setup("ve.json");
     ve::entry::init();
-    ve::entry::run();    // blocks on event loop
+    int code = ve::entry::run();    // blocks on event loop
     ve::entry::deinit();
-    return 0;
+    return code;
 }
 ```
 
@@ -229,8 +305,8 @@ int main(int argc, char* argv[]) {
 Connect to the built-in terminal via TCP:
 
 ```bash
-# netcat / telnet to port 5061
-nc localhost 5061
+# netcat / telnet to port 10000
+nc localhost 10000
 
 ve> ls /robot
 state/
@@ -248,52 +324,63 @@ OK
 
 ```
 VersatileEngine/
-+-- core/                       Pure C++17 core -> libve (shared library)
++-- ve/                         VE framework (pure C++17 core -> libve + JS)
 |   +-- include/ve/             Public headers
 |   |   +-- global.h            Global macros (VE_API, VE_AUTO_RUN, ...)
+|   |   +-- entry.h             Entry lifecycle (setup/init/run/deinit), plugin, version
 |   |   +-- core/               Core API headers
-|   |   |   +-- base.h          Object, Manager, containers, type traits
+|   |   |   +-- base.h          Containers, type traits, KVAccessor, Manager
+|   |   |   +-- object.h        Object (signal/slot, thread-safe, parent/child)
 |   |   |   +-- var.h           Var (16B variant, 10 types + CUSTOM)
 |   |   |   +-- node.h          Node (reactive data tree)
-|   |   |   +-- command.h       Command system (Step, Pipeline, Command)
-|   |   |   +-- data.h          AnyData<T>, DataManager
+|   |   |   +-- schema.h        Schema definition + Node serialization
+|   |   |   +-- step.h          Step - single execution unit
+|   |   |   +-- pipeline.h      Pipeline - state machine for Step chains
+|   |   |   +-- command.h       Command system (named Step sequences + built-in commands)
 |   |   |   +-- factory.h       Factory<Sig>, Pool<T>, Pooled<T>
 |   |   |   +-- module.h        Module lifecycle
 |   |   |   +-- loop.h          EventLoop, LoopRef
-|   |   |   +-- log.h           Logging (spdlog backend)
 |   |   |   +-- convert.h       Convert<T> extension point
-|   |   |   +-- rescue.h        Crash handler API
-|   |   |   +-- impl/           Hash functions, OrderedHashMap, JSON, Binary
-|   |   +-- service/            Terminal, HTTP, WebSocket, TCP Binary servers
-|   |   +-- entry.h             Entry lifecycle + plugin + version
+|   |   |   +-- log.h           Logging (spdlog backend)
+|   |   |   +-- impl/           Hash functions, OrderedHashMap, SmallVector, JSON, Binary
+|   |   +-- service/            Terminal, HTTP, Binary TCP services, crash handler
 |   +-- src/                    Implementation files
+|   |   +-- core/               Core implementations
+|   |   +-- module/             Internal modules (core, terminal, http, ws, tcp_bin)
+|   |   +-- service/            Service implementations
 |   +-- platform/               Crash handlers: win/ linux/ unsupported/
-|   +-- test/                   535 unit tests (custom framework, pure C++)
+|   +-- test/                   513 unit tests (custom framework, pure C++)
+|   +-- js/                     JavaScript deliverables
+|   |   +-- veservice.js        Standalone vanilla WS client
+|   |   +-- ve-sdk/             TypeScript SDK (HTTP + WS)
+|   |   +-- ve-app/             React admin UI (Node inspector)
+|   +-- program/                ve.exe entry process + module DLLs
+|       +-- main.cpp            int main() { return ve::entry::exec(argc, argv); }
+|       +-- ve.json             Default configuration
+|       +-- example/            ve_example.dll (ExampleModule)
 |
-+-- cpp/qt/                     Qt adapter modules (optional, needs Qt5/6)
-|   +-- imol/                   Legacy data tree (imol::ModuleObject)
-|   +-- veQtBase/               Qt core utilities
-|   +-- veTerminal/             Terminal widget
-|   +-- veService/              IPC layer (CBS, XService)
-|   +-- veQml/                  QML bridge (QuickNode)
-|   +-- veExample/              Demo application
++-- qt/                         VE + Qt ecosystem (optional, needs Qt5/6)
+|   +-- include/
+|   |   +-- ve/qt/              Qt-specific public headers (qt_entry, var_qt, node_qobject, qml/, ...)
+|   |   +-- imol/               IMOL data tree API and bridge headers
+|   +-- src/                    base/, terminal/, service/, qml/
+|   +-- program/
+|       +-- browser/            veqtbrowser.dll (BrowserModule)
 |
-+-- cpp/rtt/                    Pure C++ RTT adapter (xcore-derived)
++-- rtt/                        VE + RTT (pure C++, xcore-derived)
 |   +-- veRttCore/              CommandObject, Procedure, CIP, LoopObject
 |   +-- XService/               XService server
 |
-+-- cpp/ros/                    DDS adapter (optional, needs FastDDS)
++-- ros/                        VE + ROS/DDS (optional, needs FastDDS)
 |   +-- veFastDDS/              Participant, Topic, Service, Bridge
+|   +-- veRos/                  ROS integration: command_service, data, ros_module
 |
 +-- deps/                       Bundled dependencies
 |   +-- asio2/                  asio2 + asio + spdlog + fmt + cereal
-|   +-- yaml-cpp/               yaml-cpp 0.9 (static)
-|   +-- pugixml/                pugixml 1.15 (static)
-|   +-- nlohmann/               nlohmann/json (header-only)
+|   +-- simdjson/               simdjson (high-performance JSON parser)
 |
 +-- cmake/                      CMake utilities
 +-- docs/                       Documentation
-+-- js/                         JavaScript/TypeScript packages
 +-- CMakeLists.txt              Top-level build configuration
 ```
 
@@ -303,15 +390,15 @@ VersatileEngine/
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `ve::n("/path")` | Global slash-path accessor (auto-creates) | `ve::n("/robot/state/power")` |
-| `ve::d("dot.path")` | Global dot-path accessor | `ve::d("robot.state.power")` |
+| `ve::n("path")` | Global slash-path accessor that creates missing nodes | `ve::n("robot/state/power")` |
 | `node::root()` | Global root node | `ve::node::root()` |
+| `find(path)` | Read-only path lookup | `node->find("state/power")` |
+| `at(path)` | Path lookup with creation | `node->at("state/power")` |
+| `child(name, overlap)` | Get named child by overlap index | `node->child("item", 1)` |
+| `child(index)` | Get child by insertion order index | `node->child(0)` |
 | `parent(level)` | Navigate up N levels | `node->parent(2)` |
-| `child(name)` | Get child by name | `node->child("power")` |
-| `child(index)` | Get child by index | `node->child(0)` |
-| `sibling(offset)` | Sibling node (+/-) | `node->sibling(1)` |
-| `resolve(path)` | Relative path navigation | `node->resolve("state/power")` |
-| `ensure(path)` | Resolve, creating if needed | `node->ensure("state/power")` |
+| `sibling(offset)` | Navigate to neighbor node | `node->sibling(1)` |
+| `copy(other)` | Sync value and subtree from another node | `node->copy(template_node)` |
 | `path()` | Full path from root | `node->path()` |
 
 ### Node Signals
@@ -343,15 +430,22 @@ VersatileEngine/
 
 | Service | Port | Protocol | Description |
 |---------|------|----------|-------------|
-| Terminal | 5061 | TCP text | REPL with tab completion |
-| HTTP | 8080 | HTTP | REST-like Node access |
-| WebSocket | 8081 | WS JSON | Real-time Node change push |
-| TCP Binary | 5065 | CBS | High-efficiency binary IPC |
+| Terminal | 10000 | TCP text | REPL with tab completion |
+| HTTP | 12000 | HTTP | REST-like Node access + static files |
+| WebSocket | 12100 | WS JSON | Real-time Node change push |
+| TCP Binary | 11000 | CBS | High-efficiency binary IPC |
+
+Port rule: **first three digits** = service family (fixed); **last two** increment on bind failure. See [docs/SERVICE.md](docs/SERVICE.md) (*Port numbering*).
 
 ## Documentation
 
-- [Architecture Overview & Evolution Plan](docs/ARCHITECTURE.md)
-- [Core Module Documentation](docs/core/README.md)
+- [Service Reference](docs/SERVICE.md)
+- [Design Guide](docs/DESIGN.md)
+- [Core API Guide](docs/CORE.md)
+- [Coding Style](docs/CODING_STYLE.md)
+- [History and Design Lineage](docs/HISTORY.md)
+- [HTTP and curl Debugging](docs/local-http-curl-debug.md)
+- [Cursor MCP Quick Start](docs/cursor-mcp-usage.md)
 
 ## License
 

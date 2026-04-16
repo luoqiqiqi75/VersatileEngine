@@ -1,0 +1,60 @@
+{
+  "ve": {
+    "entry": {
+      "verbose": false,
+      "plugins": []
+    },
+    "core": {
+      "config": {
+        "log": { "level": "info" }
+      }
+    },
+    "client": {
+      "terminal": {
+        "stdio": {
+          "enabled": false
+        },
+        "tcp": {
+          "enabled": false,
+          "config": {
+            "host": "127.0.0.1",
+            "port": 10000
+          }
+        }
+      }
+    },
+    "server": {
+      "priority": 50,
+      "node": {
+        "http": {
+          "enable": true,
+          "config": { "port": 12000 }
+        },
+        "ws": {
+          "enable": true,
+          "config": { "port": 12100 }
+        },
+        "tcp": {
+          "enable": true,
+          "config": { "port": 12200 }
+        },
+        "udp": {
+          "enable": true,
+          "config": { "port": 12300 }
+        }
+      },
+      "terminal": {
+        "repl": {
+          "enable": true,
+          "config": { "port": 10000 }
+        }
+      },
+      "bin": {
+        "tcp": {
+          "enable": true,
+          "config": { "port": 11000 }
+        }
+      }
+    }
+  }
+}

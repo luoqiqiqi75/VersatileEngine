@@ -1,0 +1,91 @@
+Metadata-Version: 2.4
+Name: ve-client
+Version: 0.3.0
+Summary: VersatileEngine Python client library
+Author: VersatileEngine Contributors
+License: LGPL-3.0
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Provides-Extra: http
+Requires-Dist: requests>=2.25.0; extra == "http"
+Provides-Extra: msgpack
+Requires-Dist: msgpack>=1.0.0; extra == "msgpack"
+Provides-Extra: ws
+Requires-Dist: websockets>=10.0; extra == "ws"
+Provides-Extra: all
+Requires-Dist: requests>=2.25.0; extra == "all"
+Requires-Dist: msgpack>=1.0.0; extra == "all"
+Requires-Dist: websockets>=10.0; extra == "all"
+
+# VersatileEngine Python Client
+
+Python client library for VersatileEngine JSON-RPC and MessagePack IPC.
+
+## Installation
+
+```bash
+pip install requests websockets
+```
+
+## Usage
+
+### HTTP JSON-RPC Client
+
+```python
+from ve_client import VeJsonRpcClient
+
+client = VeJsonRpcClient("http://localhost:5070")
+
+# Get node value
+result = client.node_get("/config")
+print(result.value)
+
+# Set node value
+client.node_set("/test", 42)
+
+# List children
+children = client.node_list("/")
+print(children)
+
+# Run command
+result = client.command_run("ls", {"path": "/"})
+```
+
+### WebSocket Client (Async)
+
+```python
+import asyncio
+from ve_client.jsonrpc_ws import VeJsonRpcWsClient
+
+async def main():
+    client = VeJsonRpcWsClient("ws://localhost:5071")
+    await client.connect()
+    
+    # Subscribe to changes
+    def on_change(value):
+        print(f"Value changed: {value}")
+    
+    await client.subscribe("/config", on_change)
+    
+    # Keep running
+    await asyncio.sleep(60)
+    
+    await client.disconnect()
+
+asyncio.run(main())
+```
+
+## Examples
+
+See `examples/test_client.py` for complete examples.
+
+```bash
+cd ve/py
+python examples/test_client.py
+```
+
+## Requirements
+
+- Python 3.7+
+- requests
+- websockets

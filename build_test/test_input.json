@@ -1,1 +1,0 @@
-﻿{"robot":{"name":"arm1","joints":3,"enabled":true},"sensors":[{"type":"lidar","hz":10},{"type":"camera","hz":30}]}
