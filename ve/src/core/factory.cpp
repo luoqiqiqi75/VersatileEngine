@@ -7,6 +7,7 @@ namespace ve {
 struct Factory::Private
 {
     Node* root = nullptr;  // /ve/factory/{name}
+    Strings keys;          // registered keys (for fast enumeration)
 };
 
 static std::string normalizeKey(const std::string& key)
@@ -27,12 +28,19 @@ Factory::~Factory() = default;
 void Factory::reg(const std::string& key, Var callable,
                   const std::string& help, LoopRef lr)
 {
-    auto* nd = _p->root->at(normalizeKey(key));
+    auto nkey = normalizeKey(key);
+    auto* nd = _p->root->at(nkey);
     nd->set(std::move(callable));
     if (!help.empty())
         nd->at("help")->set(Var(help));
     if (lr)
         nd->at("loop")->set(Var::custom(std::move(lr)));
+
+    // Track registered key
+    auto it = std::find(_p->keys.begin(), _p->keys.end(), nkey);
+    if (it == _p->keys.end()) {
+        _p->keys.push_back(nkey);
+    }
 }
 
 Node* Factory::node(const std::string& key) const
@@ -47,14 +55,26 @@ Node* Factory::ensureNode(const std::string& key)
 
 void Factory::erase(const std::string& key)
 {
-    auto* nd = node(key);
-    if (nd && nd->parent())
+    auto nkey = normalizeKey(key);
+    auto* nd = node(nkey);
+    if (nd && nd->parent()) {
         nd->parent()->remove(nd);
+        // Remove from keys list
+        auto it = std::find(_p->keys.begin(), _p->keys.end(), nkey);
+        if (it != _p->keys.end()) {
+            _p->keys.erase(it);
+        }
+    }
 }
 
 Node* Factory::root() const
 {
     return _p->root;
+}
+
+Strings Factory::keys() const
+{
+    return _p->keys;
 }
 
 // ============================================================================
@@ -80,25 +100,7 @@ Node* root()
 
 Strings keys(const std::string& factory_name)
 {
-    Strings result;
-    auto* froot = get(factory_name).root();
-    if (!froot) return result;
-
-    std::function<void(Node*, const std::string&)> collect = [&](Node* n, const std::string& prefix) {
-        if (!n) return;
-        // Registered entry: callable value, or multi-step (has "steps" child).
-        // Stop recursing — children are implementation detail of this entry.
-        if (!prefix.empty() && (n->get().isCallable() || n->find("steps", false))) {
-            result.push_back(prefix);
-            return;
-        }
-        for (auto* child : *n) {
-            if (!child || child->name().empty()) continue;
-            collect(child, prefix.empty() ? child->name() : prefix + "/" + child->name());
-        }
-    };
-    collect(froot, "");
-    return result;
+    return get(factory_name).keys();
 }
 
 } // namespace factory

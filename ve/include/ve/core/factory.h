@@ -219,6 +219,9 @@ public:
     // The root node of this factory (/ve/factory/{name}).
     Node* root() const;
 
+    // All registered keys in this factory.
+    Strings keys() const;
+
     // Typed call: pack params into Var, invoke, unpack result.
     // Pointer params are cast to void*; pointer return types use toPointer().
     // Fallback: RetT{} when key not found.
