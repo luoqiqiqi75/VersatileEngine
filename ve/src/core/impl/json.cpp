@@ -12,6 +12,7 @@ namespace ve::impl::json {
 // Stringify helpers (pure C++)
 // ============================================================================
 static void nodeToJsonImpl(const Node* node, std::string& out, const schema::ExportOptions& options, int depth);
+static void nodeToJsonImplWithDepth(const Node* node, std::string& out, const schema::ExportOptions& options, int depth, int maxDepth, int currentDepth);
 
 static void escape(const std::string& s, std::string& out)
 {
@@ -201,6 +202,115 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const schema::Exp
     out += pad + "}";
 }
 
+static void nodeToJsonImplWithDepth(const Node* node, std::string& out, const schema::ExportOptions& options, int depth, int maxDepth, int currentDepth)
+{
+    const int indent = options.indent;
+    std::string pad(depth * indent, ' ');
+    std::string pad1((depth + 1) * indent, ' ');
+
+    auto all_children = node->children();
+    Vector<const Node*> visible_children;
+    visible_children.reserve(all_children.sizeAsInt());
+    for (auto* child : all_children) {
+        if (!isIgnoredChild(child, options))
+            visible_children.push_back(child);
+    }
+
+    const int nch = visible_children.sizeAsInt();
+
+    // Depth limit reached: output truncation marker
+    if (maxDepth >= 0 && currentDepth >= maxDepth) {
+        if (nch == 0) {
+            if (!node->get().isNull()) {
+                varToJson(node->get(), out);
+            } else {
+                out += "null";
+            }
+        } else {
+            out += "\"...\"";
+        }
+        return;
+    }
+
+    if (nch == 0) {
+        if (!node->get().isNull()) {
+            varToJson(node->get(), out);
+        } else {
+            out += "null";
+        }
+        return;
+    }
+
+    // First child has empty name => JSON array
+    if (visible_children[0]->name().empty()) {
+        out += "[\n";
+        int i = 0;
+        for (auto* c : visible_children) {
+            out += pad1;
+            nodeToJsonImplWithDepth(c, out, options, depth + 1, maxDepth, currentDepth + 1);
+            if (++i < nch) {
+                out += ",";
+            }
+            out += "\n";
+        }
+        out += pad + "]";
+        return;
+    }
+
+    const bool hasVal = !node->get().isNull();
+    out += "{\n";
+    Strings names;
+    Hash<Vector<const Node*>> named_groups;
+    Vector<const Node*> anonymous_children;
+    Hash<char> seen;
+    for (auto* child : visible_children) {
+        if (child->name().empty()) {
+            anonymous_children.push_back(child);
+            continue;
+        }
+        if (!seen.count(child->name())) {
+            seen[child->name()] = 0;
+            names.push_back(child->name());
+        }
+        named_groups[child->name()].push_back(child);
+    }
+
+    const int anonCnt = anonymous_children.sizeAsInt();
+    int fieldIdx = 0;
+    int totalFields = (int)names.size() + (anonCnt > 0 ? 1 : 0) + (hasVal ? 1 : 0);
+
+    if (hasVal) {
+        out += pad1 + "\"_value\": ";
+        varToJson(node->get(), out);
+        if (++fieldIdx < totalFields) out += ",";
+        out += "\n";
+    }
+
+    for (auto& nm : names) {
+        auto& group = named_groups[nm];
+        out += pad1 + "\"";
+        escape(nm, out);
+        out += "\": ";
+        nodeToJsonImplWithDepth(group[0], out, options, depth + 1, maxDepth, currentDepth + 1);
+        if (++fieldIdx < totalFields) out += ",";
+        out += "\n";
+    }
+
+    if (anonCnt > 0) {
+        out += pad1 + "\"\": [\n";
+        std::string pad2((depth + 2) * indent, ' ');
+        for (int i = 0; i < anonCnt; ++i) {
+            out += pad2;
+            nodeToJsonImplWithDepth(anonymous_children[i], out, options, depth + 2, maxDepth, currentDepth + 1);
+            if (i + 1 < anonCnt) out += ",";
+            out += "\n";
+        }
+        out += pad1 + "]\n";
+    }
+
+    out += pad + "}";
+}
+
 // ============================================================================
 // Public stringify API
 // ============================================================================
@@ -225,6 +335,16 @@ std::string exportTree(const Node* node, const schema::ExportOptions& options)
     std::string out;
     out.reserve(256);
     nodeToJsonImpl(node, out, options, 0);
+    out += "\n";
+    return out;
+}
+
+std::string exportTree(const Node* node, int maxDepth, const schema::ExportOptions& options)
+{
+    if (!node) return "null";
+    std::string out;
+    out.reserve(256);
+    nodeToJsonImplWithDepth(node, out, options, 0, maxDepth, 0);
     out += "\n";
     return out;
 }

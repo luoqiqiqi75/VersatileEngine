@@ -329,6 +329,6 @@ template<typename T1, typename T2, typename... Ts> std::string path(const T1& t1
 
 }
 
-VE_API Node* n(const std::string& path);
+VE_API Node* n(const std::string& path, bool auto_create = true);
 
 } // namespace ve

@@ -1,12 +1,16 @@
 import type {
-  HealthResponse,
-  NodeResponse,
-  NodeSetResponse,
-  TreeNode,
-  TreeImportResponse,
-  VarValue,
   CommandListResponse,
   CommandRunResponse,
+  HealthResponse,
+  NodeListResponse,
+  NodeResponse,
+  NodeSetResponse,
+  TreeImportResponse,
+  TreeNode,
+  VarValue,
+  VeErrorReply,
+  VeReply,
+  VeRequest,
 } from './types';
 
 export class VeHttpClient {
@@ -16,93 +20,119 @@ export class VeHttpClient {
     this.base = base.replace(/\/$/, '');
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private atUrl(path = ''): string {
+    const normalized = path.replace(/^\/+/, '');
+    return normalized ? `/at/${normalized}` : '/at';
+  }
+
+  private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${this.base}${path}`, init);
+    const body = await res.text();
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`HTTP ${res.status}: ${body}`);
+      throw new Error(`HTTP ${res.status} ${path}: ${body}`);
     }
-    return res.json();
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      throw new Error(`Invalid JSON from ${path}: ${body}`);
+    }
   }
 
   private async requestText(path: string, init?: RequestInit): Promise<string> {
     const res = await fetch(`${this.base}${path}`, init);
+    const body = await res.text();
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`HTTP ${res.status}: ${body}`);
+      throw new Error(`HTTP ${res.status} ${path}: ${body}`);
     }
-    return res.text();
+    return body;
+  }
+
+  private unwrap<T>(reply: VeReply<T>): T {
+    if (!reply.ok) {
+      const err = reply as VeErrorReply;
+      throw new Error(`${err.code}: ${err.error}`);
+    }
+    if ('accepted' in reply && reply.accepted) {
+      throw new Error(`Request accepted asynchronously (task_id=${reply.task_id})`);
+    }
+    return reply.data;
+  }
+
+  async call<T = VarValue>(op: string, payload: Omit<VeRequest, 'op'> = {}): Promise<VeReply<T>> {
+    return this.requestJson<VeReply<T>>('/ve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, ...payload }),
+    });
   }
 
   async health(): Promise<HealthResponse> {
-    return this.request('/health');
+    return this.requestJson('/health');
   }
 
-  /** GET /api/cmd — registered command names and help text */
-  async listCommands(): Promise<CommandListResponse> {
-    return this.request('/api/cmd');
+  async getNode(path = '', options: { meta?: boolean; depth?: number } = {}): Promise<NodeResponse> {
+    return this.unwrap(await this.call<NodeResponse>('node.get', {
+      path,
+      meta: options.meta,
+      depth: options.depth,
+    }));
   }
 
-  /**
-   * POST /api/cmd/{cmdKey} — run a ve::command (e.g. save, load).
-   * Default wait false → may return 202 { ok, accepted } when execution is async on main loop.
-   * Pass wait: true to block until the pipeline finishes (same worker; avoid on HTTP from hot paths if possible).
-   */
-  async runCommand(
-    cmdKey: string,
-    body: { args?: VarValue[]; wait?: boolean; id?: VarValue } = {},
-  ): Promise<CommandRunResponse> {
-    const key = encodeURIComponent(cmdKey.replace(/^\/+/, ''));
-    return this.request(`/api/cmd/${key}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  }
-
-  async getNode(path = ''): Promise<NodeResponse> {
-    const p = path ? `/${path}` : '';
-    return this.request(`/api/node${p}`);
+  async listNodes(path = '', meta = false): Promise<NodeListResponse> {
+    return this.unwrap(await this.call<NodeListResponse>('node.list', { path, meta }));
   }
 
   async setNode(path: string, value: VarValue): Promise<NodeSetResponse> {
-    return this.request(`/api/node/${path}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(value),
-    });
+    return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
   }
 
-  /** POST /api/node/{path} — fire NODE_CHANGED on the node. */
+  async removeNode(path: string): Promise<NodeSetResponse> {
+    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
+  }
+
   async triggerNode(path: string): Promise<NodeSetResponse> {
-    return this.request(`/api/node/${path}`, {
-      method: 'POST',
-    });
+    return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
   }
 
-  async getTree(path = ''): Promise<TreeNode> {
-    const p = path ? `/${path}` : '';
-    return this.request(`/api/tree${p}`);
+  async getTree(path = '', depth = -1): Promise<TreeNode> {
+    const data = await this.getNode(path, { depth });
+    return (data.tree ?? data.value) as TreeNode;
   }
 
   async getChildren(path = ''): Promise<string[]> {
-    const p = path ? `/${path}` : '';
-    return this.request(`/api/children${p}`);
+    const data = await this.listNodes(path);
+    return data.children.map((child) => child.name);
   }
 
-  /** Export subtree as raw JSON string (GET /api/tree) */
-  async exportTree(path = ''): Promise<string> {
-    const p = path ? `/${path}` : '';
-    return this.requestText(`/api/tree${p}`);
+  async exportTree(path = '', depth = -1): Promise<string> {
+    if (depth < 0) {
+      return this.requestText(this.atUrl(path));
+    }
+    const data = await this.getNode(path, { depth });
+    return JSON.stringify(data.tree ?? null);
   }
 
-  /** Import JSON into subtree (POST /api/tree) */
   async importTree(path: string, json: string): Promise<TreeImportResponse> {
-    const p = path ? `/${path}` : '';
-    return this.request(`/api/tree${p}`, {
-      method: 'POST',
+    return this.requestJson<TreeImportResponse>(this.atUrl(path), {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: json,
+    });
+  }
+
+  async listCommands(): Promise<CommandListResponse> {
+    return this.unwrap(await this.call<CommandListResponse>('command.list'));
+  }
+
+  async runCommand(
+    cmdKey: string,
+    body: { args?: VarValue; wait?: boolean; id?: VarValue } = {},
+  ): Promise<CommandRunResponse> {
+    return this.call<VarValue>('command.run', {
+      name: cmdKey,
+      args: body.args,
+      wait: body.wait,
+      id: body.id,
     });
   }
 }

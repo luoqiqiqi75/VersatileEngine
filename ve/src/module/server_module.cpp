@@ -361,13 +361,15 @@ void ServerModule::registerSearchCommand()
     decl->at("path")->set("_short", "p");
     decl->at("top")->set("_short", "n");
     decl->at("ignore-case")->set("_short", "i");
+    decl->at("with-value")->set("_short", "w");
+    decl->at("leaf-only")->set("_short", "l");
 
     command::reg("search", [](Node* ctx) -> Result {
         auto a = command::args(ctx);
 
         std::string pattern = a.string("pattern");
         if (pattern.empty()) {
-            return Result::fail(Var("Usage: search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N]"));
+            return Result::fail(Var("Usage: search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N] [--with-value] [--leaf-only]"));
         }
 
         std::string rootPath = a.string("root");
@@ -375,11 +377,12 @@ void ServerModule::registerSearchCommand()
         bool matchValue = a.flag("value");
         bool matchPath  = a.flag("path");
         bool ignoreCase = a.flag("ignore-case");
+        bool withValue  = a.flag("with-value");
+        bool leafOnly   = a.flag("leaf-only");
         int  topN       = static_cast<int>(a.integer("top", 10));
 
         if (!matchKey && !matchValue && !matchPath) matchKey = true;
 
-        // Normalize pattern for case-insensitive search
         if (ignoreCase) pattern = toLower(pattern);
 
         Node* root = (rootPath.empty() || rootPath == "/")
@@ -416,14 +419,25 @@ void ServerModule::registerSearchCommand()
                         if (globMatch(pattern, pathToMatch)) hit = true;
                     }
 
-                    if (hit) results.push_back(Var(childPath));
+                    if (hit) {
+                        if (leafOnly && c->count() > 0) {
+                            // skip non-leaf
+                        } else if (withValue) {
+                            Var::DictV item;
+                            item["path"] = Var(childPath);
+                            item["value"] = c->get();
+                            results.push_back(Var(std::move(item)));
+                        } else {
+                            results.push_back(Var(childPath));
+                        }
+                    }
                     walk(c, childPath);
                 }
             };
 
         walk(root, rootPrefix);
         return Result::ok(Var(std::move(results)));
-    }, "search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N]");
+    }, "search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N] [--with-value] [--leaf-only]");
 }
 
 void ServerModule::ready() {

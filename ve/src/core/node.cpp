@@ -858,9 +858,9 @@ Node* root() { return &basic::_t_static_var_helper<Node>::var; }
 
 }
 
-Node* n(const std::string& path)
+Node* n(const std::string& path, bool auto_create)
 {
-    return node::root()->at(path);
+    return auto_create ? node::root()->at(path) : node::root()->find(path);
 }
 
 // ============================================================================

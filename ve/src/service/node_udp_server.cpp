@@ -1,18 +1,9 @@
 // node_udp_server.cpp — ve::service::NodeUdpServer
-//
-// JSON text protocol over UDP, one JSON object per datagram.
-// Same command format as NodeTcpServer:
-//   {"cmd":"get","path":"...","id":1}
-//   {"cmd":"set","path":"...","value":...,"id":1}
-//
-// Stateless - no subscribe support (UDP has no persistent connection).
-
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
-#include "ve/core/var.h"
-#include "ve/core/command.h"
 #include "ve/core/schema.h"
-#include "ve/core/log.h"
+#include "node_protocol.h"
+#include "node_task_service.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -23,26 +14,35 @@
 #pragma warning(pop)
 #endif
 
+#include <memory>
+#include <string>
+
 namespace ve {
 namespace service {
 
-// Reuse from node_tcp_server.cpp
-extern std::string handleNodeJsonCmd(Node* root, Node* reqNode);
+static const schema::ExportOptions compactJson{0};
 
-// ============================================================================
-// Private
-// ============================================================================
+static std::string toJson(Node& n)
+{
+    return schema::exportAs<schema::JsonS>(&n, compactJson);
+}
+
+static void fillError(Node* rep, const std::string& code, const std::string& error)
+{
+    rep->clear();
+    rep->set(Var());
+    rep->set("ok", false);
+    rep->set("code", code);
+    rep->set("error", error);
+}
 
 struct NodeUdpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12300;
     asio2::udp_server server;
+    std::unique_ptr<NodeTaskService> taskSvc;
 };
-
-// ============================================================================
-// NodeUdpServer
-// ============================================================================
 
 NodeUdpServer::NodeUdpServer(Node* root, uint16_t port)
     : _p(std::make_unique<Private>())
@@ -58,17 +58,25 @@ NodeUdpServer::~NodeUdpServer()
 
 bool NodeUdpServer::start()
 {
+    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
+
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         std::string msg(data);
-        if (msg.empty()) return;
+        if (msg.empty()) {
+            return;
+        }
 
         Node req("req");
         if (!schema::importAs<schema::JsonS>(&req, msg)) {
-            session_ptr->async_send("{\"type\":\"error\",\"msg\":\"invalid json\"}");
+            Node reply("rep");
+            fillError(&reply, "invalid_request", "invalid JSON request");
+            session_ptr->async_send(toJson(reply));
             return;
         }
-        std::string response = handleNodeJsonCmd(_p->root, &req);
-        session_ptr->async_send(response);
+
+        Node reply("rep");
+        dispatchNodeProtocol(_p->root, &req, &reply, nullptr, _p->taskSvc.get());
+        session_ptr->async_send(toJson(reply));
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
@@ -78,6 +86,7 @@ bool NodeUdpServer::start()
 void NodeUdpServer::stop()
 {
     _p->server.stop();
+    _p->taskSvc.reset();
 }
 
 bool NodeUdpServer::isRunning() const

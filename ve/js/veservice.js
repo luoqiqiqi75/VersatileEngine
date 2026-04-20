@@ -1,10 +1,8 @@
 "use strict";
 
 var VEService = function(wsUrl) {
-    // Default matches ve/program/ve.json ve/server/node/ws/config/port (12100). Override via argument or _ve_ws_url.
     this.address = wsUrl || "ws://127.0.0.1:12100";
     this.transport = null;
-
     this.pendingRequests = new Map();
     this.subscriptions = new Map();
     this.requestIdCounter = 0;
@@ -14,9 +12,15 @@ var VEService = function(wsUrl) {
     this._reconnectDelay = 1000;
     this._maxReconnectDelay = 8000;
     this._autoReconnect = true;
+    this._messageHandlers = new Set();
+    this._connectionHandlers = new Set();
 
     this._generateRequestId = function() {
         return ++this.requestIdCounter;
+    };
+
+    this._normalizePath = function(path) {
+        return String(path || "").replace(/^\/+/, "");
     };
 
     this.connect = function() {
@@ -41,6 +45,7 @@ var VEService = function(wsUrl) {
                     self._reconnectDelay = 1000;
                     console.log("[veService] connected to " + self.address);
                     self._resubscribe();
+                    self._notifyConnection(true);
                     resolve();
                 };
 
@@ -61,6 +66,9 @@ var VEService = function(wsUrl) {
                     });
                     self.pendingRequests.clear();
                     self.transport = null;
+                    if (wasConnected) {
+                        self._notifyConnection(false);
+                    }
                     if (wasConnected && self._autoReconnect) {
                         self._scheduleReconnect();
                     }
@@ -107,7 +115,7 @@ var VEService = function(wsUrl) {
         this.subscriptions.forEach(function(callbacks, path) {
             if (callbacks.size > 0 && self.transport && self.isConnected) {
                 try {
-                    self.transport.send(JSON.stringify({ cmd: "subscribe", path: path }));
+                    self.transport.send(JSON.stringify({ op: "subscribe", path: path }));
                 } catch (error) {
                     console.error("[veService] resubscribe failed for '" + path + "':", error);
                 }
@@ -118,37 +126,24 @@ var VEService = function(wsUrl) {
     this._handleMessage = function(raw) {
         try {
             var message = JSON.parse(raw);
+            if (message.event === "node.changed" && message.path !== undefined) {
+                this._notifySubscribers(message.path, message.value);
+                this._notifyMessage(message);
+                return;
+            }
+            if (message.event === "task.result") {
+                this._notifyMessage(message);
+                return;
+            }
 
             if (message.id !== undefined && this.pendingRequests.has(message.id)) {
                 var pending = this.pendingRequests.get(message.id);
-                // JSON command.run async: accepted (keep pending) then result
-                if (message.type === "accepted") {
-                    return;
-                }
-                if (message.type === "result") {
-                    this.pendingRequests.delete(message.id);
-                    if (message.ok) {
-                        pending.resolve(message.result !== undefined ? message.result : message);
-                    } else {
-                        pending.reject(new Error(message.msg || "command failed"));
-                    }
-                    return;
-                }
                 this.pendingRequests.delete(message.id);
-                if (message.type === "error") {
-                    pending.reject(new Error(message.msg || "unknown error"));
-                } else if (message.type === "ok" && message.result !== undefined) {
-                    pending.resolve(message.result);
-                } else {
-                    pending.resolve(message.value !== undefined ? message.value : message);
-                }
+                pending.resolve(message);
                 return;
             }
 
-            if (message.type === "event" && message.path !== undefined) {
-                this._notifySubscribers(message.path, message.value);
-                return;
-            }
+            this._notifyMessage(message);
         } catch (e) {
             console.error("[veService] invalid message:", e);
         }
@@ -159,7 +154,7 @@ var VEService = function(wsUrl) {
             var callbacks = this.subscriptions.get(path);
             callbacks.forEach(function(callback) {
                 try {
-                    callback(data);
+                    callback(data, path);
                 } catch (error) {
                     console.error("[veService] subscription callback error for '" + path + "':", error);
                 }
@@ -167,7 +162,53 @@ var VEService = function(wsUrl) {
         }
     };
 
-    this.get = function(path) {
+    this._unwrapReply = function(reply) {
+        if (!reply.ok) {
+            throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
+        }
+        if (reply.accepted) {
+            return reply;
+        }
+        return reply.data;
+    };
+
+    this._notifyMessage = function(message) {
+        this._messageHandlers.forEach(function(handler) {
+            try {
+                handler(message);
+            } catch (error) {
+                console.error("[veService] message handler error:", error);
+            }
+        });
+    };
+
+    this._notifyConnection = function(connected) {
+        this._connectionHandlers.forEach(function(handler) {
+            try {
+                handler(connected);
+            } catch (error) {
+                console.error("[veService] connection handler error:", error);
+            }
+        });
+    };
+
+    this.onMessage = function(handler) {
+        this._messageHandlers.add(handler);
+        var self = this;
+        return function() {
+            self._messageHandlers.delete(handler);
+        };
+    };
+
+    this.onConnectionChange = function(handler) {
+        this._connectionHandlers.add(handler);
+        var self = this;
+        return function() {
+            self._connectionHandlers.delete(handler);
+        };
+    };
+
+    this.call = function(op, payload) {
         if (!this.transport || !this.isConnected) {
             return Promise.reject(new Error("WebSocket not connected"));
         }
@@ -189,7 +230,10 @@ var VEService = function(wsUrl) {
             });
 
             try {
-                self.transport.send(JSON.stringify({ cmd: "get", path: path, id: id }));
+                var body = payload || {};
+                body.op = op;
+                body.id = id;
+                self.transport.send(JSON.stringify(body));
             } catch (error) {
                 self.pendingRequests.delete(id);
                 clearTimeout(timer);
@@ -198,35 +242,33 @@ var VEService = function(wsUrl) {
         });
     };
 
-    this.set = function(path, value) {
-        if (!this.transport || !this.isConnected) {
-            console.error("[veService] WebSocket not connected");
-            return;
-        }
+    this.get = function(path) {
+        return this.call("node.get", { path: this._normalizePath(path) }).then(function(reply) {
+            var data = reply.data || {};
+            return data.value;
+        });
+    };
 
-        try {
-            this.transport.send(JSON.stringify({ cmd: "set", path: path, value: value }));
-        } catch (error) {
-            console.error("[veService] set failed for '" + path + "':", error);
-        }
+    this.set = function(path, value) {
+        return this.call("node.set", { path: this._normalizePath(path), value: value }).then(this._unwrapReply);
     };
 
     this.trigger = function(path) {
-        this.set(path, null);
+        return this.call("node.trigger", { path: this._normalizePath(path) }).then(this._unwrapReply);
     };
 
     this.subscribe = function(path, callback, immediateGet) {
         if (typeof callback !== "function") {
-            console.error("[veService] subscribe callback must be a function");
-            return function() {};
+            callback = function() {};
         }
+        path = this._normalizePath(path);
 
         if (!this.subscriptions.has(path)) {
             this.subscriptions.set(path, new Set());
 
             if (this.transport && this.isConnected) {
                 try {
-                    this.transport.send(JSON.stringify({ cmd: "subscribe", path: path }));
+                    this.transport.send(JSON.stringify({ op: "subscribe", path: path }));
                 } catch (error) {
                     console.error("[veService] subscribe failed for '" + path + "':", error);
                 }
@@ -240,7 +282,7 @@ var VEService = function(wsUrl) {
 
         if (immediateGet) {
             this.get(path).then(function(data) {
-                try { callback(data); } catch (e) { /* ignore */ }
+                try { callback(data, path); } catch (e) { /* ignore */ }
             }).catch(function() {});
         }
 
@@ -261,7 +303,7 @@ var VEService = function(wsUrl) {
                 this.subscriptions.delete(path);
                 if (this.transport && this.isConnected) {
                     try {
-                        this.transport.send(JSON.stringify({ cmd: "unsubscribe", path: path }));
+                        this.transport.send(JSON.stringify({ op: "unsubscribe", path: path }));
                     } catch (error) {
                         console.error("[veService] unsubscribe failed for '" + path + "':", error);
                     }
@@ -271,7 +313,7 @@ var VEService = function(wsUrl) {
             this.subscriptions.delete(path);
             if (this.transport && this.isConnected) {
                 try {
-                    this.transport.send(JSON.stringify({ cmd: "unsubscribe", path: path }));
+                    this.transport.send(JSON.stringify({ op: "unsubscribe", path: path }));
                 } catch (error) {
                     console.error("[veService] unsubscribe failed for '" + path + "':", error);
                 }
@@ -279,73 +321,12 @@ var VEService = function(wsUrl) {
         }
     };
 
-    // options.wait === true -> server blocks until command finishes (single {type:"ok"} frame).
-    // default wait false -> async on main loop: {type:"accepted"} then {type:"result", ok, result|msg}.
     this.command = function(name, args, options) {
-        if (!this.transport || !this.isConnected) {
-            return Promise.reject(new Error("WebSocket not connected"));
-        }
-
-        var self = this;
-        var waitSync = options && options.wait === true;
-
-        return new Promise(function(resolve, reject) {
-            var id = self._generateRequestId();
-
-            var timer = setTimeout(function() {
-                if (self.pendingRequests.has(id)) {
-                    self.pendingRequests.delete(id);
-                    reject(new Error("Request timeout"));
-                }
-            }, self.timeout);
-
-            self.pendingRequests.set(id, {
-                resolve: function(data) { clearTimeout(timer); resolve(data); },
-                reject:  function(err)  { clearTimeout(timer); reject(err); }
-            });
-
-            // Convert args to list format
-            var argsList = [];
-            if (Array.isArray(args)) {
-                argsList = args;
-            } else if (typeof args === 'object' && args !== null) {
-                // Convert {format:"json", path:"/config", file:"config.json"}
-                // to ["json", "/config", "-f", "config.json"]
-                for (var key in args) {
-                    if (args.hasOwnProperty(key)) {
-                        var val = args[key];
-                        if (key === 'format' || key === 'path') {
-                            argsList.push(String(val));
-                        } else if (key === 'file') {
-                            argsList.push('-f', String(val));
-                        } else if (key === 'inline' || key === 'data') {
-                            argsList.push('-i', String(val));
-                        } else if (key === 'compact' && val) {
-                            argsList.push('--compact');
-                        } else if (key === 'ignore_private' && val) {
-                            argsList.push('--ignore-private');
-                        } else if (key === 'remove' && val) {
-                            argsList.push('--remove');
-                        }
-                    }
-                }
-            }
-
-            var payload = {
-                cmd: "command.run",
-                name: name,
-                args: argsList,
-                id: id,
-                wait: waitSync
-            };
-
-            try {
-                self.transport.send(JSON.stringify(payload));
-            } catch (error) {
-                self.pendingRequests.delete(id);
-                clearTimeout(timer);
-                reject(error);
-            }
+        var waitSync = options && options.wait === false ? false : true;
+        return this.call("command.run", {
+            name: name,
+            args: args == null ? [] : args,
+            wait: waitSync
         });
     };
 };

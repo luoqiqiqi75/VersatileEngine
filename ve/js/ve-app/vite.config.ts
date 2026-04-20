@@ -7,7 +7,15 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Match ve/program/ve.json ve/server/node/http|ws config when using stock dev config.
-      '/api': {
+      '/ve': {
+        target: 'http://localhost:12000',
+        changeOrigin: true,
+      },
+      '/at': {
+        target: 'http://localhost:12000',
+        changeOrigin: true,
+      },
+      '/jsonrpc': {
         target: 'http://localhost:12000',
         changeOrigin: true,
       },

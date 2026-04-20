@@ -1,19 +1,10 @@
 // node_tcp_server.cpp — ve::service::NodeTcpServer
-//
-// JSON text protocol over TCP, newline-delimited.
-// Request/response use Node + schema::exportAs<JsonS> for serialization.
-//   {"cmd":"get","path":"...","id":1}
-//   {"cmd":"set","path":"...","value":...,"id":1}
-//   {"cmd":"subscribe","path":"...","id":1}
-//   {"cmd":"unsubscribe","path":"...","id":1}
-
 #include "ve/service/node_service.h"
-#include "subscribe_service.h"
 #include "ve/core/node.h"
-#include "ve/core/var.h"
-#include "ve/core/command.h"
 #include "ve/core/schema.h"
-#include "ve/core/log.h"
+#include "subscribe_service.h"
+#include "node_protocol.h"
+#include "node_task_service.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -24,134 +15,35 @@
 #pragma warning(pop)
 #endif
 
+#include <atomic>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 namespace ve {
 namespace service {
 
-// ============================================================================
-// Shared Node-based JSON command handling
-// ============================================================================
+static const schema::ExportOptions compactJson{0};
 
-static std::string nodeToJson(Node& n)
+static std::string toJson(const Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, schema::ExportOptions{0});
+    return schema::exportAs<schema::JsonS>(&n, compactJson);
 }
 
-std::string handleNodeJsonCmd(Node* root, Node* reqNode)
+static void fillError(Node* rep, const std::string& code, const std::string& error)
 {
-    std::string cmd = reqNode->get("cmd").toString();
-    std::string path = reqNode->get("path").toString();
-
-    Node resp("r");
-    if (!reqNode->get("id").isNull()) resp.at("id")->set(reqNode->get("id"));
-
-    if (cmd == "get") {
-        Node* target = path.empty() ? root : root->find(path);
-        if (!target) {
-            resp.set("type", "error");
-            resp.set("msg", "not found");
-            return nodeToJson(resp);
-        }
-        resp.set("type", "data");
-        resp.set("path", target->path(root));
-        resp.at("value")->copy(target);
-        return nodeToJson(resp);
-    }
-    else if (cmd == "set") {
-        if (path.empty()) {
-            resp.set("type", "error");
-            resp.set("msg", "path required");
-            return nodeToJson(resp);
-        }
-        if (reqNode->has("value")) {
-            // Set with value (even if value is null)
-            Node* target = root->at(path);
-            if (!target) {
-                resp.set("type", "error");
-                resp.set("msg", "cannot create node");
-                return nodeToJson(resp);
-            }
-            Node* valNode = reqNode->find("value");
-            target->copy(valNode);
-            resp.set("type", "ok");
-            resp.set("path", target->path(root));
-        } else {
-            // No value field at all = trigger
-            Node* target = root->find(path);
-            if (!target) {
-                resp.set("type", "error");
-                resp.set("msg", "not found");
-                return nodeToJson(resp);
-            }
-            target->trigger<Node::NODE_CHANGED>();
-            if (target->isWatching()) target->activate(Node::NODE_CHANGED, target);
-            resp.set("type", "ok");
-            resp.set("path", target->path(root));
-        }
-        return nodeToJson(resp);
-    }
-    else if (cmd == "list") {
-        Node* target = path.empty() ? root : root->find(path);
-        if (!target) {
-            resp.set("type", "error");
-            resp.set("msg", "not found");
-            return nodeToJson(resp);
-        }
-        resp.set("type", "data");
-        resp.set("path", target->path(root));
-        Var::ListV children;
-        for (int i = 0; i < target->count(); ++i) {
-            children.push_back(Var(target->child(i)->name()));
-        }
-        resp.set("children", Var(std::move(children)));
-        return nodeToJson(resp);
-    }
-    else if (cmd == "command.run") {
-        std::string name = reqNode->get("name").toString();
-        if (name.empty()) {
-            resp.set("type", "error");
-            resp.set("msg", "command name required");
-            return nodeToJson(resp);
-        }
-        if (!command::has(name)) {
-            resp.set("type", "error");
-            resp.set("msg", "unknown command: " + name);
-            return nodeToJson(resp);
-        }
-
-        // Convert args to Var (should be a list)
-        Var args;
-        if (reqNode->find("args")) {
-            args = schema::exportAs<schema::VarS>(reqNode->find("args"));
-        }
-
-        Result result = command::call(name, args);
-        if (result.isSuccess() || result.isAccepted()) {
-            resp.set("type", "ok");
-            resp.at("result")->set(result.content());
-        } else {
-            resp.set("type", "error");
-            resp.set("msg", result.content().toString());
-        }
-        return nodeToJson(resp);
-    }
-
-    resp.set("type", "error");
-    resp.set("msg", "unknown command: " + cmd);
-    return nodeToJson(resp);
+    rep->clear();
+    rep->set(Var());
+    rep->set("ok", false);
+    rep->set("code", code);
+    rep->set("error", error);
 }
-
-// ============================================================================
-// Private
-// ============================================================================
 
 struct NodeTcpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12200;
-
     asio2::tcp_server server;
     std::mutex mtx;
     std::atomic<int> connCount{0};
@@ -160,71 +52,66 @@ struct NodeTcpServer::Private
         std::string recvBuf;
     };
     std::unordered_map<std::size_t, ConnState> connections;
-
     std::unique_ptr<SubscribeService> subscribeSvc;
+    std::unique_ptr<NodeTaskService> taskSvc;
+
+    void postToSession(uint64_t sid, std::string message)
+    {
+        server.post([this, sid, message = std::move(message)]() {
+            server.foreach_session([&](auto& session_ptr) {
+                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid) {
+                    session_ptr->async_send(message);
+                }
+            });
+        });
+    }
 
     template<typename SessionPtr>
     void processLines(std::size_t connKey, SessionPtr& session_ptr)
     {
-        ConnState* cs = nullptr;
+        ConnState* state = nullptr;
         {
             std::lock_guard<std::mutex> lock(mtx);
             auto it = connections.find(connKey);
-            if (it != connections.end()) cs = &it->second;
+            if (it != connections.end()) {
+                state = &it->second;
+            }
         }
-        if (!cs) return;
+        if (!state) {
+            return;
+        }
 
-        auto& buf = cs->recvBuf;
+        auto& buf = state->recvBuf;
         std::string::size_type pos;
         while ((pos = buf.find('\n')) != std::string::npos) {
             std::string line = buf.substr(0, pos);
             buf.erase(0, pos + 1);
-
             if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
-            if (line.empty()) continue;
-
-            // Parse request via schema
-            Node req("req");
-            if (!schema::importAs<schema::JsonS>(&req, line)) {
-                session_ptr->async_send("{\"type\":\"error\",\"msg\":\"invalid json\"}\n");
+            if (line.empty()) {
                 continue;
             }
 
-            std::string cmd = req.get("cmd").toString();
+            Node req("req");
+            if (!schema::importAs<schema::JsonS>(&req, line)) {
+                Node reply("rep");
+                fillError(&reply, "invalid_request", "invalid JSON request");
+                session_ptr->async_send(toJson(reply) + "\n");
+                continue;
+            }
 
-            if (cmd == "subscribe") {
-                std::string path = req.get("path").toString();
-                auto sid = static_cast<uint64_t>(connKey);
-                if (subscribeSvc) subscribeSvc->subscribe(sid, path);
-                Node resp("r");
-                resp.set("type", "subscribed");
-                resp.set("path", path);
-                if (!req.get("id").isNull()) resp.at("id")->set(req.get("id"));
-                session_ptr->async_send(nodeToJson(resp) + "\n");
-            }
-            else if (cmd == "unsubscribe") {
-                std::string path = req.get("path").toString();
-                auto sid = static_cast<uint64_t>(connKey);
-                if (subscribeSvc) subscribeSvc->unsubscribe(sid, path);
-                Node resp("r");
-                resp.set("type", "unsubscribed");
-                resp.set("path", path);
-                if (!req.get("id").isNull()) resp.at("id")->set(req.get("id"));
-                session_ptr->async_send(nodeToJson(resp) + "\n");
-            }
-            else {
-                std::string response = handleNodeJsonCmd(root, &req);
-                session_ptr->async_send(response + "\n");
-            }
+            Node reply("rep");
+            dispatchNodeProtocol(root, &req, &reply,
+                                 subscribeSvc.get(), taskSvc.get(), 500,
+                                 true, static_cast<uint64_t>(connKey), true,
+                                 [this, sid = static_cast<uint64_t>(connKey)](const Node& event) {
+                                     postToSession(sid, toJson(event) + "\n");
+                                 });
+            session_ptr->async_send(toJson(reply) + "\n");
         }
     }
 };
-
-// ============================================================================
-// NodeTcpServer
-// ============================================================================
 
 NodeTcpServer::NodeTcpServer(Node* root, uint16_t port)
     : _p(std::make_unique<Private>())
@@ -241,23 +128,15 @@ NodeTcpServer::~NodeTcpServer()
 bool NodeTcpServer::start()
 {
     _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
-    _p->subscribeSvc->setPushCallback(
-        [this](uint64_t sessionId, const std::string& path, const Var& value) {
-            Node evt("e");
-            evt.set("type", "event");
-            evt.set("path", path);
-            evt.at("value")->set(value);
-            std::string pushMsg = nodeToJson(evt) + "\n";
-
-            _p->server.post([this, sessionId, pushMsg = std::move(pushMsg)]() {
-                _p->server.foreach_session(
-                    [&](auto& session_ptr) {
-                        if (static_cast<uint64_t>(session_ptr->hash_key()) == sessionId)
-                            session_ptr->async_send(pushMsg);
-                    });
-            });
-        });
+    _p->subscribeSvc->setPushCallback([this](uint64_t sessionId, const std::string& path, const Var& value) {
+        Node event("event");
+        event.set("event", "node.changed");
+        event.set("path", path);
+        event.at("value")->set(value);
+        _p->postToSession(sessionId, toJson(event) + "\n");
+    });
     _p->subscribeSvc->start();
+    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
@@ -303,6 +182,7 @@ void NodeTcpServer::stop()
         _p->subscribeSvc->stop();
         _p->subscribeSvc.reset();
     }
+    _p->taskSvc.reset();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

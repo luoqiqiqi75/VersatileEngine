@@ -12,15 +12,30 @@ type CommandInfo = {
   help?: string;
 };
 
-type CommandListResponse = {
-  commands?: CommandInfo[];
+type VeOkReply<T> = {
+  ok: true;
+  id?: unknown;
+  data: T;
 };
 
-type CommandCallResponse = {
-  ok?: boolean;
-  result?: unknown;
-  error?: unknown;
-  id?: number;
+type VeAcceptedReply = {
+  ok: true;
+  id?: unknown;
+  accepted: true;
+  task_id: string;
+};
+
+type VeErrorReply = {
+  ok: false;
+  id?: unknown;
+  code: string;
+  error: string;
+};
+
+type VeReply<T> = VeOkReply<T> | VeAcceptedReply | VeErrorReply;
+
+type CommandListResponse = {
+  commands?: CommandInfo[];
 };
 
 const VE_HTTP_BASE = (process.env.VE_HTTP_BASE ?? "http://127.0.0.1:12000").replace(/\/$/, "");
@@ -30,7 +45,7 @@ const VE_PING_TOOL = "ve_ping";
 const builtinPingToolDef = {
   name: VE_PING_TOOL,
   description:
-    "Probe VE HTTP at GET /api/cmd (no VE command). Returns ok + command count if up; use to see whether the service is running.",
+    "Probe VE HTTP health and command listing. Returns whether the VE service is reachable and how many commands are exposed.",
   inputSchema: {
     type: "object" as const,
     additionalProperties: true,
@@ -85,36 +100,37 @@ async function httpJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function listCommands(): Promise<CommandInfo[]> {
-  const payload = await httpJson<CommandListResponse>("/api/cmd");
-  if (!Array.isArray(payload.commands)) {
+  const payload = await httpJson<VeReply<CommandListResponse>>("/ve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ op: "command.list" }),
+  });
+  if (!payload.ok || !("data" in payload) || !Array.isArray(payload.data.commands)) {
     return [];
   }
-  return payload.commands.filter((c) => !!c?.name);
+  return payload.data.commands.filter((c) => !!c?.name);
 }
 
 async function pingVe(): Promise<{ ok: boolean; text: string }> {
-  const path = "/api/cmd";
   try {
-    const res = await fetch(`${VE_HTTP_BASE}${path}`);
-    const body = await res.text();
-    if (!res.ok) {
+    const healthRes = await fetch(`${VE_HTTP_BASE}/health`);
+    const healthBody = await healthRes.text();
+    if (!healthRes.ok) {
       return {
         ok: false,
-        text: `down: HTTP ${res.status} ${path} at ${VE_HTTP_BASE} — ${body.slice(0, 400)}`,
+        text: `down: HTTP ${healthRes.status} /health at ${VE_HTTP_BASE} — ${healthBody.slice(0, 400)}`,
       };
     }
     let count = 0;
     try {
-      const j = JSON.parse(body) as CommandListResponse;
-      if (Array.isArray(j.commands)) {
-        count = j.commands.length;
-      }
+      const tools = await listCommands();
+      count = tools.length;
     } catch {
-      // ignore parse errors; still reachable
+      // ignore follow-up command listing errors
     }
     return {
       ok: true,
-      text: `ok: ${VE_HTTP_BASE} reachable, GET ${path} -> HTTP ${res.status}, ${count} commands`,
+      text: `ok: ${VE_HTTP_BASE} reachable, /health up, ${count} commands`,
     };
   } catch (err) {
     return {
@@ -124,33 +140,52 @@ async function pingVe(): Promise<{ ok: boolean; text: string }> {
   }
 }
 
-function commandBodyForHttp(args: unknown): unknown {
+function commandArgsForVe(args: unknown): { args?: unknown; wait?: boolean; id?: unknown } {
   if (args == null) {
-    return [];
+    return { args: [] };
   }
   if (Array.isArray(args)) {
-    return args;
+    return { args };
   }
   if (typeof args === "object") {
-    const o = args as Record<string, unknown>;
-    if (Array.isArray(o.args)) {
-      return o.args;
+    const obj = args as Record<string, unknown>;
+    const out: { args?: unknown; wait?: boolean; id?: unknown } = {};
+    if ("wait" in obj && typeof obj.wait === "boolean") {
+      out.wait = obj.wait;
     }
-    if (Array.isArray(o.argv)) {
-      return o.argv;
+    if ("id" in obj) {
+      out.id = obj.id;
     }
-    if (Object.keys(o).length === 0) {
-      return [];
+    if (Array.isArray(obj.args)) {
+      out.args = obj.args;
+      return out;
     }
+    if (Array.isArray(obj.argv)) {
+      out.args = obj.argv;
+      return out;
+    }
+    const clone = { ...obj };
+    delete clone.wait;
+    delete clone.id;
+    if (Object.keys(clone).length === 0) {
+      out.args = [];
+    } else {
+      out.args = clone;
+    }
+    return out;
   }
-  return args;
+  return { args };
 }
 
-async function callCommand(name: string, args: unknown): Promise<CommandCallResponse> {
-  return httpJson<CommandCallResponse>(`/api/cmd/${encodeURIComponent(name)}`, {
+async function callCommand(name: string, args: unknown): Promise<VeReply<unknown>> {
+  return httpJson<VeReply<unknown>>("/ve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cmd: name, body: commandBodyForHttp(args) }),
+    body: JSON.stringify({
+      op: "command.run",
+      name,
+      ...commandArgsForVe(args),
+    }),
   });
 }
 
@@ -163,7 +198,7 @@ async function main(): Promise<void> {
     {
       capabilities: {
         tools: {},
-      },
+      }
     },
   );
 
@@ -210,7 +245,7 @@ async function main(): Promise<void> {
       };
     }
 
-    let payload: CommandCallResponse;
+    let payload: VeReply<unknown>;
     try {
       payload = await callCommand(name, args);
     } catch (err) {
@@ -219,21 +254,32 @@ async function main(): Promise<void> {
         content: [
           {
             type: "text",
-            text: `HTTP call failed (${VE_HTTP_BASE}/api/cmd/${encodeURIComponent(name)}): ${errorText(err)}`,
+            text: `HTTP call failed (${VE_HTTP_BASE}/ve op=command.run name=${name}): ${errorText(err)}`,
           },
         ],
       };
     }
 
     if (payload.ok) {
+      if ("accepted" in payload && payload.accepted) {
+        return {
+          content: [{ type: "text", text: `accepted: task_id=${payload.task_id}` }],
+        };
+      }
+      if (!("data" in payload)) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: "missing command result payload" }],
+        };
+      }
       return {
-        content: [{ type: "text", text: text(payload.result) }],
+        content: [{ type: "text", text: text(payload.data) }],
       };
     }
 
     return {
       isError: true,
-      content: [{ type: "text", text: text(payload.error ?? "unknown error") }],
+      content: [{ type: "text", text: text(`${payload.code}: ${payload.error}`) }],
     };
   });
 

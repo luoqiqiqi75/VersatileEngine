@@ -1,7 +1,7 @@
 """VE Client Benchmark Suite
 
 Compares performance of different transports:
-- HTTP REST (12000)
+- HTTP /ve (12000)
 - JSON-RPC (12000/jsonrpc)
 - TCP JSON (12200) - default
 - MessagePack (11000) - fastest
@@ -88,7 +88,7 @@ def main():
     args = parser.parse_args()
 
     transports = [
-        ("HTTP REST", "http://localhost:12000", "http"),
+        ("HTTP /ve", "http://localhost:12000", "http"),
         ("JSON-RPC", "http://localhost:12000", "jsonrpc"),
         ("TCP JSON", "tcp://localhost:12200", "tcp"),
         ("MessagePack", "tcp://localhost:11000", "msgpack"),

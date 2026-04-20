@@ -1,17 +1,17 @@
 # VersatileEngine Python Client
 
-Python client library for VersatileEngine with multiple transport options.
+Python client library for VE with multiple transports.
 
 ## Installation
 
 ```bash
-# Default (TCP JSON, pure stdlib, no dependencies)
+# Default (TCP JSON, pure stdlib)
 pip install ve-client
 
-# With HTTP support
+# HTTP / JSON-RPC
 pip install ve-client[http]
 
-# With MessagePack support (high-performance)
+# MessagePack
 pip install ve-client[msgpack]
 
 # All transports
@@ -23,99 +23,103 @@ pip install ve-client[all]
 ```python
 from ve_client import VeClient
 
-# TCP JSON (default, pure stdlib, persistent connection)
-client = VeClient()
+client = VeClient()  # tcp://localhost:12200
 
-# Get node value
-value = client.get("/config/port")
-
-# Set node value
-client.set("/test", 42)
-
-# List children
-children = client.list("/")
+value = client.get("ve/server/node/http/runtime/port")
+client.set("test/value", 42)
+children = client.list("ve/server")
+tree = client.tree("ve/server")
 ```
 
-## Transports
+## Transport Overview
 
-### TCP JSON (Default)
-- **Port**: 12200
-- **Protocol**: Newline-delimited JSON over TCP
-- **Dependencies**: None (pure stdlib)
-- **Features**: Persistent connection, subscribe support
-- **Use case**: Default choice, embedded systems, scripts
+### TCP JSON (default)
+
+- Port: `12200`
+- Protocol: newline-delimited JSON envelope
+- Features: persistent connection, subscribe support
 
 ```python
-client = VeClient()  # tcp://localhost:12200
+client = VeClient()
 client = VeClient("tcp://localhost:12200")
 ```
 
-### HTTP REST
-- **Port**: 12000
-- **Protocol**: REST API
-- **Dependencies**: `requests`
-- **Features**: Stateless, curl-compatible
-- **Use case**: One-off queries, debugging
+### HTTP
+
+- Port: `12000`
+- Protocol: `POST /ve` + convenience `GET/PUT /at/*`
+- Features: stateless, curl-friendly
 
 ```python
 client = VeClient("http://localhost:12000", transport="http")
 ```
 
 ### JSON-RPC 2.0
-- **Port**: 12000
-- **Protocol**: JSON-RPC 2.0 over HTTP
-- **Dependencies**: `requests`
-- **Features**: Standard protocol, library support
-- **Use case**: Standard JSON-RPC clients
+
+- Port: `12000`
+- Protocol: `POST /jsonrpc`
+- Features: standard JSON-RPC clients
 
 ```python
 client = VeClient("http://localhost:12000", transport="jsonrpc")
 ```
 
 ### MessagePack Binary
-- **Port**: 11000
-- **Protocol**: Frame-based MessagePack over TCP
-- **Dependencies**: `msgpack`
-- **Features**: Highest performance, smallest payload
-- **Use case**: High-frequency data, performance-critical
+
+- Port: `11000`
+- Protocol: frame-based MessagePack with the same VE envelope semantics
+- Features: lowest overhead, subscribe support
 
 ```python
 client = VeClient("tcp://localhost:11000", transport="msgpack")
 ```
 
-## API
+## Core API
 
 ```python
 client.get(path: str) -> Any
 client.set(path: str, value: Any) -> bool
+client.trigger(path: str) -> bool
 client.list(path: str) -> List[Dict]
 client.tree(path: str) -> Dict
+client.command(name: str, args: Optional[Dict]) -> Any
 client.ping() -> bool
 client.close()
 ```
 
-## Benchmarks
+## HTTP / `/ve`
 
-Run benchmarks to compare transports:
+HTTP transport internally maps these calls to the VE native protocol:
 
-```bash
-python examples/benchmark.py
-```
+- `get()` -> `node.get`
+- `set()` -> `node.set`
+- `trigger()` -> `node.trigger`
+- `list()` -> `node.list`
+- `tree()` -> `GET /at/<path>`
+- `command()` -> `command.run`
 
-Typical results (localhost):
-```
-Latency (1000 get operations):
-  HTTP REST        45.2 ms/op
-  JSON-RPC         42.1 ms/op
-  TCP JSON         12.3 ms/op  <- default
-  MessagePack       8.7 ms/op  <- fastest
+## Subscribe
 
-Speedup: 5.2x (MessagePack vs HTTP)
+`subscribe()` is available on:
+
+- TCP JSON
+- MessagePack
+
+Example:
+
+```python
+def on_change(path, value):
+    print(path, value)
+
+client = VeClient("tcp://localhost:12200")
+unsub = client.subscribe("ve/server/node/http/runtime/port", on_change)
+unsub()
 ```
 
 ## Examples
 
-See `examples/` directory:
-- `simple_test.py` - Basic usage
-- `test_client.py` - All transports
-- `benchmark.py` - Performance comparison
+See `examples/`:
+
+- `simple_test.py`
+- `test_client.py`
+- `benchmark.py`

@@ -37,7 +37,16 @@
  * ```
  */
 
-import type { VarValue } from './types';
+import type {
+  CommandRunResponse,
+  NodeListResponse,
+  NodeResponse,
+  NodeSetResponse,
+  VarValue,
+  VeErrorReply,
+  VeReply,
+  WsMessage,
+} from './types';
 
 // ---------------------------------------------------------------------------
 // Inline msgpack encode/decode (minimal, no external dependency)
@@ -316,6 +325,7 @@ const FRAME_HEADER_SIZE = 5;
 
 export type NotifyHandler = (path: string, value: VarValue) => void;
 export type ConnectionHandler = (connected: boolean) => void;
+export type MessageHandler = (message: WsMessage) => void;
 
 export interface VeBinTcpClientOptions {
   host?: string;
@@ -330,8 +340,8 @@ export interface VeBinTcpClientOptions {
   maxReconnectInterval?: number;
 }
 
-interface PendingRequest {
-  resolve: (result: { flag: number; data: Record<string, unknown> }) => void;
+interface PendingRequest<T = VarValue> {
+  resolve: (result: VeReply<T>) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -359,6 +369,7 @@ export class VeBinTcpClient {
 
   private notifyHandlers = new Map<string, Set<NotifyHandler>>();
   private connectionHandlers = new Set<ConnectionHandler>();
+  private messageHandlers = new Set<MessageHandler>();
 
   constructor(options: VeBinTcpClientOptions = {}) {
     this.host = options.host ?? '127.0.0.1';
@@ -434,6 +445,11 @@ export class VeBinTcpClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Disconnected'));
+    }
+    this.pending.clear();
     this.socket?.destroy();
     this.socket = null;
     this._connected = false;
@@ -444,38 +460,28 @@ export class VeBinTcpClient {
   // -------------------------------------------------------------------------
 
   async get(path: string): Promise<VarValue> {
-    const { flag, data } = await this.sendRequest('get', path);
-    if ((flag & FLAG_TYPE_MASK) === FLAG_ERROR) return null;
-    return (data.data ?? null) as VarValue;
+    return this.unwrap(await this.call<NodeResponse>('node.get', { path })).value;
   }
 
-  async set(path: string, value: VarValue): Promise<boolean> {
-    const { flag } = await this.sendRequest('set', path, value);
-    return (flag & FLAG_TYPE_MASK) !== FLAG_ERROR;
+  async set(path: string, value: VarValue): Promise<NodeSetResponse> {
+    return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
   }
 
-  async list(path: string): Promise<string[]> {
-    const { flag, data } = await this.sendRequest('ls', path);
-    if ((flag & FLAG_TYPE_MASK) === FLAG_ERROR) return [];
-    const d = data.data;
-    return Array.isArray(d) ? d as string[] : [];
+  async list(path: string): Promise<NodeListResponse> {
+    return this.unwrap(await this.call<NodeListResponse>('node.list', { path }));
   }
 
-  async tree(path: string): Promise<VarValue> {
-    return this.get(path);
+  async tree(path: string, depth = -1): Promise<VarValue> {
+    const data = this.unwrap(await this.call<NodeResponse>('node.get', { path, depth }));
+    return (data.tree ?? data.value) as VarValue;
   }
 
-  async trigger(path: string): Promise<boolean> {
-    const { flag } = await this.sendRequest('set', path);
-    return (flag & FLAG_TYPE_MASK) !== FLAG_ERROR;
+  async trigger(path: string): Promise<NodeSetResponse> {
+    return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
   }
 
-  async command(name: string, args?: VarValue): Promise<VarValue> {
-    const { flag, data } = await this.sendRequest(name, '/', args);
-    if ((flag & FLAG_TYPE_MASK) === FLAG_ERROR) {
-      throw new Error(String(data.data ?? 'command failed'));
-    }
-    return (data.data ?? null) as VarValue;
+  async command(name: string, args: VarValue = [], wait = true): Promise<CommandRunResponse> {
+    return this.call<VarValue>('command.run', { name, args, wait });
   }
 
   // -------------------------------------------------------------------------
@@ -487,7 +493,7 @@ export class VeBinTcpClient {
       this.notifyHandlers.set(path, new Set());
       // Send subscribe request to server
       if (this._connected) {
-        await this.sendRequest('subscribe', path).catch(() => {});
+        await this.call('subscribe', { path }).catch(() => {});
       }
     }
 
@@ -500,10 +506,15 @@ export class VeBinTcpClient {
       if (handlers.size === 0) {
         this.notifyHandlers.delete(path);
         if (this._connected) {
-          this.sendRequest('unsubscribe', path).catch(() => {});
+          this.call('unsubscribe', { path }).catch(() => {});
         }
       }
     };
+  }
+
+  onMessage(handler: MessageHandler): () => void {
+    this.messageHandlers.add(handler);
+    return () => this.messageHandlers.delete(handler);
   }
 
   onConnectionChange(handler: ConnectionHandler): () => void {
@@ -515,17 +526,14 @@ export class VeBinTcpClient {
   // Internal: frame send / receive
   // -------------------------------------------------------------------------
 
-  private sendRequest(
-    op: string, path: string, data?: unknown
-  ): Promise<{ flag: number; data: Record<string, unknown> }> {
+  async call<T = VarValue>(op: string, payload: Record<string, unknown> = {}): Promise<VeReply<T>> {
     return new Promise((resolve, reject) => {
       if (!this.socket || !this._connected) {
         return reject(new Error('Not connected'));
       }
 
       const id = ++this.nextId;
-      const payload: Record<string, unknown> = { op, path, id };
-      if (data !== undefined) payload.data = data;
+      const requestPayload: Record<string, unknown> = { op, id, ...payload };
 
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -534,7 +542,7 @@ export class VeBinTcpClient {
 
       this.pending.set(id, { resolve, reject, timer });
 
-      const encoded = msgpackEncode(payload);
+      const encoded = msgpackEncode(requestPayload);
       const header = new Uint8Array(FRAME_HEADER_SIZE);
       header[0] = FLAG_REQUEST;
       new DataView(header.buffer).setUint32(1, encoded.length, true); // LE
@@ -576,15 +584,17 @@ export class VeBinTcpClient {
       const frameType = flag & FLAG_TYPE_MASK;
 
       if (frameType === FLAG_NOTIFY) {
-        // Subscription push
-        const path = String(msg.path ?? '');
-        const value = msg.value as VarValue;
-        const handlers = this.notifyHandlers.get(path);
-        if (handlers) {
-          for (const h of handlers) {
-            try { h(path, value); } catch { /* ignore callback errors */ }
+        if (msg.event === 'node.changed') {
+          const path = String(msg.path ?? '');
+          const value = msg.value as VarValue;
+          const handlers = this.notifyHandlers.get(path);
+          if (handlers) {
+            for (const h of handlers) {
+              try { h(path, value); } catch { /* ignore callback errors */ }
+            }
           }
         }
+        this.notifyMessage(msg as WsMessage);
         continue;
       }
 
@@ -594,7 +604,9 @@ export class VeBinTcpClient {
         const p = this.pending.get(id)!;
         this.pending.delete(id);
         clearTimeout(p.timer);
-        p.resolve({ flag, data: msg });
+        p.resolve(msg as VeReply);
+      } else {
+        this.notifyMessage(msg as WsMessage);
       }
     }
   }
@@ -611,7 +623,7 @@ export class VeBinTcpClient {
         await this.connect();
         // Re-subscribe all
         for (const path of this.notifyHandlers.keys()) {
-          this.sendRequest('subscribe', path).catch(() => {});
+          this.call('subscribe', { path }).catch(() => {});
         }
       } catch {
         this.currentReconnectDelay = Math.min(
@@ -629,5 +641,22 @@ export class VeBinTcpClient {
     for (const h of this.connectionHandlers) {
       try { h(connected); } catch { /* ignore */ }
     }
+  }
+
+  private notifyMessage(message: WsMessage): void {
+    for (const h of this.messageHandlers) {
+      try { h(message); } catch { /* ignore */ }
+    }
+  }
+
+  private unwrap<T>(reply: VeReply<T>): T {
+    if (!reply.ok) {
+      const err = reply as VeErrorReply;
+      throw new Error(`${err.code}: ${err.error}`);
+    }
+    if ('accepted' in reply && reply.accepted) {
+      throw new Error(`Request accepted asynchronously (task_id=${reply.task_id})`);
+    }
+    return reply.data;
   }
 }

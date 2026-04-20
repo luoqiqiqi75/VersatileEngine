@@ -14,7 +14,7 @@ class Node;
 
 namespace service {
 
-class SubscribeService
+class VE_API SubscribeService
 {
 public:
     using PushFn = std::function<void(uint64_t session, const std::string& path, const Var& value)>;
@@ -30,6 +30,8 @@ public:
     void removeSession(uint64_t session);
 
     void setPushCallback(PushFn fn);
+
+    size_t getSubscriberCount(const std::string& path) const;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

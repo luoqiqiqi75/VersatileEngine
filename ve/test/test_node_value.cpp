@@ -219,6 +219,12 @@ VE_TEST(node_global_n_slash_path) {
     VE_ASSERT(ve::node::root()->find("test_n/a/b") != nullptr);
 }
 
+VE_TEST(node_global_n_find_without_create) {
+    VE_ASSERT(ve::node::root()->find("test_n_no_create/missing") == nullptr);
+    VE_ASSERT(ve::n("test_n_no_create/missing", false) == nullptr);
+    VE_ASSERT(ve::node::root()->find("test_n_no_create/missing") == nullptr);
+}
+
 VE_TEST(node_global_n_update) {
     auto* node = ve::n("test_upd/val");
     node->set(Var(0));

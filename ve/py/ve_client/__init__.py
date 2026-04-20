@@ -5,7 +5,7 @@ Usage:
     from ve_client import VeClient
 
     client = VeClient()                    # TCP JSON (default)
-    client = VeClient("http://localhost:12000")  # HTTP REST
+    client = VeClient("http://localhost:12000")  # HTTP /ve + /at
     client = VeClient("tcp://localhost:11000", transport="msgpack")  # MsgPack
 
     client.get("/config")

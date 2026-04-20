@@ -37,7 +37,7 @@ class VeClient:
         client = VeClient()
         client = VeClient("tcp://localhost:12200")
 
-        # HTTP REST
+        # HTTP native protocol (/ve + /at)
         client = VeClient("http://localhost:12000")
 
         # JSON-RPC

@@ -1,93 +1,130 @@
-/** Var type tags matching C++ ve::Var::Type */
 export type VarType =
   | 'null' | 'bool' | 'int' | 'double' | 'string'
   | 'bin' | 'list' | 'dict' | 'pointer' | 'custom';
 
-/** JSON-serialized Var value (what the REST API returns) */
-export type VarValue = null | boolean | number | string | VarValue[] | { [key: string]: VarValue };
+export type VarValue =
+  | null
+  | boolean
+  | number
+  | string
+  | Uint8Array
+  | VarValue[]
+  | { [key: string]: VarValue };
 
-/** Response from GET /api/node/{path} */
-export interface NodeResponse {
-  path: string;
-  value: VarValue;
-}
-
-/** Response from PUT /api/node/{path} */
-export interface NodeSetResponse {
-  ok: boolean;
-  path: string;
-}
-
-/** Response from GET /api/tree/{path} — recursive JSON structure */
-export interface TreeNode {
-  name?: string;
-  value?: VarValue;
-  children?: TreeNode[];
-  [key: string]: unknown;
-}
-
-/** Response from GET /health */
 export interface HealthResponse {
   status: string;
   uptime_s: number;
 }
 
-/** WebSocket outgoing command (subset; see veservice.js for full command.run + wait) */
-export interface WsCommand {
-  cmd: 'get' | 'set' | 'subscribe' | 'unsubscribe' | 'command.run';
-  path?: string;
-  value?: VarValue;
-  id?: number;
-  name?: string;
-  args?: VarValue[];
-  wait?: boolean;
-}
-
-/**
- * WebSocket JSON frames from ve::service::NodeWsServer (see node_ws_server.cpp).
- * VeWsClient in ws.ts only forwards raw objects; use veservice.js or a custom handler for Promise/command.run.
- */
-export type WsMessage =
-  | { type: 'data'; path?: string; value?: VarValue; id?: number }
-  | { type: 'ok'; result?: VarValue; id?: number }
-  | { type: 'error'; msg?: string; id?: number }
-  | { type: 'subscribed' | 'unsubscribed'; path?: string; id?: number }
-  | { type: 'event'; path?: string; value?: VarValue }
-  | { type: 'accepted'; accepted?: boolean; id?: number }
-  | { type: 'result'; ok: boolean; result?: VarValue; msg?: string; id?: number };
-
-/** GET /api/cmd */
-export interface CommandListResponse {
-  commands: { name: string; help: string }[];
-}
-
-/** POST /api/cmd/{key} — sync result */
-export interface CommandRunOkResponse {
+export interface VeOkReply<T = VarValue> {
   ok: true;
-  result: VarValue;
   id?: VarValue;
+  data: T;
+  accepted?: false;
 }
 
-/** POST /api/cmd/{key} — async accepted (wait false, command deferred to main loop) */
-export interface CommandRunAcceptedResponse {
+export interface VeAcceptedReply {
   ok: true;
+  id?: VarValue;
   accepted: true;
-  id?: VarValue;
+  task_id: string;
 }
 
-export interface CommandRunErrorResponse {
+export interface VeErrorReply {
+  ok: false;
+  id?: VarValue;
+  code: string;
   error: string;
 }
 
-export type CommandRunResponse = CommandRunOkResponse | CommandRunAcceptedResponse | CommandRunErrorResponse;
+export type VeReply<T = VarValue> = VeOkReply<T> | VeAcceptedReply | VeErrorReply;
 
-/** Response from POST /api/tree/{path} */
-export interface TreeImportResponse {
-  ok: boolean;
+export interface NodeMeta {
+  type: number;
+  child_count: number;
+  has_shadow: boolean;
+  subscribers: number;
+  parent_path?: string;
+}
+
+export interface NodeResponse {
+  path: string;
+  value: VarValue;
+  tree?: VarValue;
+  meta?: NodeMeta;
+}
+
+export interface NodeSetResponse {
   path: string;
 }
 
-/** SDK configuration */
+export interface NodeListEntry {
+  name: string;
+  path: string;
+  has_value: boolean;
+  child_count: number;
+  type?: number;
+  subscribers?: number;
+}
+
+export interface NodeListResponse {
+  path: string;
+  children: NodeListEntry[];
+}
+
+export interface TreeImportResponse {
+  path: string;
+}
+
+export type TreeNode = VarValue;
+
+export interface CommandInfo {
+  name: string;
+  help: string;
+}
+
+export interface CommandListResponse {
+  commands: CommandInfo[];
+}
+
+export type CommandRunOkResponse = VeOkReply<VarValue>;
+export type CommandRunAcceptedResponse = VeAcceptedReply;
+export type CommandRunErrorResponse = VeErrorReply;
+export type CommandRunResponse = VeReply<VarValue>;
+
+export interface NodeChangedEvent {
+  event: 'node.changed';
+  path: string;
+  value: VarValue;
+}
+
+export interface TaskResultEvent {
+  event: 'task.result';
+  id?: VarValue;
+  task_id: string;
+  ok: boolean;
+  data?: VarValue;
+  code?: string;
+  error?: string;
+}
+
+export type WsMessage = NodeChangedEvent | TaskResultEvent | VeReply<VarValue>;
+
+export interface VeRequest {
+  op: string;
+  id?: VarValue;
+  path?: string;
+  value?: VarValue;
+  tree?: VarValue;
+  args?: VarValue;
+  wait?: boolean;
+  depth?: number;
+  meta?: boolean;
+  bubble?: boolean;
+  items?: VeRequest[];
+  name?: string;
+}
+
 export interface VeSdkConfig {
   httpBase?: string;
   wsUrl?: string;

@@ -45,7 +45,7 @@ export const useVeStore = create<VeState>((set, get) => ({
   init() {
     veWs.onStateChange((connected) => set({ connected }));
     veWs.onMessage((msg: WsMessage) => {
-      if (msg.type === 'event' && msg.path != null) {
+      if ('event' in msg && msg.event === 'node.changed' && msg.path != null) {
         const { selectedPath } = get();
         if (isSubPath(msg.path, selectedPath) || isSubPath(selectedPath, msg.path)) {
           get().refreshTree(selectedPath);

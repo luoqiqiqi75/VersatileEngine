@@ -31,9 +31,11 @@ VE_API Var         parse(const std::string& json);
 
 // Node tree <-> JSON string
 // exportTree(options) can hide internal "_" children.
+// exportTree(node, maxDepth) limits tree depth (-1 = unlimited, 0 = value only, 1 = direct children).
 // importTree(options) performs merge-style import through Node::copy().
 VE_API std::string exportTree(const Node* node, int indent = 2);
 VE_API std::string exportTree(const Node* node, const schema::ExportOptions& options);
+VE_API std::string exportTree(const Node* node, int maxDepth, const schema::ExportOptions& options);
 VE_API bool        importTree(Node* node, const std::string& json);
 VE_API bool        importTree(Node* node, const std::string& json, const schema::ImportOptions& options);
 
