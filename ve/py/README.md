@@ -8,8 +8,11 @@ Python client library for VE with multiple transports.
 # Default (TCP JSON, pure stdlib)
 pip install ve-client
 
-# HTTP / JSON-RPC
+# HTTP / JSON-RPC (sync)
 pip install ve-client[http]
+
+# Async support (for FastAPI, asyncio apps)
+pip install ve-client[async]
 
 # MessagePack
 pip install ve-client[msgpack]
@@ -20,6 +23,8 @@ pip install ve-client[all]
 
 ## Quick Start
 
+### Sync Client
+
 ```python
 from ve_client import VeClient
 
@@ -29,6 +34,23 @@ value = client.get("ve/server/node/http/runtime/port")
 client.set("test/value", 42)
 children = client.list("ve/server")
 tree = client.tree("ve/server")
+```
+
+### Async Client (FastAPI, asyncio)
+
+```python
+from ve_client import AsyncVeClient
+
+# Context manager (recommended)
+async with AsyncVeClient("http://localhost:12000") as client:
+    value = await client.get("/config")
+    await client.set("/test", 42)
+    children = await client.list("/")
+
+# Manual close
+client = AsyncVeClient("http://localhost:12000")
+value = await client.get("/config")
+await client.close()
 ```
 
 ## Transport Overview
@@ -116,10 +138,31 @@ unsub = client.subscribe("ve/server/node/http/runtime/port", on_change)
 unsub()
 ```
 
+## FastAPI Integration
+
+```python
+from fastapi import FastAPI
+from ve_client import AsyncVeClient
+
+app = FastAPI()
+ve_client = AsyncVeClient("http://localhost:12000")
+
+@app.get("/ve/{path:path}")
+async def get_node(path: str):
+    return await ve_client.get(path)
+
+@app.on_event("shutdown")
+async def shutdown():
+    await ve_client.close()
+```
+
+See `examples/fastapi_example.py` for a complete FastAPI integration example.
+
 ## Examples
 
 See `examples/`:
 
-- `simple_test.py`
-- `test_client.py`
-- `benchmark.py`
+- `simple_test.py` - Basic sync client usage
+- `test_client.py` - All transport types
+- `benchmark.py` - Performance testing
+- `fastapi_example.py` - FastAPI integration with async client

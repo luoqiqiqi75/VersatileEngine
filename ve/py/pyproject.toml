@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ve-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "VersatileEngine Python client library"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -18,7 +18,8 @@ dependencies = []
 http = ["requests>=2.25.0"]
 msgpack = ["msgpack>=1.0.0"]
 ws = ["websockets>=10.0"]
-all = ["requests>=2.25.0", "msgpack>=1.0.0", "websockets>=10.0"]
+async = ["httpx>=0.23.0"]
+all = ["requests>=2.25.0", "msgpack>=1.0.0", "websockets>=10.0", "httpx>=0.23.0"]
 
 [tool.setuptools.packages.find]
 include = ["ve_client*"]
