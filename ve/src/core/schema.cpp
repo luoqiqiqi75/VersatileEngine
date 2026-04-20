@@ -6,6 +6,7 @@
 #include "ve/core/impl/json.h"
 #include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"  // for SchemaTraits<Xml>
+#include "ve/core/impl/md.h"   // for SchemaTraits<Md>
 
 namespace ve {
 
@@ -266,6 +267,30 @@ bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, const ImportOpt
     varToNodeImpl(data, &parsed);
     node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
     return true;
+}
+
+// ============================================================================
+// SchemaTraits<MdS>
+// ============================================================================
+
+std::string SchemaTraits<MdS>::exportNode(const Node* node, int indent)
+{
+    return impl::md::exportTree(node, indent);
+}
+
+std::string SchemaTraits<MdS>::exportNode(const Node* node, const ExportOptions& options)
+{
+    return impl::md::exportTree(node, options);
+}
+
+bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data)
+{
+    return impl::md::importTree(node, data);
+}
+
+bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+{
+    return impl::md::importTree(node, data, options);
 }
 
 // ============================================================================

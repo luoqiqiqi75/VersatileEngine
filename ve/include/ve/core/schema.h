@@ -4,7 +4,7 @@
 // SchemaField / Schema: describe the expected structure of a Node subtree.
 // schema::exportAs<F> / importAs<F>: tag-dispatched Node serialization.
 //
-// Format tags: schema::JsonS, schema::BinS, schema::XmlS, schema::VarS
+// Format tags: schema::JsonS, schema::BinS, schema::XmlS, schema::VarS, schema::MdS
 // Customization point: schema::SchemaTraits<Format>
 // Runtime extension: schema::registerSchemaFormat() for plugin formats.
 // ImportOptions drive merge-style import.
@@ -58,6 +58,7 @@ struct JsonS {};
 struct BinS  {};
 struct XmlS  {};  // pugixml based; attrs stored as Dict in Var value; only NODE_CHANGED for attr CRUD
 struct VarS  {};  // Var based; exports Node tree to a single Var (Dict/List/Value)
+struct MdS   {};  // Markdown based; headings -> Node hierarchy, content -> _content child
 
 struct ImportOptions {
     bool auto_insert  = true;
@@ -110,6 +111,15 @@ struct SchemaTraits<VarS>
     VE_API static Var exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool    importNode(Node* node, const Var& data);
     VE_API static bool    importNode(Node* node, const Var& data, const ImportOptions& options);
+};
+
+template<>
+struct SchemaTraits<MdS>
+{
+    VE_API static std::string exportNode(const Node* node, int indent = 2);
+    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
+    VE_API static bool        importNode(Node* node, const std::string& data);
+    VE_API static bool        importNode(Node* node, const std::string& data, const ImportOptions& options);
 };
 
 // --- Convenience functions -------------------------------------------------

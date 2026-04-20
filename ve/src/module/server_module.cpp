@@ -9,6 +9,7 @@
 #include "ve/core/impl/json.h"
 #include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"
+#include "ve/core/impl/md.h"
 #include "ve/service/node_service.h"
 #include "ve/service/static_service.h"
 #include "ve/service/bin_service.h"
@@ -206,6 +207,8 @@ void ServerModule::registerFileCommands()
             result = impl::json::exportTree(target);
         } else if (format == "xml") {
             result = impl::xml::exportTree(target);
+        } else if (format == "md") {
+            result = impl::md::exportTree(target);
         } else if (format == "var") {
             result = impl::json::stringify(schema::exportAs<schema::VarS>(target)) + "\n";
         } else if (format == "bin") {
@@ -304,6 +307,8 @@ void ServerModule::registerFileCommands()
             ok = impl::json::importTree(target, content);
         } else if (format == "xml") {
             ok = impl::xml::importTree(target, content);
+        } else if (format == "md") {
+            ok = impl::md::importTree(target, content);
         } else if (format == "bin") {
             ok = impl::bin::importTree(target, reinterpret_cast<const uint8_t*>(content.data()), content.size());
         } else if (schema::hasSchemaFormat(format)) {

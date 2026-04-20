@@ -357,3 +357,142 @@ client = VeClient("tcp://localhost:11000", transport="msgpack")
 | 12100 | NodeWsServer | WebSocket envelope |
 | 12200 | NodeTcpServer | TCP JSON envelope |
 | 12300 | NodeUdpServer | UDP JSON envelope |
+
+---
+
+## File I/O Commands
+
+VE provides `save` and `load` commands for persisting Node trees to files. These commands support multiple formats and are accessible via all service endpoints.
+
+### Supported Formats
+
+| Format | Extension | Description | Use Case |
+|--------|-----------|-------------|----------|
+| `json` | `.json` | JSON tree export (schema-oriented, ignores repeated names) | Configuration, human-readable data |
+| `xml` | `.xml` | XML tree export (attributes as `@key` children) | Legacy systems, XML-based protocols |
+| `md` | `.md` | Markdown export (headings → Node hierarchy) | AI-friendly docs, RAG retrieval |
+| `bin` | `.bin` | Binary export (CBS-compatible, preserves full tree) | High-performance IPC, snapshots |
+| `var` | `.json` | Var-based export (JSON-stringified Var tree) | Internal serialization |
+
+### save Command
+
+Export Node tree to file or return as string.
+
+**Syntax**:
+```bash
+save <format> [path] [-f file]
+```
+
+**Parameters**:
+- `<format>` - Output format: `json`, `xml`, `md`, `bin`, `var`
+- `[path]` - Node path to export (default: current context or root)
+- `-f <file>` - File path relative to `data_root` (default: `./data/`)
+
+**Examples**:
+
+```bash
+# Terminal
+save json /config                    # Return JSON string
+save json /config -f config.json     # Save to ./data/config.json
+save md /docs/plan -f plan.md        # Export as Markdown
+
+# HTTP
+curl -X POST http://localhost:12000/cmd/save \
+  -d '["json", "/config", "-f", "config.json"]'
+
+# WebSocket (veservice.js)
+veService.command("save", {format:"json", path:"/config", file:"config.json"});
+```
+
+### load Command
+
+Import Node tree from file or inline data.
+
+**Syntax**:
+```bash
+load <format> [path] [-f file] [-i data]
+```
+
+**Parameters**:
+- `<format>` - Input format: `json`, `xml`, `md`, `bin`
+- `[path]` - Target node path (default: current context or root)
+- `-f <file>` - File path relative to `data_root`
+- `-i <data>` - Inline data string
+
+**Examples**:
+
+```bash
+# Terminal
+load json /config -f config.json           # Load from file
+load json /config -i '{"key":"value"}'     # Inline import
+load md /docs/plan -f plan.md              # Import Markdown doc
+
+# HTTP
+curl -X POST http://localhost:12000/cmd/load \
+  -d '["json", "/config", "-f", "config.json"]'
+
+# WebSocket
+veService.command("load", {format:"json", path:"/config", file:"config.json"});
+```
+
+### Markdown Schema (MdS)
+
+Markdown format provides AI-friendly document storage with hierarchical retrieval.
+
+**Mapping Rules**:
+- MD heading → Node (name=cleaned title, value=raw title)
+- Heading level → `_level` child node (1-6)
+- Content after heading → `_content` child node
+- Special chars (`/`, `*`, `#`) → replaced with space in name
+
+**Example**:
+
+```markdown
+# Database Configuration
+Main database configuration
+
+## MySQL
+Production MySQL settings
+
+### Connection Pool
+host: localhost
+port: 3306
+```
+
+**Converts to Node tree**:
+```
+/Database Configuration (value: "Database Configuration")
+  /_level (value: 1)
+  /_content (value: "Main database configuration")
+  /MySQL (value: "MySQL")
+    /_level (value: 2)
+    /_content (value: "Production MySQL settings")
+    /Connection Pool (value: "Connection Pool")
+      /_level (value: 3)
+      /_content (value: "host: localhost\nport: 3306")
+```
+
+**RAG Use Cases**:
+
+```bash
+# 1. Import documentation
+load md /docs/http-plan -f http-service-enhancement.md
+
+# 2. Search by heading
+search "Feature" /docs/http-plan --key
+# Returns: ["docs/http-plan/.../Feature 1: 批量节点读取", ...]
+
+# 3. Get specific section
+curl -X POST http://localhost:12000/ve \
+  -d '{"op":"node.get","path":"docs/http-plan/.../Feature 1","depth":1}'
+
+# 4. List document structure
+curl -X POST http://localhost:12000/ve \
+  -d '{"op":"node.list","path":"docs/http-plan/VE HTTP Service Enhancement Plan"}'
+```
+
+**Benefits for AI**:
+- Structured retrieval by heading hierarchy
+- Incremental loading (no need to read entire doc)
+- Cross-document search via `search` command
+- Real-time updates via WebSocket subscriptions

@@ -97,9 +97,52 @@ veService.command("load", {
 });
 ```
 
-**Supported formats**: json, xml, bin, var, or custom (via schema registry)
+**Supported formats**: `json`, `xml`, `md`, `bin`, `var`, or custom (via schema registry)
 
 **File paths**: Relative to `./data/` by default (configurable via `ve/server/file_io/data_root`)
+
+### Markdown Format (md)
+
+Markdown format provides AI-friendly document storage with hierarchical retrieval.
+
+```bash
+# Import documentation
+load md /docs/plan -f plan.md
+
+# Export as Markdown
+save md /docs/plan -f plan.md
+
+# Search by heading
+search "Feature" /docs/plan --key
+
+# Get specific section
+curl -X POST http://localhost:12000/ve \
+  -d '{"op":"node.get","path":"docs/plan/Section/Subsection","depth":1}'
+```
+
+**Mapping**:
+- MD heading → Node (name=cleaned title, value=raw title)
+- Heading level → `_level` child (1-6)
+- Content → `_content` child
+
+**Example**:
+```markdown
+# Database
+Config for database
+
+## MySQL
+Production settings
+```
+
+Becomes:
+```
+/Database (value: "Database")
+  /_level: 1
+  /_content: "Config for database"
+  /MySQL (value: "MySQL")
+    /_level: 2
+    /_content: "Production settings"
+```
 
 ## Setup Configuration
 
