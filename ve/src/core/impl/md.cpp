@@ -58,25 +58,29 @@ static std::string stripNodeNameSuffix(const std::string& name)
 // Export: Node → MD
 // ============================================================================
 
-static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int level,
+static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int parentLevel,
                                 const schema::ExportOptions& options)
 {
     if (!node) {
         return;
     }
 
-    // Get level from _level child if exists
-    int actualLevel = level;
+    // Determine actual level
+    int actualLevel = parentLevel + 1;
     if (const Node* levelNode = node->find("_level")) {
-        actualLevel = levelNode->get().toInt(level);
+        actualLevel = levelNode->get().toInt(actualLevel);
     }
     actualLevel = std::min(actualLevel, 6);  // MD max 6 levels
 
     // Write heading
     if (actualLevel > 0) {
         std::string heading(actualLevel, '#');
-        std::string title = node->get().toString();
-        if (title.empty()) {
+
+        // Get title: prefer _title, fallback to name
+        std::string title;
+        if (const Node* titleNode = node->find("_title")) {
+            title = titleNode->get().toString();
+        } else {
             title = stripNodeNameSuffix(node->name());
         }
 
@@ -85,9 +89,9 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int l
         }
     }
 
-    // Write content from _content child
-    if (const Node* contentNode = node->find("_content")) {
-        std::string content = contentNode->get().toString();
+    // Write content from node value
+    if (!node->get().isNull()) {
+        std::string content = node->get().toString();
         if (!content.empty()) {
             oss << content;
             if (content.back() != '\n') {
@@ -110,11 +114,8 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int l
         if (!childName.empty() && childName[0] == '_') {
             continue;
         }
-        if (options.auto_ignore && !childName.empty() && childName[0] == '_') {
-            continue;
-        }
 
-        exportNodeRecursive(child, oss, level + 1, options);
+        exportNodeRecursive(child, oss, actualLevel, options);
     }
 }
 
@@ -154,11 +155,8 @@ std::string exportTree(const Node* node, const schema::ExportOptions& options)
         if (!childName.empty() && childName[0] == '_') {
             continue;
         }
-        if (options.auto_ignore && !childName.empty() && childName[0] == '_') {
-            continue;
-        }
 
-        exportNodeRecursive(child, oss, 1, options);
+        exportNodeRecursive(child, oss, 0, options);
     }
 
     return oss.str();
@@ -276,7 +274,7 @@ static void flushContent(Node* target, const std::string& content)
 {
     std::string trimmed = trimTrailingWhitespace(content);
     if (!trimmed.empty()) {
-        target->append("_content")->set(Var(trimmed));
+        target->set(Var(trimmed));
     }
 }
 
@@ -285,12 +283,16 @@ static void importDirect(Node* root, const std::string& md)
     std::istringstream stream(md);
     std::string line;
 
-    // levelStack[i] = node at heading level i (1-indexed)
-    // levelStack[0] = root
-    std::vector<Node*> levelStack;
-    levelStack.push_back(root);
+    // levelStack[i] = {node, actual_md_level}
+    struct StackEntry {
+        Node* node;
+        int level;
+    };
+    std::vector<StackEntry> levelStack;
+    levelStack.push_back({root, 0});
 
     Node* currentNode = root;
+    int currentLevel = 0;
     std::ostringstream contentBuf;
     bool inCodeFence = false;
     std::string fenceMarker;
@@ -316,22 +318,31 @@ static void importDirect(Node* root, const std::string& md)
             contentBuf.str("");
             contentBuf.clear();
 
-            // Find parent: pop stack to level-1
-            while (static_cast<int>(levelStack.size()) > heading.level) {
+            // Find parent: pop stack until we find a level < heading.level
+            while (levelStack.size() > 1 && levelStack.back().level >= heading.level) {
                 levelStack.pop_back();
             }
-            // Pad stack if level jumps (e.g., # → ###)
-            while (static_cast<int>(levelStack.size()) < heading.level) {
-                levelStack.push_back(levelStack.back());
+
+            Node* parent = levelStack.back().node;
+            int parentLevel = levelStack.back().level;
+            int expectedLevel = parentLevel + 1;
+
+            // Create new node
+            Node* newNode = parent->append(heading.cleanTitle);
+
+            // Store original title only if cleaned
+            if (heading.cleanTitle != heading.rawTitle) {
+                newNode->append("_title")->set(Var(heading.rawTitle));
             }
 
-            Node* parent = levelStack.back();
-            Node* newNode = parent->append(heading.cleanTitle);
-            newNode->set(Var(heading.rawTitle));
-            newNode->append("_level")->set(Var(heading.level));
+            // Store level only if jumped
+            if (heading.level != expectedLevel) {
+                newNode->append("_level")->set(Var(heading.level));
+            }
 
-            levelStack.push_back(newNode);
+            levelStack.push_back({newNode, heading.level});
             currentNode = newNode;
+            currentLevel = heading.level;
         } else {
             contentBuf << line << "\n";
         }

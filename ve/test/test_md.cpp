@@ -18,9 +18,8 @@ VE_TEST(md_import_single_heading) {
 
     Node* h = root.child("Hello World");
     VE_ASSERT(h != nullptr);
-    VE_ASSERT_EQ(h->get().toString(), "Hello World");
-    VE_ASSERT(h->find("_level") != nullptr);
-    VE_ASSERT_EQ(h->find("_level")->get().toInt(), 1);
+    // No _level for first-level heading (no jump)
+    VE_ASSERT(h->find("_level") == nullptr);
 }
 
 VE_TEST(md_import_heading_with_content) {
@@ -33,8 +32,8 @@ VE_TEST(md_import_heading_with_content) {
 
     Node* s = root.child("Section");
     VE_ASSERT(s != nullptr);
-    VE_ASSERT(s->find("_content") != nullptr);
-    std::string content = s->find("_content")->get().toString();
+    // Content is in value, not _content
+    std::string content = s->get().toString();
     VE_ASSERT(content.find("Some content here.") != std::string::npos);
     VE_ASSERT(content.find("More content.") != std::string::npos);
 }
@@ -50,15 +49,18 @@ VE_TEST(md_import_nested_headings) {
     VE_ASSERT_EQ(root.count(), 1);
     Node* l1 = root.child("Level 1");
     VE_ASSERT(l1 != nullptr);
-    VE_ASSERT_EQ(l1->find("_level")->get().toInt(), 1);
+    // No _level (no jump from root to level 1)
+    VE_ASSERT(l1->find("_level") == nullptr);
 
     Node* l2 = l1->child("Level 2");
     VE_ASSERT(l2 != nullptr);
-    VE_ASSERT_EQ(l2->find("_level")->get().toInt(), 2);
+    // No _level (expected 2, got 2)
+    VE_ASSERT(l2->find("_level") == nullptr);
 
     Node* l3 = l2->child("Level 3");
     VE_ASSERT(l3 != nullptr);
-    VE_ASSERT_EQ(l3->find("_level")->get().toInt(), 3);
+    // No _level (expected 3, got 3)
+    VE_ASSERT(l3->find("_level") == nullptr);
 }
 
 // ============================================================================
@@ -75,8 +77,8 @@ VE_TEST(md_import_same_name) {
     VE_ASSERT(impl::md::importTree(&root, md));
 
     VE_ASSERT_EQ(root.count("Feature"), 2);
-    VE_ASSERT_EQ(root.child("Feature", 0)->find("_content")->get().toString(), "First");
-    VE_ASSERT_EQ(root.child("Feature", 1)->find("_content")->get().toString(), "Second");
+    VE_ASSERT_EQ(root.child("Feature", 0)->get().toString(), "First");
+    VE_ASSERT_EQ(root.child("Feature", 1)->get().toString(), "Second");
 }
 
 // ============================================================================
@@ -93,13 +95,16 @@ VE_TEST(md_import_level_jump) {
 
     Node* a = root.child("A");
     VE_ASSERT(a != nullptr);
-    VE_ASSERT_EQ(a->find("_level")->get().toInt(), 1);
+    // No _level for A (no jump)
+    VE_ASSERT(a->find("_level") == nullptr);
 
     // B should be child of A despite level jump
     Node* b = a->child("B");
     VE_ASSERT(b != nullptr);
+    // _level exists because jumped (expected 2, got 3)
+    VE_ASSERT(b->find("_level") != nullptr);
     VE_ASSERT_EQ(b->find("_level")->get().toInt(), 3);
-    VE_ASSERT_EQ(b->find("_content")->get().toString(), "Content B");
+    VE_ASSERT_EQ(b->get().toString(), "Content B");
 }
 
 // ============================================================================
@@ -115,10 +120,8 @@ VE_TEST(md_import_preamble) {
     Node root("root");
     VE_ASSERT(impl::md::importTree(&root, md));
 
-    // Preamble goes to root's _content
-    Node* preamble = root.find("_content");
-    VE_ASSERT(preamble != nullptr);
-    VE_ASSERT(preamble->get().toString().find("preamble") != std::string::npos);
+    // Preamble goes to root's value
+    VE_ASSERT(root.get().toString().find("preamble") != std::string::npos);
 
     Node* s = root.child("Section");
     VE_ASSERT(s != nullptr);
@@ -142,7 +145,7 @@ VE_TEST(md_import_code_fence) {
     VE_ASSERT_EQ(root.count(), 1);
     Node* h = root.child("Real Heading");
     VE_ASSERT(h != nullptr);
-    std::string content = h->find("_content")->get().toString();
+    std::string content = h->get().toString();
     VE_ASSERT(content.find("# Not a heading") != std::string::npos);
     VE_ASSERT(content.find("After code") != std::string::npos);
 }
@@ -158,7 +161,9 @@ VE_TEST(md_import_strip_formatting) {
 
     Node* h = root.child("Important Feature");
     VE_ASSERT(h != nullptr);
-    VE_ASSERT_EQ(h->get().toString(), "**Important** Feature");
+    // _title stores original because name was cleaned
+    VE_ASSERT(h->find("_title") != nullptr);
+    VE_ASSERT_EQ(h->find("_title")->get().toString(), "**Important** Feature");
 }
 
 VE_TEST(md_import_slash_in_heading) {
@@ -168,7 +173,9 @@ VE_TEST(md_import_slash_in_heading) {
 
     Node* h = root.child("TCP IP Stack");
     VE_ASSERT(h != nullptr);
-    VE_ASSERT_EQ(h->get().toString(), "TCP/IP Stack");
+    // _title stores original because name was cleaned (/ → space)
+    VE_ASSERT(h->find("_title") != nullptr);
+    VE_ASSERT_EQ(h->find("_title")->get().toString(), "TCP/IP Stack");
 }
 
 // ============================================================================
@@ -193,14 +200,10 @@ VE_TEST(md_import_empty_heading) {
 VE_TEST(md_export_basic) {
     Node root("root");
     Node* s1 = root.append("Section1");
-    s1->set(Var("Section1"));
-    s1->append("_level")->set(Var(1));
-    s1->append("_content")->set(Var("Content 1"));
+    s1->set(Var("Content 1"));
 
     Node* s2 = s1->append("Sub1");
-    s2->set(Var("Sub1"));
-    s2->append("_level")->set(Var(2));
-    s2->append("_content")->set(Var("Content 1.1"));
+    s2->set(Var("Content 1.1"));
 
     std::string md = impl::md::exportTree(&root);
     VE_ASSERT(md.find("# Section1") != std::string::npos);
@@ -212,12 +215,9 @@ VE_TEST(md_export_basic) {
 VE_TEST(md_export_preserves_level) {
     Node root("root");
     Node* a = root.append("A");
-    a->set(Var("A"));
-    a->append("_level")->set(Var(1));
 
     Node* b = a->append("B");
-    b->set(Var("B"));
-    b->append("_level")->set(Var(3));
+    b->append("_level")->set(Var(3));  // Jump from 1 to 3
 
     std::string md = impl::md::exportTree(&root);
     VE_ASSERT(md.find("# A") != std::string::npos);
@@ -255,8 +255,7 @@ VE_TEST(md_roundtrip) {
     Node* f1b = root2.child("Feature 1");
     VE_ASSERT(f1a != nullptr);
     VE_ASSERT(f1b != nullptr);
-    VE_ASSERT_EQ(f1a->find("_content")->get().toString(),
-                 f1b->find("_content")->get().toString());
+    VE_ASSERT_EQ(f1a->get().toString(), f1b->get().toString());
 }
 
 // ============================================================================
@@ -314,7 +313,7 @@ VE_TEST(md_import_complex_doc) {
 
     Node* ctx = plan->child("Context");
     VE_ASSERT(ctx != nullptr);
-    VE_ASSERT(ctx->find("_content")->get().toString().find("basic Node tree") != std::string::npos);
+    VE_ASSERT(ctx->get().toString().find("basic Node tree") != std::string::npos);
 
     Node* principles = plan->child("Design Principles");
     VE_ASSERT(principles != nullptr);
@@ -325,5 +324,5 @@ VE_TEST(md_import_complex_doc) {
     VE_ASSERT(features != nullptr);
     VE_ASSERT(features->child("Feature 1") != nullptr);
     VE_ASSERT(features->child("Feature 2") != nullptr);
-    VE_ASSERT_EQ(features->child("Feature 1")->find("_content")->get().toString(), "Batch node read.");
+    VE_ASSERT_EQ(features->child("Feature 1")->get().toString(), "Batch node read.");
 }

@@ -121,9 +121,9 @@ curl -X POST http://localhost:12000/ve \
 ```
 
 **Mapping**:
-- MD heading → Node (name=cleaned title, value=raw title)
-- Heading level → `_level` child (1-6)
-- Content → `_content` child
+- MD heading → Node (name=cleaned title, value=content after heading)
+- Original title → `_title` child (only if name was cleaned)
+- Heading level → `_level` child (only if level jumped)
 
 **Example**:
 ```markdown
@@ -132,16 +132,19 @@ Config for database
 
 ## MySQL
 Production settings
+
+# Title1
+### Title3
+Deep content
 ```
 
 Becomes:
 ```
-/Database (value: "Database")
-  /_level: 1
-  /_content: "Config for database"
-  /MySQL (value: "MySQL")
-    /_level: 2
-    /_content: "Production settings"
+/Database (value: "Config for database")
+  /MySQL (value: "Production settings")
+/Title1 (value: null)
+  /Title3 (value: "Deep content")
+    /_level: 3  # Jumped from 1 to 3
 ```
 
 ## Setup Configuration

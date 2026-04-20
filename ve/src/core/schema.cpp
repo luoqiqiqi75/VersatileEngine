@@ -7,6 +7,8 @@
 #include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"  // for SchemaTraits<Xml>
 #include "ve/core/impl/md.h"   // for SchemaTraits<Md>
+#include <sstream>
+#include <iomanip>
 
 namespace ve {
 
@@ -302,6 +304,43 @@ static Hash<SchemaFormatHandler>& formatRegistry()
     static Hash<SchemaFormatHandler> registry;
     return registry;
 }
+
+// Auto-register built-in formats
+static struct BuiltinFormatRegistrar {
+    BuiltinFormatRegistrar() {
+        // json
+        registerSchemaFormat("json", {
+            [](const Node* n) { return impl::json::exportTree(n); },
+            [](Node* n, const std::string& d) { return impl::json::importTree(n, d); }
+        });
+        // xml
+        registerSchemaFormat("xml", {
+            [](const Node* n) { return impl::xml::exportTree(n); },
+            [](Node* n, const std::string& d) { return impl::xml::importTree(n, d); }
+        });
+        // md
+        registerSchemaFormat("md", {
+            [](const Node* n) { return impl::md::exportTree(n); },
+            [](Node* n, const std::string& d) { return impl::md::importTree(n, d); }
+        });
+        // bin (special case - binary data, wrap as hex string for registry)
+        registerSchemaFormat("bin", {
+            [](const Node* n) {
+                auto bytes = impl::bin::exportTree(n);
+                // Return hex string for text-based registry
+                std::ostringstream oss;
+                for (auto b : bytes) {
+                    oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(b);
+                }
+                return oss.str();
+            },
+            [](Node* n, const std::string& d) {
+                // Assume raw binary string (not hex)
+                return impl::bin::importTree(n, reinterpret_cast<const uint8_t*>(d.data()), d.size());
+            }
+        });
+    }
+} _builtinFormatRegistrar;
 
 void registerSchemaFormat(const std::string& name, SchemaFormatHandler handler)
 {

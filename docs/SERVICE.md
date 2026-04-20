@@ -440,9 +440,9 @@ veService.command("load", {format:"json", path:"/config", file:"config.json"});
 Markdown format provides AI-friendly document storage with hierarchical retrieval.
 
 **Mapping Rules**:
-- MD heading → Node (name=cleaned title, value=raw title)
-- Heading level → `_level` child node (1-6)
-- Content after heading → `_content` child node
+- MD heading → Node (name=cleaned title, value=content after heading)
+- Original title → `_title` child (only if name was cleaned due to special chars)
+- Heading level → `_level` child (only if level jumped, stores actual level)
 - Special chars (`/`, `*`, `#`) → replaced with space in name
 
 **Example**:
@@ -454,22 +454,18 @@ Main database configuration
 ## MySQL
 Production MySQL settings
 
-### Connection Pool
-host: localhost
-port: 3306
+# Title1
+### Title3
+Deep content
 ```
 
 **Converts to Node tree**:
 ```
-/Database Configuration (value: "Database Configuration")
-  /_level (value: 1)
-  /_content (value: "Main database configuration")
-  /MySQL (value: "MySQL")
-    /_level (value: 2)
-    /_content (value: "Production MySQL settings")
-    /Connection Pool (value: "Connection Pool")
-      /_level (value: 3)
-      /_content (value: "host: localhost\nport: 3306")
+/Database Configuration (value: "Main database configuration")
+  /MySQL (value: "Production MySQL settings")
+/Title1 (value: null)
+  /Title3 (value: "Deep content")
+    /_level: 3  # Jumped from level 1 to 3
 ```
 
 **RAG Use Cases**:
