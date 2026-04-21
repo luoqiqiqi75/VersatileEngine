@@ -714,6 +714,66 @@ public:
         return result;
     }
 
+    Var::DictV callService(const std::string& service, const std::string& type,
+                          const std::string& request, const std::string& payload_format) override
+    {
+        std::shared_ptr<rclcpp::Node> node;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!node_)
+                return makeResult(false, "rclcpp backend is not started");
+            node = node_;
+        }
+
+        if (service.empty())
+            return makeResult(false, "service name is required");
+        if (type.empty())
+            return makeResult(false, "service type is required");
+
+        const std::string fmt = normalizedPayloadFormat(payload_format);
+        auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
+        std::string bridge_error;
+        if (fmt != "cdr_hex" && !bridge->initialize(type, bridge_error))
+            return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+
+        Var request_var;
+        if (fmt == "yaml") {
+            request_var = ve::ros::yaml::decode(request);
+        } else if (fmt == "var") {
+            request_var = ve::ros::yaml::decode(request);
+        } else if (fmt == "cdr_hex") {
+            return makeResult(false, "cdr_hex format not supported for service request");
+        } else {
+            return makeResult(false, "unsupported payload format: " + fmt);
+        }
+
+        rclcpp::SerializedMessage request_msg;
+        if (!bridge->serializeFromVar(request_var, request_msg, bridge_error))
+            return makeResult(false, "failed to serialize request: " + bridge_error);
+
+        auto client = node->create_generic_client(service, type);
+        if (!client->wait_for_service(std::chrono::seconds(5)))
+            return makeResult(false, "service not available: " + service);
+
+        auto future = client->async_send_request(std::make_shared<rclcpp::SerializedMessage>(request_msg));
+        if (future.wait_for(std::chrono::seconds(10)) != std::future_status::ready)
+            return makeResult(false, "service call timeout");
+
+        auto response_msg = future.get();
+        Var response_var;
+        if (!bridge->deserializeToVar(*response_msg, response_var, bridge_error))
+            return makeResult(false, "failed to deserialize response: " + bridge_error);
+
+        Var::DictV result = makeResult(true, "service call ok");
+        result["service"] = Var(service);
+        result["type"] = Var(type);
+        result["payload_format"] = Var(fmt);
+        result["response"] = response_var;
+        if (fmt == "yaml")
+            result["yaml"] = Var(ve::ros::yaml::encode(response_var));
+        return result;
+    }
+
     Var::DictV listParams(const std::string& node_name = "") const override
     {
         std::shared_ptr<rclcpp::Node> node;

@@ -3,7 +3,7 @@
 from typing import Any, Callable, Dict, List, Optional
 from .transports import (
     Transport, HttpRestTransport, JsonRpcTransport,
-    TcpJsonTransport, MsgPackTransport, NotifyCallback
+    TcpJsonTransport, MsgPackTransport, NotifyCallback, _UNSET
 )
 
 
@@ -46,18 +46,20 @@ class VeClient:
         # MessagePack (high-performance)
         client = VeClient("tcp://localhost:11000", transport="msgpack")
 
-        # Operations
-        client.get("/config/port")
-        client.set("/test", 42)
-        client.trigger("/test")
-        client.list("/")
+        # Operations (aligned with JS veservice.js)
+        tree = client.get("/config")           # Get tree (depth=-1)
+        value = client.val("/config/port")     # Get single value
+        client.val("/test", 42)                # Set single value
+        client.set("/config", {"port": 8080})  # Set tree structure
+        client.trigger("/test")                # Trigger NODE_CHANGED
+        client.list("/")                       # List children
 
         # Subscribe (TCP JSON and MsgPack only)
         unsub = client.subscribe("/test", lambda path, value: print(f"{path} = {value}"))
         unsub()  # unsubscribe
 
         # Command
-        client.command("ros/topic/list", {"args": []})
+        client.command("search", {"args": ["config"]})
     """
 
     def __init__(self, url: str = "tcp://localhost:12200",
@@ -93,17 +95,29 @@ class VeClient:
         else:
             raise ValueError(f"Unknown transport: {name!r}")
 
-    def get(self, path: str = "/") -> Any:
-        """Get node value at path."""
-        return self._transport.get(path)
+    def get(self, path: str = "/", depth: int = -1) -> Any:
+        """Get node tree or value (default depth=-1 returns full tree)."""
+        return self._transport.get(path, depth)
 
-    def set(self, path: str, value: Any) -> bool:
-        """Set node value at path."""
-        return self._transport.set(path, value)
+    def set(self, path: str, tree: Any) -> bool:
+        """Set node tree structure (node.put)."""
+        return self._transport.set(path, tree)
+
+    def val(self, path: str, value: Any = _UNSET) -> Any:
+        """Get or set single node value (node.get/node.set).
+
+        val(path) -> returns current value
+        val(path, value) -> sets value, returns success status
+        """
+        return self._transport.val(path, value)
 
     def trigger(self, path: str) -> bool:
         """Trigger NODE_CHANGED on node (re-fire signal without changing value)."""
         return self._transport.trigger(path)
+
+    def rm(self, path: str) -> bool:
+        """Remove node at path."""
+        return self._transport.rm(path)
 
     def list(self, path: str = "/") -> List[Dict]:
         """List children at path."""
@@ -116,6 +130,14 @@ class VeClient:
     def command(self, name: str, args: Optional[Dict] = None) -> Any:
         """Run a command."""
         return self._transport.command(name, args)
+
+    def cmds(self) -> List[str]:
+        """List available commands."""
+        return self._transport.cmds()
+
+    def batch(self, items: List[Dict]) -> List[Any]:
+        """Execute batch operations."""
+        return self._transport.batch(items)
 
     def subscribe(self, path: str, callback: NotifyCallback) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function.

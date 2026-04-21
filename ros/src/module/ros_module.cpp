@@ -220,6 +220,13 @@ private:
 
         command::declareNode("ros/service/list")->at("filter");
         command::declareNode("ros/service/info")->at("name");
+
+        auto* service_call_decl = command::declareNode("ros/service/call");
+        service_call_decl->at("service");
+        service_call_decl->at("type");
+        service_call_decl->at("request");
+        service_call_decl->at("payload_format");
+
         command::declareNode("ros/param/list")->at("node");
 
         auto* param_get_decl = command::declareNode("ros/param/get");
@@ -402,6 +409,21 @@ private:
                 return failResult("service name is required");
             return okResult(Var(ros::serviceInfo(service_name)));
         }, "Show ROS service details.");
+
+        command::reg("ros/service/call", [this](Node* ctx) -> Result {
+            auto a = command::args(ctx);
+            ros::ServiceCallRequest request;
+            request.service = a.string("service");
+            request.type = a.string("type");
+            request.request = a.string("request");
+            request.payload_format = a.string("payload_format", "yaml");
+            if (request.service.empty() || request.type.empty() || request.request.empty())
+                return failResult("service/type/request is required");
+
+            const auto result = ros::callService(request);
+            writeRosMirror("service_calls/last", Var(result));
+            return okResult(Var(result));
+        }, "Call a ROS service.");
 
         command::reg("ros/param/list", [this](Node* ctx) -> Result {
             auto a = command::args(ctx);

@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, List, Optional
 from .async_transports import (
-    AsyncTransport, AsyncHttpRestTransport, AsyncJsonRpcTransport
+    AsyncTransport, AsyncHttpRestTransport, AsyncJsonRpcTransport, _UNSET
 )
 
 
@@ -39,12 +39,13 @@ class AsyncVeClient:
         # JSON-RPC
         client = AsyncVeClient("http://localhost:12000", transport="jsonrpc")
 
-        # Operations
-        value = await client.get("/config/port")
-        await client.set("/test", 42)
-        await client.trigger("/test")
-        children = await client.list("/")
-        tree = await client.tree("/")
+        # Operations (aligned with JS veservice.js)
+        tree = await client.get("/config")           # Get tree (depth=-1)
+        value = await client.val("/config/port")     # Get single value
+        await client.val("/test", 42)                # Set single value
+        await client.set("/config", {"port": 8080})  # Set tree structure
+        await client.trigger("/test")                # Trigger NODE_CHANGED
+        children = await client.list("/")            # List children
 
         # Command
         result = await client.command("search", {"args": ["config"]})
@@ -80,17 +81,29 @@ class AsyncVeClient:
         else:
             raise ValueError(f"Unknown async transport: {name!r}")
 
-    async def get(self, path: str = "/") -> Any:
-        """Get node value at path."""
-        return await self._transport.get(path)
+    async def get(self, path: str = "/", depth: int = -1) -> Any:
+        """Get node tree or value (default depth=-1 returns full tree)."""
+        return await self._transport.get(path, depth)
 
-    async def set(self, path: str, value: Any) -> bool:
-        """Set node value at path."""
-        return await self._transport.set(path, value)
+    async def set(self, path: str, tree: Any) -> bool:
+        """Set node tree structure (node.put)."""
+        return await self._transport.set(path, tree)
+
+    async def val(self, path: str, value: Any = _UNSET) -> Any:
+        """Get or set single node value (node.get/node.set).
+
+        val(path) -> returns current value
+        val(path, value) -> sets value, returns success status
+        """
+        return await self._transport.val(path, value)
 
     async def trigger(self, path: str) -> bool:
         """Trigger NODE_CHANGED on node (re-fire signal without changing value)."""
         return await self._transport.trigger(path)
+
+    async def rm(self, path: str) -> bool:
+        """Remove node at path."""
+        return await self._transport.rm(path)
 
     async def list(self, path: str = "/") -> List[Dict]:
         """List children at path."""
@@ -103,6 +116,14 @@ class AsyncVeClient:
     async def command(self, name: str, args: Optional[Dict] = None) -> Any:
         """Run a command."""
         return await self._transport.command(name, args)
+
+    async def cmds(self) -> List[str]:
+        """List available commands."""
+        return await self._transport.cmds()
+
+    async def batch(self, items: List[Dict]) -> List[Any]:
+        """Execute batch operations."""
+        return await self._transport.batch(items)
 
     async def ping(self) -> bool:
         """Test connection."""

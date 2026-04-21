@@ -50,15 +50,25 @@ def _reply_error(reply: Dict[str, Any]) -> RuntimeError:
     return RuntimeError(f"{reply.get('code', 'error')}: {reply.get('error', 'unknown error')}")
 
 
+_UNSET = object()
+
+
 class AsyncTransport(ABC):
     """Abstract async transport for VE Node operations."""
 
     @abstractmethod
-    async def get(self, path: str) -> Any:
+    async def get(self, path: str, depth: int = -1) -> Any:
+        """Get node tree or value (default depth=-1 returns full tree)."""
         pass
 
     @abstractmethod
-    async def set(self, path: str, value: Any) -> bool:
+    async def set(self, path: str, tree: Any) -> bool:
+        """Set node tree structure (node.put)."""
+        pass
+
+    @abstractmethod
+    async def val(self, path: str, value: Any = _UNSET) -> Any:
+        """Get or set single node value (node.get/node.set)."""
         pass
 
     @abstractmethod
@@ -75,6 +85,11 @@ class AsyncTransport(ABC):
 
     @abstractmethod
     async def ping(self) -> bool:
+        pass
+
+    @abstractmethod
+    async def rm(self, path: str) -> bool:
+        """Remove node at path (node.remove)."""
         pass
 
     async def trigger(self, path: str) -> bool:
@@ -102,23 +117,46 @@ class AsyncHttpRestTransport(AsyncTransport):
                                     headers={"Content-Type": "application/json"})
         return resp.json()
 
-    async def get(self, path: str) -> Any:
+    async def get(self, path: str, depth: int = -1) -> Any:
+        """Get node tree or value (default depth=-1 returns full tree)."""
         try:
-            reply = await self._call("node.get", path=_normalize_path(path))
+            reply = await self._call("node.get", path=_normalize_path(path), depth=depth)
             if not reply.get("ok"):
                 if reply.get("code") == "not_found":
                     return None
                 raise _reply_error(reply)
             data = reply.get("data", {})
-            return data.get("value") if isinstance(data, dict) else data
+            if isinstance(data, dict):
+                return data.get("tree") or data.get("value")
+            return data
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return None
             raise
 
-    async def set(self, path: str, value: Any) -> bool:
-        reply = await self._call("node.set", path=_normalize_path(path), value=value)
+    async def set(self, path: str, tree: Any) -> bool:
+        """Set node tree structure (node.put)."""
+        reply = await self._call("node.put", path=_normalize_path(path), tree=tree)
         return bool(reply.get("ok"))
+
+    async def val(self, path: str, value: Any = _UNSET) -> Any:
+        """Get or set single node value (node.get/node.set)."""
+        if value is _UNSET:
+            try:
+                reply = await self._call("node.get", path=_normalize_path(path))
+                if not reply.get("ok"):
+                    if reply.get("code") == "not_found":
+                        return None
+                    raise _reply_error(reply)
+                data = reply.get("data", {})
+                return data.get("value") if isinstance(data, dict) else data
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    return None
+                raise
+        else:
+            reply = await self._call("node.set", path=_normalize_path(path), value=value)
+            return bool(reply.get("ok"))
 
     async def trigger(self, path: str) -> bool:
         try:
@@ -126,6 +164,10 @@ class AsyncHttpRestTransport(AsyncTransport):
             return bool(reply.get("ok"))
         except Exception:
             return False
+
+    async def rm(self, path: str) -> bool:
+        reply = await self._call("node.remove", path=_normalize_path(path))
+        return bool(reply.get("ok"))
 
     async def list(self, path: str) -> List[Dict]:
         reply = await self._call("node.list", path=_normalize_path(path))
@@ -148,6 +190,20 @@ class AsyncHttpRestTransport(AsyncTransport):
         if reply.get("accepted"):
             return {"accepted": True, "task_id": reply.get("task_id")}
         return reply.get("data")
+
+    async def cmds(self) -> List[str]:
+        reply = await self._call("command.list")
+        if not reply.get("ok"):
+            return []
+        data = reply.get("data", {})
+        return data if isinstance(data, list) else []
+
+    async def batch(self, items: List[Dict]) -> List[Any]:
+        reply = await self._call("batch", items=items)
+        if not reply.get("ok"):
+            raise _reply_error(reply)
+        data = reply.get("data", {})
+        return data.get("items", []) if isinstance(data, dict) else []
 
     async def ping(self) -> bool:
         try:
@@ -191,21 +247,43 @@ class AsyncJsonRpcTransport(AsyncTransport):
 
         return result.get("result")
 
-    async def get(self, path: str) -> Any:
+    async def get(self, path: str, depth: int = -1) -> Any:
+        """Get node tree or value (default depth=-1 returns full tree)."""
         try:
-            data = await self._call("node.get", {"path": _normalize_path(path)})
+            data = await self._call("node.get", {"path": _normalize_path(path), "depth": depth})
         except RuntimeError as exc:
             if "not_found" in str(exc):
                 return None
             raise
-        return data.get("value") if isinstance(data, dict) else data
+        if isinstance(data, dict):
+            return data.get("tree") or data.get("value")
+        return data
 
-    async def set(self, path: str, value: Any) -> bool:
-        data = await self._call("node.set", {"path": _normalize_path(path), "value": value})
+    async def set(self, path: str, tree: Any) -> bool:
+        """Set node tree structure (node.put)."""
+        data = await self._call("node.put", {"path": _normalize_path(path), "tree": tree})
         return isinstance(data, dict) and "path" in data
+
+    async def val(self, path: str, value: Any = _UNSET) -> Any:
+        """Get or set single node value (node.get/node.set)."""
+        if value is _UNSET:
+            try:
+                data = await self._call("node.get", {"path": _normalize_path(path)})
+            except RuntimeError as exc:
+                if "not_found" in str(exc):
+                    return None
+                raise
+            return data.get("value") if isinstance(data, dict) else data
+        else:
+            data = await self._call("node.set", {"path": _normalize_path(path), "value": value})
+            return isinstance(data, dict) and "path" in data
 
     async def trigger(self, path: str) -> bool:
         data = await self._call("node.trigger", {"path": _normalize_path(path)})
+        return isinstance(data, dict) and "path" in data
+
+    async def rm(self, path: str) -> bool:
+        data = await self._call("node.remove", {"path": _normalize_path(path)})
         return isinstance(data, dict) and "path" in data
 
     async def list(self, path: str) -> List[Dict]:
@@ -221,6 +299,14 @@ class AsyncJsonRpcTransport(AsyncTransport):
     async def command(self, name: str, args: Optional[Dict] = None) -> Any:
         data = await self._call("command.run", {"name": name, **_command_payload(args)})
         return data
+
+    async def cmds(self) -> List[str]:
+        data = await self._call("command.list", {})
+        return data if isinstance(data, list) else []
+
+    async def batch(self, items: List[Dict]) -> List[Any]:
+        data = await self._call("batch", {"items": items})
+        return data.get("items", []) if isinstance(data, dict) else []
 
     async def ping(self) -> bool:
         try:
