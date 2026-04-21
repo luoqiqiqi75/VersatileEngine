@@ -148,36 +148,32 @@ const ve = new VeHttpClient('http://127.0.0.1:12000');
 
 await ve.health();
 
-const node = await ve.getNode('ve/server/node/http/runtime/port', { meta: true });
-const tree = await ve.getTree('ve/server');
-const cmds = await ve.listCommands();
+const tree = await ve.get('ve/server');
+const port = await ve.val('ve/server/node/http/runtime/port');
+const commands = await ve.cmds();
 
-const run = await ve.runCommand('save', {
-  args: ['json', '/ve', '-f', 've.json'],
-  wait: true,
-});
+await ve.run('save', ['json', '/ve', '-f', 've.json']);
 ```
 
 ### 3. `VeHttpClient`
 
 `VeHttpClient` 的核心方法是：
 
-- `call(op, payload)`：直接打 `/ve`
+- `call(op, payload)` - 直接打 `/ve`
 
-上层保留了这些薄封装：
+上层薄封装（三个客户端统一命名）：
 
-- `getNode(path, options)` - 获取节点（支持 depth、meta）
-- `listNodes(path, meta?)` - 列出子节点
-- `setNode(path, value)` - 设置节点值
-- `putNode(path, tree)` - 导入树形结构
-- `removeNode(path)` - 删除节点
-- `triggerNode(path)` - 触发节点变更信号
-- `getTree(path, depth?)` - 获取树形结构
-- `exportTree(path, depth?)` - 导出为 JSON 字符串
-- `importTree(path, json)` - 从 JSON 导入
-- `listCommands()` - 列出所有命令
-- `runCommand(name, { args, wait, id })` - 执行命令
+- `get(path, depth?)` - 获取树（默认 depth=-1 完整树）
+- `set(path, tree)` - 设置树
+- `val(path)` / `val(path, value)` - 获取/设置单个值
+- `list(path)` - 列出子节点
+- `rm(path)` - 删除节点
+- `trigger(path)` - 触发信号
+- `run(name, args, wait?)` - 执行命令
+- `cmds()` - 列出命令
 - `batch(items)` - 批量操作
+- `exportTree(path, depth?)` - 导出为 JSON 字符串
+- `importTree(path, json)` - 从 JSON 导入（REST PUT）
 
 说明：
 
@@ -213,31 +209,36 @@ import { VeWsClient } from '@ve/sdk';
 const ws = new VeWsClient({ url: 'ws://127.0.0.1:12100' });
 ws.connect();
 
-ws.onMessage((msg) => {
-  if ('event' in msg && msg.event === 'task.result') {
-    console.log('task result:', msg);
-  }
-});
+// 获取完整树
+const tree = await ws.get('ve/server');
 
-const unsub = ws.subscribe('ve/server/node/http/runtime/port', (path, value) => {
+// 获取/设置单个值
+const port = await ws.val('ve/server/node/http/runtime/port');
+await ws.val('test/value', 42);
+
+// 订阅（默认 tree:true，推送完整子树）
+const stop = ws.watch('ve/server/node/http/runtime', (path, value) => {
   console.log(path, value);
 });
+
+// 执行命令
+await ws.run('save', ['json', '/ve']);
 ```
 
 `VeWsClient` 提供的方法：
 
-- `call(op, payload)` - 通用协议调用
-- `get(path)` - 获取节点值
-- `set(path, value)` - 设置节点值
+- `get(path, depth?)` - 获取树（默认 depth=-1 完整树）
+- `set(path, tree)` - 设置树
+- `val(path)` / `val(path, value)` - 获取/设置单个值
 - `list(path)` - 列出子节点
-- `remove(path)` - 删除节点
-- `put(path, tree)` - 导入树形结构
-- `trigger(path)` - 触发节点变更信号
-- `command(name, args, wait?)` - 执行命令
-- `listCommands()` - 列出所有命令
+- `rm(path)` - 删除节点
+- `trigger(path)` - 触发信号
+- `watch(path, handler, opts?)` - 订阅（默认 tree:true）
+- `unwatch(path)` - 取消订阅
+- `run(name, args, wait?)` - 执行命令
+- `cmds()` - 列出命令
 - `batch(items)` - 批量操作
-- `subscribe(path, handler, immediateGet?)` - 订阅节点变更
-- `unsubscribe(path)` - 取消订阅
+- `call(op, payload)` - 底层协议调用
 - `onConnectionChange(handler)` - 监听连接状态
 - `onMessage(handler)` - 监听所有消息
 
@@ -297,18 +298,18 @@ const unsub = await client.subscribe('ve/server/node/http/runtime/port', (path, 
 
 全局会有 `veService`，它使用新的 WS envelope，并提供：
 
-- `get(path)` - 获取节点值
-- `getTree(path, depth?)` - 获取树形结构（默认 depth=-1 无限深度）
-- `set(path, value)` - 设置节点值
+- `get(path, depth?)` - 获取树（默认 depth=-1 完整树）
+- `set(path, tree)` - 设置树
+- `val(path)` / `val(path, value)` - 获取/设置单个值
 - `list(path)` - 列出子节点
-- `remove(path)` - 删除节点
-- `put(path, tree)` - 导入树形结构
-- `trigger(path)` - 触发节点变更信号
-- `subscribe(path, callback, immediateGet?)` - 订阅节点变更
-- `command(name, args, options?)` - 执行命令
-- `listCommands()` - 列出所有命令
+- `rm(path)` - 删除节点
+- `trigger(path)` - 触发信号
+- `watch(path, fn, opts?)` - 订阅（默认 tree:true）
+- `unwatch(path)` - 取消订阅
+- `run(name, args, wait?)` - 执行命令
+- `cmds()` - 列出命令
 - `batch(items)` - 批量操作
-- `call(op, payload)` - 通用协议调用
+- `call(op, payload)` - 底层协议调用
 
 ---
 

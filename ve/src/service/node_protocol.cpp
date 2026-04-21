@@ -360,7 +360,9 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
         }
 
         std::string path = req->get("path").toString();
-        subscribe->subscribe(sessionId, path, req->get("bubble").toBool(false));
+        bool bubble = req->get("bubble").toBool(false);
+        bool tree = req->get("tree").toBool(false);
+        subscribe->subscribe(sessionId, path, bubble, tree);
 
         Node data("data");
         data.set("path", path);

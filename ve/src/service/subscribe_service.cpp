@@ -1,7 +1,8 @@
-// subscribe_service.cpp — SubscribeService: per-node subscription with optional bubble
+// subscribe_service.cpp — SubscribeService: per-node subscription with optional bubble/tree
 //
 // Default: connects to target node's NODE_CHANGED signal (precise)
 // Optional: bubble=true connects to NODE_ACTIVATED for subtree changes
+// Optional: tree=true pushes entire subtree JSON instead of scalar value
 //
 // Lifecycle: each subscription has its own Object observer.
 //   - Node deleted -> sender connections cleared, callback stops
@@ -10,6 +11,7 @@
 #include "subscribe_service.h"
 #include "ve/core/node.h"
 #include "ve/core/var.h"
+#include "ve/core/schema.h"
 
 #include <algorithm>
 #include <mutex>
@@ -24,6 +26,7 @@ struct SubEntry
 {
     std::string path;
     bool bubble;
+    bool tree;
     Object observer{"_sub"};
 };
 
@@ -122,7 +125,7 @@ void SubscribeService::stop()
     _p->sessions.clear();
 }
 
-void SubscribeService::subscribe(uint64_t session, const std::string& path, bool bubble)
+void SubscribeService::subscribe(uint64_t session, const std::string& path, bool bubble, bool tree)
 {
     std::string normalized = normalizePath(path);
     Node* target = normalized.empty() ? _p->root : _p->root->find(normalized);
@@ -134,6 +137,7 @@ void SubscribeService::subscribe(uint64_t session, const std::string& path, bool
     auto entry = std::make_unique<SubEntry>();
     entry->path = normalized;
     entry->bubble = bubble;
+    entry->tree = tree;
 
     if (bubble) {
         target->watchAll(true);
@@ -145,6 +149,12 @@ void SubscribeService::subscribe(uint64_t session, const std::string& path, bool
                 auto* src = static_cast<Node*>(data[1].toPointer());
                 if (!src || !_p->pushFn) return;
                 _p->pushFn(session, src->path(root), src->get());
+            });
+    } else if (tree) {
+        target->connect<Node::NODE_CHANGED>(
+            &entry->observer, [this, session, normalized, target]() {
+                if (!_p->pushFn) return;
+                _p->pushFn(session, normalized, schema::exportAs<schema::VarS>(target));
             });
     } else {
         target->connect<Node::NODE_CHANGED>(

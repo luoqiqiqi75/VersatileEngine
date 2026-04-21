@@ -25,7 +25,7 @@ public:
     void start();
     void stop();
 
-    void subscribe(uint64_t session, const std::string& path, bool bubble = false);
+    void subscribe(uint64_t session, const std::string& path, bool bubble = false, bool tree = false);
     void unsubscribe(uint64_t session, const std::string& path);
     void removeSession(uint64_t session);
 

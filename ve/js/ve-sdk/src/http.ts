@@ -70,41 +70,63 @@ export class VeHttpClient {
     return this.requestJson('/health');
   }
 
-  async getNode(path = '', options: { meta?: boolean; depth?: number } = {}): Promise<NodeResponse> {
-    return this.unwrap(await this.call<NodeResponse>('node.get', {
-      path,
-      meta: options.meta,
-      depth: options.depth,
-    }));
+  // ===== Tree operations (default behavior) =====
+  async get(path = '', depth = -1): Promise<VarValue> {
+    const reply = await this.call<NodeResponse>('node.get', { path, depth });
+    const data = this.unwrap(reply);
+    return (data.tree ?? data.value) as VarValue;
   }
 
-  async listNodes(path = '', meta = false): Promise<NodeListResponse> {
-    return this.unwrap(await this.call<NodeListResponse>('node.list', { path, meta }));
-  }
-
-  async setNode(path: string, value: VarValue): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
-  }
-
-  async removeNode(path: string): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
-  }
-
-  async putNode(path: string, tree: VarValue): Promise<TreeImportResponse> {
+  async set(path: string, tree: VarValue): Promise<TreeImportResponse> {
     return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
   }
 
-  async triggerNode(path: string): Promise<NodeSetResponse> {
+  // ===== Single value operations =====
+  async val(path: string): Promise<VarValue>;
+  async val(path: string, value: VarValue): Promise<NodeSetResponse>;
+  async val(path: string, value?: VarValue): Promise<VarValue | NodeSetResponse> {
+    if (value === undefined) {
+      return this.unwrap(await this.call<NodeResponse>('node.get', { path })).value;
+    } else {
+      return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
+    }
+  }
+
+  // ===== Structure operations =====
+  async list(path = ''): Promise<NodeListResponse> {
+    return this.unwrap(await this.call<NodeListResponse>('node.list', { path }));
+  }
+
+  async rm(path: string): Promise<NodeSetResponse> {
+    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
+  }
+
+  async trigger(path: string): Promise<NodeSetResponse> {
     return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
   }
 
-  async getTree(path = '', depth = -1): Promise<TreeNode> {
-    const data = await this.getNode(path, { depth });
-    return (data.tree ?? data.value) as TreeNode;
+  // ===== Commands =====
+  async run(
+    name: string,
+    args: VarValue = [],
+    wait = true,
+  ): Promise<CommandRunResponse> {
+    return this.call<VarValue>('command.run', { name, args, wait });
   }
 
+  async cmds(): Promise<CommandListResponse> {
+    return this.unwrap(await this.call<CommandListResponse>('command.list'));
+  }
+
+  // ===== Batch operations =====
+  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
+    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
+    return this.unwrap(reply).items;
+  }
+
+  // ===== Legacy REST endpoints =====
   async getChildren(path = ''): Promise<string[]> {
-    const data = await this.listNodes(path);
+    const data = await this.list(path);
     return data.children.map((child) => child.name);
   }
 
@@ -112,8 +134,8 @@ export class VeHttpClient {
     if (depth < 0) {
       return this.requestText(this.atUrl(path));
     }
-    const data = await this.getNode(path, { depth });
-    return JSON.stringify(data.tree ?? null);
+    const tree = await this.get(path, depth);
+    return JSON.stringify(tree);
   }
 
   async importTree(path: string, json: string): Promise<TreeImportResponse> {
@@ -124,24 +146,23 @@ export class VeHttpClient {
     });
   }
 
-  async listCommands(): Promise<CommandListResponse> {
-    return this.unwrap(await this.call<CommandListResponse>('command.list'));
-  }
+  // ===== Backward compatibility aliases =====
+  getNode = async (path = '', options: { meta?: boolean; depth?: number } = {}): Promise<NodeResponse> => {
+    return this.unwrap(
+      await this.call<NodeResponse>('node.get', {
+        path,
+        meta: options.meta,
+        depth: options.depth,
+      }),
+    );
+  };
 
-  async runCommand(
-    cmdKey: string,
-    body: { args?: VarValue; wait?: boolean; id?: VarValue } = {},
-  ): Promise<CommandRunResponse> {
-    return this.call<VarValue>('command.run', {
-      name: cmdKey,
-      args: body.args,
-      wait: body.wait,
-      id: body.id,
-    });
-  }
-
-  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
-    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
-    return this.unwrap(reply).items;
-  }
+  getTree = this.get;
+  setNode = this.val;
+  putNode = this.set;
+  listNodes = this.list;
+  removeNode = this.rm;
+  triggerNode = this.trigger;
+  runCommand = this.run;
+  listCommands = this.cmds;
 }

@@ -213,15 +213,19 @@ Port `12100`. WebSocket transport for the same VE envelope.
 Requests:
 
 ```json
-{"op":"node.get","path":"ve/server","id":1}
+{"op":"node.get","path":"ve/server","id":1,"depth":-1}
 {"op":"command.run","name":"save","args":["json","/config"],"wait":false,"id":2}
-{"op":"subscribe","path":"ve/server/node/http/runtime/port","id":3}
+{"op":"subscribe","path":"ve/server/node/http/runtime/port","tree":true,"id":3}
 ```
+
+**Subscribe parameters:**
+- `bubble`: `true` = monitor all descendant changes (push leaf path + value)
+- `tree`: `true` = push entire subtree JSON when subscribed node changes (default for clients)
 
 Immediate replies:
 
 ```json
-{"ok":true,"id":1,"data":{"path":"ve/server","value":null}}
+{"ok":true,"id":1,"data":{"path":"ve/server","value":null,"tree":{...}}}
 {"ok":true,"id":2,"accepted":true,"task_id":"abcd1234"}
 {"ok":false,"id":9,"code":"not_found","error":"node not found: bad/path"}
 ```
@@ -230,8 +234,11 @@ Push events:
 
 ```json
 {"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}
+{"event":"node.changed","path":"ve/server","value":{"node":{"http":{"runtime":{"port":12000}}}}}
 {"event":"task.result","id":2,"task_id":"abcd1234","ok":true,"data":"Saved to config.json"}
 ```
+
+**Note:** With `tree:true`, the push event contains the entire subscribed subtree, not just the changed leaf value.
 
 ---
 

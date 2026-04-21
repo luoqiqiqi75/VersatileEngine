@@ -242,14 +242,8 @@ var VEService = function(wsUrl) {
         });
     };
 
-    this.get = function(path) {
-        return this.call("node.get", { path: this._normalizePath(path) }).then(function(reply) {
-            var data = reply.data || {};
-            return data.value;
-        });
-    };
-
-    this.getTree = function(path, depth) {
+    // ===== Tree operations (default behavior) =====
+    this.get = function(path, depth) {
         if (depth === undefined) { depth = -1; }
         return this.call("node.get", { path: this._normalizePath(path), depth: depth }).then(function(reply) {
             if (!reply.ok) {
@@ -259,30 +253,48 @@ var VEService = function(wsUrl) {
         });
     };
 
-    this.set = function(path, value) {
-        return this.call("node.set", { path: this._normalizePath(path), value: value }).then(this._unwrapReply);
+    this.set = function(path, tree) {
+        return this.call("node.put", { path: this._normalizePath(path), tree: tree }).then(this._unwrapReply);
     };
 
+    // ===== Single value operations =====
+    this.val = function(path, value) {
+        path = this._normalizePath(path);
+        if (arguments.length === 1) {
+            return this.call("node.get", { path: path }).then(function(reply) {
+                if (!reply.ok) {
+                    throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
+                }
+                return reply.data.value;
+            });
+        } else {
+            return this.call("node.set", { path: path, value: value }).then(this._unwrapReply);
+        }
+    };
+
+    // ===== Structure operations =====
     this.list = function(path) {
         return this.call("node.list", { path: this._normalizePath(path) }).then(this._unwrapReply);
     };
 
-    this.remove = function(path) {
+    this.rm = function(path) {
         return this.call("node.remove", { path: this._normalizePath(path) }).then(this._unwrapReply);
-    };
-
-    this.put = function(path, tree) {
-        return this.call("node.put", { path: this._normalizePath(path), tree: tree }).then(this._unwrapReply);
     };
 
     this.trigger = function(path) {
         return this.call("node.trigger", { path: this._normalizePath(path) }).then(this._unwrapReply);
     };
 
-    this.subscribe = function(path, callback, immediateGet) {
+    // ===== Subscription (tree mode by default) =====
+    this.watch = function(path, callback, options) {
         if (typeof callback !== "function") {
             callback = function() {};
         }
+        options = options || {};
+        var immediate = options.immediate !== undefined ? options.immediate : false;
+        var tree = options.tree !== undefined ? options.tree : true;
+        var bubble = options.bubble !== undefined ? options.bubble : false;
+
         path = this._normalizePath(path);
 
         if (!this.subscriptions.has(path)) {
@@ -290,7 +302,12 @@ var VEService = function(wsUrl) {
 
             if (this.transport && this.isConnected) {
                 try {
-                    this.transport.send(JSON.stringify({ op: "subscribe", path: path }));
+                    this.transport.send(JSON.stringify({
+                        op: "subscribe",
+                        path: path,
+                        tree: tree,
+                        bubble: bubble
+                    }));
                 } catch (error) {
                     console.error("[veService] subscribe failed for '" + path + "':", error);
                 }
@@ -302,7 +319,7 @@ var VEService = function(wsUrl) {
             callbacks.add(callback);
         }
 
-        if (immediateGet) {
+        if (immediate) {
             this.get(path).then(function(data) {
                 try { callback(data, path); } catch (e) { /* ignore */ }
             }).catch(function() {});
@@ -310,11 +327,11 @@ var VEService = function(wsUrl) {
 
         var self = this;
         return function() {
-            self.unsubscribe(path, callback);
+            self.unwatch(path, callback);
         };
     };
 
-    this.unsubscribe = function(path, callback) {
+    this.unwatch = function(path, callback) {
         if (!this.subscriptions.has(path)) { return; }
 
         var callbacks = this.subscriptions.get(path);
@@ -343,19 +360,21 @@ var VEService = function(wsUrl) {
         }
     };
 
-    this.command = function(name, args, options) {
-        var waitSync = options && options.wait === false ? false : true;
+    // ===== Commands =====
+    this.run = function(name, args, wait) {
+        if (wait === undefined) { wait = true; }
         return this.call("command.run", {
             name: name,
             args: args == null ? [] : args,
-            wait: waitSync
+            wait: wait
         });
     };
 
-    this.listCommands = function() {
+    this.cmds = function() {
         return this.call("command.list", {}).then(this._unwrapReply);
     };
 
+    // ===== Batch operations =====
     this.batch = function(items) {
         return this.call("batch", { items: items }).then(function(reply) {
             if (!reply.ok) {
@@ -364,6 +383,14 @@ var VEService = function(wsUrl) {
             return reply.data.items;
         });
     };
+
+    // ===== Backward compatibility aliases =====
+    this.getTree = this.get;
+    this.remove = this.rm;
+    this.subscribe = this.watch;
+    this.unsubscribe = this.unwatch;
+    this.command = this.run;
+    this.listCommands = this.cmds;
 };
 
 if (typeof veService === "undefined") {

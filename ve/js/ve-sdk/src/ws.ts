@@ -99,60 +99,67 @@ export class VeWsClient {
     });
   }
 
-  async get(path = ''): Promise<VarValue> {
-    return this.unwrap(await this.call<NodeResponse>('node.get', { path })).value;
+  // ===== Tree operations (default behavior) =====
+  async get(path = '', depth = -1): Promise<VarValue> {
+    const reply = await this.call<NodeResponse>('node.get', { path, depth });
+    const data = this.unwrap(reply);
+    return (data.tree ?? data.value) as VarValue;
   }
 
-  async set(path: string, value: VarValue): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
+  async set(path: string, tree: VarValue): Promise<TreeImportResponse> {
+    return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
+  }
+
+  // ===== Single value operations =====
+  async val(path: string): Promise<VarValue>;
+  async val(path: string, value: VarValue): Promise<NodeSetResponse>;
+  async val(path: string, value?: VarValue): Promise<VarValue | NodeSetResponse> {
+    if (value === undefined) {
+      return this.unwrap(await this.call<NodeResponse>('node.get', { path })).value;
+    } else {
+      return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
+    }
+  }
+
+  // ===== Structure operations =====
+  async list(path = ''): Promise<NodeListResponse> {
+    return this.unwrap(await this.call<NodeListResponse>('node.list', { path }));
+  }
+
+  async rm(path: string): Promise<NodeSetResponse> {
+    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
   }
 
   async trigger(path: string): Promise<NodeSetResponse> {
     return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
   }
 
-  async list(path = ''): Promise<NodeListResponse> {
-    return this.unwrap(await this.call<NodeListResponse>('node.list', { path }));
-  }
+  // ===== Subscription (tree mode by default) =====
+  watch(
+    path: string,
+    handler: WsNotifyHandler = () => {},
+    options: { immediate?: boolean; tree?: boolean; bubble?: boolean } = {},
+  ): () => void {
+    const { immediate = false, tree = true, bubble = false } = options;
 
-  async command(name: string, args: VarValue = [], wait = true): Promise<VeReply<VarValue>> {
-    return this.call<VarValue>('command.run', { name, args, wait });
-  }
-
-  async remove(path: string): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
-  }
-
-  async put(path: string, tree: VarValue): Promise<TreeImportResponse> {
-    return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
-  }
-
-  async listCommands(): Promise<CommandListResponse> {
-    return this.unwrap(await this.call<CommandListResponse>('command.list'));
-  }
-
-  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
-    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
-    return this.unwrap(reply).items;
-  }
-
-  subscribe(path: string, handler: WsNotifyHandler = () => {}, immediateGet = false): () => void {
     if (!this.subscriptions.has(path)) {
       this.subscriptions.set(path, new Set());
       if (this.connected) {
-        this.sendWithoutReply({ op: 'subscribe', path });
+        this.sendWithoutReply({ op: 'subscribe', path, tree, bubble });
       }
     }
     this.subscriptions.get(path)!.add(handler);
 
-    if (immediateGet) {
-      this.get(path).then((value) => {
-        try {
-          handler(path, value);
-        } catch {
-          // ignore callback errors
-        }
-      }).catch(() => {});
+    if (immediate) {
+      this.get(path)
+        .then((value) => {
+          try {
+            handler(path, value);
+          } catch {
+            // ignore callback errors
+          }
+        })
+        .catch(() => {});
     }
 
     return () => {
@@ -170,13 +177,29 @@ export class VeWsClient {
     };
   }
 
-  unsubscribe(path: string): void {
+  unwatch(path: string): void {
     this.subscriptions.delete(path);
     if (this.connected) {
       this.sendWithoutReply({ op: 'unsubscribe', path });
     }
   }
 
+  // ===== Commands =====
+  async run(name: string, args: VarValue = [], wait = true): Promise<VeReply<VarValue>> {
+    return this.call<VarValue>('command.run', { name, args, wait });
+  }
+
+  async cmds(): Promise<CommandListResponse> {
+    return this.unwrap(await this.call<CommandListResponse>('command.list'));
+  }
+
+  // ===== Batch operations =====
+  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
+    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
+    return this.unwrap(reply).items;
+  }
+
+  // ===== Connection management =====
   onConnectionChange(handler: WsStateHandler): () => void {
     this.stateHandlers.add(handler);
     return () => this.stateHandlers.delete(handler);
@@ -190,6 +213,14 @@ export class VeWsClient {
     this.messageHandlers.add(handler);
     return () => this.messageHandlers.delete(handler);
   }
+
+  // ===== Backward compatibility aliases =====
+  getTree = this.get;
+  remove = this.rm;
+  subscribe = this.watch;
+  unsubscribe = this.unwatch;
+  command = this.run;
+  listCommands = this.cmds;
 
   private unwrap<T>(reply: VeReply<T>): T {
     if (!reply.ok) {
@@ -221,7 +252,7 @@ export class VeWsClient {
       this.currentInterval = this.reconnectInterval;
       this.notifyState(true);
       for (const path of this.subscriptions.keys()) {
-        this.sendWithoutReply({ op: 'subscribe', path });
+        this.sendWithoutReply({ op: 'subscribe', path, tree: true });
       }
     };
 
