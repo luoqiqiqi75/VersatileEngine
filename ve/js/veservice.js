@@ -249,6 +249,16 @@ var VEService = function(wsUrl) {
         });
     };
 
+    this.getTree = function(path, depth) {
+        if (depth === undefined) { depth = -1; }
+        return this.call("node.get", { path: this._normalizePath(path), depth: depth }).then(function(reply) {
+            if (!reply.ok) {
+                throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
+            }
+            return reply.data.tree || reply.data.value;
+        });
+    };
+
     this.set = function(path, value) {
         return this.call("node.set", { path: this._normalizePath(path), value: value }).then(this._unwrapReply);
     };

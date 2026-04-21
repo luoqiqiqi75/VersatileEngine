@@ -298,6 +298,7 @@ const unsub = await client.subscribe('ve/server/node/http/runtime/port', (path, 
 全局会有 `veService`，它使用新的 WS envelope，并提供：
 
 - `get(path)` - 获取节点值
+- `getTree(path, depth?)` - 获取树形结构（默认 depth=-1 无限深度）
 - `set(path, value)` - 设置节点值
 - `list(path)` - 列出子节点
 - `remove(path)` - 删除节点
