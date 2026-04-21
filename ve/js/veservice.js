@@ -253,6 +253,18 @@ var VEService = function(wsUrl) {
         return this.call("node.set", { path: this._normalizePath(path), value: value }).then(this._unwrapReply);
     };
 
+    this.list = function(path) {
+        return this.call("node.list", { path: this._normalizePath(path) }).then(this._unwrapReply);
+    };
+
+    this.remove = function(path) {
+        return this.call("node.remove", { path: this._normalizePath(path) }).then(this._unwrapReply);
+    };
+
+    this.put = function(path, tree) {
+        return this.call("node.put", { path: this._normalizePath(path), tree: tree }).then(this._unwrapReply);
+    };
+
     this.trigger = function(path) {
         return this.call("node.trigger", { path: this._normalizePath(path) }).then(this._unwrapReply);
     };
@@ -327,6 +339,19 @@ var VEService = function(wsUrl) {
             name: name,
             args: args == null ? [] : args,
             wait: waitSync
+        });
+    };
+
+    this.listCommands = function() {
+        return this.call("command.list", {}).then(this._unwrapReply);
+    };
+
+    this.batch = function(items) {
+        return this.call("batch", { items: items }).then(function(reply) {
+            if (!reply.ok) {
+                throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
+            }
+            return reply.data.items;
         });
     };
 };

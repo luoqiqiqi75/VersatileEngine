@@ -166,16 +166,18 @@ const run = await ve.runCommand('save', {
 
 上层保留了这些薄封装：
 
-- `getNode(path, options)`
-- `listNodes(path, meta?)`
-- `setNode(path, value)`
-- `triggerNode(path)`
-- `removeNode(path)`
-- `getTree(path, depth?)`
-- `exportTree(path, depth?)`
-- `importTree(path, json)`
-- `listCommands()`
-- `runCommand(name, { args, wait, id })`
+- `getNode(path, options)` - 获取节点（支持 depth、meta）
+- `listNodes(path, meta?)` - 列出子节点
+- `setNode(path, value)` - 设置节点值
+- `putNode(path, tree)` - 导入树形结构
+- `removeNode(path)` - 删除节点
+- `triggerNode(path)` - 触发节点变更信号
+- `getTree(path, depth?)` - 获取树形结构
+- `exportTree(path, depth?)` - 导出为 JSON 字符串
+- `importTree(path, json)` - 从 JSON 导入
+- `listCommands()` - 列出所有命令
+- `runCommand(name, { args, wait, id })` - 执行命令
+- `batch(items)` - 批量操作
 
 说明：
 
@@ -220,6 +222,25 @@ ws.onMessage((msg) => {
 const unsub = ws.subscribe('ve/server/node/http/runtime/port', (path, value) => {
   console.log(path, value);
 });
+```
+
+`VeWsClient` 提供的方法：
+
+- `call(op, payload)` - 通用协议调用
+- `get(path)` - 获取节点值
+- `set(path, value)` - 设置节点值
+- `list(path)` - 列出子节点
+- `remove(path)` - 删除节点
+- `put(path, tree)` - 导入树形结构
+- `trigger(path)` - 触发节点变更信号
+- `command(name, args, wait?)` - 执行命令
+- `listCommands()` - 列出所有命令
+- `batch(items)` - 批量操作
+- `subscribe(path, handler, immediateGet?)` - 订阅节点变更
+- `unsubscribe(path)` - 取消订阅
+- `onConnectionChange(handler)` - 监听连接状态
+- `onMessage(handler)` - 监听所有消息
+
 ```
 
 ---
@@ -276,12 +297,17 @@ const unsub = await client.subscribe('ve/server/node/http/runtime/port', (path, 
 
 全局会有 `veService`，它使用新的 WS envelope，并提供：
 
-- `get(path)`
-- `set(path, value)`
-- `trigger(path)`
-- `subscribe(path, callback, immediateGet?)`
-- `command(name, args, options?)`
-- `call(op, payload)`
+- `get(path)` - 获取节点值
+- `set(path, value)` - 设置节点值
+- `list(path)` - 列出子节点
+- `remove(path)` - 删除节点
+- `put(path, tree)` - 导入树形结构
+- `trigger(path)` - 触发节点变更信号
+- `subscribe(path, callback, immediateGet?)` - 订阅节点变更
+- `command(name, args, options?)` - 执行命令
+- `listCommands()` - 列出所有命令
+- `batch(items)` - 批量操作
+- `call(op, payload)` - 通用协议调用
 
 ---
 

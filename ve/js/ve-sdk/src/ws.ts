@@ -1,8 +1,10 @@
 import type {
+  CommandListResponse,
   NodeChangedEvent,
   NodeListResponse,
   NodeResponse,
   NodeSetResponse,
+  TreeImportResponse,
   VarValue,
   VeErrorReply,
   VeReply,
@@ -115,6 +117,23 @@ export class VeWsClient {
 
   async command(name: string, args: VarValue = [], wait = true): Promise<VeReply<VarValue>> {
     return this.call<VarValue>('command.run', { name, args, wait });
+  }
+
+  async remove(path: string): Promise<NodeSetResponse> {
+    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
+  }
+
+  async put(path: string, tree: VarValue): Promise<TreeImportResponse> {
+    return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
+  }
+
+  async listCommands(): Promise<CommandListResponse> {
+    return this.unwrap(await this.call<CommandListResponse>('command.list'));
+  }
+
+  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
+    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
+    return this.unwrap(reply).items;
   }
 
   subscribe(path: string, handler: WsNotifyHandler = () => {}, immediateGet = false): () => void {

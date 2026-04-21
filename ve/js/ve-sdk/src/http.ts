@@ -90,6 +90,10 @@ export class VeHttpClient {
     return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
   }
 
+  async putNode(path: string, tree: VarValue): Promise<TreeImportResponse> {
+    return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
+  }
+
   async triggerNode(path: string): Promise<NodeSetResponse> {
     return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
   }
@@ -134,5 +138,10 @@ export class VeHttpClient {
       wait: body.wait,
       id: body.id,
     });
+  }
+
+  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
+    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
+    return this.unwrap(reply).items;
   }
 }
