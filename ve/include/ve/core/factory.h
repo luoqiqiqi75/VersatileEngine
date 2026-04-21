@@ -210,12 +210,6 @@ public:
     // Look up the node for key (nullptr if not found).
     Node* node(const std::string& key) const;
 
-    // Ensure node exists for key (creates if missing).
-    Node* ensureNode(const std::string& key);
-
-    // Remove the node for key (and its subtree).
-    void erase(const std::string& key);
-
     // The root node of this factory (/ve/factory/{name}).
     Node* root() const;
 

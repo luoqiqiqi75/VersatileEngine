@@ -29,42 +29,24 @@ void Factory::reg(const std::string& key, Var callable,
                   const std::string& help, LoopRef lr)
 {
     auto nkey = normalizeKey(key);
+
+    // Track registered key first
+    auto it = std::find(_p->keys.begin(), _p->keys.end(), nkey);
+    if (it == _p->keys.end()) {
+        _p->keys.push_back(nkey);
+    }
+
     auto* nd = _p->root->at(nkey);
     nd->set(std::move(callable));
     if (!help.empty())
         nd->at("help")->set(Var(help));
     if (lr)
         nd->at("loop")->set(Var::custom(std::move(lr)));
-
-    // Track registered key
-    auto it = std::find(_p->keys.begin(), _p->keys.end(), nkey);
-    if (it == _p->keys.end()) {
-        _p->keys.push_back(nkey);
-    }
 }
 
 Node* Factory::node(const std::string& key) const
 {
     return _p->root->find(normalizeKey(key), false);
-}
-
-Node* Factory::ensureNode(const std::string& key)
-{
-    return _p->root->at(normalizeKey(key));
-}
-
-void Factory::erase(const std::string& key)
-{
-    auto nkey = normalizeKey(key);
-    auto* nd = node(nkey);
-    if (nd && nd->parent()) {
-        nd->parent()->remove(nd);
-        // Remove from keys list
-        auto it = std::find(_p->keys.begin(), _p->keys.end(), nkey);
-        if (it != _p->keys.end()) {
-            _p->keys.erase(it);
-        }
-    }
 }
 
 Node* Factory::root() const

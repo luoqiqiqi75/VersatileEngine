@@ -383,14 +383,6 @@ var VEService = function(wsUrl) {
             return reply.data.items;
         });
     };
-
-    // ===== Backward compatibility aliases =====
-    this.getTree = this.get;
-    this.remove = this.rm;
-    this.subscribe = this.watch;
-    this.unsubscribe = this.unwatch;
-    this.command = this.run;
-    this.listCommands = this.cmds;
 };
 
 if (typeof veService === "undefined") {

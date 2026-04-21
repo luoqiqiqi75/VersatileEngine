@@ -129,16 +129,24 @@ Factory& GlobalCommandFactory()
 
 void registerStep(const std::string& key, Step step, const std::string& help)
 {
-    auto* nd = GlobalCommandFactory().ensureNode(key);
-    step.writeTo(nd);
-    if (!help.empty())
-        nd->at("help")->set(Var(help));
+    GlobalCommandFactory().reg(key, step.first, help, step.second);
 }
 
 void registerCommand(const std::string& key, std::function<void(Command&)> builder,
                      const std::string& help)
 {
-    auto* nd = GlobalCommandFactory().ensureNode(key);
+    auto& factory = GlobalCommandFactory();
+    auto nkey = key;
+    std::replace(nkey.begin(), nkey.end(), '.', '/');
+
+    // Track in keys list first
+    auto keys = factory.keys();
+    if (std::find(keys.begin(), keys.end(), nkey) == keys.end()) {
+        // Add to keys by registering empty callable
+        factory.reg(key, Var(), "", {});
+    }
+
+    auto* nd = factory.root()->at(nkey);
     Command cmd(nd);
     builder(cmd);
     if (!help.empty())
@@ -161,7 +169,17 @@ void build(const std::string& key, std::function<void(Command&)> builder,
 
 Node* declareNode(const std::string& key)
 {
-    return GlobalCommandFactory().ensureNode(key)->at("declare");
+    auto& factory = GlobalCommandFactory();
+    auto nkey = key;
+    std::replace(nkey.begin(), nkey.end(), '.', '/');
+
+    // Track in keys list if not already present
+    auto keys = factory.keys();
+    if (std::find(keys.begin(), keys.end(), nkey) == keys.end()) {
+        factory.reg(key, Var(), "", {});
+    }
+
+    return factory.root()->at(nkey)->at("declare");
 }
 
 Node* context(const std::string& key, Node* currentNode)

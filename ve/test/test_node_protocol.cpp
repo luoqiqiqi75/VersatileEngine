@@ -152,5 +152,5 @@ VE_TEST(node_protocol_async_command_creates_task_and_event) {
     VE_ASSERT_EQ(taskNode->get("result").toString(), "async-done");
 
     loop.stop();
-    GlobalCommandFactory().erase("_test_proto_async");
+    GlobalCommandFactory().root()->erase("_test_proto_async");
 }

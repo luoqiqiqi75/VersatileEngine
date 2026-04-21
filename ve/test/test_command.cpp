@@ -268,7 +268,7 @@ VE_TEST(command_basic) {
     VE_ASSERT(nd->find("steps", false) != nullptr);
     VE_ASSERT_EQ(nd->find("steps", false)->count(), 2);
 
-    GlobalCommandFactory().erase("_test_deploy");
+    GlobalCommandFactory().root()->erase("_test_deploy");
 }
 
 VE_TEST(command_pipeline_creation) {
@@ -290,7 +290,7 @@ VE_TEST(command_help_metadata) {
         cmd.setHelp("say hello");
     });
     VE_ASSERT_EQ(command::help("_test_greet_help"), "say hello");
-    GlobalCommandFactory().erase("_test_greet_help");
+    GlobalCommandFactory().root()->erase("_test_greet_help");
 }
 
 VE_TEST(command_build_pipeline) {
@@ -308,7 +308,7 @@ VE_TEST(command_build_pipeline) {
     VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
     VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 42);
 
-    GlobalCommandFactory().erase("_test_build_pipe");
+    GlobalCommandFactory().root()->erase("_test_build_pipe");
 }
 
 // ============================================================================
@@ -326,7 +326,7 @@ VE_TEST(factory_node_layout_single_step) {
     VE_ASSERT(nd->find("steps", false) == nullptr);
     VE_ASSERT_EQ(nd->find("help", false)->getString(), "triple it");
 
-    GlobalCommandFactory().erase("_test_layout_single");
+    GlobalCommandFactory().root()->erase("_test_layout_single");
 }
 
 VE_TEST(factory_node_layout_multi_step) {
@@ -344,7 +344,7 @@ VE_TEST(factory_node_layout_multi_step) {
     VE_ASSERT_EQ(steps->count(), 3);
     VE_ASSERT_EQ(nd->find("help", false)->getString(), "three steps");
 
-    GlobalCommandFactory().erase("_test_layout_multi");
+    GlobalCommandFactory().root()->erase("_test_layout_multi");
 }
 
 VE_TEST(factory_node_lookup) {
@@ -359,8 +359,8 @@ VE_TEST(factory_node_lookup) {
     VE_ASSERT(GlobalCommandFactory().node("_test_lookup_a") != nullptr);
     VE_ASSERT(GlobalCommandFactory().node("_test_lookup_nonexistent") == nullptr);
 
-    GlobalCommandFactory().erase("_test_lookup_a");
-    GlobalCommandFactory().erase("_test_lookup_b");
+    GlobalCommandFactory().root()->erase("_test_lookup_a");
+    GlobalCommandFactory().root()->erase("_test_lookup_b");
     VE_ASSERT(!command::has("_test_lookup_a"));
 }
 
@@ -379,7 +379,7 @@ VE_TEST(command_ns_reg_and_call) {
     Result r = command::call("_test_echo", Var(42));
     VE_ASSERT(r.isSuccess());
 
-    GlobalCommandFactory().erase("_test_echo");
+    GlobalCommandFactory().root()->erase("_test_echo");
 }
 
 VE_TEST(command_ns_run) {
@@ -394,7 +394,7 @@ VE_TEST(command_ns_run) {
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 
-    GlobalCommandFactory().erase("_test_multi");
+    GlobalCommandFactory().root()->erase("_test_multi");
 }
 
 VE_TEST(command_ns_step) {
@@ -408,7 +408,7 @@ VE_TEST(command_ns_step) {
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 
-    GlobalCommandFactory().erase("_test_inc");
+    GlobalCommandFactory().root()->erase("_test_inc");
 }
 
 VE_TEST(register_step_with_loopref) {
@@ -428,7 +428,7 @@ VE_TEST(register_step_with_loopref) {
     VE_ASSERT(loop_nd->get().customIs<LoopRef>());
 
     loop.stop();
-    GlobalCommandFactory().erase("_test_regstep_lr");
+    GlobalCommandFactory().root()->erase("_test_regstep_lr");
 }
 
 VE_TEST(command_reg_with_loopref) {
@@ -447,7 +447,7 @@ VE_TEST(command_reg_with_loopref) {
     VE_ASSERT(loop_nd->get().customIs<LoopRef>());
 
     loop.stop();
-    GlobalCommandFactory().erase("_test_reg_ns_lr");
+    GlobalCommandFactory().root()->erase("_test_reg_ns_lr");
 }
 
 VE_TEST(command_ns_not_found) {
@@ -499,7 +499,7 @@ VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
     VE_ASSERT_EQ(namedArgs.string("target_node"), "/target");
     delete namedCtx;
 
-    GlobalCommandFactory().erase("_test_declared_args");
+    GlobalCommandFactory().root()->erase("_test_declared_args");
 }
 
 // ============================================================================
@@ -511,7 +511,7 @@ VE_TEST(step_form2_multi_arg_int) {
     auto r = command::call("_test_add", Var(Var::ListV{Var(3), Var(4)}));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), 7);
-    GlobalCommandFactory().erase("_test_add");
+    GlobalCommandFactory().root()->erase("_test_add");
 }
 
 VE_TEST(step_form2_multi_arg_result) {
@@ -525,7 +525,7 @@ VE_TEST(step_form2_multi_arg_result) {
 
     auto r2 = command::call("_test_div", Var(Var::ListV{Var(1), Var(0)}));
     VE_ASSERT(r2.isError());
-    GlobalCommandFactory().erase("_test_div");
+    GlobalCommandFactory().root()->erase("_test_div");
 }
 
 VE_TEST(step_form2_single_string) {
@@ -535,7 +535,7 @@ VE_TEST(step_form2_single_string) {
     auto r = command::call("_test_hi", Var("alice"));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toString(), "hi alice");
-    GlobalCommandFactory().erase("_test_hi");
+    GlobalCommandFactory().root()->erase("_test_hi");
 }
 
 VE_TEST(step_form2_void_no_args) {
@@ -544,7 +544,7 @@ VE_TEST(step_form2_void_no_args) {
     auto r = command::call("_test_noop");
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(called, 1);
-    GlobalCommandFactory().erase("_test_noop");
+    GlobalCommandFactory().root()->erase("_test_noop");
 }
 
 VE_TEST(step_form2_var_return) {
@@ -552,7 +552,7 @@ VE_TEST(step_form2_var_return) {
     auto r = command::call("_test_ping");
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toString(), "pong");
-    GlobalCommandFactory().erase("_test_ping");
+    GlobalCommandFactory().root()->erase("_test_ping");
 }
 
 VE_TEST(step_form2_double_args) {
@@ -560,7 +560,7 @@ VE_TEST(step_form2_double_args) {
     auto r = command::call("_test_sum", Var(Var::ListV{Var(1.5), Var(2.5)}));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toDouble(), 4.0);
-    GlobalCommandFactory().erase("_test_sum");
+    GlobalCommandFactory().root()->erase("_test_sum");
 }
 
 VE_TEST(step_form2_single_arg_via_call) {
@@ -568,7 +568,7 @@ VE_TEST(step_form2_single_arg_via_call) {
     auto r = command::call("_test_double_it", Var(21));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), 42);
-    GlobalCommandFactory().erase("_test_double_it");
+    GlobalCommandFactory().root()->erase("_test_double_it");
 }
 
 VE_TEST(step_form2_single_arg_ctx_child) {
@@ -578,7 +578,7 @@ VE_TEST(step_form2_single_arg_ctx_child) {
     auto r = command::call("_test_negate", ctx);
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), -7);
-    GlobalCommandFactory().erase("_test_negate");
+    GlobalCommandFactory().root()->erase("_test_negate");
 }
 
 // ============================================================================
