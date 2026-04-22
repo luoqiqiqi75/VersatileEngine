@@ -757,10 +757,10 @@ public:
 
         auto& raw_request = request_msg.get_rcl_serialized_message();
         auto future_and_id = client->async_send_request(static_cast<void*>(&raw_request));
-        if (future_and_id.first.wait_for(std::chrono::seconds(10)) != std::future_status::ready)
+        if (future_and_id.future.wait_for(std::chrono::seconds(10)) != std::future_status::ready)
             return makeResult(false, "service call timeout");
 
-        auto response_shared = future_and_id.first.get();
+        auto response_shared = future_and_id.future.get();
         auto* response_raw = static_cast<rcl_serialized_message_t*>(response_shared.get());
         rclcpp::SerializedMessage response_msg(*response_raw);
         Var response_var;
