@@ -839,12 +839,15 @@ std::string TerminalSession::prompt() const
     std::string path_color = "\x1b[36m";
     std::string prompt_color = "\x1b[32m";
 
-    if (Node* cfg = _p->root->find("ve/server/terminal/repl/config")) {
-        use_color = cfg->get("prompt_color").toBool(true);
-        auto pc = cfg->get("prompt_path_color").toString();
-        if (!pc.empty()) path_color = pc;
-        auto sc = cfg->get("prompt_symbol_color").toString();
-        if (!sc.empty()) prompt_color = sc;
+    // Only read config if opts allow color
+    if (_p->opts.prompt_color) {
+        if (Node* cfg = _p->root->find("ve/server/terminal/repl/config")) {
+            use_color = cfg->get("prompt_color").toBool(true);
+            auto pc = cfg->get("prompt_path_color").toString();
+            if (!pc.empty()) path_color = pc;
+            auto sc = cfg->get("prompt_symbol_color").toString();
+            if (!sc.empty()) prompt_color = sc;
+        }
     }
 
     if (!use_color) {
