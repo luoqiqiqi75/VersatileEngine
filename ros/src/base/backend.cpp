@@ -98,6 +98,13 @@ public:
     }
     Var::ListV listServices(const std::string&) const override { return {}; }
     Var::DictV serviceInfo(const std::string&) const override { return {}; }
+    Var::DictV callService(const std::string&, const std::string&, const std::string&, const std::string&) override
+    {
+        Var::DictV result;
+        result["ok"] = Var(false);
+        result["message"] = Var("Fast DDS placeholder backend does not implement service call");
+        return result;
+    }
     Var::DictV listParams(const std::string&) const override { return {}; }
     Var::DictV getParam(const std::string&, const std::string&) const override { return {}; }
     Var::DictV setParam(const std::string&, const std::string&, const Var&) const override { return {}; }
