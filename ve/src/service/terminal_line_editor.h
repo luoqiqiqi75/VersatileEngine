@@ -1,6 +1,7 @@
 #pragma once
 
 #include "terminal_session.h"
+#include "terminal_utf8.h"
 
 #include <algorithm>
 #include <string>
@@ -29,7 +30,8 @@ enum class TerminalKey {
 struct TerminalKeyEvent
 {
     TerminalKey key = TerminalKey::NONE;
-    char ch = '\0';
+    char ch = '\0';  // For single-byte ASCII (backward compat)
+    std::string chars;  // For multi-byte UTF-8 characters
 };
 
 struct TerminalEditResult
@@ -74,6 +76,12 @@ public:
         return cursor_;
     }
 
+    // Get display width from cursor to end of line (for ANSI cursor positioning)
+    size_t cursorColsToEnd() const
+    {
+        return utf8::displayWidth(line_, cursor_, line_.size());
+    }
+
     std::string prompt() const
     {
         return session_ ? session_->prompt() : std::string("> ");
@@ -103,14 +111,23 @@ public:
         TerminalEditResult out;
 
         switch (ev.key) {
-            case TerminalKey::CHARACTER:
-                if (ev.ch >= 0x20 && ev.ch < 0x7f) {
+            case TerminalKey::CHARACTER: {
+                // Support both single-byte (ch) and multi-byte (chars) input
+                std::string input;
+                if (!ev.chars.empty()) {
+                    input = ev.chars;
+                } else if (ev.ch >= 0x20 && ev.ch < 0x7f) {
+                    input = std::string(1, ev.ch);
+                }
+
+                if (!input.empty()) {
                     resetHistoryBrowse();
-                    line_.insert(cursor_, 1, ev.ch);
-                    ++cursor_;
+                    line_.insert(cursor_, input);
+                    cursor_ += input.size();
                     out.redraw = (mode_ == Mode::CONTROLLED);
                 }
                 return out;
+            }
 
             case TerminalKey::ENTER:
                 return submitLine();
@@ -118,8 +135,10 @@ public:
             case TerminalKey::BACKSPACE:
                 if (cursor_ > 0) {
                     resetHistoryBrowse();
-                    line_.erase(cursor_ - 1, 1);
-                    --cursor_;
+                    size_t prev_len = utf8::prevCharByteLen(line_, cursor_);
+                    if (prev_len == 0) prev_len = 1;  // fallback: delete one byte
+                    line_.erase(cursor_ - prev_len, prev_len);
+                    cursor_ -= prev_len;
                     out.redraw = (mode_ == Mode::CONTROLLED);
                 }
                 return out;
@@ -151,14 +170,18 @@ public:
 
             case TerminalKey::LEFT:
                 if (mode_ == Mode::CONTROLLED && cursor_ > 0) {
-                    --cursor_;
+                    size_t prev_len = utf8::prevCharByteLen(line_, cursor_);
+                    if (prev_len == 0) prev_len = 1;  // fallback
+                    cursor_ -= prev_len;
                     out.redraw = true;
                 }
                 return out;
 
             case TerminalKey::RIGHT:
                 if (mode_ == Mode::CONTROLLED && cursor_ < line_.size()) {
-                    ++cursor_;
+                    size_t char_len = utf8::charByteLen(line_, cursor_);
+                    if (char_len == 0) char_len = 1;  // fallback
+                    cursor_ += char_len;
                     out.redraw = true;
                 }
                 return out;
@@ -180,7 +203,9 @@ public:
             case TerminalKey::DELETE_KEY:
                 if (mode_ == Mode::CONTROLLED && cursor_ < line_.size()) {
                     resetHistoryBrowse();
-                    line_.erase(cursor_, 1);
+                    size_t char_len = utf8::charByteLen(line_, cursor_);
+                    if (char_len == 0) char_len = 1;  // fallback
+                    line_.erase(cursor_, char_len);
                     out.redraw = true;
                 }
                 return out;

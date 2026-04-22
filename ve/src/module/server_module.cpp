@@ -74,6 +74,7 @@ class ServerModule : public Module
     std::unique_ptr<service::NodeUdpServer> _node_udp_s;
     std::unique_ptr<service::BinTcpServer> _bin_tcp_s;
     std::unique_ptr<service::TerminalReplServer> _terminal_repl_s;
+    std::unique_ptr<service::TerminalReplServer> _terminal_ai_s;  // AI REPL (no banner, no current)
     std::unique_ptr<service::StaticServer> _static_s;
 
     std::string _data_root = "./data";
@@ -447,6 +448,26 @@ void ServerModule::registerSearchCommand()
 
 void ServerModule::ready() {
     if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
+
+    // AI REPL: no banner, no title, no color (save tokens), but keep cd/current (AI can handle state)
+    if (node()->get("terminal/ai/enable").toBool(true)) {
+        int port = node()->get("terminal/ai/config/port").toInt(10100);
+        service::TerminalReplServer::Options ai_opts;
+        ai_opts.banner = false;
+        ai_opts.title = false;
+        ai_opts.prompt_color = false;
+        ai_opts.use_current = true;  // Keep cd - AI can understand navigation
+        _terminal_ai_s = std::make_unique<service::TerminalReplServer>(node::root(), static_cast<uint16_t>(port), ai_opts);
+        if (_terminal_ai_s->start()) {
+            node()->at("terminal/ai")->set("runtime/port", port);
+            node()->at("terminal/ai")->set("runtime/listening", true);
+            veLogI << "TerminalReplServer(AI) started on port " << port;
+        } else {
+            veLogW << "TerminalReplServer(AI) failed to start on port " << port;
+            _terminal_ai_s.reset();
+        }
+    }
+
     if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000, "BinTcpServer");
     if (node()->get("node/http/enable").toBool(true)) openServer(_node_http_s, node()->at("node/http"), 12000, "NodeHttpServer");
     if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100, "NodeWsServer");
@@ -462,6 +483,7 @@ void ServerModule::deinit() {
     closeServer(_node_udp_s, node()->at("node/udp"));
     closeServer(_bin_tcp_s, node()->at("bin/tcp"));
     closeServer(_terminal_repl_s, node()->at("terminal/repl"));
+    closeServer(_terminal_ai_s, node()->at("terminal/ai"));
     closeServer(_static_s, node()->at("static"));
 }
 

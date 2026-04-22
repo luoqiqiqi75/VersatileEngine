@@ -146,6 +146,7 @@ struct TerminalSession::Private
     std::string output;
     std::unordered_map<std::string, CmdFn> cmds;
     TerminalSession::AsyncOutputFn asyncOutput;
+    TerminalSession::Options opts;
 
     std::string currentPath() const { return cur->path(root); }
 
@@ -719,11 +720,12 @@ void TerminalSession::Private::initCommands()
 // TerminalSession
 // ============================================================================
 
-TerminalSession::TerminalSession(Node* root)
+TerminalSession::TerminalSession(Node* root, const Options& opts)
     : _p(std::make_unique<Private>())
 {
     _p->root = root;
     _p->cur  = root;
+    _p->opts = opts;
     _p->initCommands();
 }
 
@@ -833,7 +835,7 @@ std::string TerminalSession::execute(const std::string& line)
 
 std::string TerminalSession::prompt() const
 {
-    bool use_color = true;
+    bool use_color = _p->opts.prompt_color;
     std::string path_color = "\x1b[36m";
     std::string prompt_color = "\x1b[32m";
 

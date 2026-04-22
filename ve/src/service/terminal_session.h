@@ -17,7 +17,12 @@ class TerminalSession
 public:
     using AsyncOutputFn = std::function<void(const std::string&)>;
 
-    explicit TerminalSession(Node* root);
+    struct Options {
+        bool prompt_color = true;  // Use colored prompt
+        bool use_current = true;   // Maintain current path (cd command)
+    };
+
+    explicit TerminalSession(Node* root, const Options& opts = Options());
     ~TerminalSession();
 
     std::string execute(const std::string& line);

@@ -83,15 +83,17 @@ static std::string toTcpText(const std::string& text)
     return out;
 }
 
-static std::string renderEditorLine(const TerminalLineEditor& editor, bool new_line)
+static std::string renderEditorLine(const TerminalLineEditor& editor, bool new_line, bool use_ansi = true)
 {
     std::string out = new_line ? "\r\n" : "\r";
     out += editor.renderedLine();
-    out += "\x1b[K";
 
-    size_t back = editor.line().size() - editor.cursor();
-    if (back > 0) {
-        out += "\x1b[" + std::to_string(back) + "D";
+    if (use_ansi) {
+        out += "\x1b[K";
+        size_t back_cols = editor.cursorColsToEnd();
+        if (back_cols > 0) {
+            out += "\x1b[" + std::to_string(back_cols) + "D";
+        }
     }
     return out;
 }
@@ -205,6 +207,11 @@ struct ConnectionState {
     std::unique_ptr<TerminalLineEditor> editor;
     TcpDecodeState decode;
     bool server_controls_input = false;
+    bool use_ansi = true;  // false for AI mode
+
+    // UTF-8 multi-byte accumulator for TCP input
+    std::string utf8_buf;
+    size_t utf8_expected = 0;  // total bytes expected for current character
 };
 
 // ============================================================================
@@ -226,8 +233,11 @@ struct TerminalStdioClient::Private
     HANDLE stdout_handle = INVALID_HANDLE_VALUE;
     DWORD stdin_mode = 0;
     DWORD stdout_mode = 0;
+    UINT stdin_cp = 0;
+    UINT stdout_cp = 0;
     bool restore_stdin_mode = false;
     bool restore_stdout_mode = false;
+    bool restore_codepage = false;
 #else
     termios stdin_mode{};
     bool restore_stdin_mode = false;
@@ -236,6 +246,10 @@ struct TerminalStdioClient::Private
     ~Private()
     {
 #ifdef _WIN32
+        if (restore_codepage) {
+            SetConsoleCP(stdin_cp);
+            SetConsoleOutputCP(stdout_cp);
+        }
         if (restore_stdin_mode && stdin_handle != INVALID_HANDLE_VALUE) {
             SetConsoleMode(stdin_handle, stdin_mode);
         }
@@ -268,8 +282,11 @@ struct TerminalTcpClient::Private
     HANDLE stdout_handle = INVALID_HANDLE_VALUE;
     DWORD stdin_mode = 0;
     DWORD stdout_mode = 0;
+    UINT stdin_cp = 0;
+    UINT stdout_cp = 0;
     bool restore_stdin_mode = false;
     bool restore_stdout_mode = false;
+    bool restore_codepage = false;
 #else
     termios stdin_mode{};
     bool restore_stdin_mode = false;
@@ -278,6 +295,10 @@ struct TerminalTcpClient::Private
     ~Private()
     {
 #ifdef _WIN32
+        if (restore_codepage) {
+            SetConsoleCP(stdin_cp);
+            SetConsoleOutputCP(stdout_cp);
+        }
         if (restore_stdin_mode && stdin_handle != INVALID_HANDLE_VALUE) {
             SetConsoleMode(stdin_handle, stdin_mode);
         }
@@ -301,6 +322,7 @@ struct TerminalReplServer::Private
     Node*    root = nullptr;
     bool     ownsRoot = false;
     uint16_t port = 10000;
+    TerminalReplServer::Options opts;
 
     asio2::tcp_server server;
     std::mutex mtx;
@@ -312,10 +334,11 @@ struct TerminalReplServer::Private
 // TerminalServer
 // ============================================================================
 
-TerminalReplServer::TerminalReplServer(Node* root, uint16_t port) : _p(std::make_unique<Private>())
+TerminalReplServer::TerminalReplServer(Node* root, uint16_t port, const Options& opts) : _p(std::make_unique<Private>())
 {
     _p->root = root ? root : ve::node::root();
     _p->port = port;
+    _p->opts = opts;
 }
 
 TerminalReplServer::~TerminalReplServer()
@@ -329,7 +352,13 @@ bool TerminalReplServer::start()
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
         auto cs = std::make_unique<ConnectionState>();
-        cs->session = std::make_unique<TerminalSession>(_p->root);
+
+        TerminalSession::Options session_opts;
+        session_opts.prompt_color = _p->opts.prompt_color;
+        session_opts.use_current = _p->opts.use_current;
+        cs->session = std::make_unique<TerminalSession>(_p->root, session_opts);
+        cs->use_ansi = _p->opts.prompt_color;  // AI mode: no ANSI escape codes
+
         if (Node* tcp_cfg = _p->root->find("ve/server/terminal/repl/config/tcp")) {
             cs->server_controls_input = tcp_cfg->get("server_line_echo").toBool(false);
         }
@@ -338,8 +367,10 @@ bool TerminalReplServer::start()
             cs->server_controls_input ? TerminalLineEditor::Mode::CONTROLLED : TerminalLineEditor::Mode::COOKED
         );
 
-        std::string welcome =
-            std::string(banner()) + std::string(title()) + cs->editor->renderedLine();
+        std::string welcome;
+        if (_p->opts.banner) welcome += banner();
+        if (_p->opts.title) welcome += title();
+        welcome += cs->editor->renderedLine();
 
         // Wire async command output for this connection
         cs->session->setAsyncOutput([this, key](const std::string& text) {
@@ -349,9 +380,9 @@ bool TerminalReplServer::start()
                 if (it == _p->connections.end()) return;
                 auto* cs = it->second.get();
                 std::string out;
-                out += "\r\x1b[K";
+                if (cs->use_ansi) out += "\r\x1b[K";
                 out += toTcpText(text);
-                out += renderEditorLine(*cs->editor, false);
+                out += renderEditorLine(*cs->editor, false, cs->use_ansi);
                 _p->server.foreach_session([&](auto& sp) {
                     if (sp->hash_key() == key)
                         sp->async_send(out);
@@ -387,9 +418,9 @@ bool TerminalReplServer::start()
                 return true;
             }
             if (result.prompt_on_new_line) {
-                session_ptr->async_send(renderEditorLine(*cs->editor, true));
+                session_ptr->async_send(renderEditorLine(*cs->editor, true, cs->use_ansi));
             } else if (result.redraw && cs->server_controls_input) {
-                session_ptr->async_send(renderEditorLine(*cs->editor, false));
+                session_ptr->async_send(renderEditorLine(*cs->editor, false, cs->use_ansi));
             }
             return false;
         };
@@ -446,12 +477,59 @@ bool TerminalReplServer::start()
                     return;
                 }
             } else if (ch >= 0x20 && ch < 0x7F) {
+                // ASCII single-byte character
                 if (cs->server_controls_input) {
-                    if (flushResult(cs->editor->onKey({TerminalKey::CHARACTER, static_cast<char>(ch)}))) {
+                    TerminalKeyEvent ev;
+                    ev.key = TerminalKey::CHARACTER;
+                    ev.ch = static_cast<char>(ch);
+                    ev.chars = std::string(1, ev.ch);
+                    if (flushResult(cs->editor->onKey(ev))) {
                         return;
                     }
                 } else {
                     cs->editor->appendCooked(static_cast<char>(ch));
+                }
+            } else if (ch >= 0x80) {
+                // UTF-8 multi-byte character
+                if (cs->utf8_buf.empty()) {
+                    // Start of new UTF-8 sequence
+                    cs->utf8_buf.push_back(static_cast<char>(ch));
+                    if ((ch & 0xE0) == 0xC0) cs->utf8_expected = 2;
+                    else if ((ch & 0xF0) == 0xE0) cs->utf8_expected = 3;
+                    else if ((ch & 0xF8) == 0xF0) cs->utf8_expected = 4;
+                    else {
+                        // Invalid lead byte
+                        cs->utf8_buf.clear();
+                        cs->utf8_expected = 0;
+                    }
+                } else {
+                    // Continuation byte
+                    if ((ch & 0xC0) == 0x80) {
+                        cs->utf8_buf.push_back(static_cast<char>(ch));
+                        if (cs->utf8_buf.size() >= cs->utf8_expected) {
+                            // Complete UTF-8 character
+                            if (cs->server_controls_input) {
+                                TerminalKeyEvent ev;
+                                ev.key = TerminalKey::CHARACTER;
+                                ev.chars = std::move(cs->utf8_buf);
+                                cs->utf8_buf.clear();
+                                cs->utf8_expected = 0;
+                                if (flushResult(cs->editor->onKey(ev))) {
+                                    return;
+                                }
+                            } else {
+                                for (char c : cs->utf8_buf) {
+                                    cs->editor->appendCooked(c);
+                                }
+                                cs->utf8_buf.clear();
+                                cs->utf8_expected = 0;
+                            }
+                        }
+                    } else {
+                        // Invalid continuation byte
+                        cs->utf8_buf.clear();
+                        cs->utf8_expected = 0;
+                    }
                 }
             }
         }
@@ -511,6 +589,15 @@ static bool prepareStdioConsole(State& state)
         return false;
     }
 
+    // Save original code pages
+    state.stdin_cp = GetConsoleCP();
+    state.stdout_cp = GetConsoleOutputCP();
+    state.restore_codepage = true;
+
+    // Set console input/output code page to UTF-8
+    SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
+
     DWORD input_mode = 0;
     if (!GetConsoleMode(state.stdin_handle, &input_mode)) {
         return false;
@@ -520,7 +607,8 @@ static bool prepareStdioConsole(State& state)
 
     DWORD raw_input = input_mode;
     raw_input &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
-    raw_input |= ENABLE_EXTENDED_FLAGS;
+    // Keep ENABLE_WINDOW_INPUT to allow IME events
+    raw_input |= ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT;
     if (!SetConsoleMode(state.stdin_handle, raw_input)) {
         state.restore_stdin_mode = false;
         return false;
@@ -561,34 +649,61 @@ static bool prepareStdioConsole(State& state)
 static TerminalKeyEvent readStdioKey()
 {
 #ifdef _WIN32
-    int ch = _getch();
-    if (ch == 0 || ch == 0xE0) {
-        int ext = _getch();
-        switch (ext) {
-            case 72: return {TerminalKey::UP};
-            case 80: return {TerminalKey::DOWN};
-            case 75: return {TerminalKey::LEFT};
-            case 77: return {TerminalKey::RIGHT};
-            case 71: return {TerminalKey::HOME};
-            case 79: return {TerminalKey::END};
-            case 83: return {TerminalKey::DELETE_KEY};
+    // Use ReadConsoleInput to support IME (Chinese input)
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    INPUT_RECORD irInBuf;
+    DWORD cNumRead;
+
+    if (!ReadConsoleInputW(hStdin, &irInBuf, 1, &cNumRead) || cNumRead == 0) {
+        return {TerminalKey::EOF_KEY};
+    }
+
+    if (irInBuf.EventType != KEY_EVENT || !irInBuf.Event.KeyEvent.bKeyDown) {
+        return {};  // Ignore key-up events and non-key events
+    }
+
+    const KEY_EVENT_RECORD& keyEvent = irInBuf.Event.KeyEvent;
+    WCHAR wch = keyEvent.uChar.UnicodeChar;
+    WORD vk = keyEvent.wVirtualKeyCode;
+
+    // Handle special keys (no Unicode character)
+    if (wch == 0) {
+        switch (vk) {
+            case VK_UP: return {TerminalKey::UP};
+            case VK_DOWN: return {TerminalKey::DOWN};
+            case VK_LEFT: return {TerminalKey::LEFT};
+            case VK_RIGHT: return {TerminalKey::RIGHT};
+            case VK_HOME: return {TerminalKey::HOME};
+            case VK_END: return {TerminalKey::END};
+            case VK_DELETE: return {TerminalKey::DELETE_KEY};
             default: return {};
         }
     }
 
-    switch (ch) {
-        case '\r': return {TerminalKey::ENTER};
-        case '\t': return {TerminalKey::TAB};
-        case 0x08: return {TerminalKey::BACKSPACE};
-        case 0x03: return {TerminalKey::CTRL_C};
-        case 0x15: return {TerminalKey::CTRL_U};
-        case 0x1A: return {TerminalKey::EOF_KEY};
-        default:
-            if (ch >= 0x20 && ch < 0x7F) {
-                return {TerminalKey::CHARACTER, static_cast<char>(ch)};
+    // Handle control characters
+    if (wch == L'\r') return {TerminalKey::ENTER};
+    if (wch == L'\t') return {TerminalKey::TAB};
+    if (wch == 0x08) return {TerminalKey::BACKSPACE};
+    if (wch == 0x03) return {TerminalKey::CTRL_C};
+    if (wch == 0x15) return {TerminalKey::CTRL_U};
+    if (wch == 0x1A) return {TerminalKey::EOF_KEY};
+
+    // Convert Unicode (UTF-16) to UTF-8
+    if (wch >= 0x20) {
+        char utf8_buf[8];
+        int len = WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8_buf, sizeof(utf8_buf), nullptr, nullptr);
+        if (len > 0) {
+            TerminalKeyEvent ev;
+            ev.key = TerminalKey::CHARACTER;
+            ev.chars = std::string(utf8_buf, len);
+            if (len == 1) {
+                ev.ch = utf8_buf[0];
             }
-            return {};
+            return ev;
+        }
     }
+
+    return {};
 #else
     unsigned char ch = 0;
     ssize_t n = ::read(STDIN_FILENO, &ch, 1);
@@ -633,9 +748,38 @@ static TerminalKeyEvent readStdioKey()
         return {};
     }
 
+    // ASCII single-byte
     if (ch >= 0x20 && ch < 0x7F) {
-        return {TerminalKey::CHARACTER, static_cast<char>(ch)};
+        TerminalKeyEvent ev;
+        ev.key = TerminalKey::CHARACTER;
+        ev.ch = static_cast<char>(ch);
+        ev.chars = std::string(1, ev.ch);
+        return ev;
     }
+
+    // UTF-8 multi-byte: read continuation bytes
+    if (ch >= 0x80) {
+        size_t len = 0;
+        if ((ch & 0xE0) == 0xC0) len = 2;
+        else if ((ch & 0xF0) == 0xE0) len = 3;
+        else if ((ch & 0xF8) == 0xF0) len = 4;
+        else return {};  // Invalid lead byte
+
+        std::string utf8_char(1, static_cast<char>(ch));
+        for (size_t i = 1; i < len; ++i) {
+            unsigned char cont = 0;
+            if (::read(STDIN_FILENO, &cont, 1) <= 0 || (cont & 0xC0) != 0x80) {
+                return {};  // Invalid continuation byte
+            }
+            utf8_char.push_back(static_cast<char>(cont));
+        }
+
+        TerminalKeyEvent ev;
+        ev.key = TerminalKey::CHARACTER;
+        ev.chars = std::move(utf8_char);
+        return ev;
+    }
+
     return {};
 #endif
 }
@@ -643,15 +787,11 @@ static TerminalKeyEvent readStdioKey()
 static bool pollStdioKey(TerminalKeyEvent& out_event, int timeout_ms)
 {
 #ifdef _WIN32
-    const int step_ms = 20;
-    int waited = 0;
-    while (waited < timeout_ms) {
-        if (_kbhit()) {
-            out_event = readStdioKey();
-            return out_event.key != TerminalKey::NONE;
-        }
-        ::Sleep(step_ms);
-        waited += step_ms;
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD waitResult = WaitForSingleObject(hStdin, timeout_ms);
+    if (waitResult == WAIT_OBJECT_0) {
+        out_event = readStdioKey();
+        return out_event.key != TerminalKey::NONE;
     }
     return false;
 #else
@@ -677,6 +817,9 @@ static std::string keyEventToBytes(const TerminalKeyEvent& ev)
 {
     switch (ev.key) {
         case TerminalKey::CHARACTER:
+            if (!ev.chars.empty()) {
+                return ev.chars;
+            }
             if (ev.ch >= 0x20 && ev.ch < 0x7f) {
                 return std::string(1, ev.ch);
             }
@@ -760,9 +903,9 @@ int TerminalStdioClient::run()
             if (!text.empty() && text.back() != '\n')
                 std::cout << '\n';
             std::cout << _p->editor->renderedLine() << "\x1b[K";
-            size_t back = _p->editor->line().size() - _p->editor->cursor();
-            if (back > 0)
-                std::cout << "\x1b[" << back << 'D';
+            size_t back_cols = _p->editor->cursorColsToEnd();
+            if (back_cols > 0)
+                std::cout << "\x1b[" << back_cols << 'D';
             std::cout.flush();
         });
     }

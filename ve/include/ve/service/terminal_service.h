@@ -13,7 +13,14 @@ namespace service {
 class VE_API TerminalReplServer
 {
 public:
-    explicit TerminalReplServer(Node* root, uint16_t port);
+    struct Options {
+        bool banner = true;        // Show ASCII art banner on connect
+        bool title = true;         // Show "VersatileEngine Terminal" title
+        bool prompt_color = true;  // Use colored prompt
+        bool use_current = true;   // Maintain current path (cd command)
+    };
+
+    explicit TerminalReplServer(Node* root, uint16_t port, const Options& opts = Options());
     ~TerminalReplServer();
 
     bool     start();
