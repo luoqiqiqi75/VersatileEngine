@@ -257,9 +257,7 @@ static void varToNodeImpl(const Var& var, Node* node)
 
 bool SchemaTraits<VarS>::importNode(Node* node, const Var& data)
 {
-    if (!node) return false;
-    varToNodeImpl(data, node);
-    return true;
+    return importNode(node, data, ImportOptions{});
 }
 
 bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, const ImportOptions& options)
