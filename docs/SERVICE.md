@@ -218,9 +218,11 @@ Requests:
 {"op":"subscribe","path":"ve/server/node/http/runtime/port","tree":true,"id":3}
 ```
 
-**Subscribe parameters:**
-- `bubble`: `true` = monitor all descendant changes (push leaf path + value)
-- `tree`: `true` = push entire subtree JSON when subscribed node changes (default for clients)
+**Subscribe parameters (all default to `false`):**
+- `bubble`: monitor all descendant changes; push fires for each changed leaf with that leaf's path and scalar value
+- `tree`: when the subscribed node fires `NODE_CHANGED`, push the entire subtree as a Var dict instead of the node's scalar value
+
+Without either flag, only the exact subscribed node is monitored and the push carries its scalar value (`node.get()`).
 
 Immediate replies:
 
@@ -238,7 +240,10 @@ Push events:
 {"event":"task.result","id":2,"task_id":"abcd1234","ok":true,"data":"Saved to config.json"}
 ```
 
-**Note:** With `tree:true`, the push event contains the entire subscribed subtree, not just the changed leaf value.
+**Push event behavior:**
+- Default (`bubble=false, tree=false`): `{"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}` (scalar value)
+- `tree=true`: `{"event":"node.changed","path":"ve/server","value":{"node":{"http":{"runtime":{"port":12000}}}}}` (entire subtree as Var dict)
+- `bubble=true`: fires for each descendant change with that descendant's path and scalar value
 
 ---
 
