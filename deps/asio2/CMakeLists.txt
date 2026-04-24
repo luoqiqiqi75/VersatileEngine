@@ -12,7 +12,7 @@
 # export CXX=/usr/local/bin/g++
 #
 
-cmake_minimum_required (VERSION 2.8...3.20)
+cmake_minimum_required (VERSION 2.8...3.16)
 
 
 
