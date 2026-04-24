@@ -89,6 +89,16 @@ target_sources(${VE_ROS_LIBRARY} PRIVATE
 
 if(_VE_ROS_HAS_RCLCPP)
     file(GLOB_RECURSE _ROS_RCLCPP_SRC src/backend/rclcpp/*.cpp src/backend/rclcpp/*.h)
+
+    # Check if rclcpp has typesupport_helpers (Galactic+)
+    # Foxy (rclcpp 2.x) doesn't have this, so exclude dynamic_typesupport_bridge
+    if(rclcpp_VERSION VERSION_LESS "3.0.0")
+        list(FILTER _ROS_RCLCPP_SRC EXCLUDE REGEX "dynamic_typesupport_bridge\\.(cpp|h)$")
+        message(STATUS "  - rclcpp ${rclcpp_VERSION} < 3.0 (Foxy): excluding dynamic typesupport bridge")
+    else()
+        target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_DYNAMIC_TYPESUPPORT=1)
+    endif()
+
     target_sources(${VE_ROS_LIBRARY} PRIVATE ${_ROS_RCLCPP_SRC})
     ament_target_dependencies(${VE_ROS_LIBRARY} PUBLIC rclcpp)
     target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_RCLCPP=1)

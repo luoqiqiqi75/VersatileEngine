@@ -1,4 +1,6 @@
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
 #include "dynamic_typesupport_bridge.h"
+#endif
 
 #include "ve/ros/backend.h"
 #include "ve/core/schema.h"
@@ -242,7 +244,12 @@ Var::DictV decodedMessageResult(const rclcpp::SerializedMessage& message,
                                 const std::string& topic,
                                 const std::string& type,
                                 const std::string& payload_format,
-                                const std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>& bridge)
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+                                const std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>& bridge
+#else
+                                const std::shared_ptr<void>& bridge
+#endif
+                                )
 {
     Var::DictV result = makeResult(true, "topic message decoded");
     result["topic"] = Var(topic);
@@ -256,6 +263,7 @@ Var::DictV decodedMessageResult(const rclcpp::SerializedMessage& message,
         return result;
     }
 
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
     Var decoded;
     std::string error;
     if (bridge && bridge->deserializeToVar(message, decoded, error)) {
@@ -269,6 +277,12 @@ Var::DictV decodedMessageResult(const rclcpp::SerializedMessage& message,
     result["message"] = Var(error);
     result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
     result["fallback_format"] = Var("cdr_hex");
+#else
+    result["ok"] = Var(false);
+    result["message"] = Var("dynamic typesupport not available (ROS 2 Foxy), use cdr_hex format");
+    result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
+    result["fallback_format"] = Var("cdr_hex");
+#endif
     return result;
 }
 
@@ -492,9 +506,15 @@ public:
 
         const std::string payload_format = normalizedPayloadFormat(config.payload_format);
         std::string bridge_error;
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         if (payload_format != "cdr_hex" && !bridge->initialize(topic_type, bridge_error))
             return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+#else
+        auto bridge = std::shared_ptr<void>{};
+        if (payload_format != "cdr_hex")
+            return makeResult(false, "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+#endif
 
         auto target_path = config.target_node;
         if (target_path.empty())
@@ -573,6 +593,7 @@ public:
             std::memcpy(raw.buffer, bytes.data(), bytes.size());
             raw.buffer_length = bytes.size();
         } else {
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
             auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
             std::string error;
             if (!bridge->initialize(topic_type, error))
@@ -583,6 +604,9 @@ public:
                 : ve::ros::yaml::decode(request.payload);
             if (!bridge->serializeFromVar(payload, message, error))
                 return makeResult(false, "failed to serialize payload: " + error);
+#else
+            return makeResult(false, "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+#endif
         }
 
         auto publisher = publishers_.value(request.topic, rclcpp::GenericPublisher::SharedPtr{});
@@ -621,10 +645,16 @@ public:
             return makeResult(false, "topic type is required");
 
         const std::string payload_format = normalizedPayloadFormat(request.payload_format);
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         std::string bridge_error;
         if (payload_format != "cdr_hex" && !bridge->initialize(topic_type, bridge_error))
             return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+#else
+        auto bridge = std::shared_ptr<void>{};
+        if (payload_format != "cdr_hex")
+            return makeResult(false, "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+#endif
 
         auto promise = std::make_shared<std::promise<Var::DictV>>();
         auto future = promise->get_future();
@@ -731,6 +761,9 @@ public:
             return makeResult(false, "service type is required");
 
         const std::string fmt = normalizedPayloadFormat(payload_format);
+#ifndef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+        return makeResult(false, "dynamic typesupport not available on Foxy, service calls require Galactic+");
+#else
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         std::string bridge_error;
         if (fmt != "cdr_hex" && !bridge->initialize(type, bridge_error))
@@ -775,6 +808,7 @@ public:
         if (fmt == "yaml")
             result["yaml"] = Var(ve::ros::yaml::encode(response_var));
         return result;
+#endif
     }
 
     Var::DictV listParams(const std::string& node_name = "") const override
