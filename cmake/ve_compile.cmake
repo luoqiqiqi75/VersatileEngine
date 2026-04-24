@@ -55,13 +55,13 @@ else ()
     # 强制调试信息（显示文件名和行号）
     # 即使在Release模式下也保留调试信息，方便问题诊断
     # 如果要最小化Release体积，在_local.cmake中设置 VE_FORCE_DEBUG_INFO=OFF
-    
+
     # 使用 option，但允许_custom.cmake中的set()覆盖
     # 注意：如果变量已经定义（通过set），option不会覆盖
     if(NOT DEFINED VE_FORCE_DEBUG_INFO)
         option(VE_FORCE_DEBUG_INFO "Generate crash tracking" OFF)
     endif()
-    
+
     if (VE_FORCE_DEBUG_INFO)
         if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
             # 在非Debug模式下添加 -g
@@ -71,6 +71,13 @@ else ()
     else()
         message(STATUS "Debug info disabled (set VE_FORCE_DEBUG_INFO=ON in cmake/_local.cmake to enable)")
     endif()
+
+    # Hide internal symbols (spdlog, asio, etc.) to avoid ABI conflicts with system/ROS libraries
+    # Only symbols marked with VE_API will be exported
+    add_compile_options(-fvisibility=hidden -fvisibility-inlines-hidden)
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+    set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+    message(STATUS "Symbol visibility: hidden (prevents spdlog/asio conflicts with ROS/system libs)")
 endif ()
 
 # --- Build options ---
