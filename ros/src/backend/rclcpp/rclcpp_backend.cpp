@@ -367,7 +367,9 @@ public:
         }
         std::lock_guard<std::mutex> lock(mu_);
         subscriptions_.clear();
+#ifdef VE_ROS_HAS_GENERIC_PUBSUB
         publishers_.clear();
+#endif
         spinning_.store(false);
         if (executor_) {
             executor_->cancel();
@@ -494,6 +496,9 @@ public:
 
     Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
     {
+#ifndef VE_ROS_HAS_GENERIC_PUBSUB
+        return makeResult(false, "GenericSubscription not available on Foxy, requires Galactic+");
+#else
         std::lock_guard<std::mutex> lock(mu_);
         if (!node_)
             return makeResult(false, "rclcpp backend is not started");
@@ -556,10 +561,14 @@ public:
         result["target_node"] = Var(target_path);
         result["payload_format"] = Var(payload_format);
         return result;
+#endif
     }
 
     Var::DictV unsubscribeTopic(const std::string& name) override
     {
+#ifndef VE_ROS_HAS_GENERIC_PUBSUB
+        return makeResult(false, "GenericSubscription not available on Foxy, requires Galactic+");
+#else
         std::lock_guard<std::mutex> lock(mu_);
         if (!subscriptions_.has(name))
             return makeResult(false, "subscription not found");
@@ -568,10 +577,14 @@ public:
         Var::DictV result = makeResult(true, "topic unsubscribed");
         result["name"] = Var(name);
         return result;
+#endif
     }
 
     Var::DictV publishTopic(const TopicPublishRequest& request) override
     {
+#ifndef VE_ROS_HAS_GENERIC_PUBSUB
+        return makeResult(false, "GenericPublisher not available on Foxy, requires Galactic+");
+#else
         std::lock_guard<std::mutex> lock(mu_);
         if (!node_)
             return makeResult(false, "rclcpp backend is not started");
@@ -623,10 +636,14 @@ public:
         result["size"] = Var(static_cast<int64_t>(message.size()));
         result["payload_format"] = Var(payload_format);
         return result;
+#endif
     }
 
     Var::DictV onceTopic(const TopicOnceRequest& request) override
     {
+#ifndef VE_ROS_HAS_GENERIC_PUBSUB
+        return makeResult(false, "GenericSubscription not available on Foxy, requires Galactic+");
+#else
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -684,6 +701,7 @@ public:
         }
         result["message"] = Var(result.value("ok").toBool(false) ? "topic once ok" : result.value("message").toString());
         return result;
+#endif
     }
 
     Var::ListV listServices(const std::string& filter = "") const override
@@ -700,8 +718,13 @@ public:
 
             Var::DictV item;
             item["name"] = Var(name);
+#ifdef VE_ROS_HAS_GENERIC_PUBSUB
             item["server_count"] = Var(static_cast<int64_t>(node_->count_services(name)));
             item["client_count"] = Var(static_cast<int64_t>(node_->count_clients(name)));
+#else
+            item["server_count"] = Var(static_cast<int64_t>(0));
+            item["client_count"] = Var(static_cast<int64_t>(0));
+#endif
 
             Var::ListV type_list;
             for (const auto& type : types)
@@ -739,8 +762,13 @@ public:
         result["ok"] = Var(true);
         result["message"] = Var("service info ok");
         result["types"] = Var(std::move(type_list));
+#ifdef VE_ROS_HAS_GENERIC_PUBSUB
         result["server_count"] = Var(static_cast<int64_t>(node_->count_services(service)));
         result["client_count"] = Var(static_cast<int64_t>(node_->count_clients(service)));
+#else
+        result["server_count"] = Var(static_cast<int64_t>(0));
+        result["client_count"] = Var(static_cast<int64_t>(0));
+#endif
         return result;
     }
 
@@ -947,7 +975,9 @@ private:
     struct SubscriptionInfo {
         TopicSubscriptionConfig config;
         std::string target_node;
+#ifdef VE_ROS_HAS_GENERIC_PUBSUB
         rclcpp::GenericSubscription::SharedPtr subscription;
+#endif
     };
 
     std::string inferTopicTypeLocked(const std::string& topic_name) const
@@ -994,7 +1024,9 @@ private:
     std::string node_namespace_;
     std::string node_full_name_;
     Dict<SubscriptionInfo> subscriptions_;
+#ifdef VE_ROS_HAS_GENERIC_PUBSUB
     Dict<rclcpp::GenericPublisher::SharedPtr> publishers_;
+#endif
     mutable std::unordered_map<std::string, std::shared_ptr<rclcpp::AsyncParametersClient>> param_clients_;
 };
 
