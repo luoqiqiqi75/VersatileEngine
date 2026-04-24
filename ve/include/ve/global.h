@@ -35,6 +35,12 @@
 #else
 #define VE_API __declspec(dllimport)
 #endif
+#elif !defined(VE_STATIC_LIBRARY) // Linux/Unix shared library
+#ifdef VE_LIBRARY
+#define VE_API __attribute__((visibility("default")))
+#else
+#define VE_API __attribute__((visibility("default")))
+#endif
 #else
 #define VE_API
 #endif
