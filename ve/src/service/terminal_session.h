@@ -18,8 +18,9 @@ public:
     using AsyncOutputFn = std::function<void(const std::string&)>;
 
     struct Options {
-        bool prompt_color = true;  // Use colored prompt
-        bool use_current = true;   // Maintain current path (cd command)
+        bool prompt_color;
+        bool use_current;
+        Options() : prompt_color(true), use_current(true) {}
     };
 
     explicit TerminalSession(Node* root, const Options& opts = Options());

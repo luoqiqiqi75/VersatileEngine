@@ -14,10 +14,11 @@ class VE_API TerminalReplServer
 {
 public:
     struct Options {
-        bool banner = true;        // Show ASCII art banner on connect
-        bool title = true;         // Show "VersatileEngine Terminal" title
-        bool prompt_color = true;  // Use colored prompt
-        bool use_current = true;   // Maintain current path (cd command)
+        bool banner;
+        bool title;
+        bool prompt_color;
+        bool use_current;
+        Options() : banner(true), title(true), prompt_color(true), use_current(true) {}
     };
 
     explicit TerminalReplServer(Node* root, uint16_t port, const Options& opts = Options());
