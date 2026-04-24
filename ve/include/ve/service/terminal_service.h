@@ -18,6 +18,7 @@ public:
         bool title = true;         // Show "VersatileEngine Terminal" title
         bool prompt_color = true;  // Use colored prompt
         bool use_current = true;   // Maintain current path (cd command)
+        Options() = default;       // Explicit default constructor for C++17 compatibility
     };
 
     explicit TerminalReplServer(Node* root, uint16_t port, const Options& opts = Options());
