@@ -77,7 +77,12 @@ else ()
     add_compile_options(-fvisibility=hidden -fvisibility-inlines-hidden)
     set(CMAKE_CXX_VISIBILITY_PRESET hidden)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
-    message(STATUS "Symbol visibility: hidden (prevents spdlog/asio conflicts with ROS/system libs)")
+    # Disable STB_GNU_UNIQUE: GCC uses unique symbols for static locals/template statics
+    # to guarantee cross-DSO singletons, but this causes ODR conflicts when libve.so and
+    # libfastrtps.so both contain asio service_id statics with the same mangled name.
+    # -fno-gnu-unique makes these symbols STB_WEAK instead, so each DSO gets its own copy.
+    add_compile_options(-fno-gnu-unique)
+    message(STATUS "Symbol visibility: hidden + no-gnu-unique (prevents asio/spdlog ODR conflicts with ROS/system libs)")
 endif ()
 
 # --- Build options ---

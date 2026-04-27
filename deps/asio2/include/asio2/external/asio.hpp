@@ -24,7 +24,7 @@
 #endif
 
 #ifdef ASIO_STANDALONE
-#  ifndef ASIO_HEADER_ONLY
+#  if !defined(ASIO_HEADER_ONLY) && !defined(ASIO_SEPARATE_COMPILATION)
 #  define ASIO_HEADER_ONLY
 #  endif
 #endif

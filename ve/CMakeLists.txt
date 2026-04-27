@@ -53,9 +53,28 @@ target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio2)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_pugixml)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_msgpack)
 
+# OpenSSL (required by asio_impl.cpp SSL symbols on Linux)
+if(UNIX AND NOT APPLE)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(${VE_CORE_LIBRARY} PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
+
 # dynamic library loading (dlopen on Linux)
 if(NOT WIN32)
     target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
+# --- Version script: hide asio/spdlog/simdjson symbols from dynamic symbol table ---
+# Prevents ODR conflicts when libve.so coexists with other .so files that also
+# embed asio (e.g. libfastrtps.so in ROS2 Foxy). Only ve:: symbols are exported.
+if(UNIX AND NOT APPLE)
+    set(_VE_VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/libve.version")
+    target_link_options(${VE_CORE_LIBRARY} PRIVATE
+        "LINKER:--version-script=${_VE_VERSION_SCRIPT}"
+    )
+    set_target_properties(${VE_CORE_LIBRARY} PROPERTIES
+        LINK_DEPENDS "${_VE_VERSION_SCRIPT}"
+    )
 endif()
 
 # --- Install (when VE_INSTALL is ON, see top-level ve_install.cmake) ---

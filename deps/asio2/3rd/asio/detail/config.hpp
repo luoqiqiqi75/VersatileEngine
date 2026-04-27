@@ -85,7 +85,15 @@
 
 // If ASIO_DECL isn't defined yet define it now.
 #if !defined(ASIO_DECL)
-# define ASIO_DECL
+// On GCC/Clang with separate compilation, explicitly hide asio symbols to
+// prevent ODR conflicts when loaded alongside other libraries (e.g. FastDDS)
+// that also embed asio. Without this, -fvisibility=hidden alone does not
+// suppress weak/unique symbols generated for template statics.
+# if defined(__GNUC__) && defined(ASIO_SEPARATE_COMPILATION)
+#  define ASIO_DECL __attribute__((visibility("hidden")))
+# else
+#  define ASIO_DECL
+# endif
 #endif // !defined(ASIO_DECL)
 
 // Helper macro for documentation.

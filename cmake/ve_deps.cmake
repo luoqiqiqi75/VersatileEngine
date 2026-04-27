@@ -34,10 +34,18 @@ set(VE_DEPS_3RD  "${VE_DEPS_ASIO2_ROOT}/3rd")
 add_library(ve_dep_spdlog INTERFACE)
 target_include_directories(ve_dep_spdlog INTERFACE "${VE_DEPS_3RD}")
 
-# --- standalone asio (header-only) ---
+# --- standalone asio (separate compilation to hide symbols) ---
+# Use ASIO_SEPARATE_COMPILATION on Linux only to prevent ODR conflicts with
+# other libraries (e.g., FastDDS/ROS2) that also use asio via ELF weak symbols.
+# On Windows, DLL import/export semantics prevent ODR issues, and asio2 forces
+# ASIO_HEADER_ONLY anyway (via asio2/config.hpp -> external/asio.hpp).
 add_library(ve_dep_asio INTERFACE)
 target_include_directories(ve_dep_asio INTERFACE "${VE_DEPS_3RD}")
-target_compile_definitions(ve_dep_asio INTERFACE ASIO_STANDALONE ASIO_HEADER_ONLY)
+if(UNIX)
+    target_compile_definitions(ve_dep_asio INTERFACE ASIO_STANDALONE ASIO_SEPARATE_COMPILATION)
+else()
+    target_compile_definitions(ve_dep_asio INTERFACE ASIO_STANDALONE ASIO_HEADER_ONLY)
+endif()
 if(WIN32)
     target_link_libraries(ve_dep_asio INTERFACE ws2_32 mswsock)
 elseif(UNIX)
@@ -50,8 +58,14 @@ add_library(ve_dep_asio2 INTERFACE)
 target_include_directories(ve_dep_asio2 INTERFACE
     "${VE_DEPS_ASIO2_ROOT}/include"
     "${VE_DEPS_3RD}"
-    "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/include"
 )
+# Bundled OpenSSL headers are only used on Windows where we also link the bundled libs.
+# On Linux/macOS we use system OpenSSL to ensure header/library version consistency.
+if(WIN32)
+    target_include_directories(ve_dep_asio2 INTERFACE
+        "${VE_DEPS_ASIO2_ROOT}/3rd/openssl/include"
+    )
+endif()
 target_compile_definitions(ve_dep_asio2 INTERFACE ASIO2_ENABLE_SSL)
 target_link_libraries(ve_dep_asio2 INTERFACE ve_dep_asio)
 

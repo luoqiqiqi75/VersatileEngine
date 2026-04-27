@@ -1,0 +1,37 @@
+# =============================================================================
+# libve.version - GNU ld version script for symbol visibility control
+# =============================================================================
+# Purpose: Prevent asio/spdlog/simdjson/pugixml symbols from leaking into
+#          the dynamic symbol table, avoiding ODR conflicts with ROS2/FastDDS.
+#
+# Only symbols in the "ve" namespace (mangled prefix _ZN2ve / _ZNK2ve / _ZTIN2ve
+# / _ZTSN2ve / _ZTVN2ve) and explicitly listed C symbols are exported.
+# Everything else (asio::*, spdlog::*, simdjson::*, pugixml::*) is hidden.
+#
+# Why mangled-name globs instead of `extern "C++" { ve::*; }`:
+#   GNU ld matches `extern "C++"` against the *demangled* form, which for free
+#   function templates includes the return type prefix, e.g.:
+#     "void ve::logOnSink<...>(...)"
+#   That string does not start with "ve::", so `ve::*` silently misses them
+#   and they get hidden. Matching mangled names sidesteps the issue entirely.
+# =============================================================================
+
+VE_1.0 {
+  global:
+    # All symbols in namespace ve:: (Itanium ABI: _ZN2ve... / _ZNK2ve... for const)
+    _ZN2ve*;
+    _ZNK2ve*;
+
+    # RTTI / typeinfo / vtable for ve:: types
+    _ZTIN2ve*;   # typeinfo
+    _ZTSN2ve*;   # typeinfo name
+    _ZTVN2ve*;   # vtable
+    _ZThn*_N2ve*;  # virtual thunks
+
+    # C symbols (plugin entry points, version query, etc.)
+    ve_*;
+
+  local:
+    # Hide everything else (asio, spdlog, simdjson, pugixml, openssl, ...)
+    *;
+};
