@@ -207,6 +207,7 @@ void applyEarlySettings()
 class QtModule : public Module
 {
     QCoreApplication* app_ = nullptr;
+    bool owns_app_ = false;
 
 public:
     explicit QtModule(const std::string& name) : Module(name) {}
@@ -225,12 +226,17 @@ protected:
 
         applyEarlySettings();
 
-        auto& opts = entry::options();
-        int argc = opts.argc;
-        if (app_type == "widgets") {
-            app_ = new QApplication(argc, opts.argv);
+        if (QCoreApplication::instance()) {
+            app_ = QCoreApplication::instance();
         } else {
-            app_ = new QGuiApplication(argc, opts.argv);
+            auto& opts = entry::options();
+            int argc = opts.argc;
+            if (app_type == "widgets") {
+                app_ = new QApplication(argc, opts.argv);
+            } else {
+                app_ = new QGuiApplication(argc, opts.argv);
+            }
+            owns_app_ = true;
         }
 
         loop::setMainRunner(
@@ -306,7 +312,9 @@ protected:
 
     void deinit() override
     {
-        delete app_;
+        if (owns_app_) {
+            delete app_;
+        }
         app_ = nullptr;
     }
 };

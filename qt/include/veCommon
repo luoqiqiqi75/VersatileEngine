@@ -1,4 +1,3 @@
-#include "ve/qt/core/common.h"
 #include "ve/qt/qt_entry.h"
 #include "ve/qt/var_qt.h"
 #include "ve/qt/schema_qt.h"
