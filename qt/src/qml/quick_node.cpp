@@ -3,20 +3,31 @@
 // ----------------------------------------------------------------------------
 
 #include "ve/qt/qml/quick_node.h"
+
+#ifndef QT_QML_LIB
+#warning "QuickNode compiled without Qt::Qml - QJSValue unwrapping disabled, QML integration may not work correctly"
+#endif
+
 #include "ve/qt/node_signal_bridge.h"
 #include "ve/qt/schema_qt.h"
 
 #include "ve/core/node.h"
 #include "ve/qt/var_qt.h"
 
+#ifdef QT_QML_LIB
 #include <QJSValue>
+#endif
 #include <QTimer>
 
 namespace ve {
 
 static QVariant unwrapJsValue(const QVariant& var)
 {
+#ifdef QT_QML_LIB
     return qstrcmp(var.typeName(), "QJSValue") == 0 ? var.value<QJSValue>().toVariant() : var;
+#else
+    return var;  // Fallback: no QJSValue unwrapping without Qt::Qml
+#endif
 }
 
 // ============================================================================

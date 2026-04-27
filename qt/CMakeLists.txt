@@ -55,19 +55,28 @@ target_include_directories(${VE_QT_LIBRARY} PUBLIC
 )
 
 # ==========================================================
+# QML bridge probe (before ve_collect to decide source filtering)
+# ==========================================================
+set(_VE_QT_HAS_QML OFF)
+if(VE_BUILD_QT_QML OR VE_BUILD_QT_BROWSER)
+    find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS Qml)
+    if(TARGET Qt${QT_VERSION_MAJOR}::Qml)
+        set(_VE_QT_HAS_QML ON)
+    endif()
+endif()
+
+# ==========================================================
 # Library sources
 # ==========================================================
-file(GLOB_RECURSE _IMOL_SRC     src/imol/*.cpp)
-file(GLOB_RECURSE _BASE_SRC     src/base/*.cpp)
-file(GLOB_RECURSE _TERMINAL_SRC src/terminal/*.cpp src/terminal/*.h src/terminal/*.ui)
-file(GLOB_RECURSE _SERVICE_SRC  src/service/*.cpp  src/service/*.h)
-file(GLOB_RECURSE _RES          res/*.qrc)
-file(GLOB_RECURSE _INCLUDES     include/*.h)
+ve_collect(${CMAKE_CURRENT_SOURCE_DIR} _QT)
 
-target_sources(${VE_QT_LIBRARY} PRIVATE
-    ${_IMOL_SRC} ${_BASE_SRC} ${_TERMINAL_SRC} ${_SERVICE_SRC}
-    ${_RES} ${_INCLUDES}
-)
+# quick_node.cpp is core Qt bridge (no Qml dependency), always built.
+# qml_register.cpp and qt_launch_module.cpp require Qt::Qml, filter them out if not available.
+if(NOT _VE_QT_HAS_QML)
+    list(FILTER _QT_ALL EXCLUDE REGEX ".*/src/qml/(qml_register|qt_launch_module)\\.cpp$")
+endif()
+
+target_sources(${VE_QT_LIBRARY} PRIVATE ${_QT_ALL})
 
 # PRIVATE: internal src headers, AUTOUIC output
 target_include_directories(${VE_QT_LIBRARY} PRIVATE
@@ -93,19 +102,11 @@ endif()
 # ==========================================================
 # QML bridge (conditional)
 # ==========================================================
-set(_VE_QT_HAS_QML OFF)
-if(VE_BUILD_QT_QML OR VE_BUILD_QT_BROWSER)
-    find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS Qml)
-    if(TARGET Qt${QT_VERSION_MAJOR}::Qml)
-        set(_VE_QT_HAS_QML ON)
-        ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC "Qml")
-        file(GLOB_RECURSE _QML_SRC src/qml/*.cpp)
-        file(GLOB_RECURSE _QML_HDR include/ve/qt/qml/*.h)
-        target_sources(${VE_QT_LIBRARY} PRIVATE ${_QML_SRC} ${_QML_HDR})
-        message(STATUS "  + QML bridge")
-    elseif(VE_BUILD_QT_QML)
-        message(STATUS "  - Skip QML bridge (Qt${QT_VERSION_MAJOR} Qml not found)")
-    endif()
+if(_VE_QT_HAS_QML)
+    ve_target_link_qt(${VE_QT_LIBRARY} PUBLIC "Qml")
+    message(STATUS "  + QML bridge")
+elseif(VE_BUILD_QT_QML)
+    message(STATUS "  - Skip QML bridge (Qt${QT_VERSION_MAJOR} Qml not found)")
 endif()
 
 # ==========================================================

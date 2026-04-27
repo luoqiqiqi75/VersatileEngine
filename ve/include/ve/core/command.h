@@ -143,7 +143,7 @@ public:
     template<typename F, Step::EnableIfFn<F> = 0>
     void addStep(F&& fn, LoopRef lr = {})
     {
-        addStep(Step(Step::wrap(std::forward<F>(fn)), std::move(lr)));
+        addStep(Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), std::move(lr)}));
     }
 
     void setHelp(const std::string& h);
@@ -175,13 +175,13 @@ VE_API void registerStep(const std::string& key, Step step, const std::string& h
 template<typename F, Step::EnableIfFn<F> = 0>
 void registerStep(const std::string& key, F&& fn, const std::string& help = "")
 {
-    registerStep(key, Step(Step::wrap(std::forward<F>(fn))), help);
+    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), LoopRef{}}), help);
 }
 
 template<typename F, Step::EnableIfFn<F> = 0>
 void registerStep(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
 {
-    registerStep(key, Step(Step::wrap(std::forward<F>(fn)), std::move(loop)), help);
+    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), std::move(loop)}), help);
 }
 
 VE_API void registerCommand(const std::string& key,
@@ -197,13 +197,13 @@ namespace command {
 template<typename F, Step::EnableIfFn<F> = 0>
 void reg(const std::string& key, F&& fn, const std::string& help = "")
 {
-    registerStep(key, std::forward<F>(fn), help);
+    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), LoopRef{}}), help);
 }
 
 template<typename F, Step::EnableIfFn<F> = 0>
 void reg(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
 {
-    registerStep(key, std::forward<F>(fn), std::move(loop), help);
+    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), std::move(loop)}), help);
 }
 
 VE_API void build(const std::string& key,

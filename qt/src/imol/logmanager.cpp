@@ -59,7 +59,7 @@ FLog::FLog(const QString &level_str, const QString &detail_str, const QString &f
 FLog::~FLog()
 {
     if (!m_log_file.isOpen()) return;
-    m_f_debug << Qt::endl;
+    m_f_debug << '\n';
     m_log_file.close();
 }
 
