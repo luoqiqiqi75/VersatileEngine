@@ -23,8 +23,8 @@ export interface VeWsClientOptions {
   maxReconnectInterval?: number;
 }
 
-interface PendingRequest<T = VarValue> {
-  resolve: (value: VeReply<T>) => void;
+interface PendingRequest {
+  resolve: (value: VeReply<unknown>) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -91,7 +91,7 @@ export class VeWsClient {
       }, this.timeout);
 
       this.pending.set(id, {
-        resolve: resolve as PendingRequest<T>['resolve'],
+        resolve: resolve as (value: VeReply<unknown>) => void,
         reject,
         timer,
       });

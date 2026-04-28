@@ -340,8 +340,8 @@ export interface VeBinTcpClientOptions {
   maxReconnectInterval?: number;
 }
 
-interface PendingRequest<T = VarValue> {
-  resolve: (result: VeReply<T>) => void;
+interface PendingRequest {
+  resolve: (result: VeReply<unknown>) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -540,7 +540,7 @@ export class VeBinTcpClient {
         reject(new Error(`Request timeout (${this.timeout}ms)`));
       }, this.timeout);
 
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve: resolve as (result: VeReply<unknown>) => void, reject, timer });
 
       const encoded = msgpackEncode(requestPayload);
       const header = new Uint8Array(FRAME_HEADER_SIZE);
@@ -594,7 +594,7 @@ export class VeBinTcpClient {
             }
           }
         }
-        this.notifyMessage(msg as WsMessage);
+        this.notifyMessage(msg as unknown as WsMessage);
         continue;
       }
 
@@ -604,9 +604,9 @@ export class VeBinTcpClient {
         const p = this.pending.get(id)!;
         this.pending.delete(id);
         clearTimeout(p.timer);
-        p.resolve(msg as VeReply);
+        p.resolve(msg as unknown as VeReply);
       } else {
-        this.notifyMessage(msg as WsMessage);
+        this.notifyMessage(msg as unknown as WsMessage);
       }
     }
   }

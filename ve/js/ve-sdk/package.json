@@ -10,12 +10,15 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "vite build && tsc --emitDeclarationOnly",
     "dev": "vite build --watch"
   },
   "devDependencies": {
+    "@types/node": "^25.6.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0"
   }
