@@ -81,8 +81,13 @@ else ()
     # to guarantee cross-DSO singletons, but this causes ODR conflicts when libve.so and
     # libfastrtps.so both contain asio service_id statics with the same mangled name.
     # -fno-gnu-unique makes these symbols STB_WEAK instead, so each DSO gets its own copy.
-    add_compile_options(-fno-gnu-unique)
-    message(STATUS "Symbol visibility: hidden + no-gnu-unique (prevents asio/spdlog ODR conflicts with ROS/system libs)")
+    # Only GCC supports this flag; Clang (including Android NDK) does not.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        add_compile_options(-fno-gnu-unique)
+        message(STATUS "Symbol visibility: hidden + no-gnu-unique (prevents asio/spdlog ODR conflicts with ROS/system libs)")
+    else()
+        message(STATUS "Symbol visibility: hidden (non-GCC compiler, skipping -fno-gnu-unique)")
+    endif()
 endif ()
 
 # --- Build options ---

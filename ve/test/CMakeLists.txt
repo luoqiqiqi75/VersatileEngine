@@ -18,8 +18,10 @@ endif()
 
 target_link_libraries(ve_test PRIVATE VersatileEngine::ve)
 
-if(UNIX)
+if(UNIX AND NOT ANDROID)
     target_link_libraries(ve_test PRIVATE pthread dl)
+elseif(ANDROID)
+    target_link_libraries(ve_test PRIVATE dl)
 endif()
 
 message(STATUS "")
