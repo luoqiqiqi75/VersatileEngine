@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// asio_impl.cpp - Separate compilation unit for asio implementation (Linux only)
+// asio_impl.cpp - Separate compilation unit for asio implementation
 // ----------------------------------------------------------------------------
 // Compiles all asio + asio SSL implementation into a single TU so that symbols
 // are subject to -fvisibility=hidden and -fno-gnu-unique, preventing ODR
@@ -9,11 +9,11 @@
 // OPENSSL_VERSION_NUMBER >= 0x30000000L, so this compiles cleanly on
 // Ubuntu 20.04 / OpenSSL 1.1.x as well.
 //
-// Windows: this file is a no-op (DLL semantics prevent ODR issues there).
-// Requires: ASIO_SEPARATE_COMPILATION (set in ve_deps.cmake for Linux/Unix).
+// This file is only compiled when ASIO_SEPARATE_COMPILATION is defined.
+// On platforms using ASIO_HEADER_ONLY (Windows/macOS/iOS/Android), this is a no-op.
 // ----------------------------------------------------------------------------
 
-#ifdef __unix__
+#ifdef ASIO_SEPARATE_COMPILATION
 #include <asio/impl/src.hpp>
 #include <asio/ssl/impl/src.hpp>
 #endif
