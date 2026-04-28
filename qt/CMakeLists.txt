@@ -34,9 +34,9 @@ option(VE_BUILD_QT_BROWSER "Build veqtbrowser module DLL (WebView)"       ON)
 ve_resolve_library_target_name(VE_QT_LIBRARY veqt)
 
 # ==========================================================
-# Create the single shared library target
+# Create the single library target (SHARED on desktop, STATIC on iOS)
 # ==========================================================
-add_library(${VE_QT_LIBRARY} SHARED)
+add_library(${VE_QT_LIBRARY})
 
 target_compile_definitions(${VE_QT_LIBRARY} PRIVATE VE_LIBRARY VE_QT_HAS_IMOL=1)
 

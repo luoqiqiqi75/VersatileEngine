@@ -77,16 +77,15 @@ else ()
     add_compile_options(-fvisibility=hidden -fvisibility-inlines-hidden)
     set(CMAKE_CXX_VISIBILITY_PRESET hidden)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
-    # Disable STB_GNU_UNIQUE: GCC uses unique symbols for static locals/template statics
+    # Disable STB_GNU_UNIQUE on Linux: GCC uses unique symbols for static locals/template statics
     # to guarantee cross-DSO singletons, but this causes ODR conflicts when libve.so and
     # libfastrtps.so both contain asio service_id statics with the same mangled name.
     # -fno-gnu-unique makes these symbols STB_WEAK instead, so each DSO gets its own copy.
-    # Only GCC supports this flag; Clang (including Android NDK) does not.
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         add_compile_options(-fno-gnu-unique)
-        message(STATUS "Symbol visibility: hidden + no-gnu-unique (prevents asio/spdlog ODR conflicts with ROS/system libs)")
+        message(STATUS "Symbol visibility: hidden + no-gnu-unique (Linux GCC, prevents asio/spdlog ODR conflicts with ROS/system libs)")
     else()
-        message(STATUS "Symbol visibility: hidden (non-GCC compiler, skipping -fno-gnu-unique)")
+        message(STATUS "Symbol visibility: hidden (skip -fno-gnu-unique)")
     endif()
 endif ()
 

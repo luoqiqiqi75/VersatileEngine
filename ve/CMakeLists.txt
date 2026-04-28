@@ -26,7 +26,7 @@ file(GLOB_RECURSE _PLAT_SOURCES ${_PLAT_DIR}/*.h ${_PLAT_DIR}/*.cpp)
 ve_resolve_library_target_name(VE_CORE_LIBRARY ve)
 set(VE_CORE_LIBRARY ${VE_CORE_LIBRARY} PARENT_SCOPE)
 
-add_library(${VE_CORE_LIBRARY} SHARED
+add_library(${VE_CORE_LIBRARY}
     ${_CORE_ALL}
     ${_PLAT_SOURCES}
 )

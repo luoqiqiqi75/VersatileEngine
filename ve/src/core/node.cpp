@@ -854,7 +854,7 @@ bool Node::update(const Var& v)
 
 namespace node {
 
-Node* root() { return &basic::_t_static_var_helper<Node>::var; }
+Node* root() { static auto* s = new Node(); return s; }
 
 }
 

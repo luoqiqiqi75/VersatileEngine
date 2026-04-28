@@ -15,7 +15,7 @@ set(_BROWSER_SOURCES
 
 file(GLOB_RECURSE _BROWSER_QML res/qml/*.qml)
 
-add_library(veqtbrowser SHARED ${_BROWSER_SOURCES} ${_BROWSER_QML})
+add_library(veqtbrowser ${_BROWSER_SOURCES} ${_BROWSER_QML})
 
 target_link_libraries(veqtbrowser PRIVATE ${VE_QT_LIBRARY})
 ve_target_link_qt(veqtbrowser PRIVATE "Quick;WebView")
