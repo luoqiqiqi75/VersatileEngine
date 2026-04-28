@@ -324,6 +324,102 @@ nc localhost 10000
 
 ---
 
+## StaticServer
+
+Port `12400`. Static file hosting with reverse proxy support. Disabled by default (`enable: false`).
+
+### Configuration
+
+```json
+{
+  "ve": {
+    "server": {
+      "static": {
+        "enable": true,
+        "config": {
+          "port": 12400,
+          "mounts": [
+            {
+              "prefix": "/",
+              "root": "./dist",
+              "default_file": "index.html",
+              "spa_fallback": true,
+              "proxy": [
+                {
+                  "prefix": "/api",
+                  "target": "http://127.0.0.1:8080/v1"
+                },
+                {
+                  "prefix": "/ws",
+                  "target": "http://127.0.0.1:12100"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Mount points
+
+Mounts are matched by longest prefix first. `"/"` is the root fallback.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `prefix` | `"/"` | URL prefix to match |
+| `root` | (required) | Local directory for static files |
+| `default_file` | `"index.html"` | Default file when path is empty |
+| `spa_fallback` | `false` | Serve `default_file` for unmatched paths (SPA routing) |
+
+### Proxy rules
+
+Each mount can have proxy rules. Proxy is checked before static files.
+
+| Field | Description |
+|-------|-------------|
+| `prefix` | URL prefix relative to the mount (e.g. `"/api"`) |
+| `target` | Upstream URL including base path (e.g. `"http://127.0.0.1:8080/v1"`) |
+
+Request path transformation:
+
+```
+Client: GET /{mountPrefix}/{proxyPrefix}/users?id=1
+Upstream: GET {targetPath}/users?id=1 -> http://targetHost:targetPort{targetPath}/users?id=1
+```
+
+Headers are forwarded with hop-by-hop headers stripped. HTTPS proxy requires `ASIO2_ENABLE_SSL` at build time.
+
+### Dynamic proxy target
+
+Proxy targets support live updates via the node tree. When `ServerModule` starts the static server, it connects `NODE_CHANGED` signals on each proxy rule's `target` node. Changing the target value at runtime updates the cached proxy destination immediately, no restart needed.
+
+```bash
+# Terminal - switch API backend on the fly
+set ve/server/static/config/mounts/#0/proxy/#0/target http://10.0.0.5:9090/v2
+
+# HTTP
+curl -X POST http://localhost:12000/at/ve/server/static/config/mounts/%230/proxy/%230/target \
+  -H "Content-Type: application/json" \
+  -d '"http://10.0.0.5:9090/v2"'
+
+# WebSocket
+{"op":"node.set","path":"ve/server/static/config/mounts/#0/proxy/#0/target","value":"http://10.0.0.5:9090/v2"}
+```
+
+Setting target to an empty string disables the proxy rule (requests fall through to static file serving).
+
+### Request handling order
+
+1. Proxy (first matching rule wins)
+2. Static file
+3. SPA fallback (if enabled)
+4. 404 Not Found
+
+---
+
 ## Subscription System
 
 NodeWsServer, NodeTcpServer, and BinTcpServer support subscriptions through `SubscribeService`.
@@ -369,6 +465,7 @@ client = VeClient("tcp://localhost:11000", transport="msgpack")
 | 12100 | NodeWsServer | WebSocket envelope |
 | 12200 | NodeTcpServer | TCP JSON envelope |
 | 12300 | NodeUdpServer | UDP JSON envelope |
+| 12400 | StaticServer | Static files + reverse proxy |
 
 ---
 

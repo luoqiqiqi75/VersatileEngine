@@ -165,6 +165,8 @@ bool StaticServer::Private::tryProxy(const Mount& mount, const std::string& relP
         if (relPath.substr(0, rule.prefix.size()) != rule.prefix) continue;
         if (relPath.size() > rule.prefix.size() && relPath[rule.prefix.size()] != '/') continue;
 
+        if (rule.targetHost.empty()) continue;
+
         // Build upstream target: strip mount prefix from original target, then apply proxy
         std::string afterMount = reqTarget.substr(mount.prefix == "/" ? 0 : mount.prefix.size());
         std::string remaining = afterMount.substr(rule.prefix.size());
@@ -326,6 +328,36 @@ void StaticServer::addMountProxy(const std::string& mountPrefix,
         return;
     }
     veLogWs("[static proxy] mount not found:", mountPrefix);
+}
+
+bool StaticServer::updateMountProxy(const std::string& mountPrefix,
+                                    const std::string& proxyPrefix,
+                                    const std::string& target)
+{
+    for (auto& m : _p->mounts) {
+        if (m.prefix != mountPrefix) continue;
+        for (auto& rule : m.proxyRules) {
+            if (rule.prefix != proxyPrefix) continue;
+            if (target.empty()) {
+                rule.targetHost.clear();
+                rule.targetPort.clear();
+                rule.targetPath.clear();
+                rule.isHttps = false;
+            } else {
+                http::url u(target);
+                rule.targetHost = std::string(u.host());
+                rule.targetPort = std::string(u.port());
+                rule.targetPath = std::string(u.path());
+                rule.isHttps    = asio2::iequals(u.schema(), "https");
+                while (rule.targetPath.size() > 1 && rule.targetPath.back() == '/')
+                    rule.targetPath.pop_back();
+            }
+            veLogDs("[static proxy] target updated:", proxyPrefix, "->", target);
+            return true;
+        }
+        return false;
+    }
+    return false;
 }
 
 bool StaticServer::start()

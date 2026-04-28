@@ -84,6 +84,7 @@ public:
 
     void registerFileCommands();
     void registerSearchCommand();
+    void bindStaticProxyTargets();
 
 private:
     void init() override;
@@ -446,6 +447,33 @@ void ServerModule::registerSearchCommand()
     }, "search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N] [--with-value] [--leaf-only]");
 }
 
+void ServerModule::bindStaticProxyTargets()
+{
+    if (!_static_s) return;
+    Node* mounts_node = node()->find("static/config/mounts");
+    if (!mounts_node) return;
+
+    for (Node* mount : mounts_node->children()) {
+        std::string prefix = mount->get("prefix").toString("/");
+        Node* proxy_node = mount->find("proxy");
+        if (!proxy_node) continue;
+
+        for (Node* rule : proxy_node->children()) {
+            std::string pfx = rule->get("prefix").toString();
+            if (pfx.empty()) continue;
+
+            Node* targetNode = rule->find("target", false);
+            if (!targetNode) continue;
+
+            targetNode->onChanged(this, [this, prefix, pfx](const Var& newVal, const Var&) {
+                if (_static_s) {
+                    _static_s->updateMountProxy(prefix, pfx, newVal.toString());
+                }
+            });
+        }
+    }
+}
+
 void ServerModule::ready() {
     if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
 
@@ -473,7 +501,10 @@ void ServerModule::ready() {
     if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100, "NodeWsServer");
     if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 12200, "NodeTcpServer");
     if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 12300, "NodeUdpServer");
-    if (node()->get("static/enable").toBool(false)) openServer(_static_s, node()->at("static"), 12400, "StaticServer");
+    if (node()->get("static/enable").toBool(false)) {
+        openServer(_static_s, node()->at("static"), 12400, "StaticServer");
+        bindStaticProxyTargets();
+    }
 }
 
 void ServerModule::deinit() {

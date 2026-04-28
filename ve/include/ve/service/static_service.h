@@ -24,6 +24,10 @@ public:
                        const std::string& proxyPrefix,
                        const std::string& target);
 
+    bool updateMountProxy(const std::string& mountPrefix,
+                          const std::string& proxyPrefix,
+                          const std::string& target);
+
     bool start();
     void stop();
     bool isRunning() const;
