@@ -132,6 +132,20 @@ std::string inferTopicType(const std::string& topic)
     return types.toList().front().toString();
 }
 
+ros::QosProfile parseQos(const command::Args& a)
+{
+    ros::QosProfile qos;
+    const auto reliability = a.string("qos_reliability");
+    if (!reliability.empty()) qos.reliability = reliability;
+    const auto durability = a.string("qos_durability");
+    if (!durability.empty()) qos.durability = durability;
+    const auto history = a.string("qos_history");
+    if (!history.empty()) qos.history = history;
+    const auto depth = a.integer("qos_depth", 0);
+    if (depth > 0) qos.depth = static_cast<int>(depth);
+    return qos;
+}
+
 } // namespace
 
 class RosModule : public Module
@@ -202,6 +216,10 @@ private:
         subscribe_decl->at("type");
         subscribe_decl->at("target_node");
         subscribe_decl->at("payload_format");
+        subscribe_decl->at("qos_reliability");
+        subscribe_decl->at("qos_durability");
+        subscribe_decl->at("qos_history");
+        subscribe_decl->at("qos_depth");
 
         command::declareNode("ros/topic/unsubscribe")->at("name");
 
@@ -210,6 +228,10 @@ private:
         publish_decl->at("type");
         publish_decl->at("payload");
         publish_decl->at("payload_format");
+        publish_decl->at("qos_reliability");
+        publish_decl->at("qos_durability");
+        publish_decl->at("qos_history");
+        publish_decl->at("qos_depth");
 
         auto* once_decl = command::declareNode("ros/topic/once");
         once_decl->at("topic");
@@ -217,6 +239,10 @@ private:
         once_decl->at("type");
         once_decl->at("payload_format");
         once_decl->at("timeout_ms");
+        once_decl->at("qos_reliability");
+        once_decl->at("qos_durability");
+        once_decl->at("qos_history");
+        once_decl->at("qos_depth");
 
         command::declareNode("ros/service/list")->at("filter");
         command::declareNode("ros/service/info")->at("name");
@@ -226,6 +252,8 @@ private:
         service_call_decl->at("type");
         service_call_decl->at("request");
         service_call_decl->at("payload_format");
+        service_call_decl->at("timeout_wait_ms");
+        service_call_decl->at("timeout_response_ms");
 
         command::declareNode("ros/param/list")->at("node");
 
@@ -312,6 +340,7 @@ private:
             config.type = a.string("type");
             config.target_node = a.string("target_node");
             config.payload_format = a.string("payload_format", "yaml");
+            config.qos = parseQos(a);
             if (config.name.empty() || config.topic.empty())
                 return failResult("name/topic is required");
 
@@ -340,6 +369,7 @@ private:
             request.type = a.string("type");
             request.payload = a.string("payload");
             request.payload_format = a.string("payload_format", "yaml");
+            request.qos = parseQos(a);
             if (request.topic.empty() || request.payload.empty())
                 return failResult("topic/payload is required");
 
@@ -369,6 +399,7 @@ private:
 
             request.type = type_str;
             request.payload_format = fmt_str;
+            request.qos = parseQos(a);
 
             if (request.topic.empty())
                 return failResult("topic is required");
@@ -417,6 +448,8 @@ private:
             request.type = a.string("type");
             request.request = a.string("request");
             request.payload_format = a.string("payload_format", "yaml");
+            request.timeout_wait_ms = static_cast<int>(a.integer("timeout_wait_ms", 5000));
+            request.timeout_response_ms = static_cast<int>(a.integer("timeout_response_ms", 10000));
             if (request.service.empty() || request.type.empty() || request.request.empty())
                 return failResult("service/type/request is required");
 

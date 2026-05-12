@@ -16,7 +16,9 @@ public:
     explicit DynamicTypesupportBridge(const std::string& type, std::string& error);
 
     bool initialize(const std::string& type, std::string& error);
+    bool initializeService(const std::string& srv_type, std::string& error);
     bool isReady() const { return ready_; }
+    bool isService() const { return is_service_; }
     const std::string& type() const { return type_; }
 
     bool deserializeToVar(const rclcpp::SerializedMessage& message,
@@ -26,8 +28,16 @@ public:
                           rclcpp::SerializedMessage& out,
                           std::string& error) const;
 
+    bool serializeRequest(const ve::Var& value,
+                          rclcpp::SerializedMessage& out,
+                          std::string& error) const;
+    bool deserializeResponse(const rclcpp::SerializedMessage& message,
+                             ve::Var& out,
+                             std::string& error) const;
+
 private:
     bool ready_ = false;
+    bool is_service_ = false;
     std::string type_;
 
     struct Private;

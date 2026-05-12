@@ -26,7 +26,7 @@ Var::DictV serviceInfo(const std::string& service_name)
 Var::DictV callService(const ServiceCallRequest& request)
 {
     if (auto current = activeBackend())
-        return current->callService(request.service, request.type, request.request, request.payload_format);
+        return current->callService(request);
 
     Var::DictV result;
     result["ok"] = Var(false);

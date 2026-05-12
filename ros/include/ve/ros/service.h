@@ -10,6 +10,8 @@ struct ServiceCallRequest
     std::string type;
     std::string request;
     std::string payload_format = "yaml";
+    int timeout_wait_ms = 5000;
+    int timeout_response_ms = 10000;
 };
 
 VE_API Var::ListV listServices(const std::string& filter = "");

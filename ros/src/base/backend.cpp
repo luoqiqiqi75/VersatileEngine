@@ -98,7 +98,7 @@ public:
     }
     Var::ListV listServices(const std::string&) const override { return {}; }
     Var::DictV serviceInfo(const std::string&) const override { return {}; }
-    Var::DictV callService(const std::string&, const std::string&, const std::string&, const std::string&) override
+    Var::DictV callService(const ServiceCallRequest&) override
     {
         Var::DictV result;
         result["ok"] = Var(false);

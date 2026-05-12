@@ -217,6 +217,26 @@ std::string normalizedPayloadFormat(std::string format)
     return format.empty() ? "yaml" : format;
 }
 
+rclcpp::QoS makeQos(const QosProfile& q)
+{
+    const int depth = q.depth > 0 ? q.depth : 10;
+    rclcpp::QoS qos = (q.history == "keep_all")
+        ? rclcpp::QoS(rclcpp::KeepAll())
+        : rclcpp::QoS(rclcpp::KeepLast(depth));
+
+    if (q.reliability == "best_effort")
+        qos.best_effort();
+    else
+        qos.reliable();
+
+    if (q.durability == "transient_local")
+        qos.transient_local();
+    else
+        qos.durability_volatile();
+
+    return qos;
+}
+
 std::string runtimeNodeName()
 {
 #ifdef _WIN32
@@ -528,7 +548,7 @@ public:
         auto subscription = node_->create_generic_subscription(
             config.topic,
             topic_type,
-            rclcpp::QoS(10),
+            makeQos(config.qos),
             [name = config.name,
              topic = config.topic,
              type = topic_type,
@@ -624,7 +644,7 @@ public:
 
         auto publisher = publishers_.value(request.topic, rclcpp::GenericPublisher::SharedPtr{});
         if (!publisher) {
-            publisher = node_->create_generic_publisher(request.topic, topic_type, rclcpp::QoS(10));
+            publisher = node_->create_generic_publisher(request.topic, topic_type, makeQos(request.qos));
             publishers_.insertOne(request.topic, publisher);
         }
 
@@ -680,7 +700,7 @@ public:
         auto subscription = node->create_generic_subscription(
             request.topic,
             topic_type,
-            rclcpp::QoS(10),
+            makeQos(request.qos),
             [promise, delivered, topic = request.topic, type = topic_type, payload_format, bridge]
             (std::shared_ptr<rclcpp::SerializedMessage> message) {
                 if (delivered->exchange(true))
@@ -772,8 +792,7 @@ public:
         return result;
     }
 
-    Var::DictV callService(const std::string& service, const std::string& type,
-                          const std::string& request, const std::string& payload_format) override
+    Var::DictV callService(const ServiceCallRequest& request) override
     {
         std::shared_ptr<rclcpp::Node> node;
         {
@@ -783,49 +802,47 @@ public:
             node = node_;
         }
 
+        const std::string& service = request.service;
+        const std::string& type = request.type;
         if (service.empty())
             return makeResult(false, "service name is required");
         if (type.empty())
             return makeResult(false, "service type is required");
 
-        const std::string fmt = normalizedPayloadFormat(payload_format);
+        const std::string fmt = normalizedPayloadFormat(request.payload_format);
 #ifndef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
         return makeResult(false, "dynamic typesupport not available on Foxy, service calls require Galactic+");
 #else
+        if (fmt == "cdr_hex")
+            return makeResult(false, "cdr_hex payload format is not supported for service calls; use yaml or var");
+        if (fmt != "yaml" && fmt != "var")
+            return makeResult(false, "unsupported payload format: " + fmt);
+
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         std::string bridge_error;
-        if (fmt != "cdr_hex" && !bridge->initialize(type, bridge_error))
+        if (!bridge->initializeService(type, bridge_error))
             return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
 
-        Var request_var;
-        if (fmt == "yaml") {
-            request_var = ve::ros::yaml::decode(request);
-        } else if (fmt == "var") {
-            request_var = ve::ros::yaml::decode(request);
-        } else if (fmt == "cdr_hex") {
-            return makeResult(false, "cdr_hex format not supported for service request");
-        } else {
-            return makeResult(false, "unsupported payload format: " + fmt);
-        }
+        const Var request_var = ve::ros::yaml::decode(request.request);
 
         rclcpp::SerializedMessage request_msg;
-        if (!bridge->serializeFromVar(request_var, request_msg, bridge_error))
+        if (!bridge->serializeRequest(request_var, request_msg, bridge_error))
             return makeResult(false, "failed to serialize request: " + bridge_error);
 
         auto client = node->create_generic_client(service, type);
-        if (!client->wait_for_service(std::chrono::seconds(5)))
+        if (!client->wait_for_service(std::chrono::milliseconds(request.timeout_wait_ms)))
             return makeResult(false, "service not available: " + service);
 
         auto& raw_request = request_msg.get_rcl_serialized_message();
         auto future_and_id = client->async_send_request(static_cast<void*>(&raw_request));
-        if (future_and_id.future.wait_for(std::chrono::seconds(10)) != std::future_status::ready)
+        if (future_and_id.future.wait_for(std::chrono::milliseconds(request.timeout_response_ms)) != std::future_status::ready)
             return makeResult(false, "service call timeout");
 
         auto response_shared = future_and_id.future.get();
         auto* response_raw = static_cast<rcl_serialized_message_t*>(response_shared.get());
         rclcpp::SerializedMessage response_msg(*response_raw);
         Var response_var;
-        if (!bridge->deserializeToVar(response_msg, response_var, bridge_error))
+        if (!bridge->deserializeResponse(response_msg, response_var, bridge_error))
             return makeResult(false, "failed to deserialize response: " + bridge_error);
 
         Var::DictV result = makeResult(true, "service call ok");

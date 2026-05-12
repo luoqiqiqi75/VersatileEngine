@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ve/core/node.h"
+#include "ve/ros/service.h"
 #include "ve/ros/topic.h"
 
 namespace ve::ros {
@@ -31,7 +32,7 @@ public:
     virtual Var::DictV onceTopic(const TopicOnceRequest& request) = 0;
     virtual Var::ListV listServices(const std::string& filter = "") const = 0;
     virtual Var::DictV serviceInfo(const std::string& service) const = 0;
-    virtual Var::DictV callService(const std::string& service, const std::string& type, const std::string& request, const std::string& payload_format) = 0;
+    virtual Var::DictV callService(const ServiceCallRequest& request) = 0;
     virtual Var::DictV listParams(const std::string& node_name = "") const = 0;
     virtual Var::DictV getParam(const std::string& node_name, const std::string& name) const = 0;
     virtual Var::DictV setParam(const std::string& node_name, const std::string& name, const Var& value) const = 0;

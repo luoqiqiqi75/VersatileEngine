@@ -4,12 +4,20 @@
 
 namespace ve::ros {
 
+struct QosProfile {
+    std::string reliability = "reliable";     // "reliable" | "best_effort"
+    std::string durability  = "volatile";     // "volatile" | "transient_local"
+    std::string history     = "keep_last";    // "keep_last" | "keep_all"
+    int depth = 10;
+};
+
 struct TopicSubscriptionConfig {
     std::string name;
     std::string topic;
     std::string type;
     std::string target_node;
     std::string payload_format = "yaml";
+    QosProfile qos;
 };
 
 struct TopicPublishRequest {
@@ -17,6 +25,7 @@ struct TopicPublishRequest {
     std::string type;
     std::string payload;
     std::string payload_format = "cdr_hex";
+    QosProfile qos;
 };
 
 struct TopicOnceRequest {
@@ -25,6 +34,7 @@ struct TopicOnceRequest {
     std::string target_node;
     std::string payload_format = "yaml";
     int timeout_ms = 3000;
+    QosProfile qos;
 };
 
 VE_API Var::ListV listTopics(const std::string& filter = "");

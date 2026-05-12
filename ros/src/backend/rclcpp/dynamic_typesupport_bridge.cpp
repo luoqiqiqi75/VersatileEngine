@@ -336,9 +336,7 @@ Var messageToVar(const void * message,
     return Var(std::move(dict));
 }
 
-} // namespace
-
-struct DynamicTypesupportBridge::Private
+struct MessageHandle
 {
     std::shared_ptr<rcpputils::SharedLibrary> message_ts_lib;
     std::shared_ptr<rcpputils::SharedLibrary> introspection_lib;
@@ -350,19 +348,16 @@ struct DynamicTypesupportBridge::Private
 
     CreateMessageFn create_message = nullptr;
     DestroyMessageFn destroy_message = nullptr;
+
+    bool ready() const
+    {
+        return message_ts && introspection_ts && introspection_members
+            && create_message && destroy_message;
+    }
 };
 
-DynamicTypesupportBridge::DynamicTypesupportBridge(const std::string& type, std::string& error)
+bool loadHandle(const std::string& type, MessageHandle& handle, std::string& error)
 {
-    initialize(type, error);
-}
-
-bool DynamicTypesupportBridge::initialize(const std::string& type, std::string& error)
-{
-    ready_ = false;
-    type_ = type;
-    p_ = std::make_shared<Private>();
-
     if (type.empty()) {
         error = "type is required";
         return false;
@@ -379,36 +374,183 @@ bool DynamicTypesupportBridge::initialize(const std::string& type, std::string& 
     }
 
     try {
-        p_->message_ts_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_c");
-        p_->message_ts = rclcpp::get_message_typesupport_handle(type, "rosidl_typesupport_c", *p_->message_ts_lib);
+        handle.message_ts_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_c");
+        handle.message_ts = rclcpp::get_message_typesupport_handle(
+            type, "rosidl_typesupport_c", *handle.message_ts_lib);
 
-        p_->introspection_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_introspection_c");
-        p_->introspection_ts = rclcpp::get_message_typesupport_handle(
-            type, "rosidl_typesupport_introspection_c", *p_->introspection_lib);
-        p_->introspection_members =
-            static_cast<const rosidl_typesupport_introspection_c__MessageMembers *>(p_->introspection_ts->data);
+        handle.introspection_lib = rclcpp::get_typesupport_library(type, "rosidl_typesupport_introspection_c");
+        handle.introspection_ts = rclcpp::get_message_typesupport_handle(
+            type, "rosidl_typesupport_introspection_c", *handle.introspection_lib);
+        handle.introspection_members =
+            static_cast<const rosidl_typesupport_introspection_c__MessageMembers *>(handle.introspection_ts->data);
 
         const std::string generator_lib_path =
             rclcpp::get_typesupport_library_path(package_name, "rosidl_generator_c");
-        p_->generator_c_lib = std::make_shared<rcpputils::SharedLibrary>(generator_lib_path);
+        handle.generator_c_lib = std::make_shared<rcpputils::SharedLibrary>(generator_lib_path);
 
         const std::string symbol_base = normalizeTypeForCSymbol(package_name + "__" + middle_module + "__" + type_name);
-        p_->create_message = reinterpret_cast<CreateMessageFn>(
-            p_->generator_c_lib->get_symbol(symbol_base + "__create"));
-        p_->destroy_message = reinterpret_cast<DestroyMessageFn>(
-            p_->generator_c_lib->get_symbol(symbol_base + "__destroy"));
+        handle.create_message = reinterpret_cast<CreateMessageFn>(
+            handle.generator_c_lib->get_symbol(symbol_base + "__create"));
+        handle.destroy_message = reinterpret_cast<DestroyMessageFn>(
+            handle.generator_c_lib->get_symbol(symbol_base + "__destroy"));
     } catch (const std::exception& e) {
         error = e.what();
         return false;
     }
 
-    if (!p_->message_ts || !p_->introspection_ts || !p_->introspection_members ||
-        !p_->create_message || !p_->destroy_message) {
+    if (!handle.ready()) {
         error = "failed to initialize message bridge for type: " + type;
         return false;
     }
+    return true;
+}
+
+bool splitServiceType(const std::string& srv_type,
+                     std::string& request_type,
+                     std::string& response_type,
+                     std::string& error)
+{
+    // Accept "pkg/SrvName" or "pkg/srv/SrvName"; normalize to pkg/srv/SrvName_{Request,Response}
+    const auto first = srv_type.find('/');
+    if (first == std::string::npos || first == 0 || first + 1 >= srv_type.size()) {
+        error = "service type must be 'pkg/Name' or 'pkg/srv/Name': " + srv_type;
+        return false;
+    }
+
+    const std::string package = srv_type.substr(0, first);
+    const std::string rest = srv_type.substr(first + 1);
+
+    std::string name;
+    const auto second = rest.find('/');
+    if (second == std::string::npos) {
+        name = rest;
+    } else {
+        const std::string middle = rest.substr(0, second);
+        if (middle != "srv") {
+            error = "service type middle segment must be 'srv': " + srv_type;
+            return false;
+        }
+        name = rest.substr(second + 1);
+    }
+
+    if (package.empty() || name.empty()) {
+        error = "service type has empty package or name: " + srv_type;
+        return false;
+    }
+
+    request_type = package + "/srv/" + name + "_Request";
+    response_type = package + "/srv/" + name + "_Response";
+    return true;
+}
+
+bool doDeserialize(const MessageHandle& handle,
+                   const rclcpp::SerializedMessage& message,
+                   Var& out,
+                   std::string& error)
+{
+    if (!handle.ready()) {
+        error = "bridge handle is not initialized";
+        return false;
+    }
+
+    void * ros_message = handle.create_message();
+    if (!ros_message) {
+        error = "failed to allocate message instance";
+        return false;
+    }
+
+    const auto & serialized = message.get_rcl_serialized_message();
+    rmw_serialized_message_t rmw_message = serialized;
+
+    const rmw_ret_t rc = rmw_deserialize(&rmw_message, handle.message_ts, ros_message);
+    if (rc != RMW_RET_OK) {
+        handle.destroy_message(ros_message);
+        error = "rmw_deserialize failed";
+        return false;
+    }
+
+    out = messageToVar(ros_message, handle.introspection_members);
+    handle.destroy_message(ros_message);
+    return true;
+}
+
+bool doSerialize(const MessageHandle& handle,
+                 const Var& value,
+                 rclcpp::SerializedMessage& out,
+                 std::string& error)
+{
+    if (!handle.ready()) {
+        error = "bridge handle is not initialized";
+        return false;
+    }
+
+    void * ros_message = handle.create_message();
+    if (!ros_message) {
+        error = "failed to allocate message instance";
+        return false;
+    }
+
+    if (!varToMessage(value, ros_message, handle.introspection_members, error)) {
+        handle.destroy_message(ros_message);
+        return false;
+    }
+
+    auto & rmw_message = out.get_rcl_serialized_message();
+    const rmw_ret_t rc = rmw_serialize(ros_message, handle.message_ts, &rmw_message);
+    handle.destroy_message(ros_message);
+    if (rc != RMW_RET_OK) {
+        error = "rmw_serialize failed";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+struct DynamicTypesupportBridge::Private
+{
+    MessageHandle request;   // message-mode primary; service-mode request
+    MessageHandle response;  // service-mode only
+};
+
+DynamicTypesupportBridge::DynamicTypesupportBridge(const std::string& type, std::string& error)
+{
+    initialize(type, error);
+}
+
+bool DynamicTypesupportBridge::initialize(const std::string& type, std::string& error)
+{
+    ready_ = false;
+    is_service_ = false;
+    type_ = type;
+    p_ = std::make_shared<Private>();
+
+    if (!loadHandle(type, p_->request, error))
+        return false;
 
     ready_ = true;
+    return true;
+}
+
+bool DynamicTypesupportBridge::initializeService(const std::string& srv_type, std::string& error)
+{
+    ready_ = false;
+    is_service_ = false;
+    type_ = srv_type;
+    p_ = std::make_shared<Private>();
+
+    std::string request_type;
+    std::string response_type;
+    if (!splitServiceType(srv_type, request_type, response_type, error))
+        return false;
+
+    if (!loadHandle(request_type, p_->request, error))
+        return false;
+    if (!loadHandle(response_type, p_->response, error))
+        return false;
+
+    ready_ = true;
+    is_service_ = true;
     return true;
 }
 
@@ -420,26 +562,7 @@ bool DynamicTypesupportBridge::deserializeToVar(const rclcpp::SerializedMessage&
         error = "bridge is not initialized";
         return false;
     }
-
-    void * ros_message = p_->create_message();
-    if (!ros_message) {
-        error = "failed to allocate message instance";
-        return false;
-    }
-
-    const auto & serialized = message.get_rcl_serialized_message();
-    rmw_serialized_message_t rmw_message = serialized;
-
-    const rmw_ret_t rc = rmw_deserialize(&rmw_message, p_->message_ts, ros_message);
-    if (rc != RMW_RET_OK) {
-        p_->destroy_message(ros_message);
-        error = "rmw_deserialize failed";
-        return false;
-    }
-
-    out = messageToVar(ros_message, p_->introspection_members);
-    p_->destroy_message(ros_message);
-    return true;
+    return doDeserialize(p_->request, message, out, error);
 }
 
 bool DynamicTypesupportBridge::serializeFromVar(const ve::Var& value,
@@ -450,26 +573,37 @@ bool DynamicTypesupportBridge::serializeFromVar(const ve::Var& value,
         error = "bridge is not initialized";
         return false;
     }
+    return doSerialize(p_->request, value, out, error);
+}
 
-    void * ros_message = p_->create_message();
-    if (!ros_message) {
-        error = "failed to allocate message instance";
+bool DynamicTypesupportBridge::serializeRequest(const ve::Var& value,
+                                                rclcpp::SerializedMessage& out,
+                                                std::string& error) const
+{
+    if (!ready_ || !p_) {
+        error = "bridge is not initialized";
         return false;
     }
-
-    if (!varToMessage(value, ros_message, p_->introspection_members, error)) {
-        p_->destroy_message(ros_message);
+    if (!is_service_) {
+        error = "bridge was not initialized as a service";
         return false;
     }
+    return doSerialize(p_->request, value, out, error);
+}
 
-    auto & rmw_message = out.get_rcl_serialized_message();
-    const rmw_ret_t rc = rmw_serialize(ros_message, p_->message_ts, &rmw_message);
-    p_->destroy_message(ros_message);
-    if (rc != RMW_RET_OK) {
-        error = "rmw_serialize failed";
+bool DynamicTypesupportBridge::deserializeResponse(const rclcpp::SerializedMessage& message,
+                                                   ve::Var& out,
+                                                   std::string& error) const
+{
+    if (!ready_ || !p_) {
+        error = "bridge is not initialized";
         return false;
     }
-    return true;
+    if (!is_service_) {
+        error = "bridge was not initialized as a service";
+        return false;
+    }
+    return doDeserialize(p_->response, message, out, error);
 }
 
 } // namespace ve::ros::rclcpp_backend

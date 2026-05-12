@@ -134,13 +134,13 @@ public:
         dict["service"] = Var(service);
         return dict;
     }
-    Var::DictV callService(const std::string& service, const std::string& type, const std::string&, const std::string&) override
+    Var::DictV callService(const ServiceCallRequest& request) override
     {
         Var::DictV dict;
         dict["ok"] = Var(false);
         dict["message"] = Var("Fast DDS service call is not implemented in v1");
-        dict["service"] = Var(service);
-        dict["type"] = Var(type);
+        dict["service"] = Var(request.service);
+        dict["type"] = Var(request.type);
         return dict;
     }
 
