@@ -86,6 +86,41 @@ Avoid:
 - Keep abbreviations rare and domain-specific.
 - Favor names that match the node model and runtime behavior.
 
+## Idiomatic VE Patterns
+
+These are the short-form patterns to reach for first. See `docs/QUICK_REFERENCE.md` for worked examples.
+
+### Node path/value access — 2×2 symmetric API
+
+|              | Path (returns `Node*`)              | Value (returns `Var`)                  |
+|--------------|--------------------------------------|----------------------------------------|
+| **mutating** | `at(path)` — ensure-or-create        | `set(path, v)` — write, auto-create    |
+| **read-only**| `find(path)` — `nullptr` if absent   | `get(path)` — empty `Var` if absent    |
+
+Choose along two axes: are you reading or writing, and do you want the node or its value. Short names are an ergonomic choice for high-frequency operations; they are project-local and do **not** mirror `std::vector::at` (no bounds-throw) or `std::find` (no search/scan).
+
+### Writing values — let `Var` ctors pick the type
+
+Pass literals directly to `Node::set` and other Var-accepting APIs:
+
+```cpp
+node->set(0);             // not Var(static_cast<int64_t>(0))
+node->set("hello");       // not Var(std::string{"hello"})
+node->set(true);
+```
+
+Explicit `Var(...)` wrapping is only needed for raw `void*` pointers (`Var(static_cast<void*>(p))`), forced numeric widening, and custom types (`Var::custom`).
+
+### Name-based dispatch — register through `command`
+
+Whenever code routes by a string key (protocol `op`, RPC `method`, REPL verb, plugin action), use `ve::command::reg(key, fn, help)` for registration and `ve::command::call(key, ctx)` for dispatch. The command registry is hash-backed, introspectable (`command::keys`, `command::help`), and integrates with `Pipeline`. This replaces ad-hoc `if/else` string chains and per-module `std::map<std::string, fn>` tables.
+
+For internal, non-exposed dispatch the same idea applies one level down: store `Var::callable` handlers on a dispatcher `Node` and resolve via `find(op)`. Reserve plain `switch` for fixed type enums (e.g. `Var::Type`) where the value space is closed.
+
+### Building structured payloads — Node as transient aggregator
+
+To assemble a structured blob for serialization (YAML / JSON / Bin / Markdown), prefer a **temporary unowned `Node`** as the build container, then serialize via `schema::exportAs<F>(&node)`. The schema layer is Node-centric — every format implements `SchemaTraits<F>::exportNode(const Node*)`. A `Node` with no parent and no subscribers carries near-zero reactive overhead, so this is a cheap and idiomatic build-up form. Direct `Var::DictV` / `Var::ListV` manipulation remains appropriate at boundaries where a `Var` is already in hand and one-shot serialization is the only goal.
+
 ## Memory and Ownership
 
 - Preserve object identity when syncing existing runtime state.

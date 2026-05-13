@@ -33,25 +33,84 @@ auto opt = v.tryAs<int>();    // Returns std::optional<int>
 
 ## Node Operations
 
+### Naming convention (2×2 read/write × path/value)
+
+Node path/value access follows a **two-axis symmetric naming table**. Names are deliberately short — they are typed hundreds of times per day, so two-letter `at` beats six-letter `ensure`.
+
+|              | **Path** (returns `Node*`)              | **Value** (returns `Var`)             |
+|--------------|------------------------------------------|----------------------------------------|
+| **mutating** | `at(path)` — ensure-or-create the node   | `set(path, v)` — write value, auto-create missing path |
+| **read-only**| `find(path)` — `nullptr` if absent       | `get(path)` — empty `Var` if absent     |
+
+Mental model:
+- **Writing is creative**: `at` and `set` bring the path into existence if it doesn't yet exist — you said you want to write there, so VE makes the room.
+- **Reading is observational**: `find` and `get` never mutate the tree — a missing node has no value to observe, so they simply report "absent".
+- `get` is functionally `find` + read-value; the short alias exists because reading values is the most frequent operation.
+
+> Common mis-reads to recheck: `at` is **not** `std::vector::at` (no bounds-throw); `find` is **not** a search/scan (it's an exact path lookup). Both operate on slash-separated paths like `robot/state/power`.
+
+### Writing values: prefer the short form
+
+`Node::set` accepts a `Var` via implicit construction. Var ctors are non-explicit and cover every common literal, so **write the literal directly** — let the compiler pick the right ctor.
+
 ```cpp
-// Global accessor
-auto* node = ve::n("robot/state/power");
-node->set(1);
-
-// Path operations
-Node* target = root->find("/config");     // Read-only lookup
-Node* target = root->at("/config");       // Create-on-demand
-Node* child = parent->append("child");    // Create child
-
-// Value operations
-node->set(Var(42));
-Var value = node->get();
-bool changed = node->update(Var(43));     // Only emits if changed
-
-// Tree operations
-target->copy(source);                     // Merge subtree
-target->clear();                          // Remove all children
+node->set(0);                  // INT   (Var(int) → int64 internally)
+node->set(1.5);                // DOUBLE
+node->set(true);               // BOOL
+node->set("hello");            // STRING via Var(const char*)
+node->set(std::string{"x"});   // STRING via Var(const std::string&)
+node->set(Var::ListV{1,2,3});  // LIST — container types need the explicit tag
+node->set(myMap);              // DICT — std::map / Dict pickup by Var template ctor
 ```
+
+Wrap in `Var(...)` explicitly only when:
+- **Disambiguating a raw data pointer** — `Var(static_cast<void*>(p))` is required by design (`var.h:64-67` SFINAE-deletes other raw pointers to prevent accidental pointer→bool).
+- **Forcing a numeric type narrower than the literal** — e.g. you have an `int` but want it stored as DOUBLE: `node->set(Var(static_cast<double>(n)))`.
+- **Custom user types** — `Var::custom(std::move(myObject))` for opaque payloads.
+
+Patterns like `set(ve::Var(static_cast<int64_t>(0)))` are historical residue from an earlier API surface and add no safety today — the short form is equivalent at the byte level.
+
+### Common patterns
+
+```cpp
+// Global root accessor (shortcut for the process-wide tree root)
+auto* node = ve::n("robot/state/power");
+node->set(1);                              // value write + path ensure in one call
+
+// Read-side
+Node* found = root->find("config");        // nullptr if missing — pair with explicit null-check
+Var value   = root->get("config/level");   // empty Var if missing — safe to chain .toInt(default)
+
+// Write-side
+Node* slot  = root->at("config/db/host");  // creates "config", "db", "host" as needed, returns leaf
+slot->set(std::string{"localhost"});
+
+// Child / structural
+Node* child   = parent->append("name");    // append a named child
+bool changed  = node->update(Var(43));     // write-if-different, suppresses no-op signals
+target->copy(source);                      // deep-merge subtree
+target->clear();                           // drop all children, keep node itself
+```
+
+### Node as transient aggregator → schema serialization
+
+When building a structured blob to serialize (YAML / JSON / Bin / Markdown), prefer **a temporary unowned `Node`** as the aggregator and serialize it via the schema layer. The schema system is Node-centric — every format implements `SchemaTraits<F>::exportNode(const Node*)`.
+
+```cpp
+Node payload("payload");
+payload.set("kp", Var::ListV{1.0, 2.0, 3.0});
+payload.set("mode", std::string{"position"});
+payload.at("limits")->set("max", 10.0);
+
+// Pick a format tag — JsonS / BinS / XmlS / VarS / MdS / YamlS (yaml lives in ve::ros)
+std::string yaml = schema::exportAs<schema::YamlS>(&payload);
+std::string json = schema::exportAs<schema::JsonS>(&payload);
+
+// Convenience wrappers also exist where they read more naturally:
+std::string yaml2 = ve::ros::yaml::encode(&payload);  // same path, shorter name
+```
+
+A temporary `Node` with **no parent and no subscribers** carries near-zero reactive overhead (mutex uncontended, signals fire into the void) — use it freely as a build-up container. Reserve `Var::DictV` / `Var::ListV` direct manipulation for the boundary case where you already hold a `Var` and just need a one-line serialization.
 
 ## File I/O Commands
 
@@ -184,6 +243,26 @@ Default log directory: `./log/` (falls back to platform-specific if creation fai
 ```
 
 ## Command Implementation
+
+### Use `command` for name-based dispatch
+
+Whenever code dispatches by a string key — protocol `op`, RPC `method`, REPL verb, plugin action — register each handler through `ve::command::reg(key, fn, help)` and dispatch via `ve::command::call(key, ctx)`. The command registry is hash-backed, carries help text and parameter declarations, and integrates with `Pipeline` for async/multi-step handlers.
+
+```cpp
+// Registration (e.g. in module init())
+command::reg("node.get", &handleNodeGet, "node.get <path> — read a node");
+command::reg("node.set", &handleNodeSet, "node.set <path> <value> — write a node");
+command::reg("node.list", &handleNodeList, "node.list <path> — list children");
+
+// Dispatch (single line, replaces the entire if-chain)
+Result r = command::call(op, ctx);
+```
+
+This collapses N-way string comparison into a single hash lookup, makes the supported set introspectable (`command::keys()`, `command::help(key)`), and lets new handlers register from any module without touching the dispatcher.
+
+For local dispatch that doesn't need to be exposed globally, the same idea applies one level down: store handlers as `Var::callable` on a dedicated dispatcher `Node`, then `dispatcher->find(op)->get().invoke(...)`. Reserve plain `switch` for fixed type enums (e.g. `Var::Type`), where the value space is closed.
+
+### Implementing a single command
 
 When implementing new commands via `command::reg()`:
 
