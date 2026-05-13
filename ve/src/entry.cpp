@@ -303,11 +303,11 @@ static void loadPlugins()
 
 static void buildModuleGraph(Vector<ModuleSlot>& slots)
 {
-    auto& factory = globalModuleFactory();
+    auto& factory = Module::factory();
 
     Hash<int> base_pri;
     for (const auto& key : factory::keys("module")) {
-        auto* nd = factory.node(key);
+        auto* nd = factory.node(key, VE_FACTORY_KEY_SEP);
         int priority = 100;
         if (nd) {
             if (auto* pn = nd->find("priority", false))
@@ -463,18 +463,21 @@ void init()
     buildModuleGraph(g.modules);
     resolveDepends(g.modules);
 
-    auto& factory = globalModuleFactory();
+    auto& factory = Module::factory();
 
     for (auto& slot : g.modules) {
         if (verbose) {
             veLogI << "[ve::entry] Creating module: " << slot.key;
         }
         try {
-            slot.instance = factory.exec<Module*>(slot.key);
+            const auto& cfactory = factory;
+            auto* nd = cfactory.node(slot.key, VE_FACTORY_KEY_SEP);
+            slot.instance = (nd && nd->get().isCallable())
+                ? static_cast<Module*>(nd->get().invoke().toPointer())
+                : nullptr;
             // cache instance on the factory node
-            if (slot.instance) {
-                if (auto* nd = factory.node(slot.key))
-                    nd->at("instance")->set(Var(static_cast<void*>(slot.instance)));
+            if (slot.instance && nd) {
+                nd->at("instance")->set(Var(static_cast<void*>(slot.instance)));
             }
         } catch (const std::exception& e) {
             veLogE << "[ve::entry] Module create failed (" << slot.key << "): " << e.what();

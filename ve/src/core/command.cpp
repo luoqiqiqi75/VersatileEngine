@@ -18,15 +18,14 @@ Result resultFromStepReturn(const Var& ret)
 }
 
 // ============================================================================
-// Step
+// Step  (order mirrors command.h: writeTo, addToPipeline, reg)
 // ============================================================================
 
 void Step::writeTo(Node* nd) const
 {
     if (!nd) return;
     nd->set(first);
-    if (second)
-        nd->at("loop")->set(Var::custom(second));
+    if (second) nd->at("loop")->set(Var::custom(second));
 }
 
 void Step::addToPipeline(Node* nd, Pipeline& pipe)
@@ -40,58 +39,47 @@ void Step::addToPipeline(Node* nd, Pipeline& pipe)
     pipe.add(Step(nd->get(), std::move(lr)));
 }
 
+void Step::reg(const std::string& key, Step step, const std::string& help, char sep)
+{
+    Command::factory().reg(key, step.first, help, step.second, sep);
+}
+
 // ============================================================================
-// Command
+// Command  (order mirrors command.h):
+//   ctor → stepCount → declare → addStep → build →
+//   context → call(ctx) → call(input) → run(ctx) → run(input) →
+//   factory → reg → declareNode
 // ============================================================================
 
-Command::Command(Node* factory_node) : _nd(factory_node) {}
-
-const std::string& Command::name() const
+Command::Command(const std::string& key, char sep)
 {
-    static std::string empty;
-    return _nd ? _nd->name() : empty;
-}
-
-void Command::addStep(Step step)
-{
-    if (!_nd) return;
-    auto* steps_nd = _nd->at("steps");
-    int idx = steps_nd->count();
-    auto* sn = steps_nd->at(idx);
-    step.writeTo(sn);
-}
-
-void Command::setHelp(const std::string& h)
-{
-    if (_nd && !h.empty())
-        _nd->at("help")->set(Var(h));
-}
-
-std::string Command::help() const
-{
-    if (!_nd) return {};
-    if (auto* h = _nd->find("help", false))
-        return h->getString();
-    return {};
+    const Factory& f = factory();
+    _n = f.node(key, sep);
 }
 
 int Command::stepCount() const
 {
-    if (!_nd) return 0;
-    if (_nd->get().isCallable()) return 1;
-    if (auto* s = _nd->find("steps", false)) return s->count();
+    if (_n->get().isCallable()) return 1;
+    if (auto* s = _n->find("steps", false)) return s->count();
     return 0;
 }
 
 Node* Command::declare()
 {
-    return _nd ? _nd->at("declare") : nullptr;
+    return _n->at("declare");
+}
+
+void Command::addStep(Step step)
+{
+    auto* steps_nd = _n->at("steps");
+    int idx = steps_nd->count();
+    auto* sn = steps_nd->at(idx);
+    step.writeTo(sn);
 }
 
 Pipeline* Command::build() const
 {
-    if (!_nd) return nullptr;
-    auto* pipe = new Pipeline(name());
+    auto* pipe = new Pipeline(_n->name());
 
     auto addStep = [&](Node* sn) {
         if (!sn || !sn->get().isCallable()) return;
@@ -104,9 +92,9 @@ Pipeline* Command::build() const
         pipe->add(Step(sn->get(), std::move(lr)));
     };
 
-    if (_nd->get().isCallable()) {
-        addStep(_nd);
-    } else if (auto* steps_nd = _nd->find("steps", false)) {
+    if (_n->get().isCallable()) {
+        addStep(_n);
+    } else if (auto* steps_nd = _n->find("steps", false)) {
         for (auto* sn : *steps_nd)
             addStep(sn);
     }
@@ -118,81 +106,148 @@ Pipeline* Command::build() const
     return pipe;
 }
 
-// ============================================================================
-// Global factory
-// ============================================================================
-
-Factory& GlobalCommandFactory()
+Node* Command::context(Node* currentNode)
 {
-    return factory::get("cmd");
+    auto* ctx = new Node("_ctx");
+    if (auto* decl = _n->find("declare", false))
+        ctx->setShadow(decl);
+    ctx->set(Var(static_cast<void*>(currentNode)));
+    return ctx;
 }
 
-void registerStep(const std::string& key, Step step, const std::string& help)
+Result Command::call(Node* ctx, bool wait, Pipeline** detachedOut)
 {
-    GlobalCommandFactory().reg(key, step.first, help, step.second);
-}
+    if (detachedOut) *detachedOut = nullptr;
 
-void registerCommand(const std::string& key, std::function<void(Command&)> builder,
-                     const std::string& help)
-{
-    auto& factory = GlobalCommandFactory();
-    auto nkey = key;
-    std::replace(nkey.begin(), nkey.end(), '.', '/');
+    Pipeline* pipe = build();
+    if (!pipe) return Result::fail(Var("command has no steps: " + _n->name()));
 
-    // Track in keys list first
-    auto keys = factory.keys();
-    if (std::find(keys.begin(), keys.end(), nkey) == keys.end()) {
-        // Add to keys by registering empty callable
-        factory.reg(key, Var(), "", {});
+    Node* ctxToDelete = nullptr;
+    if (!ctx) {
+        ctx = context(nullptr);
+        ctxToDelete = ctx;
     }
 
-    auto* nd = factory.root()->at(nkey);
+    auto cleanup = [&]() {
+        delete pipe;
+        if (ctxToDelete) delete ctxToDelete;
+    };
+
+    if (wait) {
+        std::mutex mtx;
+        std::condition_variable cv;
+        bool finished = false;
+
+        pipe->setResultHandler([&](const Result&) {
+            std::lock_guard<std::mutex> lk(mtx);
+            finished = true;
+            cv.notify_all();
+        });
+
+        Result r = pipe->start(ctx);
+
+        if (r.isAccepted()) {
+            std::unique_lock<std::mutex> lk(mtx);
+            while (!finished) {
+                cv.wait_for(lk, std::chrono::milliseconds(10));
+                const Pipeline::State st = pipe->state();
+                if (st == Pipeline::DONE || st == Pipeline::ERRORED || st == Pipeline::IDLE) {
+                    break;
+                }
+            }
+        }
+
+        Result lr = pipe->lastResult();
+        cleanup();
+        return lr;
+    }
+
+    Result r = pipe->start(ctx);
+
+    if (!r.isAccepted()) {
+        Result lr = pipe->lastResult();
+        cleanup();
+        return lr;
+    }
+
+    if (!detachedOut) {
+        pipe->stop();
+        cleanup();
+        return Result::fail(Var(
+            "Command::call(..., wait=false) requires non-null Pipeline** when command is asynchronous"));
+    }
+
+    *detachedOut = pipe;
+    return Result::accept();
+}
+
+Result Command::call(const Var& input, bool wait)
+{
+    Node* ctx = context(nullptr);
+    command::parseArgs(ctx, input);
+    Result r = call(ctx, wait, nullptr);
+    delete ctx;
+    return r;
+}
+
+Pipeline* Command::run(Node* ctx)
+{
+    auto* pipe = build();
+    if (!pipe) return nullptr;
+    pipe->start(ctx);
+    return pipe;
+}
+
+Pipeline* Command::run(const Var& input)
+{
+    auto* pipe = build();
+    if (!pipe) return nullptr;
+    pipe->start(input);
+    return pipe;
+}
+
+Factory& Command::factory()
+{
+    return factory::at("cmd");
+}
+
+void Command::reg(const std::string& key, std::function<void(Command&)> builder,
+                  const std::string& help, char sep)
+{
+    auto& f = factory();
+
+    // Track in keys list first
+    auto keys = f.keys();
+    if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
+        // Add to keys by registering empty callable
+        f.reg(key, Var(), "", {}, sep);
+    }
+
+    auto* nd = f.node(key, sep);
     Command cmd(nd);
     builder(cmd);
     if (!help.empty())
         cmd.setHelp(help);
 }
 
+Node* Command::declareNode(const std::string& key, char sep)
+{
+    auto& f = factory();
+
+    // Track in keys list if not already present
+    auto keys = f.keys();
+    if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
+        f.reg(key, Var(), "", {}, sep);
+    }
+
+    return f.node(key, sep)->at("declare");
+}
+
 // ============================================================================
-// command:: namespace
+// command:: namespace — ctx-operating helpers (parseArgs / Args / args)
 // ============================================================================
 
 namespace command {
-
-void build(const std::string& key, std::function<void(Command&)> builder,
-           const std::string& help)
-{
-    registerCommand(key, std::move(builder), help);
-}
-
-// --- context ---
-
-Node* declareNode(const std::string& key)
-{
-    auto& factory = GlobalCommandFactory();
-    auto nkey = key;
-    std::replace(nkey.begin(), nkey.end(), '.', '/');
-
-    // Track in keys list if not already present
-    auto keys = factory.keys();
-    if (std::find(keys.begin(), keys.end(), nkey) == keys.end()) {
-        factory.reg(key, Var(), "", {});
-    }
-
-    return factory.root()->at(nkey)->at("declare");
-}
-
-Node* context(const std::string& key, Node* currentNode)
-{
-    auto* ctx = new Node("_ctx");
-    auto* nd = GlobalCommandFactory().node(key);
-    if (nd) {
-        if (auto* decl = nd->find("declare", false))
-            ctx->setShadow(decl);
-    }
-    ctx->set(Var(static_cast<void*>(currentNode)));
-    return ctx;
-}
 
 // --- argument parsing (state-machine, declare-driven) ---
 
@@ -331,9 +386,9 @@ bool parseArgs(Node* ctx, const Var& input)
 
 Var Args::var(const std::string& key, const Var& def) const
 {
-    if (!ctx || key.empty()) return def;
+    if (!_n || key.empty()) return def;
     // use_shadow=true: falls back to declare default values
-    if (auto* n = ctx->find(key)) {
+    if (auto* n = _n->find(key)) {
         Var v = n->get();
         if (!v.isNull()) return v;
     }
@@ -366,137 +421,13 @@ bool Args::flag(const std::string& key, bool def) const
 
 bool Args::has(const std::string& key) const
 {
-    if (!ctx || key.empty()) return false;
+    if (!_n || key.empty()) return false;
     // use_shadow=false: only check if user explicitly set this param
-    auto* n = ctx->find(key, false);
+    auto* n = _n->find(key, false);
     return n && !n->get().isNull();
 }
 
 Args args(Node* ctx) { return Args(ctx); }
-
-// --- execution ---
-
-Result call(const std::string& key, Node* ctx, bool wait, Pipeline** detachedOut)
-{
-    if (detachedOut) *detachedOut = nullptr;
-
-    auto* nd = GlobalCommandFactory().node(key);
-    if (!nd) return Result::fail(Var("not found: " + key));
-
-    Command cmd(nd);
-    Pipeline* pipe = cmd.build();
-    if (!pipe) return Result::fail(Var("command has no steps: " + key));
-
-    Node* ctxToDelete = nullptr;
-    if (!ctx) {
-        ctx = context(key);
-        ctxToDelete = ctx;
-    }
-
-    auto cleanup = [&]() {
-        delete pipe;
-        if (ctxToDelete) delete ctxToDelete;
-    };
-
-    if (wait) {
-        std::mutex mtx;
-        std::condition_variable cv;
-        bool finished = false;
-
-        pipe->setResultHandler([&](const Result&) {
-            std::lock_guard<std::mutex> lk(mtx);
-            finished = true;
-            cv.notify_all();
-        });
-
-        Result r = pipe->start(ctx);
-
-        if (r.isAccepted()) {
-            std::unique_lock<std::mutex> lk(mtx);
-            while (!finished) {
-                cv.wait_for(lk, std::chrono::milliseconds(10));
-                const Pipeline::State st = pipe->state();
-                if (st == Pipeline::DONE || st == Pipeline::ERRORED || st == Pipeline::IDLE) {
-                    break;
-                }
-            }
-        }
-
-        Result lr = pipe->lastResult();
-        cleanup();
-        return lr;
-    }
-
-    Result r = pipe->start(ctx);
-
-    if (!r.isAccepted()) {
-        Result lr = pipe->lastResult();
-        cleanup();
-        return lr;
-    }
-
-    if (!detachedOut) {
-        pipe->stop();
-        cleanup();
-        return Result::fail(Var(
-            "command::call(..., wait=false) requires non-null Pipeline** when command is asynchronous"));
-    }
-
-    *detachedOut = pipe;
-    return Result::accept();
-}
-
-Result call(const std::string& key, const Var& input, bool wait)
-{
-    Node* ctx = context(key);
-    parseArgs(ctx, input);
-    Result r = call(key, ctx, wait, nullptr);
-    delete ctx;
-    return r;
-}
-
-Pipeline* run(const std::string& key, Node* ctx)
-{
-    auto* nd = GlobalCommandFactory().node(key);
-    if (!nd) return nullptr;
-    Command cmd(nd);
-    auto* pipe = cmd.build();
-    if (!pipe) return nullptr;
-    pipe->start(ctx);
-    return pipe;
-}
-
-Pipeline* run(const std::string& key, const Var& input)
-{
-    auto* nd = GlobalCommandFactory().node(key);
-    if (!nd) return nullptr;
-    Command cmd(nd);
-    auto* pipe = cmd.build();
-    if (!pipe) return nullptr;
-    pipe->start(input);
-    return pipe;
-}
-
-// --- query ---
-
-bool has(const std::string& key)
-{
-    return GlobalCommandFactory().node(key) != nullptr;
-}
-
-Strings keys()
-{
-    return factory::keys("cmd");
-}
-
-std::string help(const std::string& key)
-{
-    auto* nd = GlobalCommandFactory().node(key);
-    if (!nd) return {};
-    if (auto* h = nd->find("help", false))
-        return h->getString();
-    return {};
-}
 
 } // namespace command
 

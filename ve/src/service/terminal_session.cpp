@@ -124,7 +124,7 @@ static std::pair<std::string, size_t> resolveCommand(const std::vector<std::stri
     for (size_t i = args.size(); i >= 1; --i) {
         std::string candidate;
         for (size_t j = 0; j < i; ++j) {
-            if (j > 0) candidate += "/";
+            if (j > 0) candidate += ".";
             candidate += args[j];
         }
         if (command::has(candidate))
@@ -660,18 +660,18 @@ void TerminalSession::Private::initCommands()
         auto f = parseFlags(args);
         auto specific = f.pos(0);
         if (!specific.empty()) {
-            // Accept both "ros topic once" (space) and "ros/topic/once" (slash)
+            // Accept both "ros topic once" (space) and "ros.topic.once" (dot)
             std::string key = specific;
             // Collect remaining positional args as additional words
             for (int pi = 1; ; ++pi) {
                 auto w = f.pos(pi);
                 if (w.empty()) break;
-                key += "/" + w;
+                key += "." + w;
             }
-            std::replace(key.begin(), key.end(), ' ', '/');
+            std::replace(key.begin(), key.end(), ' ', '.');
             auto h = command::help(key);
             std::string displayKey = key;
-            std::replace(displayKey.begin(), displayKey.end(), '/', ' ');
+            std::replace(displayKey.begin(), displayKey.end(), '.', ' ');
             s.print(h.empty() ? "unknown command: " + displayKey + "\n" : displayKey + ": " + h + "\n");
             return;
         }
@@ -706,7 +706,7 @@ void TerminalSession::Private::initCommands()
             for (auto& k : userCmds) {
                 auto h = command::help(k);
                 std::string displayK = k;
-                std::replace(displayK.begin(), displayK.end(), '/', ' ');
+                std::replace(displayK.begin(), displayK.end(), '.', ' ');
                 out += "  " + displayK;
                 if (!h.empty()) { int pad = 22 - (int)displayK.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
                 out += "\n";
@@ -766,12 +766,12 @@ std::string TerminalSession::execute(const std::string& line)
         cmd = args[0];
     }
 
-    // Try multi-word command: "ros topic once" -> "ros/topic/once"
+    // Try multi-word command: "ros topic once" -> "ros.topic.once"
     // Always find the longest match (most words consumed).
     auto [resolvedCmd, cmdWordCount] = resolveCommand(args);
 
-    if (command::has(resolvedCmd)) {
-        Node* ctx = command::context(resolvedCmd, s.cur);
+    if (Command cmd(resolvedCmd); cmd) {
+        Node* ctx = cmd.context(s.cur);
         Var::ListV list;
         for (size_t i = cmdWordCount; i < args.size(); ++i)
             list.push_back(Var(args[i]));
@@ -779,7 +779,7 @@ std::string TerminalSession::execute(const std::string& line)
 
         if (asyncMode) {
             Pipeline* detached = nullptr;
-            auto r = command::call(resolvedCmd, ctx, false, &detached);
+            auto r = cmd.call(ctx, false, &detached);
 
             if (detached) {
                 auto asyncOut = s.asyncOutput;
@@ -817,7 +817,7 @@ std::string TerminalSession::execute(const std::string& line)
         }
 
         // Default: synchronous execution
-        auto r = command::call(resolvedCmd, ctx);
+        auto r = cmd.call(ctx);
         if (r.isSuccess() || r.isAccepted()) {
             auto& content = r.content();
             if (!content.isNull())

@@ -11,6 +11,10 @@
 #include "node.h"
 #include "loop.h"
 
+#ifndef VE_FACTORY_KEY_SEP
+#define VE_FACTORY_KEY_SEP '.'
+#endif
+
 namespace ve {
 
 // ============================================================================
@@ -192,65 +196,48 @@ public:
 // Registered items are child nodes whose value is Var::CALLABLE.
 // Metadata hangs as child nodes: help, loop, declare/.
 //
-// Key format: slash-separated path, e.g. "ros/topic/list"
-// Dots in keys are automatically converted to slashes.
+// Key format: caller-chosen separator (default '.', e.g. "ros.topic.list").
+// Override the global default with -DVE_FACTORY_KEY_SEP="'/'" or pass sep at the
+// call site (e.g. Factory::reg("ros/info", ..., '/')).
 //
-class VE_API Factory : public Object
+class VE_API Factory : public NodeRef
 {
-    VE_DECLARE_UNIQUE_PRIVATE
-
 public:
     explicit Factory(const std::string& name);
     ~Factory();
 
-    // Register a callable under key. Dots converted to slashes.
-    void reg(const std::string& key, Var callable,
-             const std::string& help = {}, LoopRef lr = {});
-
-    // Look up the node for key (nullptr if not found).
-    Node* node(const std::string& key) const;
-
-    // The root node of this factory (/ve/factory/{name}).
-    Node* root() const;
-
     // All registered keys in this factory.
     Strings keys() const;
 
-    // Typed call: pack params into Var, invoke, unpack result.
-    // Pointer params are cast to void*; pointer return types use toPointer().
-    // Fallback: RetT{} when key not found.
+    // Core registration: attach callable to an existing node, track key for enumeration.
+    // Caller controls node placement explicitly.
+    void reg(const std::string& key, Node* functor_n, Var callable, const std::string& help, LoopRef lr);
+
+    // Convenience: ensure node at path-resolved key, then register.
+    void reg(const std::string& key, Var callable, const std::string& help = {}, LoopRef lr = {}, char sep = VE_FACTORY_KEY_SEP)
+    {
+        reg(key, node(key, sep), std::move(callable), help, std::move(lr));
+    }
+
+    // Typed call: pack params into Var via Var's official ctor protocol, invoke, unpack result.
+    // Raw data pointers must be passed explicitly as Var(static_cast<void*>(p)) — see var.h.
+    // Fallback: RetT{} when key not found or not callable.
     template<typename RetT = Var, typename... Params>
     RetT exec(const std::string& key, Params&&... params) const
     {
-        auto* nd = node(key);
-        if (!nd || !nd->get().isCallable()) return RetT{};
-        Var result = nd->get().invoke(_packArgs(std::forward<Params>(params)...));
-        return result.as<RetT>();
+        auto* functor_n = node(key);
+        if (!functor_n || !functor_n->get().isCallable()) return RetT{};
+        Var args;
+        if constexpr (sizeof...(Params) == 1) {
+            args = Var(std::forward<Params>(params)...);
+        } else if constexpr (sizeof...(Params) > 1) {
+            args = Var(Var::ListV{Var(std::forward<Params>(params))...});
+        }
+        return functor_n->get().invoke(args).as<RetT>();
     }
 
 private:
-    template<typename T>
-    static Var _toVar(T&& v)
-    {
-        using DT = std::decay_t<T>;
-        if constexpr (basic::Meta<DT>::is_raw_pointer)
-            return Var(static_cast<void*>(v));
-        else
-            return Var(std::forward<T>(v));
-    }
-
-    template<typename... Params>
-    static Var _packArgs(Params&&... params)
-    {
-        if constexpr (sizeof...(Params) == 0) {
-            return Var{};
-        } else if constexpr (sizeof...(Params) == 1) {
-            Var _arr[] = { _toVar(std::forward<Params>(params))... };
-            return _arr[0];
-        } else {
-            return Var(Var::ListV{_toVar(std::forward<Params>(params))...});
-        }
-    }
+    VE_DECLARE_UNIQUE_PRIVATE
 };
 
 // ============================================================================
@@ -263,17 +250,11 @@ private:
 
 namespace factory {
 
-// Get or create a named factory (singleton per name).
-VE_API Factory& get(const std::string& name);
+VE_API Node* root(); // factory root node accessor (for advanced use, e.g. custom registration patterns)
 
-// Root node /ve/factory.
-VE_API Node* root();
+VE_API Factory& at(const std::string& name);
 
-// Enumerate registered keys under /ve/factory/{factory_name}/.
-// A node is a registered entry if its value is CALLABLE or it has a "steps" child.
-// Known metadata names (help, loop, declare, steps, priority, version, instance)
-// are not traversed.
-VE_API Strings keys(const std::string& factory_name);
+inline Strings keys(const std::string& name) { return at(name).keys(); }
 
 } // namespace factory
 
@@ -283,7 +264,7 @@ VE_API Strings keys(const std::string& factory_name);
 
 namespace version {
 
-VE_API void reg(const std::string& key, int ver);
+VE_API void reg(const std::string& key, const int ver);
 VE_API int  number(const std::string& key);
 VE_API bool check(const std::string& key, int min_api);
 
@@ -291,5 +272,4 @@ VE_API bool check(const std::string& key, int min_api);
 
 }
 
-#define VE_REGISTER_VERSION(Key, Ver) \
-    VE_AUTO_RUN(ve::version::reg(#Key, Ver);)
+#define VE_REGISTER_VERSION(Key, Ver) VE_AUTO_RUN(ve::version::reg(#Key, Ver);)

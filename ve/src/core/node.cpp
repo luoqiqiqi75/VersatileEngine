@@ -527,21 +527,21 @@ void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto
 // ============================================================================
 
 // Core parser: "name#N"→(name,N)  "#N"→("",N)  "name"→(name,0)  "name#"→(name,0)  "#"→("",0)  "#abc"→false
-bool Node::parseKey(std::string_view key, std::string_view& name, int& index)
+bool Node::parseKey(std::string_view key, std::string_view& name, int& index, char key_sep)
 {
     index = 0;
     if (key.empty()) { name = {}; return false; }
 
-    auto pos = key.rfind('#');
+    auto pos = key.rfind(key_sep);
     if (pos == std::string_view::npos) { name = key; return true; } // plain name
 
-    // parse digits after #
+    // parse digits after key_sep
     auto dp = key.substr(pos + 1);
-    if (dp.empty()) { name = key.substr(0, pos); return true; }  // trailing '#' — valid, index=0
+    if (dp.empty()) { name = key.substr(0, pos); return true; }  // trailing key_sep — valid, index=0
 
     int val = 0;
     for (char c : dp) {
-        if (c < '0' || c > '9') return false;  // non-digit after # — invalid
+        if (c < '0' || c > '9') return false;  // non-digit after key_sep — invalid
         val = val * 10 + (c - '0');
     }
 
@@ -550,7 +550,7 @@ bool Node::parseKey(std::string_view key, std::string_view& name, int& index)
     return true;
 }
 
-std::string Node::toKey(std::string_view name, int index)
+std::string Node::toKey(std::string_view name, int index, char key_sep)
 {
     // inverse of parseKey: (name,-1)→"name"  ("",N)→"#N"  (name,N)→"name#N"
     char buf[16];
@@ -558,7 +558,7 @@ std::string Node::toKey(std::string_view name, int index)
         auto [p, _] = std::to_chars(buf, buf + sizeof(buf), index);
         std::string r;
         r.reserve(1 + static_cast<size_t>(p - buf));
-        r.push_back('#');
+        r.push_back(key_sep);
         r.append(buf, p);
         return r;
     }
@@ -567,24 +567,15 @@ std::string Node::toKey(std::string_view name, int index)
     std::string r;
     r.reserve(name.size() + 1 + static_cast<size_t>(p - buf));
     r.append(name);
-    r.push_back('#');
+    r.push_back(key_sep);
     r.append(buf, p);
     return r;
 }
 
-bool Node::isKey(const std::string& key)
-{
-    if (key.find('/') != std::string::npos) return false;
-    std::string_view nm; int idx;
-    if (!parseKey(key, nm, idx)) return false;
-    // key with '#' must have been successfully parsed (idx >= 0)
-    return key.find('#') == std::string::npos || idx >= 0;
-}
-
-int Node::keyIndex(const std::string& key)
+int Node::keyIndex(const std::string& key, char key_sep)
 {
     std::string_view nm; int idx;
-    return parseKey(key, nm, idx) ? idx : -1;
+    return parseKey(key, nm, idx, key_sep) ? idx : -1;
 }
 
 std::string Node::keyOf(const Node* child, int guess) const
@@ -667,10 +658,10 @@ Node *Node::atKey(const std::string &name, int overlap, bool use_shadow) const
     return nullptr;
 }
 
-Node* Node::atKey(std::string_view key, bool use_shadow) const
+Node* Node::atKey(std::string_view key, bool use_shadow, char key_sep) const
 {
     std::string_view nm; int idx;
-    if (!parseKey(key, nm, idx)) return nullptr;
+    if (!parseKey(key, nm, idx, key_sep)) return nullptr;
     return nm.empty() && idx >= 0 ? atKey(idx, use_shadow) : atKey(std::string(nm), idx < 0 ? 0 : idx, use_shadow);
 }
 
@@ -702,10 +693,10 @@ Node* Node::atKey(const std::string& name, int overlap, bool use_shadow)
     return cn;
 }
 
-Node* Node::atKey(std::string_view key, bool use_shadow)
+Node* Node::atKey(std::string_view key, bool use_shadow, char key_sep)
 {
     std::string_view nm; int idx;
-    if (!parseKey(key, nm, idx)) return nullptr;
+    if (!parseKey(key, nm, idx, key_sep)) return nullptr;
     return (nm.empty() && idx >= 0) ? at(idx, use_shadow) : at(std::string(nm), idx, use_shadow);
 }
 
@@ -725,44 +716,51 @@ std::string Node::path(Node* ancestor) const
     return pp.empty() ? seg : pp + "/" + seg;
 }
 
-Node* Node::atPath(std::string_view path, bool use_shadow) const
+bool Node::isName(std::string_view name, char path_sep, char key_sep)
+{
+    if (name.empty()) return false;
+    return name.find(path_sep) == std::string_view::npos
+        && name.find(key_sep)  == std::string_view::npos;
+}
+
+Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char key_sep) const
 {
     if (path.empty()) return const_cast<Node*>(this);
     const Node* cur = this;
-    if (path[0] == '/') {
+    if (path[0] == path_sep) {
         cur = _root(this);
         path.remove_prefix(1);
         if (path.empty()) return const_cast<Node*>(cur);
     }
 
     while (!path.empty() && cur) {
-        auto slash = path.find('/');
+        auto slash = path.find(path_sep);
         auto seg = (slash == std::string_view::npos) ? path : path.substr(0, slash);
         path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        cur = cur->atKey(seg, use_shadow);
+        cur = cur->atKey(seg, use_shadow, key_sep);
     }
     return const_cast<Node*>(cur);
 }
 
-Node* Node::atPath(std::string_view path, bool use_shadow)
+Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char key_sep)
 {
     if (path.empty()) return this;
     Node* cur = this;
-    if (path[0] == '/') {
+    if (path[0] == path_sep) {
         cur = _root(this);
         path.remove_prefix(1);
         if (path.empty()) return cur;
     }
 
     while (!path.empty() && cur) {
-        auto slash = path.find('/');
+        auto slash = path.find(path_sep);
         auto seg = (slash == std::string_view::npos) ? path : path.substr(0, slash);
         path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        cur = cur->atKey(seg, use_shadow);
+        cur = cur->atKey(seg, use_shadow, key_sep);
     }
     return cur;
 }

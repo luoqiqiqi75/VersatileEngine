@@ -33,7 +33,7 @@ enum ModuleSignal : Object::SignalT {
     MODULE_STATE_CHANGED            = 0xFFFF'FFE1
 };
 
-class VE_API Module : public Object
+class VE_API Module : public Object, public NodeRef
 {
     VE_DECLARE_PRIVATE
 
@@ -51,12 +51,10 @@ public:
 
     State state() const;
 
-    const std::string& key() const { return name(); }
-
-    /// Module workspace node (key with '.' -> '/', e.g. "ve.core" -> "ve/core")
-    Node* node() const;
-
     template<State s> void exeState();
+
+    // Global module factory (ve/factory/module).
+    static Factory& factory();
 
 protected:
     virtual void init();
@@ -88,19 +86,18 @@ protected:
 };
 
 using ModuleFactory = Factory;
-VE_API ModuleFactory& globalModuleFactory();
 
 template<class C>
 inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
     const std::string& key, int priority = 100, int ver = 0)
 {
-    globalModuleFactory().reg(key, Var::callable([=]() -> Module* { return new C(key); }));
+    Module::factory().reg(key, Var::callable([=]() -> Module* { return new C(key); }));
     if (priority != 100) {
-        auto* nd = globalModuleFactory().node(key);
+        auto* nd = Module::factory().node(key, VE_FACTORY_KEY_SEP);
         if (nd) nd->at("priority")->set(Var(priority));
     }
     if (ver > 0) {
-        auto* nd = globalModuleFactory().node(key);
+        auto* nd = Module::factory().node(key, VE_FACTORY_KEY_SEP);
         if (nd) nd->at("version")->set(Var(ver));
         version::reg(key, ver);
     }
@@ -110,7 +107,8 @@ namespace module {
 
 inline Module* instance(const std::string& key)
 {
-    auto* nd = globalModuleFactory().node(key);
+    const Factory& f = Module::factory();
+    auto* nd = f.node(key, VE_FACTORY_KEY_SEP);
     if (!nd) return nullptr;
     if (auto* inst = nd->find("instance", false))
         return static_cast<Module*>(inst->get().toPointer());

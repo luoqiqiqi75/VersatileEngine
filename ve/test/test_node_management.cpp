@@ -5,35 +5,33 @@
 using namespace ve;
 
 // ============================================================================
-// Key validation
+// Name validation (isName: not empty, no path_sep, no key_sep)
 // ============================================================================
 
-VE_TEST(node_isKey) {
-    // valid keys: plain name
-    VE_ASSERT(Node::isKey("hello"));
-    VE_ASSERT(Node::isKey("item_2"));
-    VE_ASSERT(Node::isKey("a.b"));
+VE_TEST(node_isName) {
+    // valid names: plain identifiers (no '/' no '#')
+    VE_ASSERT(Node::isName("hello"));
+    VE_ASSERT(Node::isName("item_2"));
+    VE_ASSERT(Node::isName("a.b"));
 
-    // valid keys: name#N
-    VE_ASSERT(Node::isKey("item#0"));
-    VE_ASSERT(Node::isKey("item#2"));
-    VE_ASSERT(Node::isKey("tag#100"));
+    // names containing key_sep '#' are not valid names
+    VE_ASSERT(!Node::isName("item#0"));
+    VE_ASSERT(!Node::isName("item#2"));
+    VE_ASSERT(!Node::isName("tag#100"));
+    VE_ASSERT(!Node::isName("#0"));
+    VE_ASSERT(!Node::isName("#99"));
+    VE_ASSERT(!Node::isName("#"));
+    VE_ASSERT(!Node::isName("a#"));
+    VE_ASSERT(!Node::isName("#abc"));
+    VE_ASSERT(!Node::isName("a#b"));
 
-    // valid keys: #N (global index)
-    VE_ASSERT(Node::isKey("#0"));
-    VE_ASSERT(Node::isKey("#99"));
+    // names containing path_sep '/' are not valid names
+    VE_ASSERT(!Node::isName("/"));
+    VE_ASSERT(!Node::isName("a/b"));
+    VE_ASSERT(!Node::isName("a#1/b"));
 
-    // valid keys: # and name# (implicit index 0)
-    VE_ASSERT(Node::isKey("#"));        // global index 0
-    VE_ASSERT(Node::isKey("a#"));       // name with index 0
-
-    // invalid keys
-    VE_ASSERT(!Node::isKey(""));        // empty
-    VE_ASSERT(!Node::isKey("#abc"));    // non-digit after #
-    VE_ASSERT(!Node::isKey("a#b"));     // non-digit after #
-    VE_ASSERT(!Node::isKey("/"));       // path separator
-    VE_ASSERT(!Node::isKey("a/b"));     // path separator
-    VE_ASSERT(!Node::isKey("a#1/b"));   // path separator
+    // empty is not a valid name
+    VE_ASSERT(!Node::isName(""));
 }
 
 VE_TEST(node_keyIndex) {

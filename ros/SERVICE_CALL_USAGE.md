@@ -2,12 +2,12 @@
 
 ## 功能概述
 
-`ros/service/call` 命令用于调用 ROS 服务。支持通过 HTTP、WebSocket 和 Terminal 接口调用。
+`ros.service.call` 命令用于调用 ROS 服务。支持通过 HTTP、WebSocket 和 Terminal 接口调用。
 
 ## 命令格式
 
 ```bash
-ros/service/call <service> <type> <request> [payload_format]
+ros.service.call <service> <type> <request> [payload_format]
 ```
 
 ### 参数说明
@@ -25,16 +25,16 @@ ros/service/call <service> <type> <request> [payload_format]
 
 ```bash
 # 调用加法服务
-ros/service/call /add_two_ints example_interfaces/srv/AddTwoInts "{a: 10, b: 20}"
+ros.service.call /add_two_ints example_interfaces/srv/AddTwoInts "{a: 10, b: 20}"
 
 # 使用 var 格式
-ros/service/call /add_two_ints example_interfaces/srv/AddTwoInts '{"a":10,"b":20}' var
+ros.service.call /add_two_ints example_interfaces/srv/AddTwoInts '{"a":10,"b":20}' var
 ```
 
 ### 2. HTTP API 调用
 
 ```bash
-curl -X POST http://localhost:12000/api/cmd/ros/service/call \
+curl -X POST http://localhost:12000/api/cmd/ros.service.call \
   -H "Content-Type: application/json" \
   -d '{
     "args": [
@@ -50,7 +50,7 @@ curl -X POST http://localhost:12000/api/cmd/ros/service/call \
 
 ```javascript
 // 使用 veservice.js
-veService.command("ros/service/call", {
+veService.command("ros.service.call", {
   service: "/add_two_ints",
   type: "example_interfaces/srv/AddTwoInts",
   request: "{a: 10, b: 20}",
@@ -66,7 +66,7 @@ from ve_client import VEClient
 client = VEClient("http://localhost:12000")
 
 # 调用服务
-result = client.command("ros/service/call", {
+result = client.command("ros.service.call", {
     "service": "/add_two_ints",
     "type": "example_interfaces/srv/AddTwoInts",
     "request": "{a: 10, b: 20}",

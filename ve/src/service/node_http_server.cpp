@@ -27,6 +27,11 @@ namespace service {
 
 static const schema::ExportOptions compactJson{0};
 
+// HTTP-specific key separator: ':' instead of '#' so that
+// /at/leo/mu:1 is reachable from a browser without URL-encoding
+// (URL '#' is the fragment delimiter, truncated by browsers).
+static constexpr char HTTP_KEY_SEP = ':';
+
 enum JsonRpcError
 {
     JRpcParseError     = -32700,
@@ -317,7 +322,7 @@ bool NodeHttpServer::start()
         });
 
     auto bindAtGet = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
-        Node* target = ve::n(nodePath, false);
+        Node* target = const_cast<const Node*>(_p->root)->atPath(nodePath, false, '/', HTTP_KEY_SEP);
         const bool autoIgnore = queryBool(req.query(), "auto_ignore", true);
         const bool wantChildren = queryBool(req.query(), "children", false);
         const bool wantMeta = queryBool(req.query(), "meta", false);
@@ -389,7 +394,7 @@ bool NodeHttpServer::start()
             return;
         }
 
-        Node* target = ve::n(nodePath);
+        Node* target = _p->root->atPath(nodePath, true, '/', HTTP_KEY_SEP);
         schema::ImportOptions options;
         options.auto_insert = queryBool(req.query(), "auto_insert", true);
         options.auto_remove = queryBool(req.query(), "auto_remove", false);
@@ -410,7 +415,9 @@ bool NodeHttpServer::start()
     auto bindAtPost = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
         const bool trigger = queryBool(req.query(), "trigger", false);
         std::string body(req.body());
-        Node* target = trigger || body.empty() ? ve::n(nodePath, false) : ve::n(nodePath);
+        Node* target = (trigger || body.empty())
+            ? const_cast<const Node*>(_p->root)->atPath(nodePath, false, '/', HTTP_KEY_SEP)
+            : _p->root->atPath(nodePath, true, '/', HTTP_KEY_SEP);
 
         if (!target) {
             Node protocolRep("rep");
@@ -441,7 +448,8 @@ bool NodeHttpServer::start()
             rep.fill_json(toJson(reply), http::status::bad_request);
             return;
         }
-        if (!_p->root->erase(nodePath)) {
+        Node* target = const_cast<const Node*>(_p->root)->atPath(nodePath, false, '/', HTTP_KEY_SEP);
+        if (!target || !target->parent() || !target->parent()->remove(target)) {
             Node reply("rep");
             fillError(&reply, "not_found", "node not found");
             rep.fill_json(toJson(reply), http::status::not_found);
@@ -461,7 +469,8 @@ bool NodeHttpServer::start()
             rep.fill_json(toJson(reply), http::status::bad_request);
             return;
         }
-        if (!command::has(cmdKey)) {
+        Command cmd(cmdKey);
+        if (!cmd) {
             Node reply("rep");
             fillError(&reply, "not_found", "unknown command: " + cmdKey);
             rep.fill_json(toJson(reply), http::status::not_found);
@@ -480,7 +489,7 @@ bool NodeHttpServer::start()
             }
         }
 
-        Node* ctx = command::context(cmdKey, current);
+        Node* ctx = cmd.context(current);
         std::string body(req.body());
         if (!body.empty()) {
             Node input("input");
@@ -496,7 +505,7 @@ bool NodeHttpServer::start()
 
         const bool async = queryBool(req.query(), "async", false);
         Pipeline* detached = nullptr;
-        Result result = command::call(cmdKey, ctx, !async, async ? &detached : nullptr);
+        Result result = cmd.call(ctx, !async, async ? &detached : nullptr);
         if (detached) {
             if (!_p->taskSvc) {
                 delete detached;

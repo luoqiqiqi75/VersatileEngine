@@ -117,6 +117,25 @@ struct VE_API Step : std::pair<Var, LoopRef>
             return wrapMultiArg(std::forward<F>(fn), std::make_index_sequence<Traits::ArgCnt>{});
         }
     }
+
+    // --- registration ---
+
+    VE_API static void reg(const std::string& key, Step step,
+                           const std::string& help = "", char sep = VE_FACTORY_KEY_SEP);
+
+    template<typename F, EnableIfFn<F> = 0>
+    static void reg(const std::string& key, F&& fn, const std::string& help = "",
+                    char sep = VE_FACTORY_KEY_SEP)
+    {
+        reg(key, Step(BaseT{Var::callable(wrap(std::forward<F>(fn))), LoopRef{}}), help, sep);
+    }
+
+    template<typename F, EnableIfFn<F> = 0>
+    static void reg(const std::string& key, F&& fn, LoopRef loop,
+                    const std::string& help = "", char sep = VE_FACTORY_KEY_SEP)
+    {
+        reg(key, Step(BaseT{Var::callable(wrap(std::forward<F>(fn))), std::move(loop)}), help, sep);
+    }
 };
 
 VE_API Result resultFromStepReturn(const Var& ret);
@@ -125,19 +144,31 @@ VE_API Result resultFromStepReturn(const Var& ret);
 // Command - multi-step builder backed by a factory node
 // ============================================================================
 //
-// Constructed internally by registerCommand / command::build.
+// Constructed internally by Command::reg / command::build.
 // The builder lambda receives Command& and calls addStep / setHelp / declare().
 
-class VE_API Command
+class VE_API Command : public NodeRef
 {
-    Node* _nd;  // factory node (ve/factory/cmd/{key})
-
 public:
-    explicit Command(Node* factory_node);
+    // Bind to an existing factory node directly.
+    Command(Node* factory_node) : NodeRef(factory_node) {}
 
-    const std::string& name() const;
+    // Resolve key via the global command factory (find-only — invalid Command if missing).
+    explicit Command(const std::string& key, char sep = VE_FACTORY_KEY_SEP);
 
-    // Append a step to _steps/#N child of the factory node.
+    // --- instance accessors ---
+    int stepCount() const;
+    Node* declare();
+
+    std::string help() const
+    {
+        // use_shadow=true: fall back to prototype's help if this command has none
+        if (auto* h = _n->find("help")) return h->getString();
+        return {};
+    }
+
+    // --- instance builder API (used inside the reg(...) builder lambda) ---
+
     void addStep(Step step);
 
     template<typename F, Step::EnableIfFn<F> = 0>
@@ -146,47 +177,44 @@ public:
         addStep(Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), std::move(lr)}));
     }
 
-    void setHelp(const std::string& h);
-    std::string help() const;
-
-    // Number of steps: 1 if node value is callable, else count of steps/ children.
-    int stepCount() const;
-
-    // Parameter declaration subtree (_declare/ under factory node).
-    Node* declare();
+    void setHelp(const std::string& h)
+    {
+        if (!h.empty()) _n->at("help")->set(Var(h));
+    }
 
     // Assemble a Pipeline from this command's factory node.
-    // Single-step: reads node value + _loop.
-    // Multi-step:  iterates _steps/#N children.
     Pipeline* build() const;
 
-    Node* node() const { return _nd; }
+    // --- instance dispatch ---
+
+    Node* context(Node* currentNode = nullptr);
+
+    Result call(Node* ctx, bool wait = true, Pipeline** detachedOut = nullptr);
+    Result call(const Var& input = Var{}, bool wait = true);
+
+    Pipeline* run(Node* ctx);
+    Pipeline* run(const Var& input = {});
+
+    // --- static factory & registration ---
+
+    // Global command factory (ve/factory/cmd). Exposed for test access and cleanup.
+    static Factory& factory();
+
+    // Register a multi-step command; builder lambda receives Command& to addStep/setHelp/declare().
+    static void reg(const std::string& key, std::function<void(Command&)> builder,
+                    const std::string& help = "", char sep = VE_FACTORY_KEY_SEP);
+
+    // Lightweight query (1-liner inlines — no Command instance constructed)
+    static bool has(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
+    {
+        const Factory& f = factory();
+        return f.node(key, sep) != nullptr;
+    }
+    static Strings keys() { return factory().keys(); }
+
+    // Build-time helper: create _declare/ subtree for parameter declarations.
+    static Node* declareNode(const std::string& key, char sep = VE_FACTORY_KEY_SEP);
 };
-
-// ============================================================================
-// Registration
-// ============================================================================
-
-// Global command factory (ve/factory/cmd). Exposed for test access and cleanup.
-VE_API Factory& GlobalCommandFactory();
-
-VE_API void registerStep(const std::string& key, Step step, const std::string& help = "");
-
-template<typename F, Step::EnableIfFn<F> = 0>
-void registerStep(const std::string& key, F&& fn, const std::string& help = "")
-{
-    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), LoopRef{}}), help);
-}
-
-template<typename F, Step::EnableIfFn<F> = 0>
-void registerStep(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
-{
-    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), std::move(loop)}), help);
-}
-
-VE_API void registerCommand(const std::string& key,
-                            std::function<void(Command&)> builder,
-                            const std::string& help = "");
 
 // ============================================================================
 // command:: namespace
@@ -194,40 +222,64 @@ VE_API void registerCommand(const std::string& key,
 
 namespace command {
 
+// --- thin forwarders (default sep only; advanced users instantiate Command/Step directly) ---
+
 template<typename F, Step::EnableIfFn<F> = 0>
-void reg(const std::string& key, F&& fn, const std::string& help = "")
+inline void reg(const std::string& key, F&& fn, const std::string& help = "")
 {
-    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), LoopRef{}}), help);
+    Step::reg(key, std::forward<F>(fn), help);
 }
 
 template<typename F, Step::EnableIfFn<F> = 0>
-void reg(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
+inline void reg(const std::string& key, F&& fn, LoopRef loop, const std::string& help = "")
 {
-    registerStep(key, Step(Step::BaseT{Var::callable(Step::wrap(std::forward<F>(fn))), std::move(loop)}), help);
+    Step::reg(key, std::forward<F>(fn), std::move(loop), help);
 }
 
-VE_API void build(const std::string& key,
+inline void build(const std::string& key,
                   std::function<void(Command&)> builder,
-                  const std::string& help = "");
+                  const std::string& help = "")
+{
+    Command::reg(key, std::move(builder), help);
+}
 
-VE_API Result call(const std::string& key, Node* ctx, bool wait = true, Pipeline** detachedOut = nullptr);
-VE_API Result call(const std::string& key, const Var& input = Var{}, bool wait = true);
+// Lightweight query (no Command instance)
+inline bool    has(const std::string& key) { return Command::has(key); }
+inline Strings keys()                      { return Command::keys(); }
 
-VE_API Pipeline* run(const std::string& key, Node* ctx);
-VE_API Pipeline* run(const std::string& key, const Var& input = {});
+// Dispatch — each call constructs a Command and forwards. Callers are responsible
+// for ensuring the key exists (use command::has(key) first); calling on an unknown
+// key crashes. Performance-critical callers should construct Command(key) once.
+inline std::string help(const std::string& key) { return Command(key).help(); }
 
-VE_API Node* context(const std::string& key, Node* currentNode = nullptr);
+inline Result call(const std::string& key, Node* ctx,
+                   bool wait = true, Pipeline** detachedOut = nullptr)
+{
+    return Command(key).call(ctx, wait, detachedOut);
+}
+inline Result call(const std::string& key, const Var& input = Var{}, bool wait = true)
+{
+    return Command(key).call(input, wait);
+}
+inline Pipeline* run(const std::string& key, Node* ctx)             { return Command(key).run(ctx); }
+inline Pipeline* run(const std::string& key, const Var& input = {}) { return Command(key).run(input); }
+
+inline Node* context(const std::string& key, Node* currentNode = nullptr)
+{
+    return Command(key).context(currentNode);
+}
+inline Node* declareNode(const std::string& key) { return Command::declareNode(key); }
+
+// --- ctx helpers (not Command-class methods) ---
+
 inline Node* current(Node* ctx) { return ctx ? static_cast<Node*>(ctx->get().toPointer()) : nullptr; }
 inline const Node* current(const Node* ctx) { return ctx ? static_cast<const Node*>(ctx->get().toPointer()) : nullptr; }
-
-VE_API Node* declareNode(const std::string& key);
 
 VE_API bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx = 0);
 VE_API bool parseArgs(Node* ctx, const Var& input);
 
-struct VE_API Args {
-    Node* ctx;
-    explicit Args(Node* c) : ctx(c) {}
+struct VE_API Args : NodeRef {
+    using NodeRef::NodeRef;  // ctors
 
     std::string string(const std::string& key, const std::string& def = "") const;
     int64_t     integer(const std::string& key, int64_t def = 0) const;
@@ -238,10 +290,6 @@ struct VE_API Args {
 };
 
 VE_API Args args(Node* ctx);
-
-VE_API bool        has(const std::string& key);
-VE_API Strings     keys();
-VE_API std::string help(const std::string& key);
 
 inline Var invoke(const Var& callable, Node* ctx = nullptr)
 {

@@ -1,62 +1,41 @@
 // factory.cpp - ve::Factory, ve::factory::, ve::version::
 #include "ve/core/factory.h"
 #include "ve/core/node.h"
+#include "ve/core/log.h"
 
 namespace ve {
 
 struct Factory::Private
 {
-    Node* root = nullptr;  // /ve/factory/{name}
-    Strings keys;          // registered keys (for fast enumeration)
+    Strings keys;  // registered keys (caller-form, for fast enumeration)
 };
 
-static std::string normalizeKey(const std::string& key)
-{
-    std::string p = key;
-    std::replace(p.begin(), p.end(), '.', '/');
-    return p;
-}
-
 Factory::Factory(const std::string& name)
-    : Object(name), _p(std::make_unique<Private>())
+    : NodeRef(node::root()->at("ve/factory/" + name))   // ensure-exists at /ve/factory/{name}
+    , _p(std::make_unique<Private>())
 {
-    _p->root = node::root()->at("ve/factory/" + name);
 }
 
 Factory::~Factory() = default;
 
-void Factory::reg(const std::string& key, Var callable,
+Strings Factory::keys() const { return _p->keys; }
+
+void Factory::reg(const std::string& key, Node* functor_n, Var callable,
                   const std::string& help, LoopRef lr)
 {
-    auto nkey = normalizeKey(key);
+    if (!functor_n) return;
 
-    // Track registered key first
-    auto it = std::find(_p->keys.begin(), _p->keys.end(), nkey);
-    if (it == _p->keys.end()) {
-        _p->keys.push_back(nkey);
+    // Track the caller-form key for enumeration.
+    if (auto it = std::find(_p->keys.begin(), _p->keys.end(), key) == _p->keys.end()) {
+        _p->keys.push_back(key);
+    } else {
+        veLogE << "<ve/factory>" << _n->name() << ": duplicate registration for key: " << key;
+        return;
     }
 
-    auto* nd = _p->root->at(nkey);
-    nd->set(std::move(callable));
-    if (!help.empty())
-        nd->at("help")->set(Var(help));
-    if (lr)
-        nd->at("loop")->set(Var::custom(std::move(lr)));
-}
-
-Node* Factory::node(const std::string& key) const
-{
-    return _p->root->find(normalizeKey(key), false);
-}
-
-Node* Factory::root() const
-{
-    return _p->root;
-}
-
-Strings Factory::keys() const
-{
-    return _p->keys;
+    functor_n->set(std::move(callable));
+    if (!help.empty()) functor_n->at("help")->set(help);
+    if (lr) functor_n->at("loop")->set(std::move(lr));
 }
 
 // ============================================================================
@@ -65,24 +44,18 @@ Strings Factory::keys() const
 
 namespace factory {
 
-Factory& get(const std::string& name)
+Node* root() { return n("ve/factory"); }
+
+static Dict<Factory*> s_factories;
+
+Factory& at(const std::string& name)
 {
-    static auto* s_map = new Hash<Factory*>();
-    auto it = s_map->find(name);
-    if (it != s_map->end()) return *it->second;
-    auto* f = new Factory(name);
-    (*s_map)[name] = f;
+    auto f = s_factories.value(name, nullptr);
+    if (!f) {
+        f = new Factory(name);
+        s_factories[name] = f;
+    }
     return *f;
-}
-
-Node* root()
-{
-    return node::root()->at("ve/factory");
-}
-
-Strings keys(const std::string& factory_name)
-{
-    return get(factory_name).keys();
 }
 
 } // namespace factory
@@ -93,17 +66,14 @@ Strings keys(const std::string& factory_name)
 
 namespace version {
 
-void reg(const std::string& key, int ver)
+void reg(const std::string& key, const int ver)
 {
-    const int v = ver;
-    factory::get("version").reg(key, Var::callable([v]() -> int { return v; }));
+    factory::at("version").reg(key, [ver] () -> int { return ver; });
 }
 
 int number(const std::string& key)
 {
-    auto* nd = factory::get("version").node(key);
-    if (!nd || !nd->get().isCallable()) return 0;
-    return nd->get().invoke({}).toInt(0);
+    return factory::at("version").exec<int>(key);
 }
 
 bool check(const std::string& key, int min_api)

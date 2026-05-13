@@ -259,16 +259,16 @@ VE_TEST(command_basic) {
     command::build("_test_deploy", [](Command& cmd) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-        VE_ASSERT_EQ(cmd.name(), "_test_deploy");
+        VE_ASSERT_EQ(cmd.node()->name(), "_test_deploy");
         VE_ASSERT_EQ(cmd.stepCount(), 2);
     });
     // Verify stored in factory node tree
-    auto* nd = GlobalCommandFactory().node("_test_deploy");
+    auto* nd = Command::factory().node("_test_deploy");
     VE_ASSERT(nd != nullptr);
     VE_ASSERT(nd->find("steps", false) != nullptr);
     VE_ASSERT_EQ(nd->find("steps", false)->count(), 2);
 
-    GlobalCommandFactory().root()->erase("_test_deploy");
+    Command::factory().node()->erase("_test_deploy");
 }
 
 VE_TEST(command_pipeline_creation) {
@@ -290,14 +290,14 @@ VE_TEST(command_help_metadata) {
         cmd.setHelp("say hello");
     });
     VE_ASSERT_EQ(command::help("_test_greet_help"), "say hello");
-    GlobalCommandFactory().root()->erase("_test_greet_help");
+    Command::factory().node()->erase("_test_greet_help");
 }
 
 VE_TEST(command_build_pipeline) {
     command::build("_test_build_pipe", [](Command& cmd) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(Var(42)); });
     });
-    auto* nd = GlobalCommandFactory().node("_test_build_pipe");
+    auto* nd = Command::factory().node("_test_build_pipe");
     VE_ASSERT(nd != nullptr);
 
     // Use addToPipeline directly (no loop::main() default) for synchronous test
@@ -308,7 +308,7 @@ VE_TEST(command_build_pipeline) {
     VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
     VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 42);
 
-    GlobalCommandFactory().root()->erase("_test_build_pipe");
+    Command::factory().node()->erase("_test_build_pipe");
 }
 
 // ============================================================================
@@ -320,13 +320,13 @@ VE_TEST(factory_node_layout_single_step) {
         return Result::ok(Var(x * 3));
     }, "triple it");
 
-    auto* nd = GlobalCommandFactory().node("_test_layout_single");
+    auto* nd = Command::factory().node("_test_layout_single");
     VE_ASSERT(nd != nullptr);
     VE_ASSERT(nd->get().isCallable());
     VE_ASSERT(nd->find("steps", false) == nullptr);
     VE_ASSERT_EQ(nd->find("help", false)->getString(), "triple it");
 
-    GlobalCommandFactory().root()->erase("_test_layout_single");
+    Command::factory().node()->erase("_test_layout_single");
 }
 
 VE_TEST(factory_node_layout_multi_step) {
@@ -336,7 +336,7 @@ VE_TEST(factory_node_layout_multi_step) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
     }, "three steps");
 
-    auto* nd = GlobalCommandFactory().node("_test_layout_multi");
+    auto* nd = Command::factory().node("_test_layout_multi");
     VE_ASSERT(nd != nullptr);
     VE_ASSERT(!nd->get().isCallable());
     auto* steps = nd->find("steps", false);
@@ -344,7 +344,7 @@ VE_TEST(factory_node_layout_multi_step) {
     VE_ASSERT_EQ(steps->count(), 3);
     VE_ASSERT_EQ(nd->find("help", false)->getString(), "three steps");
 
-    GlobalCommandFactory().root()->erase("_test_layout_multi");
+    Command::factory().node()->erase("_test_layout_multi");
 }
 
 VE_TEST(factory_node_lookup) {
@@ -355,12 +355,13 @@ VE_TEST(factory_node_lookup) {
     VE_ASSERT(command::has("_test_lookup_b"));
     VE_ASSERT(!command::has("_test_lookup_nonexistent"));
 
-    // node() exposes the factory node directly
-    VE_ASSERT(GlobalCommandFactory().node("_test_lookup_a") != nullptr);
-    VE_ASSERT(GlobalCommandFactory().node("_test_lookup_nonexistent") == nullptr);
+    // node() exposes the factory node directly — const Factory& gives find-only semantics
+    const Factory& cf = Command::factory();
+    VE_ASSERT(cf.node("_test_lookup_a") != nullptr);
+    VE_ASSERT(cf.node("_test_lookup_nonexistent") == nullptr);
 
-    GlobalCommandFactory().root()->erase("_test_lookup_a");
-    GlobalCommandFactory().root()->erase("_test_lookup_b");
+    Command::factory().node()->erase("_test_lookup_a");
+    Command::factory().node()->erase("_test_lookup_b");
     VE_ASSERT(!command::has("_test_lookup_a"));
 }
 
@@ -379,7 +380,7 @@ VE_TEST(command_ns_reg_and_call) {
     Result r = command::call("_test_echo", Var(42));
     VE_ASSERT(r.isSuccess());
 
-    GlobalCommandFactory().root()->erase("_test_echo");
+    Command::factory().node()->erase("_test_echo");
 }
 
 VE_TEST(command_ns_run) {
@@ -394,7 +395,7 @@ VE_TEST(command_ns_run) {
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 
-    GlobalCommandFactory().root()->erase("_test_multi");
+    Command::factory().node()->erase("_test_multi");
 }
 
 VE_TEST(command_ns_step) {
@@ -408,27 +409,27 @@ VE_TEST(command_ns_step) {
     VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
     delete pipe;
 
-    GlobalCommandFactory().root()->erase("_test_inc");
+    Command::factory().node()->erase("_test_inc");
 }
 
 VE_TEST(register_step_with_loopref) {
     EventLoop loop("regstep_lr");
     loop.start();
-    registerStep("_test_regstep_lr", [](Node*) -> Result { return Result::ok(Var(1)); },
-                 LoopRef::from(loop), "lr help");
+    Step::reg("_test_regstep_lr", [](Node*) -> Result { return Result::ok(Var(1)); },
+              LoopRef::from(loop), "lr help");
 
     VE_ASSERT(command::has("_test_regstep_lr"));
     VE_ASSERT_EQ(command::help("_test_regstep_lr"), "lr help");
 
     // LoopRef stored in "loop" child node as CUSTOM
-    auto* nd = GlobalCommandFactory().node("_test_regstep_lr");
+    auto* nd = Command::factory().node("_test_regstep_lr");
     VE_ASSERT(nd != nullptr);
     auto* loop_nd = nd->find("loop", false);
     VE_ASSERT(loop_nd != nullptr);
     VE_ASSERT(loop_nd->get().customIs<LoopRef>());
 
     loop.stop();
-    GlobalCommandFactory().root()->erase("_test_regstep_lr");
+    Command::factory().node()->erase("_test_regstep_lr");
 }
 
 VE_TEST(command_reg_with_loopref) {
@@ -440,25 +441,27 @@ VE_TEST(command_reg_with_loopref) {
     VE_ASSERT(command::has("_test_reg_ns_lr"));
     VE_ASSERT_EQ(command::help("_test_reg_ns_lr"), "with loop");
 
-    auto* nd = GlobalCommandFactory().node("_test_reg_ns_lr");
+    auto* nd = Command::factory().node("_test_reg_ns_lr");
     VE_ASSERT(nd != nullptr);
     auto* loop_nd = nd->find("loop", false);
     VE_ASSERT(loop_nd != nullptr);
     VE_ASSERT(loop_nd->get().customIs<LoopRef>());
 
     loop.stop();
-    GlobalCommandFactory().root()->erase("_test_reg_ns_lr");
+    Command::factory().node()->erase("_test_reg_ns_lr");
 }
 
 VE_TEST(command_ns_not_found) {
-    Result r = command::call("_test_nonexistent");
-    VE_ASSERT(r.isError());
-
-    Pipeline* pipe = command::run("_test_nonexistent");
-    VE_ASSERT(pipe == nullptr);
+    // Command(key) constructs an invalid instance when key is unknown;
+    // callers are responsible for checking before dispatch (calling on an
+    // invalid Command crashes — caller's contract).
+    Command cmd("_test_nonexistent");
+    VE_ASSERT(!cmd);
+    VE_ASSERT(!command::has("_test_nonexistent"));
 }
 
 VE_TEST(command_context_keeps_current_out_of_children) {
+    command::declareNode("_test_ctx_meta");  // register the key first
     Node current("current");
     Node* ctx = command::context("_test_ctx_meta", &current);
 
@@ -466,9 +469,11 @@ VE_TEST(command_context_keeps_current_out_of_children) {
     VE_ASSERT_EQ(ctx->count(), 0);
 
     delete ctx;
+    Command::factory().node()->erase("_test_ctx_meta");
 }
 
 VE_TEST(command_parse_args_with_current_keeps_positional_index_zero) {
+    command::declareNode("_test_ctx_parse");
     Node current("current");
     Node* ctx = command::context("_test_ctx_parse", &current);
 
@@ -478,6 +483,7 @@ VE_TEST(command_parse_args_with_current_keeps_positional_index_zero) {
     VE_ASSERT_EQ(command::current(ctx), &current);
 
     delete ctx;
+    Command::factory().node()->erase("_test_ctx_parse");
 }
 
 VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
@@ -499,7 +505,7 @@ VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
     VE_ASSERT_EQ(namedArgs.string("target_node"), "/target");
     delete namedCtx;
 
-    GlobalCommandFactory().root()->erase("_test_declared_args");
+    Command::factory().node()->erase("_test_declared_args");
 }
 
 // ============================================================================
@@ -511,7 +517,7 @@ VE_TEST(step_form2_multi_arg_int) {
     auto r = command::call("_test_add", Var(Var::ListV{Var(3), Var(4)}));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), 7);
-    GlobalCommandFactory().root()->erase("_test_add");
+    Command::factory().node()->erase("_test_add");
 }
 
 VE_TEST(step_form2_multi_arg_result) {
@@ -525,7 +531,7 @@ VE_TEST(step_form2_multi_arg_result) {
 
     auto r2 = command::call("_test_div", Var(Var::ListV{Var(1), Var(0)}));
     VE_ASSERT(r2.isError());
-    GlobalCommandFactory().root()->erase("_test_div");
+    Command::factory().node()->erase("_test_div");
 }
 
 VE_TEST(step_form2_single_string) {
@@ -535,7 +541,7 @@ VE_TEST(step_form2_single_string) {
     auto r = command::call("_test_hi", Var("alice"));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toString(), "hi alice");
-    GlobalCommandFactory().root()->erase("_test_hi");
+    Command::factory().node()->erase("_test_hi");
 }
 
 VE_TEST(step_form2_void_no_args) {
@@ -544,7 +550,7 @@ VE_TEST(step_form2_void_no_args) {
     auto r = command::call("_test_noop");
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(called, 1);
-    GlobalCommandFactory().root()->erase("_test_noop");
+    Command::factory().node()->erase("_test_noop");
 }
 
 VE_TEST(step_form2_var_return) {
@@ -552,7 +558,7 @@ VE_TEST(step_form2_var_return) {
     auto r = command::call("_test_ping");
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toString(), "pong");
-    GlobalCommandFactory().root()->erase("_test_ping");
+    Command::factory().node()->erase("_test_ping");
 }
 
 VE_TEST(step_form2_double_args) {
@@ -560,7 +566,7 @@ VE_TEST(step_form2_double_args) {
     auto r = command::call("_test_sum", Var(Var::ListV{Var(1.5), Var(2.5)}));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toDouble(), 4.0);
-    GlobalCommandFactory().root()->erase("_test_sum");
+    Command::factory().node()->erase("_test_sum");
 }
 
 VE_TEST(step_form2_single_arg_via_call) {
@@ -568,7 +574,7 @@ VE_TEST(step_form2_single_arg_via_call) {
     auto r = command::call("_test_double_it", Var(21));
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), 42);
-    GlobalCommandFactory().root()->erase("_test_double_it");
+    Command::factory().node()->erase("_test_double_it");
 }
 
 VE_TEST(step_form2_single_arg_ctx_child) {
@@ -578,7 +584,7 @@ VE_TEST(step_form2_single_arg_ctx_child) {
     auto r = command::call("_test_negate", ctx);
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), -7);
-    GlobalCommandFactory().root()->erase("_test_negate");
+    Command::factory().node()->erase("_test_negate");
 }
 
 // ============================================================================

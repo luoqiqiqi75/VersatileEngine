@@ -4,6 +4,13 @@
 #include "object.h"
 #include "schema.h"
 
+#ifndef VE_NODE_KEY_SEP
+#define VE_NODE_KEY_SEP '#'
+#endif
+#ifndef VE_NODE_PATH_SEP
+#define VE_NODE_PATH_SEP '/'
+#endif
+
 namespace ve {
 
 // --- Node ------------------------------------------------------------------
@@ -101,10 +108,11 @@ public:
     // -- key (key = name | name#N | #N) ---
     //  parseKey: "name" → (name,-1)  "name#N" → (name,N)  "#N" → ("",N)
     //  toKey:    inverse of parseKey
-    static bool parseKey(std::string_view key, std::string_view& name, int& index);
-    static std::string toKey(std::string_view name, int index);
-    static bool isKey(const std::string& key);
-    static int  keyIndex(const std::string& key);
+    static bool parseKey(std::string_view key, std::string_view& name, int& index,
+                         char key_sep = VE_NODE_KEY_SEP);
+    static std::string toKey(std::string_view name, int index,
+                             char key_sep = VE_NODE_KEY_SEP);
+    static int  keyIndex(const std::string& key, char key_sep = VE_NODE_KEY_SEP);
 
     std::string keyOf(const Node* child, int guess = -1) const;
 
@@ -114,19 +122,30 @@ public:
     // Single-level key access: "name" | "name#N" | "#N"
     Node* atKey(int index, bool use_shadow) const;
     Node* atKey(const std::string& name, int overlap, bool use_shadow) const;
-    Node* atKey(std::string_view key, bool use_shadow) const;
+    Node* atKey(std::string_view key, bool use_shadow,
+                char key_sep = VE_NODE_KEY_SEP) const;
 
     Node* atKey(int index, bool use_shadow);
     Node* atKey(const std::string& name, int overlap, bool use_shadow);
-    Node* atKey(std::string_view key, bool use_shadow);        // ensure exists, creates if not found
+    Node* atKey(std::string_view key, bool use_shadow,
+                char key_sep = VE_NODE_KEY_SEP);        // ensure exists, creates if not found
 
 
     // --- path (path = key/key/...) ---
     std::string path(Node* ancestor = nullptr) const;
 
+    // Validate a string as a usable child name (no path_sep, no key_sep, not empty).
+    static bool isName(std::string_view name,
+                       char path_sep = VE_NODE_PATH_SEP,
+                       char key_sep  = VE_NODE_KEY_SEP);
+
     // Multi-level path access: "a/b/c"
-    Node*       atPath(std::string_view path, bool use_shadow) const;  // find only
-    Node*       atPath(std::string_view path, bool use_shadow);        // ensure exists
+    Node*       atPath(std::string_view path, bool use_shadow,
+                       char path_sep = VE_NODE_PATH_SEP,
+                       char key_sep  = VE_NODE_KEY_SEP) const;  // find only
+    Node*       atPath(std::string_view path, bool use_shadow,
+                       char path_sep = VE_NODE_PATH_SEP,
+                       char key_sep  = VE_NODE_KEY_SEP);        // ensure exists
 
     bool        erase(const std::string& path, bool auto_delete = true);
 
@@ -330,5 +349,51 @@ template<typename T1, typename T2, typename... Ts> std::string path(const T1& t1
 }
 
 VE_API Node* n(const std::string& path, bool auto_create = true);
+
+// ============================================================================
+// NodeRef — base wrapper for "this object is bound to a Node*"
+// ============================================================================
+//
+// Reusable mixin for Factory / Module / Command / Args and similar. Stores
+// a single Node* with derived-class access (protected). Provides node()
+// accessor and operator bool() to check validity.
+//
+// Path ctor uses ensure-exists semantics (atPath with create=true). Callers
+// wanting find-only should construct from an existing Node* (e.g. via
+// const_cast<const Node*>(root)->atPath(..., false, ...)).
+
+struct VE_API NodeRef
+{
+protected:
+    Node* _n = nullptr;
+
+public:
+    NodeRef() = default;
+    NodeRef(Node* n) : _n(n) {}
+    explicit NodeRef(const std::string& path,
+                     char path_sep = VE_NODE_PATH_SEP,
+                     char key_sep  = VE_NODE_KEY_SEP)
+        : _n(node::root()->atPath(path, true, path_sep, key_sep))
+    {}
+
+    Node* node() const { return _n; }
+    explicit operator bool() const { return _n != nullptr; }
+
+    // Path-based child lookup under this NodeRef.
+    // const version: find-only (nullptr if missing)
+    // non-const version: ensure-exists (creates the path)
+    Node* node(const std::string& key,
+               char path_sep = VE_NODE_PATH_SEP,
+               char key_sep  = VE_NODE_KEY_SEP) const
+    {
+        return _n ? const_cast<const Node*>(_n)->atPath(key, false, path_sep, key_sep) : nullptr;
+    }
+    Node* node(const std::string& key,
+               char path_sep = VE_NODE_PATH_SEP,
+               char key_sep  = VE_NODE_KEY_SEP)
+    {
+        return _n ? _n->atPath(key, true, path_sep, key_sep) : nullptr;
+    }
+};
 
 } // namespace ve

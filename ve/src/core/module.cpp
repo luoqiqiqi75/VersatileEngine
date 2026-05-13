@@ -10,23 +10,25 @@ namespace ve {
 struct Module::Private
 {
     State s = NONE;
-    Node* node = nullptr;
 };
 
-Module::Module(const std::string& name) : Object(name), _p(new Private)
+static std::string moduleKeyToPath(const std::string& name)
 {
     std::string path = name;
     for (auto& c : path) {
         if (c == '.') c = '/';
     }
-    _p->node = ve::n(path);
+    return path;
+}
+
+Module::Module(const std::string& name)
+    : Object(name), NodeRef(ve::n(moduleKeyToPath(name))), _p(new Private)
+{
 }
 
 Module::~Module() noexcept { delete _p; }
 
 Module::State Module::state() const { return _p->s; }
-
-Node* Module::node() const { return _p->node; }
 
 template<> VE_API void Module::exeState<Module::INIT>() { STATE_IMPL(INIT, init); }
 template<> VE_API void Module::exeState<Module::READY>() { STATE_IMPL(READY, ready); }
@@ -36,9 +38,9 @@ void Module::init() {}
 void Module::ready() {}
 void Module::deinit() {}
 
-ModuleFactory& globalModuleFactory()
+Factory& Module::factory()
 {
-    return factory::get("module");
+    return factory::at("module");
 }
 
 }
