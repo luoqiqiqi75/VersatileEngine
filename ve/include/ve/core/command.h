@@ -273,6 +273,25 @@ inline Pipeline* run(const std::string& key, const Var& input = {}) { return Com
 inline Node* current(Node* ctx) { return ctx ? static_cast<Node*>(ctx->get().toPointer()) : nullptr; }
 inline const Node* current(const Node* ctx) { return ctx ? static_cast<const Node*>(ctx->get().toPointer()) : nullptr; }
 
+// Create a standalone context Node with the shadow from command key's declare/
+// subtree applied. Caller owns and must delete. Useful for tests and manual ctx
+// setup before Command::call(ctx, ...).
+inline Node* context(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
+{
+    auto* ctx = new Node("_ctx");
+    const Factory& cf = factory();
+    if (auto* nd = cf.node(key, sep))
+        if (auto* decl = nd->find("declare", false))
+            ctx->setShadow(decl);
+    return ctx;
+}
+inline Node* context(const std::string& key, Node* currentNode, char sep = VE_FACTORY_KEY_SEP)
+{
+    auto* ctx = context(key, sep);
+    ctx->set(static_cast<void*>(currentNode));
+    return ctx;
+}
+
 VE_API bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx = 0);
 VE_API bool parseArgs(Node* ctx, const Var& input);
 

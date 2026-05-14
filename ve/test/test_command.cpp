@@ -118,7 +118,8 @@ VE_TEST(pipeline_single_step) {
     VE_ASSERT_EQ(pipe.stepCount(), 1);
     VE_ASSERT_EQ(pipe.state(), Pipeline::IDLE);
 
-    pipe.start(Var(5));
+    pipe.context()->set(Var(5));
+    pipe.start();
     VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
     VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 105);
 }
@@ -256,7 +257,7 @@ VE_TEST(pipeline_clone) {
 // ============================================================================
 
 VE_TEST(command_basic) {
-    command::build("_test_deploy", [](Command& cmd) {
+    command::reg("_test_deploy", [](Command& cmd) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
         VE_ASSERT_EQ(cmd.node()->name(), "_test_deploy");
@@ -286,7 +287,7 @@ VE_TEST(command_pipeline_creation) {
 }
 
 VE_TEST(command_help_metadata) {
-    command::build("_test_greet_help", [](Command& cmd) {
+    command::reg("_test_greet_help", [](Command& cmd) {
         cmd.setHelp("say hello");
     });
     VE_ASSERT_EQ(command::help("_test_greet_help"), "say hello");
@@ -294,7 +295,7 @@ VE_TEST(command_help_metadata) {
 }
 
 VE_TEST(command_build_pipeline) {
-    command::build("_test_build_pipe", [](Command& cmd) {
+    command::reg("_test_build_pipe", [](Command& cmd) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(Var(42)); });
     });
     auto* nd = command::factory().node("_test_build_pipe");
@@ -330,7 +331,7 @@ VE_TEST(factory_node_layout_single_step) {
 }
 
 VE_TEST(factory_node_layout_multi_step) {
-    command::build("_test_layout_multi", [](Command& cmd) {
+    command::reg("_test_layout_multi", [](Command& cmd) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
@@ -384,7 +385,7 @@ VE_TEST(command_ns_reg_and_call) {
 }
 
 VE_TEST(command_ns_run) {
-    command::build("_test_multi", [](Command& cmd) {
+    command::reg("_test_multi", [](Command& cmd) {
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
         cmd.addStep([](const Var&) -> Result { return Result::ok(); });
     });
@@ -415,7 +416,7 @@ VE_TEST(command_ns_step) {
 VE_TEST(register_step_with_loopref) {
     EventLoop loop("regstep_lr");
     loop.start();
-    Step::reg("_test_regstep_lr", [](Node*) -> Result { return Result::ok(Var(1)); },
+    command::reg("_test_regstep_lr", [](Node*) -> Result { return Result::ok(Var(1)); },
               LoopRef::from(loop), "lr help");
 
     VE_ASSERT(command::has("_test_regstep_lr"));
@@ -456,7 +457,7 @@ VE_TEST(command_ns_not_found) {
     // callers are responsible for checking before dispatch (calling on an
     // invalid Command crashes — caller's contract).
     Command cmd("_test_nonexistent");
-    VE_ASSERT(!cmd);
+    VE_ASSERT(!cmd.isValid());
     VE_ASSERT(!command::has("_test_nonexistent"));
 }
 
@@ -582,6 +583,7 @@ VE_TEST(step_form2_single_arg_ctx_child) {
     Node* ctx = command::context("_test_negate");
     ctx->at(0, false)->set(Var(7));
     auto r = command::call("_test_negate", ctx);
+    delete ctx;
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.content().toInt(), -7);
     command::factory().node()->erase("_test_negate");
