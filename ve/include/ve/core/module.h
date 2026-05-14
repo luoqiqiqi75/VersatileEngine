@@ -53,9 +53,6 @@ public:
 
     template<State s> void exeState();
 
-    // Global module factory (ve/factory/module).
-    static Factory& factory();
-
 protected:
     virtual void init();
     virtual void ready();
@@ -87,28 +84,15 @@ protected:
 
 using ModuleFactory = Factory;
 
-template<class C>
-inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
-    const std::string& key, int priority = 100, int ver = 0)
-{
-    Module::factory().reg(key, Var::callable([=]() -> Module* { return new C(key); }));
-    if (priority != 100) {
-        auto* nd = Module::factory().node(key, VE_FACTORY_KEY_SEP);
-        if (nd) nd->at("priority")->set(Var(priority));
-    }
-    if (ver > 0) {
-        auto* nd = Module::factory().node(key, VE_FACTORY_KEY_SEP);
-        if (nd) nd->at("version")->set(Var(ver));
-        version::reg(key, ver);
-    }
-}
-
 namespace module {
+
+// Global module factory (ve/factory/module). The single source of truth for
+// module registration and instance lookup.
+VE_API Factory& factory();
 
 inline Module* instance(const std::string& key)
 {
-    const Factory& f = Module::factory();
-    auto* nd = f.node(key, VE_FACTORY_KEY_SEP);
+    auto* nd = factory().node(key, VE_FACTORY_KEY_SEP);
     if (!nd) return nullptr;
     if (auto* inst = nd->find("instance", false))
         return static_cast<Module*>(inst->get().toPointer());
@@ -121,6 +105,23 @@ inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::st
     return static_cast<T*>(instance(key));
 }
 
+}
+
+template<class C>
+inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
+    const std::string& key, int priority = 100, int ver = 0)
+{
+    auto& f = module::factory();
+    f.reg(key, Var::callable([=]() -> Module* { return new C(key); }));
+    if (priority != 100) {
+        auto* nd = f.node(key, VE_FACTORY_KEY_SEP);
+        if (nd) nd->at("priority")->set(Var(priority));
+    }
+    if (ver > 0) {
+        auto* nd = f.node(key, VE_FACTORY_KEY_SEP);
+        if (nd) nd->at("version")->set(Var(ver));
+        version::reg(key, ver);
+    }
 }
 
 }

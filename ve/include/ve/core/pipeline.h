@@ -14,6 +14,12 @@
 //
 // Signals: CMD_DONE, CMD_ERROR (emitted on completion / failure)
 //
+// Context ownership:
+//   Pipeline holds the per-call context Node — the shared state every Step reads
+//   from and writes to. The constructor decides ownership: pass an existing
+//   Node* to share it with the caller (Pipeline does not delete it), or pass
+//   nullptr to let Pipeline allocate its own "_ctx" Node (deleted by the dtor).
+//
 // Each start() copies the Step list into a runtime queue for safe re-execution.
 // Steps returning ACCEPT pause the pipeline until finish() is called.
 
@@ -33,7 +39,9 @@ public:
         CMD_ERROR = 0xFFFF'0031,
     };
 
-    explicit Pipeline(const std::string& name = "");
+    // ctx == nullptr → Pipeline allocates an internal "_ctx" Node and owns it.
+    // ctx != nullptr → Pipeline uses the caller's ctx and does NOT delete it.
+    explicit Pipeline(const std::string& name = "", Node* ctx = nullptr);
     ~Pipeline();
 
     // --- build ---
@@ -42,9 +50,7 @@ public:
     int stepCount() const;
 
     // --- execution state machine ---
-    /// ctx null: allocates an empty context node (Pipeline owns; deleted in dtor). Non-null: caller owns ctx for pipeline lifetime.
-    Result start(Node* ctx = nullptr);
-    Result start(const Var& input);  // backward compat
+    Result start();
     void   pause();
     void   resume();
     void   stop();

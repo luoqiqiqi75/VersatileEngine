@@ -314,23 +314,16 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
             return;
         }
 
-        Node* ctxNode = command::context(name);
-        if (!ctxNode) {
-            errorReply(rep, id, "internal_error", "cannot create command context");
-            return;
-        }
-        command::parseArgs(ctxNode, args);
         Pipeline* detached = nullptr;
-        Result result = command::call(name, ctxNode, false, &detached);
+        Result result = Command(name).call(args, /*currentNode=*/nullptr, /*wait=*/false, &detached);
         if (detached) {
             if (!tasks) {
                 delete detached;
-                delete ctxNode;
                 errorReply(rep, id, "internal_error", "task service unavailable");
                 return;
             }
 
-            std::string taskId = tasks->attach(name, id, ctxNode, detached,
+            std::string taskId = tasks->attach(name, id, detached,
                 [allowAsyncEvents, sendEvent](const Node& event) {
                     if (allowAsyncEvents && sendEvent) {
                         sendEvent(event);
@@ -344,7 +337,6 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
             return;
         }
 
-        delete ctxNode;
         if (result.isSuccess() || result.isAccepted()) {
             okReply(rep, id, result.content());
         } else {

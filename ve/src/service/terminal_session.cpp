@@ -770,21 +770,20 @@ std::string TerminalSession::execute(const std::string& line)
     // Always find the longest match (most words consumed).
     auto [resolvedCmd, cmdWordCount] = resolveCommand(args);
 
-    if (Command cmd(resolvedCmd); cmd) {
-        Node* ctx = cmd.context(s.cur);
+    if (Command cmd(resolvedCmd); cmd.isValid()) {
         Var::ListV list;
         for (size_t i = cmdWordCount; i < args.size(); ++i)
             list.push_back(Var(args[i]));
-        command::parseArgs(ctx, list.empty() ? Var() : Var(std::move(list)));
+        Var inputVar = list.empty() ? Var() : Var(std::move(list));
 
         if (asyncMode) {
             Pipeline* detached = nullptr;
-            auto r = cmd.call(ctx, false, &detached);
+            auto r = cmd.call(inputVar, s.cur, false, &detached);
 
             if (detached) {
                 auto asyncOut = s.asyncOutput;
                 std::string cmdName = resolvedCmd;
-                detached->setResultHandler([asyncOut, ctx, detached, cmdName](const Result& res) {
+                detached->setResultHandler([asyncOut, detached, cmdName](const Result& res) {
                     std::string text;
                     if (res.isSuccess() || res.isAccepted()) {
                         if (!res.content().isNull())
@@ -798,7 +797,6 @@ std::string TerminalSession::execute(const std::string& line)
                         asyncOut("\x1b[33m[" + cmdName + "]\x1b[0m " + text);
                     }
                     delete detached;
-                    delete ctx;
                 });
                 s.print("accepted\n");
                 return s.output;
@@ -812,12 +810,11 @@ std::string TerminalSession::execute(const std::string& line)
             } else {
                 s.print(Var(r).toString() + "\n");
             }
-            delete ctx;
             return s.output;
         }
 
         // Default: synchronous execution
-        auto r = cmd.call(ctx);
+        auto r = cmd.call(inputVar, s.cur, true, nullptr);
         if (r.isSuccess() || r.isAccepted()) {
             auto& content = r.content();
             if (!content.isNull())
@@ -825,7 +822,6 @@ std::string TerminalSession::execute(const std::string& line)
         } else {
             s.print(Var(r).toString() + "\n");
         }
-        delete ctx;
         return s.output;
     }
 

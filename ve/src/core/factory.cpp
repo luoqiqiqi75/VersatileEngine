@@ -26,7 +26,7 @@ void Factory::reg(const std::string& key, Node* functor_n, Var callable,
     if (!functor_n) return;
 
     // Track the caller-form key for enumeration.
-    if (auto it = std::find(_p->keys.begin(), _p->keys.end(), key) == _p->keys.end()) {
+    if (auto it = std::find(_p->keys.begin(), _p->keys.end(), key); it == _p->keys.end()) {
         _p->keys.push_back(key);
     } else {
         veLogE << "<ve/factory>" << _n->name() << ": duplicate registration for key: " << key;

@@ -38,9 +38,10 @@ void Module::init() {}
 void Module::ready() {}
 void Module::deinit() {}
 
-Factory& Module::factory()
-{
-    return factory::at("module");
+namespace module {
+
+Factory& factory() { return factory::at("module"); }
+
 }
 
 }

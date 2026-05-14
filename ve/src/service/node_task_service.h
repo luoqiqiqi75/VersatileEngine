@@ -21,8 +21,10 @@ public:
     explicit NodeTaskService(Node* root);
     ~NodeTaskService();
 
+    // The Pipeline (`detached`) owns its context; deleting the pipeline cleans
+    // up both. Task service takes ownership of `detached`.
     std::string attach(const std::string& cmdKey, const Var& id,
-                       Node* cmdCtx, Pipeline* detached, DoneFn onDone);
+                       Pipeline* detached, DoneFn onDone);
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

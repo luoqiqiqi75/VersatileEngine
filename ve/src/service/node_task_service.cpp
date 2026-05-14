@@ -36,11 +36,10 @@ NodeTaskService::NodeTaskService(Node* root)
 NodeTaskService::~NodeTaskService() = default;
 
 std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
-                                    Node* cmdCtx, Pipeline* detached, DoneFn onDone)
+                                    Pipeline* detached, DoneFn onDone)
 {
-    if (!_p->root || !detached || !cmdCtx) {
+    if (!_p->root || !detached) {
         delete detached;
-        delete cmdCtx;
         return {};
     }
 
@@ -54,7 +53,7 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
     }
 
     auto finished = std::make_shared<std::atomic<bool>>(false);
-    auto finalize = [this, id, taskId, cmdCtx, detached, onDone, finished](const Result& res) {
+    auto finalize = [this, id, taskId, detached, onDone, finished](const Result& res) {
         if (finished->exchange(true, std::memory_order_acq_rel)) {
             return;
         }
@@ -90,7 +89,6 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
         }
 
         delete detached;
-        delete cmdCtx;
     };
 
     detached->setResultHandler([finalize](const Result& res) {

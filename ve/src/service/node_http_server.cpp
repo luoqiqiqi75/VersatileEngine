@@ -2,6 +2,7 @@
 #include "ve/service/node_service.h"
 #include "ve/core/command.h"
 #include "ve/core/node.h"
+#include "ve/core/pipeline.h"
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
 #include "server_util.h"
@@ -470,7 +471,7 @@ bool NodeHttpServer::start()
             return;
         }
         Command cmd(cmdKey);
-        if (!cmd) {
+        if (!cmd.isValid()) {
             Node reply("rep");
             fillError(&reply, "not_found", "unknown command: " + cmdKey);
             rep.fill_json(toJson(reply), http::status::not_found);
@@ -489,34 +490,32 @@ bool NodeHttpServer::start()
             }
         }
 
-        Node* ctx = cmd.context(current);
+        Var inputVar;
         std::string body(req.body());
         if (!body.empty()) {
             Node input("input");
             if (!schema::importAs<schema::JsonS>(&input, body)) {
-                delete ctx;
                 Node reply("rep");
                 fillError(&reply, "invalid_request", "invalid JSON body");
                 rep.fill_json(toJson(reply), http::status::bad_request);
                 return;
             }
-            command::parseArgs(ctx, schema::exportAs<schema::VarS>(&input));
+            inputVar = schema::exportAs<schema::VarS>(&input);
         }
 
         const bool async = queryBool(req.query(), "async", false);
         Pipeline* detached = nullptr;
-        Result result = cmd.call(ctx, !async, async ? &detached : nullptr);
+        Result result = cmd.call(inputVar, current, !async, async ? &detached : nullptr);
         if (detached) {
             if (!_p->taskSvc) {
                 delete detached;
-                delete ctx;
                 Node reply("rep");
                 fillError(&reply, "internal_error", "task service unavailable");
                 rep.fill_json(toJson(reply), http::status::internal_server_error);
                 return;
             }
 
-            std::string taskId = _p->taskSvc->attach(cmdKey, Var(), ctx, detached, {});
+            std::string taskId = _p->taskSvc->attach(cmdKey, Var(), detached, {});
             if (taskId.empty()) {
                 Node reply("rep");
                 fillError(&reply, "internal_error", "failed to start task");
@@ -531,7 +530,6 @@ bool NodeHttpServer::start()
             return;
         }
 
-        delete ctx;
         if (result.isSuccess() || result.isAccepted()) {
             Node out("r");
             out.set("ok", true);

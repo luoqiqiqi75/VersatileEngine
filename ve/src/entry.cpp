@@ -303,7 +303,7 @@ static void loadPlugins()
 
 static void buildModuleGraph(Vector<ModuleSlot>& slots)
 {
-    auto& factory = Module::factory();
+    auto& factory = module::factory();
 
     Hash<int> base_pri;
     for (const auto& key : factory::keys("module")) {
@@ -463,7 +463,7 @@ void init()
     buildModuleGraph(g.modules);
     resolveDepends(g.modules);
 
-    auto& factory = Module::factory();
+    auto& factory = module::factory();
 
     for (auto& slot : g.modules) {
         if (verbose) {

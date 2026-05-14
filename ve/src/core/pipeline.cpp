@@ -17,21 +17,24 @@ struct Pipeline::Private
     bool            ownsContext = false;
     Result          lastResult = Result::ok();
     ResultHandler   handler;
-
-    void clearContext()
-    {
-        if (ownsContext && context) {
-            delete context;
-        }
-        context = nullptr;
-        ownsContext = false;
-    }
 };
 
-Pipeline::Pipeline(const std::string& name)
-    : Object(name) {}
+Pipeline::Pipeline(const std::string& name, Node* ctx)
+    : Object(name)
+{
+    if (ctx) {
+        _p->context = ctx;
+        _p->ownsContext = false;
+    } else {
+        _p->context = new Node("_ctx");
+        _p->ownsContext = true;
+    }
+}
 
-Pipeline::~Pipeline() { _p->clearContext(); }
+Pipeline::~Pipeline()
+{
+    if (_p->ownsContext && _p->context) delete _p->context;
+}
 
 // --- build ---
 
@@ -45,17 +48,9 @@ int Pipeline::stepCount() const { return static_cast<int>(_p->steps.size()); }
 
 // --- execution state machine ---
 
-Result Pipeline::start(Node* ctx)
+Result Pipeline::start()
 {
-    _p->clearContext();
     _p->state = RUNNING;
-    if (!ctx) {
-        ctx = new Node("_ctx");
-        _p->ownsContext = true;
-    } else {
-        _p->ownsContext = false;
-    }
-    _p->context = ctx;
     _p->stepIndex = 0;
     _p->lastResult = Result::ok();
 
@@ -78,15 +73,6 @@ Result Pipeline::start(Node* ctx)
         return Result::accept();
     }
     return _p->lastResult;
-}
-
-Result Pipeline::start(const Var& input)
-{
-    auto* ctx = new Node("_input");
-    ctx->set(input);
-    auto r = start(ctx);
-    _p->ownsContext = true;
-    return r;
 }
 
 void Pipeline::pause()
@@ -113,7 +99,6 @@ void Pipeline::stop()
     _p->queue.clear();
     _p->state = IDLE;
     _p->stepIndex = -1;
-    _p->clearContext();
 }
 
 void Pipeline::finish(const Result& result)
