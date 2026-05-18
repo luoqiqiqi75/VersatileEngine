@@ -298,12 +298,13 @@ command::reg("mycommand", [](const Var& args) -> Result {
 
 | Service | Port | Protocol | Use Case |
 |---------|------|----------|----------|
+| Terminal REPL (AI/script) | 10100 | Text commands | **Default** for scripts and AI agents (bare output) |
+| Terminal REPL (human) | 10000 | Text commands | Human interactive debugging (banner/title/color) |
 | HTTP | 12000 | `/at` + `/ve` + `/jsonrpc` | Browser, curl |
 | WebSocket | 12100 | JSON envelope | Real-time web apps |
 | TCP | 12200 | JSON envelope + newline | Scripts, IoT |
 | UDP | 12300 | JSON envelope datagram | Telemetry |
 | Binary TCP | 11000 | MessagePack envelope | High-performance IPC |
-| Terminal REPL | 10000 | Text commands | Interactive debugging |
 
 ## Module Registration
 

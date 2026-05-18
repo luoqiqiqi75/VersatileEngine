@@ -77,7 +77,8 @@ The VE layer exists to map those worlds into one shared tree and one consistent 
 The same process can expose:
 
 - direct in-process C++ access through `ve::n()`
-- terminal debugging on TCP port `10000`
+- terminal REPL on TCP port `10100` (bare output, default for scripts & AI agents)
+- terminal REPL on TCP port `10000` (banner/title/color, human-only)
 - HTTP node inspection on port `12000`
 - WebSocket subscriptions on port `12100`
 - binary IPC on port `11000`
@@ -252,11 +253,14 @@ int main(int argc, char* argv[]) {
 
 ### Terminal REPL
 
-Connect to the built-in terminal via TCP:
+VE opens two TCP text REPLs on the same node tree:
+
+- **Port 10100** — bare output (no banner, no title, no ANSI color). This is the default for any non-human consumer: scripts, CI checks, AI agents. Parse-friendly.
+- **Port 10000** — banner + title + colored prompt, designed for a human at a terminal.
 
 ```bash
-# netcat / telnet to port 10000
-nc localhost 10000
+# scripts / AI agents — use 10100
+nc localhost 10100
 
 ve> ls /robot
 state/
@@ -363,7 +367,8 @@ Benchmarks run on Intel i7-12700K, Windows 11, MSVC 2022 Release build. See `ve/
 
 | Service | Port | Protocol | Description |
 |---------|------|----------|-------------|
-| Terminal | 10000 | TCP text | REPL with tab completion |
+| Terminal (AI/script) | 10100 | TCP text | REPL, bare output. **Default for scripts and AI agents.** |
+| Terminal (human) | 10000 | TCP text | REPL with banner/title/color. Human interactive only. |
 | Binary TCP | 11000 | MessagePack | High-performance IPC |
 | HTTP | 12000 | HTTP | `/at` + `/ve` + `/jsonrpc` + `/cmd` |
 | WebSocket | 12100 | WS JSON | Real-time Node change push |
