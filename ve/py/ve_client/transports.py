@@ -96,7 +96,8 @@ class Transport(ABC):
         """Remove node at path (node.remove)."""
         pass
 
-    def subscribe(self, path: str, callback: NotifyCallback) -> Callable[[], None]:
+    def subscribe(self, path: str, callback: NotifyCallback,
+                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
         raise NotImplementedError("subscribe not supported on this transport")
 
     def unsubscribe(self, path: str) -> None:
@@ -505,7 +506,8 @@ class TcpJsonTransport(Transport):
         data = resp.get("data", {})
         return data.get("items", []) if isinstance(data, dict) else []
 
-    def subscribe(self, path: str, callback: NotifyCallback) -> Callable[[], None]:
+    def subscribe(self, path: str, callback: NotifyCallback,
+                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function."""
         path = _normalize_path(path)
         with self._sub_lock:
@@ -515,7 +517,12 @@ class TcpJsonTransport(Transport):
             self._subscriptions[path].add(callback)
 
         if is_new:
-            self._send({"op": "subscribe", "path": path})
+            req: dict = {"op": "subscribe", "path": path}
+            if tree:
+                req["tree"] = True
+            if bubble:
+                req["bubble"] = True
+            self._send(req)
 
         def unsub():
             with self._sub_lock:
@@ -751,7 +758,8 @@ class MsgPackTransport(Transport):
         data = resp.get("data", {})
         return data.get("items", []) if isinstance(data, dict) else []
 
-    def subscribe(self, path: str, callback: NotifyCallback) -> Callable[[], None]:
+    def subscribe(self, path: str, callback: NotifyCallback,
+                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function."""
         path = _normalize_path(path)
         with self._sub_lock:
@@ -761,7 +769,12 @@ class MsgPackTransport(Transport):
             self._subscriptions[path].add(callback)
 
         if is_new:
-            self._send_frame("subscribe", path)
+            data = {}
+            if tree:
+                data["tree"] = True
+            if bubble:
+                data["bubble"] = True
+            self._send_frame("subscribe", path, data if data else None)
 
         def unsub():
             with self._sub_lock:

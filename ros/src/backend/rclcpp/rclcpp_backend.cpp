@@ -561,7 +561,7 @@ public:
                 schema::importAs<schema::VarS>(&payload, Var(decoded), schema::ImportOptions{true, false, true});
 
                 if (!target_path.empty())
-                    ve::n(target_path)->copy(&payload, true, true, true);
+                    ve::n(target_path)->copy(&payload, true, true, false);
                 auto* rx = ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx");
                 rx->set(rx->getInt64(0) + 1);
             });
@@ -716,7 +716,7 @@ public:
         if (result.value("ok").toBool(false) && !request.target_node.empty()) {
             Node payload("payload");
             schema::importAs<schema::VarS>(&payload, Var(result), schema::ImportOptions{true, false, true});
-            ve::n(request.target_node)->copy(&payload, true, true, true);
+            ve::n(request.target_node)->copy(&payload, true, true, false);
             result["target_node"] = Var(request.target_node);
         }
         result["message"] = Var(result.value("ok").toBool(false) ? "topic once ok" : result.value("message").toString());

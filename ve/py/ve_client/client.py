@@ -139,13 +139,17 @@ class VeClient:
         """Execute batch operations."""
         return self._transport.batch(items)
 
-    def subscribe(self, path: str, callback: NotifyCallback) -> Callable[[], None]:
+    def subscribe(self, path: str, callback: NotifyCallback,
+                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function.
 
         callback(path: str, value: Any) is called on each NODE_CHANGED event.
+        Set tree=True to receive the full subtree value instead of just the
+        node's own value.
+
         Supported on TCP JSON and MsgPack transports.
         """
-        return self._transport.subscribe(path, callback)
+        return self._transport.subscribe(path, callback, tree=tree, bubble=bubble)
 
     def unsubscribe(self, path: str) -> None:
         """Remove all subscriptions for a path."""
