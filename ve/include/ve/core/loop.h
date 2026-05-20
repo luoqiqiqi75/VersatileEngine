@@ -43,6 +43,14 @@ namespace ve {
 //   static void     postDelayed(Context*, Task, std::chrono::milliseconds);
 //   static int      postRepeating(Context*, Task, std::chrono::milliseconds);
 //   static void     cancel(Context*, int timer_id);
+//   static bool     isCurrentThread(const Context*);  // is caller on a worker thread?
+//   static size_t   runOne(Context*);                 // pump one queued task; returns count run
+//
+// The isCurrentThread / runOne pair enables sync nested command::call from a
+// loop's own worker thread: drivePipeline detects re-entrancy and pumps events
+// instead of blocking on a condition_variable (which would starve itself).
+// Backends without these become "not pumpable" — sync re-entry stays a deadlock
+// risk on those backends, as it was before.
 //
 
 template<typename T>
@@ -100,6 +108,37 @@ public:
     bool stop()                 { return Traits::stop(_ctx); }
     bool isRunning() const      { return Traits::running(_ctx); }
 
+    // --- Optional pump API (used by drivePipeline for re-entrant sync calls) ---
+    // SFINAE-detected so backends without these traits stay compilable; absent
+    // backends fall back to "not on worker thread" / "no-op pump", which keeps
+    // the legacy CV-wait behaviour for them.
+private:
+    template<typename Tr, typename = void>
+    struct has_thread_check_ : std::false_type {};
+    template<typename Tr>
+    struct has_thread_check_<Tr, std::void_t<decltype(Tr::isCurrentThread(
+        std::declval<const typename Tr::Context*>()))>> : std::true_type {};
+
+    template<typename Tr, typename = void>
+    struct has_run_one_ : std::false_type {};
+    template<typename Tr>
+    struct has_run_one_<Tr, std::void_t<decltype(Tr::runOne(
+        std::declval<typename Tr::Context*>()))>> : std::true_type {};
+
+public:
+    bool isCurrentThread() const {
+        if constexpr (has_thread_check_<Traits>::value)
+            return Traits::isCurrentThread(_ctx);
+        else
+            return false;
+    }
+    size_t runOne() {
+        if constexpr (has_run_one_<Traits>::value)
+            return Traits::runOne(_ctx);
+        else
+            return 0;
+    }
+
     // --- Backend access (requires complete Context type) ---
     Context*           contextPtr()       { return _ctx; }
     const Context*     contextPtr() const { return _ctx; }
@@ -126,6 +165,21 @@ struct has_loop_ref_interface<U, std::void_t<
 
 template<typename U>
 inline constexpr bool has_loop_ref_interface_v = has_loop_ref_interface<std::decay_t<U>>::value;
+
+// Pumpable = has isCurrentThread() + runOne() on the loop object itself.
+// (Loop<T> exposes these unconditionally via SFINAE-on-traits, so this just
+// detects "is it a real Loop<T>-like".)
+template<typename U, typename = void>
+struct has_pump_interface : std::false_type {};
+
+template<typename U>
+struct has_pump_interface<U, std::void_t<
+    decltype(std::declval<const U&>().isCurrentThread()),
+    decltype(std::declval<U&>().runOne())
+>> : std::true_type {};
+
+template<typename U>
+inline constexpr bool has_pump_interface_v = has_pump_interface<std::decay_t<U>>::value;
 
 } // namespace detail
 
@@ -154,10 +208,22 @@ struct LoopRef : std::pair<std::function<void(Task)>, Alive>
 {
     VE_INHERIT_CONSTRUCTOR(pair, LoopRef, std::pair<std::function<void(Task)>, Alive>)
 
+    // Optional pump probe + run-one closures. Filled by LoopRef::from(Loop&)
+    // when the source Loop exposes isCurrentThread()/runOne(); empty otherwise.
+    // drivePipeline reads these to detect re-entrant sync calls from a loop's
+    // own worker thread and pump events instead of CV-blocking.
+    std::function<bool()>   probe;
+    std::function<size_t()> run_one;
+
     template<typename T, typename = std::enable_if_t<
         detail::has_loop_ref_interface_v<T> && !std::is_same_v<std::decay_t<T>, LoopRef>>>
     static LoopRef from(T& loop) {
-        return LoopRef([&loop](Task t) { loop.post(std::move(t)); }, loop.alive());
+        LoopRef r([&loop](Task t) { loop.post(std::move(t)); }, loop.alive());
+        if constexpr (detail::has_pump_interface_v<T>) {
+            r.probe   = [&loop]() { return loop.isCurrentThread(); };
+            r.run_one = [&loop]() { return loop.runOne(); };
+        }
+        return r;
     }
 
     void post(Task task) const {
@@ -172,6 +238,11 @@ struct LoopRef : std::pair<std::function<void(Task)>, Alive>
             if (!token.dead()) task();
         });
     }
+
+    // True iff probe is set AND reports the caller is on the loop's worker.
+    bool isCurrentThread() const { return probe && probe(); }
+    // Pump one task; returns 0 when no pump closure is available.
+    size_t runOne() const { return run_one ? run_one() : 0; }
 
     explicit operator bool() const { return static_cast<bool>(first); }
 };
@@ -198,6 +269,10 @@ struct LoopTraits<AsioContext>
     static VE_API bool     start(Context*);
     static VE_API bool     stop(Context*);
     static VE_API bool     running(const Context*);
+
+    // Pump extensions: re-entrant sync support for drivePipeline.
+    static VE_API bool     isCurrentThread(const Context*);
+    static VE_API size_t   runOne(Context*);
 };
 
 

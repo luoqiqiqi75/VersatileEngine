@@ -131,11 +131,45 @@ namespace {
 //   - wait=false : start asynchronously. If accepted, hand pipe to *detachedOut.
 //                  Caller takes over ownership. If no detachedOut, pipe is stopped
 //                  and deleted (error returned).
+//
+// wait=true has two execution paths:
+//   (a) Pump path — taken when caller is already on loop::main()'s worker
+//       thread (e.g. a Step calling a nested command::call). CV-wait would
+//       starve itself: the step posts continuations onto the very loop the
+//       calling thread is now blocked on. Instead we pump asio handlers via
+//       Loop::runOne() until the pipeline reaches a terminal state.
+//   (b) CV path — taken when caller is on a different thread (service threads
+//       handling HTTP/WS/TCP, leo-agent worker, tests, etc). The main loop
+//       picks up step tasks; we sleep on a condvar that the pipe's result
+//       handler notifies on completion.
 Result drivePipeline(Pipeline* pipe, bool wait, Pipeline** detachedOut)
 {
     if (detachedOut) *detachedOut = nullptr;
 
     if (wait) {
+        if (loop::main().isCurrentThread()) {
+            // ---- Pump path: re-entrant sync from the main-loop worker. ----
+            Result r = pipe->start();
+
+            if (r.isAccepted()) {
+                // Pump handlers until this pipe terminates. runOne may execute
+                // arbitrary other handlers along the way (this is expected
+                // asio re-entrancy); the pipeline's own continuations will
+                // surface among them and eventually complete it.
+                while (true) {
+                    const Pipeline::State st = pipe->state();
+                    if (st == Pipeline::DONE || st == Pipeline::ERRORED
+                        || st == Pipeline::IDLE) break;
+                    if (loop::main().runOne() == 0) break;  // io stopped
+                }
+            }
+
+            Result lr = pipe->lastResult();
+            delete pipe;
+            return lr;
+        }
+
+        // ---- CV path: caller is on a foreign thread; safe to block. ----
         std::mutex mtx;
         std::condition_variable cv;
         bool finished = false;

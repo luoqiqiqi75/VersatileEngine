@@ -92,6 +92,24 @@ bool LoopTraits<AsioContext>::running(const Context* ctx)
     return ctx->is_running;
 }
 
+bool LoopTraits<AsioContext>::isCurrentThread(const Context* ctx)
+{
+    if (!ctx) return false;
+    // asio io_context exposes this directly. True iff the calling thread is
+    // currently executing inside one of this io_context's run()/run_one()
+    // invocations — i.e. a worker thread.
+    return const_cast<asio::io_context&>(ctx->io).get_executor().running_in_this_thread();
+}
+
+size_t LoopTraits<AsioContext>::runOne(Context* ctx)
+{
+    if (!ctx) return 0;
+    // Blocks until exactly one handler runs (or work is exhausted). Returns 1
+    // on dispatch, 0 when io_context has stopped. Safe to call recursively
+    // from a worker thread — asio re-enters cleanly.
+    return ctx->io.run_one();
+}
+
 // ============================================================================
 // loop:: — context (thread-local, set by owner-aware post)
 // ============================================================================
