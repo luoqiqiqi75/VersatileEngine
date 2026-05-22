@@ -305,42 +305,39 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
 
         const bool waitCmd = req->find("wait") ? req->get("wait").toBool(true) : true;
         if (waitCmd) {
-            Result result = command::call(name, args, true);
+            Result result = command::callReply(name, args);
             if (result.isSuccess() || result.isAccepted()) {
-                okReply(rep, id, result.content());
+                okReply(rep, id, result.data);
             } else {
-                errorReply(rep, id, "command_failed", result.content().toString());
+                errorReply(rep, id, "command_failed", result.message);
             }
             return;
         }
 
-        Pipeline* detached = nullptr;
-        Result result = Command(name).call(args, /*currentNode=*/nullptr, /*wait=*/false, &detached);
-        if (detached) {
-            if (!tasks) {
-                delete detached;
-                errorReply(rep, id, "internal_error", "task service unavailable");
-                return;
-            }
-
-            std::string taskId = tasks->attach(name, id, detached,
-                [allowAsyncEvents, sendEvent](const Node& event) {
-                    if (allowAsyncEvents && sendEvent) {
-                        sendEvent(event);
-                    }
-                });
-            if (taskId.empty()) {
-                errorReply(rep, id, "internal_error", "failed to start task");
-            } else {
-                acceptedReply(rep, id, taskId);
-            }
+        // Async detached path. PR A Pipeline::call is single-pass synchronous,
+        // so the pipeline actually completes before this call returns —
+        // attach() then registers onFinished (no-op) + checks state==DONE +
+        // manually finalizes. PR C will turn this into a true async dispatch.
+        if (!tasks) {
+            errorReply(rep, id, "internal_error", "task service unavailable");
             return;
         }
 
-        if (result.isSuccess() || result.isAccepted()) {
-            okReply(rep, id, result.content());
+        auto* detached = new Pipeline(name);
+        detached->keepAlive();
+        detached->addPathStep(Command(name), "request", "reply");
+        detached->callReply(args);   // sync run (PR A); handler not yet registered
+
+        std::string taskId = tasks->attach(name, id, detached,
+            [allowAsyncEvents, sendEvent](const Node& event) {
+                if (allowAsyncEvents && sendEvent) {
+                    sendEvent(event);
+                }
+            });
+        if (taskId.empty()) {
+            errorReply(rep, id, "internal_error", "failed to start task");
         } else {
-            errorReply(rep, id, "command_failed", result.content().toString());
+            acceptedReply(rep, id, taskId);
         }
         return;
     }

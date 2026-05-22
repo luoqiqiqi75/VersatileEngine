@@ -253,6 +253,40 @@ inline Loop<T>::operator LoopRef() { return LoopRef::from(*this); }
 
 
 // ============================================================================
+// Step — loop scheduling primitive: (callable + target loop) pair
+// ============================================================================
+//
+// Step is a self-contained scheduling unit: it knows what to run (callable)
+// and where to run (loop). Pipeline binds (Proc + ctx + in + out + on_done)
+// into the callable; the LoopRef tags which loop the binding belongs on.
+// Empty LoopRef ⇒ run inline on caller's thread (synchronous).
+//
+// This keeps Pipeline's StepRuntime free of side-band loop lookup tables —
+// scheduling is just `step.post(alive)`.
+
+struct Step : std::pair<Task, LoopRef>
+{
+    VE_INHERIT_CONSTRUCTOR(pair, Step, std::pair<Task, LoopRef>)
+
+    Step(Task task, LoopRef loop = {})
+        : BaseT(std::move(task), std::move(loop)) {}
+
+    explicit operator bool() const { return static_cast<bool>(first); }
+
+    // Post the callable to the bound loop (guarded by token if non-empty).
+    // Empty LoopRef ⇒ inline invocation on caller's thread.
+    void post(Alive token = {}) const {
+        if (!first) return;
+        if (second) {
+            second.post(std::move(token), first);
+        } else {
+            first();
+        }
+    }
+};
+
+
+// ============================================================================
 // AsioContext — default backend (asio::io_context)
 // ============================================================================
 
@@ -315,6 +349,13 @@ VE_API void* context();
 
 /// Sets loop context, returns previous value. For internal / Loop-backend use.
 VE_API void* setContext(void* ctx);
+
+/// Returns the LoopRef of the current thread's dispatcher.
+/// Returns an empty LoopRef when called from a non-loop-worker thread (e.g. test main,
+/// external service threads). command::callSync uses this to detect re-entrant sync
+/// calls and pump the current loop instead of CV-waiting (which would self-starve).
+/// Implementation lives in loop.cpp via thread_local LoopRef.
+VE_API LoopRef currentDispatcher();
 
 struct ContextGuard {
     void* prev;

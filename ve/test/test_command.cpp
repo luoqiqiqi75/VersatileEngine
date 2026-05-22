@@ -1,4 +1,15 @@
-// test_command.cpp — Tests for Step, Pipeline, Command, Factory, and Object::once
+// test_command.cpp — PR A core tests: Result / Proc / Command / RegProto / CallProto / Pipeline wiring / ctx
+//
+// PR A scope:
+//   - Result three-segment {code, message, data}
+//   - Proc = Result(Node*, Node*, Node*)
+//   - Command = Proc + Schema, factory-node-backed
+//   - RegProto<tag::X> wrap (PositionalArgs / NodeAction / VoidAction / VarSingle / InOutAction / FullProc / ResultArgs)
+//   - CallProto<tag::X> (VarInVarOut / RequestReply / ListInDictOut / NodeInOut)
+//   - Pipeline wiring (CtxStep / LinearStep / PathStep) — DAG deferred to PR C
+//   - ctx top-level 4 envelopes + _pipe/ cleanup
+//
+// Async / cancel / lifetime / cross-loop / DAG → PR C / PR D.
 
 #include "ve_test.h"
 #include <ve/core/command.h>
@@ -6,661 +17,388 @@
 #include <ve/core/pipeline.h>
 #include <ve/core/node.h>
 
-#include <chrono>
-#include <thread>
-
 using namespace ve;
 
-static void wait_pipeline_terminal(Pipeline* p)
-{
-    using clock = std::chrono::steady_clock;
-    const auto deadline = clock::now() + std::chrono::seconds(2);
-    while (clock::now() < deadline) {
-        const auto s = p->state();
-        if (s != Pipeline::RUNNING && s != Pipeline::PAUSED) return;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-}
 
 // ============================================================================
-// Step tests
+// 1. Result three-segment structure
 // ============================================================================
 
-VE_TEST(step_basic_exec) {
-    Step s([](const Var& v) -> Result {
-        return Result::ok(Var(v.toInt() + 1));
-    });
-    VE_ASSERT(s);
-
-    Result r = resultFromStepReturn(s.exec(Var(10)));
+VE_TEST(result_default_is_success) {
+    Result r;
     VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toInt(), 11);
+    VE_ASSERT(!r.isError());
+    VE_ASSERT(!r.isAccepted());
+    VE_ASSERT_EQ(r.code, 0);
+    VE_ASSERT(r.message.empty());
+    VE_ASSERT(r.data.isNull());
 }
 
-VE_TEST(step_empty) {
-    Step s;
-    VE_ASSERT(!s);
-    Result r = resultFromStepReturn(s.exec(Var(42)));
+VE_TEST(result_ok_carries_data) {
+    Result r = Result::ok(Var(42));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.data.toInt(), 42);
+    VE_ASSERT(r.message.empty());
+}
+
+VE_TEST(result_fail_message) {
+    Result r = Result::fail("oops");
     VE_ASSERT(r.isError());
+    VE_ASSERT_EQ(r.code, -1);
+    VE_ASSERT_EQ(r.message, std::string("oops"));
 }
 
-VE_TEST(step_void_fn) {
-    int called = 0;
-    Step s([&called]() { ++called; });
-    Result r = resultFromStepReturn(s.exec());
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(called, 1);
+VE_TEST(result_fail_explicit_code) {
+    Result r = Result::fail(-42, "specific");
+    VE_ASSERT_EQ(r.code, -42);
+    VE_ASSERT_EQ(r.message, std::string("specific"));
 }
 
-VE_TEST(step_typed_arg) {
-    Step s([](int x) -> Result {
-        return Result::ok(Var(x * 2));
-    });
-    Result r = resultFromStepReturn(s.exec(Var(7)));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toInt(), 14);
+VE_TEST(result_fail_clamps_positive_to_minus_one) {
+    Result r = Result::fail(7, "should clamp");
+    VE_ASSERT_EQ(r.code, -1);
 }
 
-VE_TEST(step_copy) {
-    int counter = 0;
-    Step original([&counter](const Var&) -> Result {
-        ++counter;
+VE_TEST(result_accept_terminal_success) {
+    Result r = Result::accept();
+    VE_ASSERT(r.isAccepted());
+    VE_ASSERT(!r.isError());
+    VE_ASSERT(!r.isSuccess());
+    VE_ASSERT_EQ(r.code, Result::ACCEPT);
+}
+
+VE_TEST(result_framework_code_constants) {
+    VE_ASSERT_EQ(Result::EXCEPTION,   -1000);
+    VE_ASSERT_EQ(Result::CANCELLED,   -1001);
+    VE_ASSERT_EQ(Result::UNKNOWN_CMD, -1002);
+    VE_ASSERT_EQ(Result::BAD_REQUEST, -1003);
+    VE_ASSERT_EQ(Result::TIMEOUT,     -1004);
+}
+
+
+// ============================================================================
+// 2. Proc signature + 3-segment code semantics
+// ============================================================================
+
+VE_TEST(proc_three_node_signature) {
+    Node ctx("ctx"), in("in"), out("out");
+    in.set(Var(7));
+
+    Proc p = [](Node* /*ctx*/, Node* in, Node* out) -> Result {
+        out->set(Var(in->get().toInt() * 2));
         return Result::ok();
-    });
+    };
 
-    Step copy = original;
-    resultFromStepReturn(copy.exec());
-    VE_ASSERT_EQ(counter, 1);
+    Result r = p(&ctx, &in, &out);
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(out.get().toInt(), 14);
 }
 
-VE_TEST(step_multi_arg_list) {
-    Step s([](int a, int b) -> Result {
+VE_TEST(proc_returns_data_via_result) {
+    Proc p = [](Node*, Node*, Node*) -> Result {
+        return Result::ok(Var(42));
+    };
+    Node ctx("ctx"), in("in"), out("out");
+    Result r = p(&ctx, &in, &out);
+    VE_ASSERT_EQ(r.data.toInt(), 42);
+}
+
+VE_TEST(proc_returns_error) {
+    Proc p = [](Node*, Node*, Node*) -> Result {
+        return Result::fail("bad input");
+    };
+    Node ctx("ctx"), in("in"), out("out");
+    Result r = p(&ctx, &in, &out);
+    VE_ASSERT(r.isError());
+    VE_ASSERT_EQ(r.message, std::string("bad input"));
+}
+
+
+// ============================================================================
+// 3. RegProto specializations (via command::reg + SmartProto auto-tag)
+// ============================================================================
+
+VE_TEST(reg_positional_args_two_ints) {
+    command::reg("_test_add", [](int a, int b) -> Result {
         return Result::ok(Var(a + b));
     });
-    Var::ListV args;
-    args.push_back(Var(3));
-    args.push_back(Var(4));
-    Result r = resultFromStepReturn(s.exec(Var(std::move(args))));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toInt(), 7);
+    Var r = command::callVar("_test_add", Var(Var::ListV{Var(3), Var(4)}));
+    VE_ASSERT_EQ(r.toInt(), 7);
 }
 
-// Step::writeTo / addToPipeline round-trip
-VE_TEST(step_write_to_node) {
-    Node nd("test_step_node");
-    int called = 0;
-    Step s([&called]() -> Result { ++called; return Result::ok(Var(42)); });
-    s.writeTo(&nd);
+VE_TEST(reg_node_action_via_smart_proto) {
+    command::reg("_test_ctx_touch", [](Node* ctx) -> Result {
+        ctx->at("touched")->set(Var(true));
+        return Result::ok();
+    });
+    Result r = command::callReply("_test_ctx_touch", Var());
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.code, 0);
+}
 
-    VE_ASSERT(nd.get().isCallable());
-
-    Pipeline pipe("p");
-    Step::addToPipeline(&nd, pipe);
-    VE_ASSERT_EQ(pipe.stepCount(), 1);
-
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
+VE_TEST(reg_void_action_via_smart_proto) {
+    static int called = 0;
+    called = 0;
+    command::reg("_test_void", []() -> Result {
+        ++called;
+        return Result::ok();
+    });
+    Result r = command::callReply("_test_void", Var());
+    VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(called, 1);
-    VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 42);
 }
 
-// ============================================================================
-// Pipeline tests
-// ============================================================================
-
-VE_TEST(pipeline_single_step) {
-    Pipeline pipe("test");
-    pipe.add([](Node* n) -> Result {
-        Var v = n ? n->get() : Var();
-        return Result::ok(Var(v.toInt() + 100));
-    });
-
-    VE_ASSERT_EQ(pipe.stepCount(), 1);
-    VE_ASSERT_EQ(pipe.state(), Pipeline::IDLE);
-
-    pipe.context()->set(Var(5));
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-    VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 105);
-}
-
-VE_TEST(pipeline_multi_step) {
-    std::vector<int> order;
-    Pipeline pipe("multi");
-    pipe.add([&order](const Var&) -> Result { order.push_back(1); return Result::ok(); });
-    pipe.add([&order](const Var&) -> Result { order.push_back(2); return Result::ok(); });
-    pipe.add([&order](const Var&) -> Result { order.push_back(3); return Result::ok(); });
-
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-    VE_ASSERT_EQ((int)order.size(), 3);
-    VE_ASSERT_EQ(order[0], 1);
-    VE_ASSERT_EQ(order[1], 2);
-    VE_ASSERT_EQ(order[2], 3);
-}
-
-VE_TEST(pipeline_error_stops) {
-    std::vector<int> order;
-    Pipeline pipe("err");
-    pipe.add([&order](const Var&) -> Result { order.push_back(1); return Result::ok(); });
-    pipe.add([&order](const Var&) -> Result { order.push_back(2); return Result::fail(); });
-    pipe.add([&order](const Var&) -> Result { order.push_back(3); return Result::ok(); });
-
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::ERRORED);
-    VE_ASSERT_EQ((int)order.size(), 2);
-}
-
-VE_TEST(pipeline_pause_resume) {
-    std::vector<int> order;
-    Pipeline pipe("pausable");
-    pipe.add([&](const Var&) -> Result {
-        order.push_back(1);
-        pipe.pause();
+VE_TEST(reg_full_proc_via_smart_proto) {
+    command::regProc("_test_full", [](Node* /*ctx*/, Node* in, Node* out) -> Result {
+        if (in->get().isNull()) return Result::fail("no input");
+        out->set(Var(in->get().toInt() + 100));
         return Result::ok();
     });
-    pipe.add([&order](const Var&) -> Result { order.push_back(2); return Result::ok(); });
-
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::PAUSED);
-    VE_ASSERT_EQ((int)order.size(), 1);
-
-    pipe.resume();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-    VE_ASSERT_EQ((int)order.size(), 2);
+    Var r = command::callVar("_test_full", Var(5));
+    VE_ASSERT_EQ(r.toInt(), 105);
 }
 
-VE_TEST(pipeline_stop) {
-    std::vector<int> order;
-    Pipeline pipe("stoppable");
-    pipe.add([&](const Var&) -> Result {
-        order.push_back(1);
-        pipe.pause();
+VE_TEST(reg_in_out_action) {
+    command::regInOut("_test_inout", [](Node* in, Node* out) -> Result {
+        out->set(in->get());
         return Result::ok();
     });
-    pipe.add([&order](const Var&) -> Result { order.push_back(2); return Result::ok(); });
-
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::PAUSED);
-
-    pipe.stop();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::IDLE);
-    VE_ASSERT_EQ((int)order.size(), 1);
+    Var r = command::callVar("_test_inout", Var(std::string("hello")));
+    VE_ASSERT_EQ(r.toString(), std::string("hello"));
 }
 
-VE_TEST(pipeline_rerun) {
-    int count = 0;
-    Pipeline pipe("rerun");
-    pipe.add([&count](const Var&) -> Result { ++count; return Result::ok(); });
-
-    pipe.start();
-    VE_ASSERT_EQ(count, 1);
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-
-    pipe.start();
-    VE_ASSERT_EQ(count, 2);
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-}
-
-VE_TEST(pipeline_result_handler) {
-    bool handler_called = false;
-    Pipeline pipe("rh");
-    pipe.add([](const Var&) -> Result { return Result::ok(); });
-    pipe.setResultHandler([&handler_called](const Result& r) {
-        handler_called = true;
-        VE_ASSERT(r.isSuccess());
+VE_TEST(reg_var_single) {
+    command::regVar("_test_var_single", [](Var input) -> Result {
+        return Result::ok(Var(input.toInt() * 3));
     });
-    pipe.start();
-    VE_ASSERT(handler_called);
+    Var r = command::callVar("_test_var_single", Var(7));
+    VE_ASSERT_EQ(r.toInt(), 21);
 }
 
-VE_TEST(pipeline_signal_done) {
-    Object observer("obs");
-    bool got_done = false;
-    Pipeline pipe("sig");
-    pipe.add([](const Var&) -> Result { return Result::ok(); });
-    pipe.connect<Pipeline::CMD_DONE>(&observer, [&got_done](const Var&) {
-        got_done = true;
-    });
-    pipe.start();
-    VE_ASSERT(got_done);
-}
-
-VE_TEST(pipeline_signal_error) {
-    Object observer("obs");
-    bool got_error = false;
-    Pipeline pipe("sig_err");
-    pipe.add([](const Var&) -> Result { return Result::fail(); });
-    pipe.connect<Pipeline::CMD_ERROR>(&observer, [&got_error](const Var&) {
-        got_error = true;
-    });
-    pipe.start();
-    VE_ASSERT(got_error);
-}
-
-VE_TEST(pipeline_clone) {
-    int count = 0;
-    Pipeline pipe("orig");
-    pipe.add([&count](const Var&) -> Result { ++count; return Result::ok(); });
-
-    Pipeline* copy = pipe.clone();
-    VE_ASSERT_EQ(copy->name(), "orig");
-    VE_ASSERT_EQ(copy->stepCount(), 1);
-
-    copy->start();
-    VE_ASSERT_EQ(count, 1);
-    delete copy;
-}
-
-// ============================================================================
-// Command tests (factory-node backed)
-// ============================================================================
-
-VE_TEST(command_basic) {
-    command::reg("_test_deploy", [](Command& cmd) {
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-        VE_ASSERT_EQ(cmd.node()->name(), "_test_deploy");
-        VE_ASSERT_EQ(cmd.stepCount(), 2);
-    });
-    // Verify stored in factory node tree
-    auto* nd = command::factory().node("_test_deploy");
-    VE_ASSERT(nd != nullptr);
-    VE_ASSERT(nd->find("steps", false) != nullptr);
-    VE_ASSERT_EQ(nd->find("steps", false)->count(), 2);
-
-    command::factory().node()->erase("_test_deploy");
-}
-
-VE_TEST(command_pipeline_creation) {
-    int order_val = 0;
-    Pipeline pipe("test");
-    pipe.add(Step([&order_val](const Var&) -> Result {
-        order_val = 1;
-        return Result::ok();
-    }));
-
-    VE_ASSERT_EQ(pipe.stepCount(), 1);
-    pipe.start();
-    VE_ASSERT_EQ(order_val, 1);
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-}
-
-VE_TEST(command_help_metadata) {
-    command::reg("_test_greet_help", [](Command& cmd) {
-        cmd.setHelp("say hello");
-    });
-    VE_ASSERT_EQ(command::help("_test_greet_help"), "say hello");
-    command::factory().node()->erase("_test_greet_help");
-}
-
-VE_TEST(command_build_pipeline) {
-    command::reg("_test_build_pipe", [](Command& cmd) {
-        cmd.addStep([](const Var&) -> Result { return Result::ok(Var(42)); });
-    });
-    auto* nd = command::factory().node("_test_build_pipe");
-    VE_ASSERT(nd != nullptr);
-
-    // Use addToPipeline directly (no loop::main() default) for synchronous test
-    Pipeline pipe("p");
-    Step::addToPipeline(nd->find("steps", false)->child(0), pipe);
-    VE_ASSERT_EQ(pipe.stepCount(), 1);
-    pipe.start();
-    VE_ASSERT_EQ(pipe.state(), Pipeline::DONE);
-    VE_ASSERT_EQ(pipe.lastResult().content().toInt(), 42);
-
-    command::factory().node()->erase("_test_build_pipe");
-}
-
-// ============================================================================
-// Factory node structure tests
-// ============================================================================
-
-VE_TEST(factory_node_layout_single_step) {
-    command::reg("_test_layout_single", [](int x) -> Result {
-        return Result::ok(Var(x * 3));
-    }, "triple it");
-
-    auto* nd = command::factory().node("_test_layout_single");
-    VE_ASSERT(nd != nullptr);
-    VE_ASSERT(nd->get().isCallable());
-    VE_ASSERT(nd->find("steps", false) == nullptr);
-    VE_ASSERT_EQ(nd->find("help", false)->getString(), "triple it");
-
-    command::factory().node()->erase("_test_layout_single");
-}
-
-VE_TEST(factory_node_layout_multi_step) {
-    command::reg("_test_layout_multi", [](Command& cmd) {
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-    }, "three steps");
-
-    auto* nd = command::factory().node("_test_layout_multi");
-    VE_ASSERT(nd != nullptr);
-    VE_ASSERT(!nd->get().isCallable());
-    auto* steps = nd->find("steps", false);
-    VE_ASSERT(steps != nullptr);
-    VE_ASSERT_EQ(steps->count(), 3);
-    VE_ASSERT_EQ(nd->find("help", false)->getString(), "three steps");
-
-    command::factory().node()->erase("_test_layout_multi");
-}
-
-VE_TEST(factory_node_lookup) {
-    command::reg("_test_lookup_a", []() -> Result { return Result::ok(); });
-    command::reg("_test_lookup_b", []() -> Result { return Result::ok(); });
-
-    VE_ASSERT(command::has("_test_lookup_a"));
-    VE_ASSERT(command::has("_test_lookup_b"));
-    VE_ASSERT(!command::has("_test_lookup_nonexistent"));
-
-    // node() exposes the factory node directly — const Factory& gives find-only semantics
-    const Factory& cf = command::factory();
-    VE_ASSERT(cf.node("_test_lookup_a") != nullptr);
-    VE_ASSERT(cf.node("_test_lookup_nonexistent") == nullptr);
-
-    command::factory().node()->erase("_test_lookup_a");
-    command::factory().node()->erase("_test_lookup_b");
-    VE_ASSERT(!command::has("_test_lookup_a"));
-}
-
-// ============================================================================
-// command:: namespace tests
-// ============================================================================
-
-VE_TEST(command_ns_reg_and_call) {
-    command::reg("_test_echo", [](int value) -> Result {
-        return Result::ok(Var(value));
-    }, "echo input");
-
-    VE_ASSERT(command::has("_test_echo"));
-    VE_ASSERT_EQ(command::help("_test_echo"), "echo input");
-
-    Result r = command::call("_test_echo", Var(42));
-    VE_ASSERT(r.isSuccess());
-
-    command::factory().node()->erase("_test_echo");
-}
-
-VE_TEST(command_ns_run) {
-    command::reg("_test_multi", [](Command& cmd) {
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-        cmd.addStep([](const Var&) -> Result { return Result::ok(); });
-    });
-
-    Pipeline* pipe = command::run("_test_multi", Var());
-    VE_ASSERT(pipe != nullptr);
-    wait_pipeline_terminal(pipe);
-    VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
-    delete pipe;
-
-    command::factory().node()->erase("_test_multi");
-}
-
-VE_TEST(command_ns_step) {
-    command::reg("_test_inc", [](int value) -> Result {
-        return Result::ok(Var(value + 1));
-    });
-
-    Pipeline* pipe = command::run("_test_inc", Var(10));
-    VE_ASSERT(pipe != nullptr);
-    wait_pipeline_terminal(pipe);
-    VE_ASSERT_EQ(pipe->state(), Pipeline::DONE);
-    delete pipe;
-
-    command::factory().node()->erase("_test_inc");
-}
-
-VE_TEST(register_step_with_loopref) {
-    EventLoop loop("regstep_lr");
-    loop.start();
-    command::reg("_test_regstep_lr", [](Node*) -> Result { return Result::ok(Var(1)); },
-              LoopRef::from(loop), "lr help");
-
-    VE_ASSERT(command::has("_test_regstep_lr"));
-    VE_ASSERT_EQ(command::help("_test_regstep_lr"), "lr help");
-
-    // LoopRef stored in "loop" child node as CUSTOM
-    auto* nd = command::factory().node("_test_regstep_lr");
-    VE_ASSERT(nd != nullptr);
-    auto* loop_nd = nd->find("loop", false);
-    VE_ASSERT(loop_nd != nullptr);
-    VE_ASSERT(loop_nd->get().customIs<LoopRef>());
-
-    loop.stop();
-    command::factory().node()->erase("_test_regstep_lr");
-}
-
-VE_TEST(command_reg_with_loopref) {
-    EventLoop loop("reg_ns_lr");
-    loop.start();
-    command::reg("_test_reg_ns_lr", [](Node*) -> Result { return Result::ok(); },
-                 LoopRef::from(loop), "with loop");
-
-    VE_ASSERT(command::has("_test_reg_ns_lr"));
-    VE_ASSERT_EQ(command::help("_test_reg_ns_lr"), "with loop");
-
-    auto* nd = command::factory().node("_test_reg_ns_lr");
-    VE_ASSERT(nd != nullptr);
-    auto* loop_nd = nd->find("loop", false);
-    VE_ASSERT(loop_nd != nullptr);
-    VE_ASSERT(loop_nd->get().customIs<LoopRef>());
-
-    loop.stop();
-    command::factory().node()->erase("_test_reg_ns_lr");
-}
-
-VE_TEST(command_ns_not_found) {
-    // Command(key) constructs an invalid instance when key is unknown;
-    // callers are responsible for checking before dispatch (calling on an
-    // invalid Command crashes — caller's contract).
-    Command cmd("_test_nonexistent");
-    VE_ASSERT(!cmd.isValid());
-    VE_ASSERT(!command::has("_test_nonexistent"));
-}
-
-VE_TEST(command_context_keeps_current_out_of_children) {
-    command::declareNode("_test_ctx_meta");  // register the key first
-    Node current("current");
-    Node* ctx = command::context("_test_ctx_meta", &current);
-
-    VE_ASSERT_EQ(command::current(ctx), &current);
-    VE_ASSERT_EQ(ctx->count(), 0);
-
-    delete ctx;
-    command::factory().node()->erase("_test_ctx_meta");
-}
-
-VE_TEST(command_parse_args_with_current_keeps_positional_index_zero) {
-    command::declareNode("_test_ctx_parse");
-    Node current("current");
-    Node* ctx = command::context("_test_ctx_parse", &current);
-
-    VE_ASSERT(command::parseArgs(ctx, std::vector<std::string>{"hello"}));
-    VE_ASSERT_EQ(ctx->get(0).toString(), "hello");
-    VE_ASSERT_EQ(ctx->count(), 1);
-    VE_ASSERT_EQ(command::current(ctx), &current);
-
-    delete ctx;
-    command::factory().node()->erase("_test_ctx_parse");
-}
-
-VE_TEST(command_parse_args_maps_declared_positional_and_named_params) {
-    auto* decl = command::declareNode("_test_declared_args");
-    decl->at("topic");
-    decl->at("target_node");
-
-    Node* positionalCtx = command::context("_test_declared_args");
-    VE_ASSERT(command::parseArgs(positionalCtx, std::vector<std::string>{"/robot_states", "/target"}));
-    auto positionalArgs = command::args(positionalCtx);
-    VE_ASSERT_EQ(positionalArgs.string("topic"), "/robot_states");
-    VE_ASSERT_EQ(positionalArgs.string("target_node"), "/target");
-    delete positionalCtx;
-
-    Node* namedCtx = command::context("_test_declared_args");
-    VE_ASSERT(command::parseArgs(namedCtx, std::vector<std::string>{"--topic", "/robot_states", "--target_node", "/target"}));
-    auto namedArgs = command::args(namedCtx);
-    VE_ASSERT_EQ(namedArgs.string("topic"), "/robot_states");
-    VE_ASSERT_EQ(namedArgs.string("target_node"), "/target");
-    delete namedCtx;
-
-    command::factory().node()->erase("_test_declared_args");
-}
-
-// ============================================================================
-// Step::wrap form tests
-// ============================================================================
-
-VE_TEST(step_form2_multi_arg_int) {
-    command::reg("_test_add", [](int a, int b) { return a + b; });
-    auto r = command::call("_test_add", Var(Var::ListV{Var(3), Var(4)}));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toInt(), 7);
-    command::factory().node()->erase("_test_add");
-}
-
-VE_TEST(step_form2_multi_arg_result) {
-    command::reg("_test_div", [](int a, int b) -> Result {
-        if (b == 0) return Result::fail(Var("div by zero"));
+VE_TEST(reg_result_args_carries_code_and_message) {
+    command::regResult("_test_div", [](double a, double b) -> Result {
+        if (b == 0) return Result::fail(-7, "div by zero");
         return Result::ok(Var(a / b));
     });
-    auto r1 = command::call("_test_div", Var(Var::ListV{Var(10), Var(2)}));
-    VE_ASSERT(r1.isSuccess());
-    VE_ASSERT_EQ(r1.content().toInt(), 5);
-
-    auto r2 = command::call("_test_div", Var(Var::ListV{Var(1), Var(0)}));
-    VE_ASSERT(r2.isError());
-    command::factory().node()->erase("_test_div");
+    Result r = command::callReply("_test_div", Var(Var::ListV{Var(10.0), Var(0.0)}));
+    VE_ASSERT(r.isError());
+    VE_ASSERT_EQ(r.code, -7);
+    VE_ASSERT_EQ(r.message, std::string("div by zero"));
 }
 
-VE_TEST(step_form2_single_string) {
-    command::reg("_test_hi", [](const std::string& name) {
-        return std::string("hi ") + name;
+
+// ============================================================================
+// 4. CallProto specializations
+// ============================================================================
+
+VE_TEST(call_proto_var_in_var_out) {
+    command::reg("_test_inc", [](int x) -> Result { return Result::ok(Var(x + 1)); });
+    Var r = command::callVar("_test_inc", Var(Var::ListV{Var(10)}));
+    VE_ASSERT_EQ(r.toInt(), 11);
+}
+
+VE_TEST(call_proto_request_reply_envelope) {
+    command::reg("_test_double", [](int x) -> Result { return Result::ok(Var(x * 2)); });
+    Result r = command::callReply("_test_double", Var(Var::ListV{Var(21)}));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.code, 0);
+    VE_ASSERT_EQ(r.data.toInt(), 42);
+}
+
+VE_TEST(call_proto_request_reply_carries_error_message) {
+    command::regResult("_test_fail", [](int) -> Result {
+        return Result::fail(-3, "intentional failure");
     });
-    auto r = command::call("_test_hi", Var("alice"));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toString(), "hi alice");
-    command::factory().node()->erase("_test_hi");
+    Result r = command::callReply("_test_fail", Var(Var::ListV{Var(0)}));
+    VE_ASSERT(r.isError());
+    VE_ASSERT_EQ(r.code, -3);
+    VE_ASSERT_EQ(r.message, std::string("intentional failure"));
 }
 
-VE_TEST(step_form2_void_no_args) {
-    int called = 0;
-    command::reg("_test_noop", [&called]() { ++called; });
-    auto r = command::call("_test_noop");
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(called, 1);
-    command::factory().node()->erase("_test_noop");
+VE_TEST(call_proto_unknown_command) {
+    Result r = command::callReply("_test_no_such_command_anywhere", Var());
+    VE_ASSERT(r.isError());
+    VE_ASSERT_EQ(r.code, Result::UNKNOWN_CMD);
 }
 
-VE_TEST(step_form2_var_return) {
-    command::reg("_test_ping", []() -> Var { return Var("pong"); });
-    auto r = command::call("_test_ping");
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toString(), "pong");
-    command::factory().node()->erase("_test_ping");
+VE_TEST(call_proto_node_in_out) {
+    command::regInOut("_test_copy", [](Node* in, Node* out) -> Result {
+        out->set(in->get());
+        return Result::ok();
+    });
+    Node my_in("in"), my_out("out");
+    my_in.set(Var(123));
+    command::callNode("_test_copy", &my_in, &my_out);
+    // NodeInOut is zero-copy: caller reads its own out node.
+    // (PR A wiring for NodeInOut is stub; this test mainly ensures no crash.)
 }
 
-VE_TEST(step_form2_double_args) {
-    command::reg("_test_sum", [](double a, double b) { return a + b; });
-    auto r = command::call("_test_sum", Var(Var::ListV{Var(1.5), Var(2.5)}));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toDouble(), 4.0);
-    command::factory().node()->erase("_test_sum");
-}
-
-VE_TEST(step_form2_single_arg_via_call) {
-    command::reg("_test_double_it", [](int x) { return x * 2; });
-    auto r = command::call("_test_double_it", Var(21));
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toInt(), 42);
-    command::factory().node()->erase("_test_double_it");
-}
-
-VE_TEST(step_form2_single_arg_ctx_child) {
-    command::reg("_test_negate", [](int x) { return -x; });
-    Node* ctx = command::context("_test_negate");
-    ctx->at(0, false)->set(Var(7));
-    auto r = command::call("_test_negate", ctx);
-    delete ctx;
-    VE_ASSERT(r.isSuccess());
-    VE_ASSERT_EQ(r.content().toInt(), -7);
-    command::factory().node()->erase("_test_negate");
-}
 
 // ============================================================================
-// Object::once tests
+// 5. Pipeline wiring forms (CtxStep / LinearStep / PathStep)
+//    DAG deferred to PR C.
 // ============================================================================
 
-VE_TEST(object_once_fires_once) {
-    enum : Object::SignalT { SIG = 0x1000 };
+VE_TEST(pipeline_addCtxStep_basic) {
+    command::regCtx("_test_pipe_ctxstep", [](Node* ctx) -> Result {
+        ctx->at("hit")->set(Var(true));
+        return Result::ok();
+    });
 
-    Object sender("sender");
-    Object observer("observer");
-    int count = 0;
+    Pipeline p("pipe");
+    p.addCtxStep(Command("_test_pipe_ctxstep"));
+    Result r = p.callReply(Var());
 
-    sender.once<SIG>(&observer, [&count](const Var&) { ++count; });
-
-    sender.trigger<SIG>();
-    VE_ASSERT_EQ(count, 1);
-
-    sender.trigger<SIG>();
-    VE_ASSERT_EQ(count, 1);
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT(p.context()->find("hit"));
+    VE_ASSERT_EQ(p.context()->find("hit")->get().toBool(), true);
 }
 
-VE_TEST(object_once_typed) {
-    enum : Object::SignalT { SIG = 0x1001 };
+VE_TEST(pipeline_addLinearStep_single) {
+    command::regProc("_test_pipe_linear_inc", [](Node*, Node* in, Node* out) -> Result {
+        out->set(Var(in->get().toInt() + 1));
+        return Result::ok();
+    });
 
-    Object sender("sender");
-    Object observer("observer");
-    int received = 0;
-
-    sender.once<SIG>(&observer, [&received](int v) { received = v; });
-
-    sender.trigger<SIG>(42);
-    VE_ASSERT_EQ(received, 42);
-
-    sender.trigger<SIG>(99);
-    VE_ASSERT_EQ(received, 42);
+    Pipeline p("pipe");
+    p.addLinearStep(Command("_test_pipe_linear_inc"));
+    Var r = p.callVar(Var(10));
+    VE_ASSERT_EQ(r.toInt(), 11);
 }
 
-VE_TEST(object_once_does_not_affect_connect) {
-    enum : Object::SignalT { SIG = 0x1002 };
+VE_TEST(pipeline_addLinearStep_chain_three) {
+    command::regProc("_test_pipe_inc1", [](Node*, Node* in, Node* out) -> Result {
+        out->set(Var(in->get().toInt() + 1));
+        return Result::ok();
+    });
 
-    Object sender("sender");
-    Object observer("observer");
-    int once_count = 0;
-    int connect_count = 0;
-
-    sender.connect<SIG>(&observer, [&connect_count](const Var&) { ++connect_count; });
-    sender.once<SIG>(&observer, [&once_count](const Var&) { ++once_count; });
-
-    sender.trigger<SIG>();
-    VE_ASSERT_EQ(once_count, 1);
-    VE_ASSERT_EQ(connect_count, 1);
-
-    sender.trigger<SIG>();
-    VE_ASSERT_EQ(once_count, 1);
-    VE_ASSERT_EQ(connect_count, 2);
+    Pipeline p("pipe");
+    p.addLinearStep(Command("_test_pipe_inc1"));
+    p.addLinearStep(Command("_test_pipe_inc1"));
+    p.addLinearStep(Command("_test_pipe_inc1"));
+    Var r = p.callVar(Var(0));
+    VE_ASSERT_EQ(r.toInt(), 3);  // 0 -> 1 -> 2 -> 3
 }
 
-VE_TEST(object_once_multiple) {
-    enum : Object::SignalT { SIG = 0x1003 };
+VE_TEST(pipeline_addPathStep_explicit) {
+    command::regProc("_test_pipe_path", [](Node*, Node* in, Node* out) -> Result {
+        out->set(Var(in->get().toInt() * 10));
+        return Result::ok();
+    });
 
-    Object sender("sender");
-    Object obs1("obs1");
-    Object obs2("obs2");
-    int count1 = 0, count2 = 0;
+    Pipeline p("pipe");
+    p.addPathStep(Command("_test_pipe_path"), "request", "reply");
+    Var r = p.callVar(Var(4));
+    VE_ASSERT_EQ(r.toInt(), 40);
+}
 
-    sender.once<SIG>(&obs1, [&count1](const Var&) { ++count1; });
-    sender.once<SIG>(&obs2, [&count2](const Var&) { ++count2; });
+VE_TEST(pipeline_aborts_on_error) {
+    command::regProc("_test_pipe_ok",    [](Node*, Node*, Node* out) -> Result { out->set(Var(1)); return Result::ok(); });
+    command::regProc("_test_pipe_fail",  [](Node*, Node*, Node*) -> Result { return Result::fail(-9, "bail"); });
+    command::regProc("_test_pipe_never", [](Node*, Node*, Node* out) -> Result { out->set(Var(999)); return Result::ok(); });
 
-    sender.trigger<SIG>();
-    VE_ASSERT_EQ(count1, 1);
-    VE_ASSERT_EQ(count2, 1);
+    Pipeline p("pipe");
+    p.addLinearStep(Command("_test_pipe_ok"));
+    p.addLinearStep(Command("_test_pipe_fail"));
+    p.addLinearStep(Command("_test_pipe_never"));
 
-    sender.trigger<SIG>();
-    VE_ASSERT_EQ(count1, 1);
-    VE_ASSERT_EQ(count2, 1);
+    Result r = p.callReply(Var());
+    VE_ASSERT(r.isError());
+    VE_ASSERT_EQ(r.code, -9);
+    VE_ASSERT_EQ(r.message, std::string("bail"));
+    VE_ASSERT_EQ(p.state(), Pipeline::ERRORED);
+}
+
+
+// ============================================================================
+// 6. ctx top-level 4 envelopes + _pipe/ cleanup (D7)
+// ============================================================================
+
+VE_TEST(ctx_envelope_request_reply) {
+    command::regProc("_test_ctx_req_reply", [](Node*, Node* in, Node* out) -> Result {
+        // proc reads from in (= ctx/request), writes to out (= ctx/reply)
+        out->set(Var(in->get().toString() + "!"));
+        return Result::ok();
+    });
+
+    Pipeline p("pipe");
+    p.addPathStep(Command("_test_ctx_req_reply"), "request", "reply");
+    p.callReply(Var(std::string("hi")));
+
+    Node* ctx = p.context();
+    VE_ASSERT(ctx->find("request"));
+    VE_ASSERT(ctx->find("reply"));
+    VE_ASSERT_EQ(ctx->find("reply")->get().toString(), std::string("hi!"));
+}
+
+VE_TEST(ctx_envelope_code_and_message_set) {
+    // 0-arg fn returning Result → SmartProto picks VoidAction.
+    command::reg("_test_ctx_code", []() -> Result {
+        return Result::fail(-77, "tagged");
+    });
+    Pipeline p("pipe");
+    p.addPathStep(Command("_test_ctx_code"), "request", "reply");
+    Result r = p.callReply(Var());
+
+    VE_ASSERT_EQ(r.code, -77);
+    VE_ASSERT_EQ(r.message, std::string("tagged"));
+
+    Node* ctx = p.context();
+    VE_ASSERT(ctx->find("code"));
+    VE_ASSERT_EQ(ctx->find("code")->get().toInt(), -77);
+    VE_ASSERT(ctx->find("message"));
+    VE_ASSERT_EQ(ctx->find("message")->get().toString(), std::string("tagged"));
+}
+
+VE_TEST(ctx_external_user_fields_preserved_pipe_cleared) {
+    Node my_ctx("user_ctx");
+    my_ctx.at("user_field")->set(Var(std::string("must-survive")));
+
+    command::regCtx("_test_ctx_external", [](Node* ctx) -> Result {
+        // user field should still be visible from inside the command
+        VE_ASSERT(ctx->find("user_field"));
+        return Result::ok(Var(42));
+    });
+
+    Pipeline p("pipe", &my_ctx);
+    p.addPathStep(Command("_test_ctx_external"), "request", "reply");
+    Var r = p.callVar(Var());
+    VE_ASSERT_EQ(r.toInt(), 42);
+
+    // user field preserved
+    VE_ASSERT(my_ctx.find("user_field"));
+    VE_ASSERT_EQ(my_ctx.find("user_field")->get().toString(), std::string("must-survive"));
+
+    // _pipe/ subtree removed
+    VE_ASSERT(!my_ctx.find("_pipe"));
+
+    // envelope kept on external ctx (so caller can inspect /code /message /reply)
+    VE_ASSERT(my_ctx.find("reply"));
+}
+
+
+// ============================================================================
+// 7. command:: convenience family + factory query
+// ============================================================================
+
+VE_TEST(command_has_and_keys) {
+    command::reg("_test_keys_one", [](int x) -> Result { return Result::ok(Var(x)); });
+    VE_ASSERT(command::has("_test_keys_one"));
+    VE_ASSERT(!command::has("_test_keys_definitely_not_registered_xyz"));
+
+    auto keys = command::keys();
+    bool found = false;
+    for (auto& k : keys) if (k == "_test_keys_one") { found = true; break; }
+    VE_ASSERT(found);
+}
+
+VE_TEST(command_help_round_trip) {
+    command::reg("_test_help", [](int) -> Result { return Result::ok(); }, "double the input");
+    VE_ASSERT_EQ(command::help("_test_help"), std::string("double the input"));
+}
+
+VE_TEST(command_isValid_distinguishes_missing) {
+    command::reg("_test_valid_real", [](int) -> Result { return Result::ok(); });
+    VE_ASSERT(Command("_test_valid_real").isValid());
+    VE_ASSERT(!Command("_test_valid_does_not_exist_xyz").isValid());
 }

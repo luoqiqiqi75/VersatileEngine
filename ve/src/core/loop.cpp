@@ -137,6 +137,22 @@ void loop::post(LoopRef loop, Alive token, Task task)
     loop.post(std::move(token), std::move(task));
 }
 
+// ----- currentDispatcher -----------------------------------------------------
+//
+// PR A: returns empty LoopRef (no thread_local plumbing yet).
+// PR D will:
+//   - declare `thread_local LoopRef t_dispatcher` here
+//   - Loop<T>::start sets t_dispatcher = LoopRef::from(*this) on each worker
+//   - command::callSync uses currentDispatcher to detect re-entrant sync calls
+//     and pump the current loop instead of CV-waiting (avoiding self-starvation).
+//
+// Until then, callSync (if/when added) will fall back to the CV-wait path.
+
+LoopRef loop::currentDispatcher()
+{
+    return LoopRef();
+}
+
 // ============================================================================
 // loop:: — global loop singletons
 // ============================================================================

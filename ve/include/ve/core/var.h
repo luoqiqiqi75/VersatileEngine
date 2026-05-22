@@ -284,7 +284,66 @@ private:
     } _storage;
 };
 
-using Result = ResultT<Var>;
+// ============================================================================
+// Result — framework-wide return type (三段独立结构)
+// ============================================================================
+//
+//   code:    int      <0 = error                (framework reserves <= -1000)
+//                     ==0 = success
+//                      >0 = terminal-but-success (DAG case-edge / proc accept)
+//   message: string   error / status text; framework writes to ctx/message
+//   data:    Var      business payload;   framework writes to ctx/reply via importAs<VarS>
+//                     (when non-null; otherwise out node is left as proc wrote it)
+//
+// Code constants follow D13: framework reserves <= -1000; user business uses -1..-999.
+//
+struct Result
+{
+    enum Code : int {
+        SUCCESS     =     0,
+        ACCEPT      =     1,    // terminal-success (>0 semantics)
+
+        // Framework-reserved error range: <= -1000
+        EXCEPTION   = -1000,    // user fn threw std::exception (wrapped by RegProto try/catch)
+        CANCELLED   = -1001,    // pipeline was cancelled mid-flight
+        UNKNOWN_CMD = -1002,    // Command(key) — key not in factory
+        BAD_REQUEST = -1003,    // CallProto input validation failed
+        TIMEOUT     = -1004,    // operation timed out
+
+        // User business errors: -1 .. -999  (no symbolic names; caller-defined)
+    };
+
+    int         code    = SUCCESS;
+    std::string message;
+    Var         data;
+
+    Result() = default;
+    Result(int c, std::string m = {}, Var d = {})
+        : code(c), message(std::move(m)), data(std::move(d)) {}
+
+    // --- query ---
+    bool isSuccess()  const { return code == 0; }
+    bool isError()    const { return code <  0; }
+    bool isAccepted() const { return code >  0; }
+    explicit operator bool() const { return isSuccess(); }
+
+    // --- factories ---
+    // ok(data) — SUCCESS with optional business payload
+    static Result ok(Var data = {})
+    { return {SUCCESS, {}, std::move(data)}; }
+
+    // fail(code, message, data) — explicit code; user passes -1..-999 (framework codes auto-clamped to -1 if user mistakenly passes >=0)
+    static Result fail(int code, std::string message = {}, Var data = {})
+    { return {code < 0 ? code : -1, std::move(message), std::move(data)}; }
+
+    // fail(message) — convenience for "just a message", defaults code = -1
+    static Result fail(std::string message)
+    { return {-1, std::move(message), {}}; }
+
+    // accept(data) — ACCEPT (>0); typically used by async procs to signal "I'm taking over"
+    static Result accept(Var data = {})
+    { return {ACCEPT, {}, std::move(data)}; }
+};
 
 namespace detail {
 

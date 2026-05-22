@@ -137,16 +137,16 @@ static Var makeToolsListResult()
 
 static Var makeToolCallResult(const std::string& key, const Var& args)
 {
-    auto r = ve::command::call(key, args);
+    auto r = ve::command::callReply(key, args);
     bool ok = r.isSuccess() || r.isAccepted();
 
     Var::ListV content;
     Var::DictV textItem;
     textItem["type"] = Var("text");
     if (ok) {
-        textItem["text"] = Var(stringify(r.content()));
+        textItem["text"] = Var(stringify(r.data));
     } else {
-        textItem["text"] = Var(Var(r).toString());
+        textItem["text"] = Var(r.message);
     }
     content.push_back(Var(std::move(textItem)));
 

@@ -26,7 +26,7 @@ Result okResult(const Var& content)
 
 Result failResult(const std::string& message)
 {
-    return Result::fail(Var(message));
+    return Result::fail(message);
 }
 
 void writeNodeTree(Node* root, const std::string& path, const Var& value)

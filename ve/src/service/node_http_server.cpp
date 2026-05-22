@@ -503,17 +503,24 @@ bool NodeHttpServer::start()
             inputVar = schema::exportAs<schema::VarS>(&input);
         }
 
+        (void)current;   // currentNode hint not threaded through new Command::call
+
         const bool async = queryBool(req.query(), "async", false);
-        Pipeline* detached = nullptr;
-        Result result = cmd.call(inputVar, current, !async, async ? &detached : nullptr);
-        if (detached) {
+        if (async) {
+            // PR A: Pipeline::call is single-pass synchronous, so the pipeline
+            // actually completes before attach() — attach handles done state.
+            // PR C will turn this into a true async dispatch.
             if (!_p->taskSvc) {
-                delete detached;
                 Node reply("rep");
                 fillError(&reply, "internal_error", "task service unavailable");
                 rep.fill_json(toJson(reply), http::status::internal_server_error);
                 return;
             }
+
+            auto* detached = new Pipeline(cmdKey);
+            detached->keepAlive();
+            detached->addPathStep(cmd, "request", "reply");
+            detached->callReply(inputVar);   // sync run
 
             std::string taskId = _p->taskSvc->attach(cmdKey, Var(), detached, {});
             if (taskId.empty()) {
@@ -530,14 +537,15 @@ bool NodeHttpServer::start()
             return;
         }
 
+        Result result = cmd.callReply(inputVar);
         if (result.isSuccess() || result.isAccepted()) {
             Node out("r");
             out.set("ok", true);
-            out.at("result")->set(result.content());
+            out.at("result")->set(result.data);
             rep.fill_json(toJson(out), http::status::ok);
         } else {
             Node reply("rep");
-            fillError(&reply, "command_failed", result.content().toString());
+            fillError(&reply, "command_failed", result.message);
             rep.fill_json(toJson(reply), http::status::internal_server_error);
         }
     };

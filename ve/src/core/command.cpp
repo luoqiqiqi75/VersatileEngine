@@ -1,66 +1,126 @@
-// command.cpp - ve::Step, ve::Command, command:: namespace
+// command.cpp — CallProto specializations, Command, command:: namespace
 
 #include "ve/core/command.h"
-#include "ve/core/loop.h"
-#include "ve/core/node.h"
-#include "ve/core/log.h"
 #include "ve/core/pipeline.h"
+#include "ve/core/schema.h"
+#include "ve/core/log.h"
 #include "parse_util.h"
 
-#include <condition_variable>
-#include <mutex>
+#include <algorithm>
+#include <map>
+#include <set>
 
 namespace ve {
 
-Result resultFromStepReturn(const Var& ret)
+// ============================================================================
+// CallProto specializations
+// ============================================================================
+//
+// All CallProtos read/write the top-level envelope:
+//   /request   /reply   /code   /message
+// _pipe/ subtree is framework-internal; only NodeInOut parks pointers there.
+
+// ----- VarInVarOut ------------------------------------------------------------
+
+void CallProto<tag::VarInVarOut>::import(Node* ctx, const Var& v)
 {
-    if (ret.customIs<Result>()) {
-        return ret.as<Result>();
-    }
-    return Result::ok(ret);
+    if (!ctx) return;
+    schema::importAs<schema::VarS>(ctx->atPath("request", true), v);
 }
 
-// ============================================================================
-// Step  (writeTo, addToPipeline)
-// ============================================================================
-
-void Step::writeTo(Node* nd) const
+Var CallProto<tag::VarInVarOut>::exportOut(Node* ctx)
 {
-    if (!nd) return;
-    nd->set(first);
-    if (second) nd->at("loop")->set(Var::custom(second));
+    if (!ctx) return {};
+    if (Node* r = ctx->atPath("reply", false))
+        return schema::exportAs<schema::VarS>(r);
+    return {};
 }
 
-void Step::addToPipeline(Node* nd, Pipeline& pipe)
+Var CallProto<tag::VarInVarOut>::makeFailure(int /*code*/, const std::string& /*msg*/)
 {
-    if (!nd || !nd->get().isCallable()) return;
-    LoopRef lr;
-    if (auto* ln = nd->find("loop", false))
-        lr = ln->get().as<LoopRef>();
-    // No default to loop::main() — empty LoopRef means synchronous inline execution.
-    // Pipeline::runNext() dispatches async only when step.second is set.
-    pipe.add(Step(nd->get(), std::move(lr)));
+    return {};   // raw-data form: failures yield empty Var
 }
 
+
+// ----- RequestReply -----------------------------------------------------------
+
+void CallProto<tag::RequestReply>::import(Node* ctx, const Var& v)
+{
+    if (!ctx) return;
+    schema::importAs<schema::VarS>(ctx->atPath("request", true), v);
+}
+
+Result CallProto<tag::RequestReply>::exportOut(Node* ctx)
+{
+    if (!ctx) return Result::fail(Result::UNKNOWN_CMD, "ctx is null");
+    Result r;
+    if (Node* cn = ctx->atPath("code", false))    r.code    = cn->get().toInt(0);
+    if (Node* mn = ctx->atPath("message", false)) r.message = mn->get().toString();
+    if (Node* rn = ctx->atPath("reply", false))   r.data    = schema::exportAs<schema::VarS>(rn);
+    return r;
+}
+
+Result CallProto<tag::RequestReply>::makeFailure(int code, const std::string& msg)
+{
+    return Result::fail(code, msg);
+}
+
+
+// ----- ListInDictOut ----------------------------------------------------------
+
+void CallProto<tag::ListInDictOut>::import(Node* ctx, const Var::ListV& v)
+{
+    if (!ctx) return;
+    Node* req = ctx->atPath("request", true);
+    req->clear();
+    for (size_t i = 0; i < v.size(); ++i)
+        req->at(static_cast<int>(i))->set(v[i]);
+}
+
+Result CallProto<tag::ListInDictOut>::exportOut(Node* ctx)
+{
+    return CallProto<tag::RequestReply>::exportOut(ctx);
+}
+
+Result CallProto<tag::ListInDictOut>::makeFailure(int code, const std::string& msg)
+{
+    return Result::fail(code, msg);
+}
+
+
+// ----- NodeInOut --------------------------------------------------------------
+
+void CallProto<tag::NodeInOut>::import(Node* ctx, const Input& v)
+{
+    if (!ctx) return;
+    // Park caller's in/out pointers under _pipe/ — Pipeline reads these to wire bypass.
+    ctx->atPath("_pipe/_bind_in",  true)->set(Var(static_cast<void*>(v.in)));
+    ctx->atPath("_pipe/_bind_out", true)->set(Var(static_cast<void*>(v.out)));
+}
+
+void CallProto<tag::NodeInOut>::exportOut(Node* /*ctx*/) {}
+void CallProto<tag::NodeInOut>::makeFailure(int /*code*/, const std::string& /*msg*/) {}
+
+
 // ============================================================================
-// Command  (order mirrors command.h):
-//   ctor → addStep → build →
-//   call(ctx) → call(input) → call(input, current) → run(ctx) → run(input)
+// Command
 // ============================================================================
 
 namespace {
 
-// Singleton sentinel node returned when `Command(key)` cannot resolve `key`.
-// Carries a callable that always fails, so downstream `call()` / `run()` reach
-// Pipeline execution and produce a clean Result::fail instead of segfaulting
-// on a null `_n`. `Command::isValid()` distinguishes it from real nodes.
+// Singleton sentinel returned when Command(key) cannot resolve `key`. Carries a
+// proc that returns Result::fail(UNKNOWN_CMD, ...) so downstream Pipeline path
+// produces a clean failure instead of segfaulting on null _n.
 Node* missingCommandNode()
 {
-    static Node* s_n = [] {
+    static Node* s_n = []() -> Node* {
         auto* n = new Node("_missing_cmd");
-        n->set(Var::callable([](Node*) -> Result {
-            return Result::fail(Var("unknown command"));
-        }));
+        Proc fail_proc = [](Node*, Node*, Node*) -> Result {
+            return Result::fail(Result::UNKNOWN_CMD, "unknown command");
+        };
+        n->at("_proc")->set(Var::custom(std::move(fail_proc)));
+        n->at("_in_schema") ->set(Var::custom(InSchema {InSchema::Empty}));
+        n->at("_out_schema")->set(Var::custom(OutSchema{OutSchema::Empty}));
         return n;
     }();
     return s_n;
@@ -70,236 +130,95 @@ Node* missingCommandNode()
 
 Command::Command(const std::string& key, char sep)
 {
-    // Find-only: const-qualified factory() reference triggers the const
-    // NodeRef::node overload (returns nullptr when the key is absent).
     const Factory& cf = command::factory();
     _n = cf.node(key, sep);
     if (!_n) _n = missingCommandNode();
 }
 
-bool Command::isValid() const { return _n && _n != missingCommandNode(); }
-
-void Command::addStep(Step step)
+bool Command::isValid() const
 {
-    auto* steps_nd = _n->at("steps");
-    int idx = steps_nd->count();
-    auto* sn = steps_nd->at(idx);
-    step.writeTo(sn);
+    return _n && _n != missingCommandNode();
 }
 
-Pipeline* Command::build(Node* ctx) const
+Proc Command::proc() const
 {
-    auto* pipe = new Pipeline(_n->name(), ctx);
-
-    // For Pipeline-owned ctx (caller passed nullptr), apply this command's
-    // declare subtree as shadow so parseArgs / Args use parameter defaults.
-    if (!ctx) {
-        if (auto* decl = _n->find("declare", false))
-            pipe->context()->setShadow(decl);
-    }
-
-    auto addStep = [&](Node* sn) {
-        if (!sn || !sn->get().isCallable()) return;
-        LoopRef lr;
-        if (auto* ln = sn->find("loop", false))
-            lr = ln->get().as<LoopRef>();
-        // Default to loop::main() so commands dispatched from services
-        // (HTTP/WS/TCP) run on the main event loop.
-        if (!lr) lr = LoopRef::from(loop::main());
-        pipe->add(Step(sn->get(), std::move(lr)));
-    };
-
-    if (_n->get().isCallable()) {
-        addStep(_n);
-    } else if (auto* steps_nd = _n->find("steps", false)) {
-        for (auto* sn : *steps_nd)
-            addStep(sn);
-    }
-
-    if (pipe->stepCount() == 0) {
-        delete pipe;
-        return nullptr;
-    }
-    return pipe;
+    if (!_n) return {};
+    auto* pn = _n->find("_proc", false);
+    if (!pn) return {};
+    Var v = pn->get();
+    if (auto* p = v.customPtr<Proc>()) return *p;
+    return {};
 }
 
-namespace {
-
-// Drive a Pipeline to completion (or detach it) based on wait/detachedOut policy.
-// Caller passes a fully-built pipe; this owns the pipe lifecycle from here:
-//   - wait=true  : block until pipe finishes, return final Result, delete pipe.
-//   - wait=false : start asynchronously. If accepted, hand pipe to *detachedOut.
-//                  Caller takes over ownership. If no detachedOut, pipe is stopped
-//                  and deleted (error returned).
-//
-// wait=true has two execution paths:
-//   (a) Pump path — taken when caller is already on loop::main()'s worker
-//       thread (e.g. a Step calling a nested command::call). CV-wait would
-//       starve itself: the step posts continuations onto the very loop the
-//       calling thread is now blocked on. Instead we pump asio handlers via
-//       Loop::runOne() until the pipeline reaches a terminal state.
-//   (b) CV path — taken when caller is on a different thread (service threads
-//       handling HTTP/WS/TCP, leo-agent worker, tests, etc). The main loop
-//       picks up step tasks; we sleep on a condvar that the pipe's result
-//       handler notifies on completion.
-Result drivePipeline(Pipeline* pipe, bool wait, Pipeline** detachedOut)
+InSchema Command::inSchema() const
 {
-    if (detachedOut) *detachedOut = nullptr;
+    if (!_n) return {};
+    auto* sn = _n->find("_in_schema", false);
+    if (!sn) return {};
+    Var v = sn->get();
+    if (auto* p = v.customPtr<InSchema>()) return *p;
+    return {};
+}
 
-    if (wait) {
-        if (loop::main().isCurrentThread()) {
-            // ---- Pump path: re-entrant sync from the main-loop worker. ----
-            Result r = pipe->start();
+OutSchema Command::outSchema() const
+{
+    if (!_n) return {};
+    auto* sn = _n->find("_out_schema", false);
+    if (!sn) return {};
+    Var v = sn->get();
+    if (auto* p = v.customPtr<OutSchema>()) return *p;
+    return {};
+}
 
-            if (r.isAccepted()) {
-                // Pump handlers until this pipe terminates. runOne may execute
-                // arbitrary other handlers along the way (this is expected
-                // asio re-entrancy); the pipeline's own continuations will
-                // surface among them and eventually complete it.
-                while (true) {
-                    const Pipeline::State st = pipe->state();
-                    if (st == Pipeline::DONE || st == Pipeline::ERRORED
-                        || st == Pipeline::IDLE) break;
-                    if (loop::main().runOne() == 0) break;  // io stopped
-                }
-            }
-
-            Result lr = pipe->lastResult();
-            delete pipe;
-            return lr;
-        }
-
-        // ---- CV path: caller is on a foreign thread; safe to block. ----
-        std::mutex mtx;
-        std::condition_variable cv;
-        bool finished = false;
-
-        pipe->setResultHandler([&](const Result&) {
-            std::lock_guard<std::mutex> lk(mtx);
-            finished = true;
-            cv.notify_all();
-        });
-
-        Result r = pipe->start();
-
-        if (r.isAccepted()) {
-            std::unique_lock<std::mutex> lk(mtx);
-            while (!finished) {
-                cv.wait_for(lk, std::chrono::milliseconds(10));
-                const Pipeline::State st = pipe->state();
-                if (st == Pipeline::DONE || st == Pipeline::ERRORED || st == Pipeline::IDLE) {
-                    break;
-                }
-            }
-        }
-
-        Result lr = pipe->lastResult();
-        delete pipe;
-        return lr;
+// Independent call: spin up a transient Pipeline + addPathStep wired to
+// /request, /reply; let Pipeline::call<CallProtoT> do the rest.
+template<typename CallProtoT>
+typename CallProtoT::Output Command::call(const typename CallProtoT::Input& input)
+{
+    if (!isValid()) {
+        return CallProtoT::makeFailure(Result::UNKNOWN_CMD,
+            "unknown command: " + (_n ? _n->name() : std::string{"?"}));
     }
-
-    Result r = pipe->start();
-
-    if (!r.isAccepted()) {
-        Result lr = pipe->lastResult();
-        delete pipe;
-        return lr;
-    }
-
-    if (!detachedOut) {
-        pipe->stop();
-        delete pipe;
-        return Result::fail(Var(
-            "Command::call(..., wait=false) requires non-null Pipeline** when command is asynchronous"));
-    }
-
-    *detachedOut = pipe;
-    return Result::accept();
+    Pipeline pipe(_n->name());
+    pipe.addPathStep(*this, "request", "reply");
+    return pipe.template call<CallProtoT>(input);
 }
 
-} // anonymous
+// Explicit instantiations for the standard 4 CallProto specializations.
+// User-defined CallProtos must either inline-instantiate or add their own
+// extern template declaration in user code.
+template Var    Command::call<CallProto<tag::VarInVarOut>>  (const Var&);
+template Result Command::call<CallProto<tag::RequestReply>> (const Var&);
+template Result Command::call<CallProto<tag::ListInDictOut>>(const Var::ListV&);
+template void   Command::call<CallProto<tag::NodeInOut>>    (const CallProto<tag::NodeInOut>::Input&);
 
-Result Command::call(Node* ctx, bool wait, Pipeline** detachedOut)
-{
-    Pipeline* pipe = build(ctx);
-    if (!pipe) {
-        if (detachedOut) *detachedOut = nullptr;
-        return Result::fail(Var("command has no steps: " + _n->name()));
-    }
-    return drivePipeline(pipe, wait, detachedOut);
-}
-
-Result Command::call(const Var& input, bool wait)
-{
-    Pipeline* pipe = build();
-    if (!pipe) return Result::fail(Var("command has no steps: " + _n->name()));
-    command::parseArgs(pipe->context(), input);
-    return drivePipeline(pipe, wait, nullptr);
-}
-
-Result Command::call(const Var& input, Node* currentNode, bool wait, Pipeline** detachedOut)
-{
-    Pipeline* pipe = build();
-    if (!pipe) {
-        if (detachedOut) *detachedOut = nullptr;
-        return Result::fail(Var("command has no steps: " + _n->name()));
-    }
-    Node* ctx = pipe->context();
-    ctx->set(static_cast<void*>(currentNode));
-    command::parseArgs(ctx, input);
-    return drivePipeline(pipe, wait, detachedOut);
-}
-
-Pipeline* Command::run(Node* ctx)
-{
-    auto* pipe = build(ctx);
-    if (!pipe) return nullptr;
-    pipe->start();
-    return pipe;
-}
-
-Pipeline* Command::run(const Var& input)
-{
-    auto* pipe = build();
-    if (!pipe) return nullptr;
-    command::parseArgs(pipe->context(), input);
-    pipe->start();
-    return pipe;
-}
 
 // ============================================================================
-// command:: namespace — factory, reg(builder), ctx-operating helpers
+// command:: namespace — factory + query + parseArgs + Args
 // ============================================================================
 
 namespace command {
 
 Factory& factory() { return factory::at("cmd"); }
 
-void reg(const std::string& key, std::function<void(Command&)> builder,
-         const std::string& help, char sep)
+bool has(const std::string& key, char sep)
 {
-    auto& f = factory();
-
-    // Track in keys list first (register empty callable to claim the key
-    // before the builder runs, so addStep / setHelp see a valid node).
-    auto keys = f.keys();
-    if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
-        f.reg(key, Var(), "", {}, sep);
-    }
-
-    auto* nd = f.node(key, sep);
-    Command cmd(nd);
-    builder(cmd);
-    if (!help.empty())
-        cmd.setHelp(help);
+    const Factory& cf = factory();
+    return cf.node(key, sep) != nullptr;
 }
 
-// --- argument parsing (state-machine, declare-driven) ---
 
-static void buildDeclInfo(const Node* decl,
-                          std::vector<std::string>& paramOrder,
-                          std::map<std::string, std::string>& shortMap,
-                          std::set<std::string>& longNames)
+// --- argument parsing (state-machine, declare-driven) ---
+//
+// Writes parsed values into ctx/request subnode (not top-level), matching the
+// new ctx envelope layout. Caller's `args(ctx)` reads from ctx/request too.
+
+namespace {
+
+void buildDeclInfo(const Node* decl,
+                   std::vector<std::string>& paramOrder,
+                   std::map<std::string, std::string>& shortMap,
+                   std::set<std::string>& longNames)
 {
     if (!decl) return;
     for (auto* param : *decl) {
@@ -315,13 +234,16 @@ static void buildDeclInfo(const Node* decl,
     }
 }
 
+} // anonymous
+
 bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
 {
     if (!ctx) return false;
 
-    ctx->clear();
+    Node* req = ctx->atPath("request", true);
+    req->clear();
 
-    const Node* decl = ctx->shadow();
+    const Node* decl = ctx->shadow();   // ctx may carry declare/ as shadow
 
     std::vector<std::string> paramOrder;
     std::map<std::string, std::string> shortMap;
@@ -358,7 +280,7 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
                 std::string name = token.substr(2, eq - 2);
                 if (longNames.count(name)) {
                     currentTarget.clear();
-                    ctx->at(name, false)->set(parse::parseValue(token.substr(eq + 1)));
+                    req->at(name, false)->set(parse::parseValue(token.substr(eq + 1)));
                     continue;
                 }
             }
@@ -371,18 +293,18 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
         }
 
         if (!currentTarget.empty()) {
-            ctx->at(currentTarget, false)->set(parse::parseValue(token));
+            req->at(currentTarget, false)->set(parse::parseValue(token));
             currentTarget.clear();
         } else if (posIndex < static_cast<int>(paramOrder.size())) {
-            ctx->at(paramOrder[posIndex], false)->set(parse::parseValue(token));
+            req->at(paramOrder[posIndex], false)->set(parse::parseValue(token));
             ++posIndex;
         } else {
-            ctx->at(ctx->count(), false)->set(parse::parseValue(token));
+            req->at(req->count(), false)->set(parse::parseValue(token));
         }
     }
 
     if (!currentTarget.empty()) {
-        ctx->at(currentTarget, false)->set(true);
+        req->at(currentTarget, false)->set(true);
     }
 
     return true;
@@ -392,13 +314,14 @@ bool parseArgs(Node* ctx, const Var& input)
 {
     if (!ctx) return false;
 
-    ctx->clear();
+    Node* req = ctx->atPath("request", true);
+    req->clear();
     if (input.isNull()) return true;
 
     if (input.isDict()) {
         for (auto& [key, val] : input.toDict()) {
             if (!key.empty() && key[0] != '_')
-                ctx->at(key, false)->set(val);
+                req->at(key, false)->set(val);
         }
         return true;
     }
@@ -411,28 +334,28 @@ bool parseArgs(Node* ctx, const Var& input)
         return parseArgs(ctx, strs, 0);
     }
 
-    // scalar: store as first positional param
+    // scalar: bind to first positional param if declared, else int-index 0
     const Node* decl = ctx->shadow();
     if (decl) {
         for (auto* param : *decl) {
             const auto& nm = param->name();
             if (nm.empty() || nm[0] == '_') continue;
             if (!param->find("_short", false)) {
-                ctx->at(nm, false)->set(input);
+                req->at(nm, false)->set(input);
                 return true;
             }
         }
     }
-    ctx->at(0, false)->set(input);
+    req->at(0, false)->set(input);
     return true;
 }
 
-// --- Args accessor ---
+
+// --- Args accessor (reads from ctx/request) ---
 
 Var Args::var(const std::string& key, const Var& def) const
 {
     if (!_n || key.empty()) return def;
-    // use_shadow=true: falls back to declare default values
     if (auto* n = _n->find(key)) {
         Var v = n->get();
         if (!v.isNull()) return v;
@@ -467,12 +390,15 @@ bool Args::flag(const std::string& key, bool def) const
 bool Args::has(const std::string& key) const
 {
     if (!_n || key.empty()) return false;
-    // use_shadow=false: only check if user explicitly set this param
     auto* n = _n->find(key, false);
     return n && !n->get().isNull();
 }
 
-Args args(Node* ctx) { return Args(ctx); }
+// Wrap ctx/request as the underlying Node — proc bodies use args(ctx) to read params.
+Args args(Node* ctx)
+{
+    return Args(ctx ? ctx->atPath("request", true) : nullptr);
+}
 
 } // namespace command
 

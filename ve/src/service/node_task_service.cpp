@@ -64,10 +64,10 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
             taskNode->set("status", ok ? "done" : "error");
             taskNode->set("ok", ok);
             if (ok) {
-                taskNode->at("result")->set(res.content());
+                taskNode->at("result")->set(res.data);
             } else {
-                taskNode->set("error", res.content().toString());
-                taskNode->set("code", res.code());
+                taskNode->set("error", res.message);
+                taskNode->set("code", res.code);
             }
         }
 
@@ -80,10 +80,10 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
             event.set("task_id", taskId);
             event.set("ok", ok);
             if (ok) {
-                event.at("data")->set(res.content());
+                event.at("data")->set(res.data);
             } else {
-                event.set("code", std::to_string(res.code()));
-                event.set("error", res.content().toString());
+                event.set("code", std::to_string(res.code));
+                event.set("error", res.message);
             }
             onDone(event);
         }
@@ -91,7 +91,7 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
         delete detached;
     };
 
-    detached->setResultHandler([finalize](const Result& res) {
+    detached->onFinished([finalize](const Result& res) {
         finalize(res);
     });
 

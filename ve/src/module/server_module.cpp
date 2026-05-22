@@ -185,7 +185,7 @@ void ServerModule::registerFileCommands()
             auto fmts = schema::schemaFormatNames();
             std::string out = "available formats: json, xml, bin, var";
             for (auto& fn : fmts) out += ", " + fn;
-            return Result::fail(Var(out));
+            return Result::fail(out);
         }
 
         // Resolve target from the command context when available.
@@ -195,7 +195,7 @@ void ServerModule::registerFileCommands()
         std::string pathStr = a.string("path");
         Node* target = pathStr.empty() ? base : base->find(pathStr);
         if (!target) {
-            return Result::fail(Var("Node not found: " + pathStr));
+            return Result::fail("Node not found: " + pathStr);
         }
 
         std::string file = a.string("file");
@@ -219,7 +219,7 @@ void ServerModule::registerFileCommands()
         } else if (schema::hasSchemaFormat(format)) {
             result = schema::exportSchemaFormat(format, target);
         } else {
-            return Result::fail(Var("Unknown format: " + format));
+            return Result::fail("Unknown format: " + format);
         }
 
         // Save to file or return content
@@ -246,14 +246,14 @@ void ServerModule::registerFileCommands()
             std::error_code ec;
             fs::create_directories(parent, ec);
             if (ec) {
-                return Result::fail(Var("Failed to create directory: " + ec.message()));
+                return Result::fail("Failed to create directory: " + ec.message());
             }
         }
 
         if (isBin) {
             std::ofstream ofs(filepath, std::ios::binary);
             if (!ofs.is_open()) {
-                return Result::fail(Var("Cannot write: " + filepath.string()));
+                return Result::fail("Cannot write: " + filepath.string());
             }
             ofs.write(reinterpret_cast<const char*>(binResult.data()), binResult.size());
             ofs.close();
@@ -261,7 +261,7 @@ void ServerModule::registerFileCommands()
         } else {
             std::ofstream ofs(filepath);
             if (!ofs.is_open()) {
-                return Result::fail(Var("Cannot write: " + filepath.string()));
+                return Result::fail("Cannot write: " + filepath.string());
             }
             ofs << result;
             ofs.close();
@@ -275,7 +275,7 @@ void ServerModule::registerFileCommands()
 
         std::string format = a.string("format");
         if (format.empty()) {
-            return Result::fail(Var("Usage: load <format> [path] [-f file] [-i data]"));
+            return Result::fail("Usage: load <format> [path] [-f file] [-i data]");
         }
 
         // Resolve target from the command context when available.
@@ -294,13 +294,13 @@ void ServerModule::registerFileCommands()
             fs::path filepath = fs::path(data_root) / file;
             std::ifstream ifs(filepath, format == "bin" ? std::ios::binary : std::ios::in);
             if (!ifs.is_open()) {
-                return Result::fail(Var("Cannot read: " + filepath.string()));
+                return Result::fail("Cannot read: " + filepath.string());
             }
             content.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
         } else if (!importContent.empty()) {
             content = importContent;
         } else {
-            return Result::fail(Var("Usage: load <format> [path] -f <file> | -i <data>"));
+            return Result::fail("Usage: load <format> [path] -f <file> | -i <data>");
         }
 
         // Import
@@ -316,13 +316,13 @@ void ServerModule::registerFileCommands()
         } else if (schema::hasSchemaFormat(format)) {
             ok = schema::importSchemaFormat(format, target, content);
         } else {
-            return Result::fail(Var("Unknown format: " + format));
+            return Result::fail("Unknown format: " + format);
         }
 
         if (ok) {
             return Result::ok(Var(file.empty() ? "Imported" : "Imported from " + file));
         } else {
-            return Result::fail(Var("Import failed (invalid " + format + ")"));
+            return Result::fail("Import failed (invalid " + format + ")");
         }
     }, "load <format> [path] [-f file] [-i data]");
 }
@@ -376,7 +376,7 @@ void ServerModule::registerSearchCommand()
 
         std::string pattern = a.string("pattern");
         if (pattern.empty()) {
-            return Result::fail(Var("Usage: search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N] [--with-value] [--leaf-only]"));
+            return Result::fail("Usage: search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N] [--with-value] [--leaf-only]");
         }
 
         std::string rootPath = a.string("root");
@@ -395,7 +395,7 @@ void ServerModule::registerSearchCommand()
         Node* root = (rootPath.empty() || rootPath == "/")
             ? node::root()
             : node::root()->find(rootPath);
-        if (!root) return Result::fail(Var("root not found: " + rootPath));
+        if (!root) return Result::fail("root not found: " + rootPath);
 
         std::string rootPrefix = (root == node::root()) ? "" : root->path();
         Var::ListV results;

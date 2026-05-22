@@ -777,19 +777,23 @@ std::string TerminalSession::execute(const std::string& line)
         Var inputVar = list.empty() ? Var() : Var(std::move(list));
 
         if (asyncMode) {
+            // PR A: async detached-pipeline path disabled (Pipeline::call is
+            // single-pass synchronous until PR C). Fall back to sync execution
+            // and print result inline. The asyncOutput path stays for PR C.
             Pipeline* detached = nullptr;
-            auto r = cmd.call(inputVar, s.cur, false, &detached);
+            (void)s.cur;
+            auto r = cmd.callReply(inputVar);
 
             if (detached) {
                 auto asyncOut = s.asyncOutput;
                 std::string cmdName = resolvedCmd;
-                detached->setResultHandler([asyncOut, detached, cmdName](const Result& res) {
+                detached->onFinished([asyncOut, detached, cmdName](const Result& res) {
                     std::string text;
                     if (res.isSuccess() || res.isAccepted()) {
-                        if (!res.content().isNull())
-                            text = res.content().toString();
+                        if (!res.data.isNull())
+                            text = res.data.toString();
                     } else {
-                        text = Var(res).toString();
+                        text = res.message;
                     }
                     if (asyncOut && !text.empty()) {
                         if (text.back() != '\n')
@@ -804,23 +808,22 @@ std::string TerminalSession::execute(const std::string& line)
 
             // Command completed synchronously despite async request
             if (r.isSuccess() || r.isAccepted()) {
-                auto& content = r.content();
-                if (!content.isNull())
-                    s.print(content.toString());
+                if (!r.data.isNull())
+                    s.print(r.data.toString());
             } else {
-                s.print(Var(r).toString() + "\n");
+                s.print(r.message + "\n");
             }
             return s.output;
         }
 
-        // Default: synchronous execution
-        auto r = cmd.call(inputVar, s.cur, true, nullptr);
+        // Default: synchronous execution (PR A: currentNode hint disabled)
+        (void)s.cur;
+        auto r = cmd.callReply(inputVar);
         if (r.isSuccess() || r.isAccepted()) {
-            auto& content = r.content();
-            if (!content.isNull())
-                s.print(content.toString());
+            if (!r.data.isNull())
+                s.print(r.data.toString());
         } else {
-            s.print(Var(r).toString() + "\n");
+            s.print(r.message + "\n");
         }
         return s.output;
     }
