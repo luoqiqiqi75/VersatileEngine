@@ -35,6 +35,11 @@ struct LoopTraits<AsioContext>::Context
     {}
 };
 
+// Thread-local dispatcher LoopRef — set/cleared at worker thread entry/exit
+// by LoopTraits<AsioContext>::start so loop::currentDispatcher() can return it.
+// Defined here (before LoopTraits<>::start uses it).
+thread_local LoopRef t_dispatcher;
+
 // ============================================================================
 // LoopTraits<AsioContext> — static functions
 // ============================================================================
@@ -127,7 +132,7 @@ void LoopTraits<AsioContext>::setSelfRef(Context* ctx, LoopRef ref)
 // ============================================================================
 
 thread_local void*   t_loop_context     = nullptr;
-thread_local LoopRef t_dispatcher;     // set by worker thread on entry; empty on non-worker threads
+// t_dispatcher is defined near the top of this file (before LoopTraits::start uses it).
 
 void* loop::context()              { return t_loop_context; }
 void* loop::setContext(void* ctx)  { auto prev = t_loop_context; t_loop_context = ctx; return prev; }

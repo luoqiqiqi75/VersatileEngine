@@ -80,35 +80,35 @@ VE_TEST(result_framework_code_constants) {
 // 2. Proc signature + 3-segment code semantics
 // ============================================================================
 
-VE_TEST(proc_three_node_signature) {
-    Node ctx("ctx"), in("in"), out("out");
+VE_TEST(proc_two_node_signature) {
+    Node in("in"), out("out");
     in.set(Var(7));
 
-    Proc p = [](Node* /*ctx*/, Node* in, Node* out) -> Result {
+    Proc p = [](Node* in, Node* out) -> Result {
         out->set(Var(in->get().toInt() * 2));
         return Result::ok();
     };
 
-    Result r = p(&ctx, &in, &out);
+    Result r = p(&in, &out);
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(out.get().toInt(), 14);
 }
 
 VE_TEST(proc_returns_data_via_result) {
-    Proc p = [](Node*, Node*, Node*) -> Result {
+    Proc p = [](Node*, Node*) -> Result {
         return Result::ok(Var(42));
     };
-    Node ctx("ctx"), in("in"), out("out");
-    Result r = p(&ctx, &in, &out);
+    Node in("in"), out("out");
+    Result r = p(&in, &out);
     VE_ASSERT_EQ(r.data.toInt(), 42);
 }
 
 VE_TEST(proc_returns_error) {
-    Proc p = [](Node*, Node*, Node*) -> Result {
+    Proc p = [](Node*, Node*) -> Result {
         return Result::fail("bad input");
     };
-    Node ctx("ctx"), in("in"), out("out");
-    Result r = p(&ctx, &in, &out);
+    Node in("in"), out("out");
+    Result r = p(&in, &out);
     VE_ASSERT(r.isError());
     VE_ASSERT_EQ(r.message, std::string("bad input"));
 }
@@ -126,12 +126,13 @@ VE_TEST(reg_positional_args_two_ints) {
     VE_ASSERT_EQ(r.toInt(), 7);
 }
 
-VE_TEST(reg_node_action_via_smart_proto) {
-    command::reg("_test_ctx_touch", [](Node* ctx) -> Result {
-        ctx->at("touched")->set(Var(true));
+VE_TEST(reg_two_node_via_smart_proto) {
+    // SmartProto picks FullProc for (Node*, Node*) signature.
+    command::reg("_test_two_node_touch", [](Node* in, Node* /*out*/) -> Result {
+        in->at("touched")->set(Var(true));
         return Result::ok();
     });
-    Result r = command::callReply("_test_ctx_touch", Var());
+    Result r = command::callReply("_test_two_node_touch", Var());
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(r.code, 0);
 }
@@ -148,23 +149,14 @@ VE_TEST(reg_void_action_via_smart_proto) {
     VE_ASSERT_EQ(called, 1);
 }
 
-VE_TEST(reg_full_proc_via_smart_proto) {
-    command::regProc("_test_full", [](Node* /*ctx*/, Node* in, Node* out) -> Result {
+VE_TEST(reg_full_proc_explicit) {
+    command::regProc("_test_full", [](Node* in, Node* out) -> Result {
         if (in->get().isNull()) return Result::fail("no input");
         out->set(Var(in->get().toInt() + 100));
         return Result::ok();
     });
     Var r = command::callVar("_test_full", Var(5));
     VE_ASSERT_EQ(r.toInt(), 105);
-}
-
-VE_TEST(reg_in_out_action) {
-    command::regInOut("_test_inout", [](Node* in, Node* out) -> Result {
-        out->set(in->get());
-        return Result::ok();
-    });
-    Var r = command::callVar("_test_inout", Var(std::string("hello")));
-    VE_ASSERT_EQ(r.toString(), std::string("hello"));
 }
 
 VE_TEST(reg_var_single) {
@@ -222,7 +214,7 @@ VE_TEST(call_proto_unknown_command) {
 }
 
 VE_TEST(call_proto_node_in_out) {
-    command::regInOut("_test_copy", [](Node* in, Node* out) -> Result {
+    command::regProc("_test_copy", [](Node* in, Node* out) -> Result {
         out->set(in->get());
         return Result::ok();
     });
@@ -240,8 +232,9 @@ VE_TEST(call_proto_node_in_out) {
 // ============================================================================
 
 VE_TEST(pipeline_addCtxStep_basic) {
-    command::regCtx("_test_pipe_ctxstep", [](Node* ctx) -> Result {
-        ctx->at("hit")->set(Var(true));
+    // With addCtxStep, in == out == pipeline internal ctx node.
+    command::regProc("_test_pipe_ctxstep", [](Node* in, Node* /*out*/) -> Result {
+        in->at("hit")->set(Var(true));
         return Result::ok();
     });
 
@@ -255,7 +248,7 @@ VE_TEST(pipeline_addCtxStep_basic) {
 }
 
 VE_TEST(pipeline_addLinearStep_single) {
-    command::regProc("_test_pipe_linear_inc", [](Node*, Node* in, Node* out) -> Result {
+    command::regProc("_test_pipe_linear_inc", [](Node* in, Node* out) -> Result {
         out->set(Var(in->get().toInt() + 1));
         return Result::ok();
     });
@@ -267,7 +260,7 @@ VE_TEST(pipeline_addLinearStep_single) {
 }
 
 VE_TEST(pipeline_addLinearStep_chain_three) {
-    command::regProc("_test_pipe_inc1", [](Node*, Node* in, Node* out) -> Result {
+    command::regProc("_test_pipe_inc1", [](Node* in, Node* out) -> Result {
         out->set(Var(in->get().toInt() + 1));
         return Result::ok();
     });
@@ -281,7 +274,7 @@ VE_TEST(pipeline_addLinearStep_chain_three) {
 }
 
 VE_TEST(pipeline_addPathStep_explicit) {
-    command::regProc("_test_pipe_path", [](Node*, Node* in, Node* out) -> Result {
+    command::regProc("_test_pipe_path", [](Node* in, Node* out) -> Result {
         out->set(Var(in->get().toInt() * 10));
         return Result::ok();
     });
@@ -293,9 +286,9 @@ VE_TEST(pipeline_addPathStep_explicit) {
 }
 
 VE_TEST(pipeline_aborts_on_error) {
-    command::regProc("_test_pipe_ok",    [](Node*, Node*, Node* out) -> Result { out->set(Var(1)); return Result::ok(); });
-    command::regProc("_test_pipe_fail",  [](Node*, Node*, Node*) -> Result { return Result::fail(-9, "bail"); });
-    command::regProc("_test_pipe_never", [](Node*, Node*, Node* out) -> Result { out->set(Var(999)); return Result::ok(); });
+    command::regProc("_test_pipe_ok",    [](Node* /*in*/, Node* out) -> Result { out->set(Var(1)); return Result::ok(); });
+    command::regProc("_test_pipe_fail",  [](Node* /*in*/, Node* /*out*/) -> Result { return Result::fail(-9, "bail"); });
+    command::regProc("_test_pipe_never", [](Node* /*in*/, Node* out) -> Result { out->set(Var(999)); return Result::ok(); });
 
     Pipeline p("pipe");
     p.addLinearStep(Command("_test_pipe_ok"));
@@ -315,7 +308,7 @@ VE_TEST(pipeline_aborts_on_error) {
 // ============================================================================
 
 VE_TEST(ctx_envelope_request_reply) {
-    command::regProc("_test_ctx_req_reply", [](Node*, Node* in, Node* out) -> Result {
+    command::regProc("_test_ctx_req_reply", [](Node* in, Node* out) -> Result {
         // proc reads from in (= ctx/request), writes to out (= ctx/reply)
         out->set(Var(in->get().toString() + "!"));
         return Result::ok();
@@ -354,9 +347,7 @@ VE_TEST(ctx_external_user_fields_preserved_pipe_cleared) {
     Node my_ctx("user_ctx");
     my_ctx.at("user_field")->set(Var(std::string("must-survive")));
 
-    command::regCtx("_test_ctx_external", [](Node* ctx) -> Result {
-        // user field should still be visible from inside the command
-        VE_ASSERT(ctx->find("user_field"));
+    command::regProc("_test_ctx_external", [](Node* /*in*/, Node* /*out*/) -> Result {
         return Result::ok(Var(42));
     });
 

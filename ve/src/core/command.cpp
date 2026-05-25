@@ -115,7 +115,7 @@ Node* missingCommandNode()
 {
     static Node* s_n = []() -> Node* {
         auto* n = new Node("_missing_cmd");
-        Proc fail_proc = [](Node*, Node*, Node*) -> Result {
+        Proc fail_proc = [](Node*, Node*) -> Result {
             return Result::fail(Result::UNKNOWN_CMD, "unknown command");
         };
         n->at("_proc")->set(Var::custom(std::move(fail_proc)));
@@ -210,8 +210,9 @@ bool has(const std::string& key, char sep)
 
 // --- argument parsing (state-machine, declare-driven) ---
 //
-// Writes parsed values into ctx/request subnode (not top-level), matching the
-// new ctx envelope layout. Caller's `args(ctx)` reads from ctx/request too.
+// Writes parsed values into the `in` node directly (in is the input container
+// in the 2-node Proc model; CallProto already places it where Pipeline wires).
+// declare/<param>/_default + _short metadata read from in->shadow() if set.
 
 namespace {
 
@@ -236,14 +237,14 @@ void buildDeclInfo(const Node* decl,
 
 } // anonymous
 
-bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
+bool parseArgs(Node* in, const std::vector<std::string>& args, int startIdx)
 {
-    if (!ctx) return false;
+    if (!in) return false;
 
-    Node* req = ctx->atPath("request", true);
-    req->clear();
+    in->clear();
+    Node* req = in;   // write directly into the input container (2-node Proc model)
 
-    const Node* decl = ctx->shadow();   // ctx may carry declare/ as shadow
+    const Node* decl = in->shadow();   // in may carry declare/ as shadow
 
     std::vector<std::string> paramOrder;
     std::map<std::string, std::string> shortMap;
@@ -310,12 +311,12 @@ bool parseArgs(Node* ctx, const std::vector<std::string>& args, int startIdx)
     return true;
 }
 
-bool parseArgs(Node* ctx, const Var& input)
+bool parseArgs(Node* in, const Var& input)
 {
-    if (!ctx) return false;
+    if (!in) return false;
 
-    Node* req = ctx->atPath("request", true);
-    req->clear();
+    in->clear();
+    Node* req = in;
     if (input.isNull()) return true;
 
     if (input.isDict()) {
@@ -331,11 +332,11 @@ bool parseArgs(Node* ctx, const Var& input)
         strs.reserve(input.toList().size());
         for (auto& item : input.toList())
             strs.push_back(item.toString());
-        return parseArgs(ctx, strs, 0);
+        return parseArgs(in, strs, 0);
     }
 
     // scalar: bind to first positional param if declared, else int-index 0
-    const Node* decl = ctx->shadow();
+    const Node* decl = in->shadow();
     if (decl) {
         for (auto* param : *decl) {
             const auto& nm = param->name();
@@ -351,7 +352,7 @@ bool parseArgs(Node* ctx, const Var& input)
 }
 
 
-// --- Args accessor (reads from ctx/request) ---
+// --- Args accessor (reads from the in node directly) ---
 
 Var Args::var(const std::string& key, const Var& def) const
 {
@@ -394,10 +395,10 @@ bool Args::has(const std::string& key) const
     return n && !n->get().isNull();
 }
 
-// Wrap ctx/request as the underlying Node — proc bodies use args(ctx) to read params.
-Args args(Node* ctx)
+// Wrap the in node — proc bodies use args(in) to read params.
+Args args(Node* in)
 {
-    return Args(ctx ? ctx->atPath("request", true) : nullptr);
+    return Args(in);
 }
 
 } // namespace command

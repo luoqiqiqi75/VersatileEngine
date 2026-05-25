@@ -177,8 +177,8 @@ void ServerModule::registerFileCommands()
     loadDecl->at("inline")->set("_short", "i");
 
     // save <format> [path] [-f file]
-    command::reg("save", [data_root](Node* ctx) -> Result {
-        auto a = command::args(ctx);
+    command::reg("save", [data_root](Node* in, Node* /*out*/) -> Result {
+        auto a = command::args(in);
 
         std::string format = a.string("format");
         if (format.empty()) {
@@ -189,7 +189,7 @@ void ServerModule::registerFileCommands()
         }
 
         // Resolve target from the command context when available.
-        Node* current = command::current(ctx);
+        Node* current = command::current(in);
         Node* base = current ? current : node::root();
 
         std::string pathStr = a.string("path");
@@ -270,8 +270,8 @@ void ServerModule::registerFileCommands()
     }, "save <format> [path] [-f file]");
 
     // load <format> [path] [-f file] [-i data]
-    command::reg("load", [data_root](Node* ctx) -> Result {
-        auto a = command::args(ctx);
+    command::reg("load", [data_root](Node* in, Node* /*out*/) -> Result {
+        auto a = command::args(in);
 
         std::string format = a.string("format");
         if (format.empty()) {
@@ -279,7 +279,7 @@ void ServerModule::registerFileCommands()
         }
 
         // Resolve target from the command context when available.
-        Node* current = command::current(ctx);
+        Node* current = command::current(in);
         Node* base = current ? current : node::root();
 
         std::string pathStr = a.string("path");
@@ -371,8 +371,8 @@ void ServerModule::registerSearchCommand()
     decl->at("with-value")->set("_short", "w");
     decl->at("leaf-only")->set("_short", "l");
 
-    command::reg("search", [](Node* ctx) -> Result {
-        auto a = command::args(ctx);
+    command::reg("search", [](Node* in, Node* /*out*/) -> Result {
+        auto a = command::args(in);
 
         std::string pattern = a.string("pattern");
         if (pattern.empty()) {

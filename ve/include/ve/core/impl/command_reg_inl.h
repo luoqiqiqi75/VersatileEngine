@@ -7,7 +7,7 @@
 // ----------------------------------------------------------------------------
 //
 // Included from command.h. Defines command::reg<RegProtoT>(...) +
-// convenience family (reg / regCtx / regInOut / regProc / regVar / regAction /
+// convenience family (reg / regProc / regVar / regAction /
 // regResult). Each generates a Proc via RegProto<tag::X>::wrap and stores it
 // to the factory node along with the in/out schema.
 
@@ -49,7 +49,7 @@ inline void reg(const std::string& key, F&& fn,
 
 // SmartProto: pick the most-specific RegProto tag from F's signature.
 // This is the only place where "auto tag detection" happens — all other
-// convenience functions (regCtx / regAction / regVar / ...) bind a fixed tag.
+// convenience functions (regProc / regAction / regVar / ...) bind a fixed tag.
 // Explicit form `reg<RegProto<tag::X>>(...)` always overrides this.
 namespace detail {
 
@@ -73,16 +73,18 @@ private:
 public:
     static constexpr bool is0_node = std::is_same_v<A<0>, Node*>;
     static constexpr bool is1_node = std::is_same_v<A<1>, Node*>;
-    static constexpr bool is2_node = std::is_same_v<A<2>, Node*>;
     static constexpr bool is0_var  = std::is_same_v<A<0>, Var>;
 
+    // 2-node Proc signature: (Node* in, Node* out).
+    //   N==0                    → VoidAction
+    //   N==1, Arg0=Var          → VarSingle
+    //   N==2, Arg0=Node*, Arg1=Node* → FullProc (raw Proc)
+    //   anything else (positional R fn(A1,…,An)) → PositionalArgs
     using Tag =
         std::conditional_t<N == 0,                                             tag::VoidAction,
-        std::conditional_t<N == 1 && is0_node,                                 tag::NodeAction,
         std::conditional_t<N == 1 && is0_var,                                  tag::VarSingle,
-        std::conditional_t<N == 2 && is0_node && is1_node,                     tag::InOutAction,
-        std::conditional_t<N == 3 && is0_node && is1_node && is2_node,         tag::FullProc,
-                                                                               tag::PositionalArgs>>>>>;
+        std::conditional_t<N == 2 && is0_node && is1_node,                     tag::FullProc,
+                                                                               tag::PositionalArgs>>>;
 };
 
 } // namespace detail
@@ -108,14 +110,6 @@ inline void reg(const std::string& key, F&& fn, LoopRef lr, const std::string& h
 {
     reg(key, std::forward<F>(fn), help, std::move(lr));
 }
-
-template<typename F>
-inline void regCtx(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
-{ reg<RegProto<tag::NodeAction>>(key, std::forward<F>(fn), help, std::move(lr)); }
-
-template<typename F>
-inline void regInOut(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
-{ reg<RegProto<tag::InOutAction>>(key, std::forward<F>(fn), help, std::move(lr)); }
 
 template<typename F>
 inline void regProc(const std::string& key, F&& fn, const std::string& help, LoopRef lr)

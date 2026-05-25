@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// impl/command_proto_inl.h — RegProto<tag::X> specializations (inline)
+// impl/command_proto_inl.h — RegProto<tag::X> specializations (inline, 2-node)
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -7,7 +7,7 @@
 // ----------------------------------------------------------------------------
 //
 // Included from command.h. Each RegProto<tag::X> wraps a user callable into a
-// Proc (Result(Node*, Node*, Node*)). Compile-time signature checks via
+// Proc — `Result(Node* in, Node* out)`. Compile-time signature checks via
 // static_assert (Q-pc-2). std::exception caught and mapped to
 // Result::fail(Result::EXCEPTION, e.what()) (Q-reg-3).
 
@@ -84,10 +84,12 @@ inline Result invokeAndPackReturn(F&& fn, Node* out, Args&&... args)
 
 
 // ============================================================================
-// RegProto<tag::FullProc>  — raw Proc passthrough
+// RegProto<tag::FullProc>  — raw 2-node Proc passthrough
 // ============================================================================
 //
-// user fn signature: Result fn(Node* ctx, Node* in, Node* out)
+// user fn signature: Result fn(Node* in, Node* out)
+//
+// This is the most flexible form — equivalent to defining a Proc directly.
 
 template<>
 struct RegProto<tag::FullProc>
@@ -97,10 +99,10 @@ struct RegProto<tag::FullProc>
     {
         using Tr = basic::FnTraits<std::decay_t<F>>;
         static_assert(Tr::IsFunction, "RegProto<FullProc>: fn is not callable");
-        static_assert(Tr::ArgCnt == 3,
-            "RegProto<FullProc>: fn must take (Node* ctx, Node* in, Node* out)");
-        return [fn = std::forward<F>(fn)](Node* ctx, Node* in, Node* out) -> Result {
-            return detail::invokeWithExceptionGuard([&]{ return Result(fn(ctx, in, out)); });
+        static_assert(Tr::ArgCnt == 2,
+            "RegProto<FullProc>: fn must take (Node* in, Node* out)");
+        return [fn = std::forward<F>(fn)](Node* in, Node* out) -> Result {
+            return detail::invokeWithExceptionGuard([&]{ return Result(fn(in, out)); });
         };
     }
 
@@ -110,66 +112,7 @@ struct RegProto<tag::FullProc>
 
 
 // ============================================================================
-// RegProto<tag::NodeAction>  — initial Procedure style (ctx-only)
-// ============================================================================
-//
-// user fn signature: Result fn(Node* ctx)  (also accepts int / void return)
-
-template<>
-struct RegProto<tag::NodeAction>
-{
-    template<typename F>
-    static Proc wrap(F&& fn)
-    {
-        using Tr = basic::FnTraits<std::decay_t<F>>;
-        static_assert(Tr::IsFunction, "RegProto<NodeAction>: fn is not callable");
-        static_assert(Tr::ArgCnt == 1, "RegProto<NodeAction>: fn must take (Node* ctx)");
-        using Arg0 = std::decay_t<typename Tr::template ArgAt<0>>;
-        static_assert(std::is_same_v<Arg0, Node*>,
-            "RegProto<NodeAction>: fn arg must be Node*");
-        using Ret = typename Tr::RetT;
-        return [fn = std::forward<F>(fn)](Node* ctx, Node* /*in*/, Node* out) -> Result {
-            return detail::invokeWithExceptionGuard([&]{
-                return detail::invokeAndPackReturn<Ret>(fn, out, ctx);
-            });
-        };
-    }
-
-    template<typename F> static InSchema  inSchemaOf () { return {InSchema::FreeForm}; }
-    template<typename F> static OutSchema outSchemaOf() { return {OutSchema::FreeForm}; }
-};
-
-
-// ============================================================================
-// RegProto<tag::InOutAction>  — no ctx; in/out only
-// ============================================================================
-//
-// user fn signature: Result fn(Node* in, Node* out)
-
-template<>
-struct RegProto<tag::InOutAction>
-{
-    template<typename F>
-    static Proc wrap(F&& fn)
-    {
-        using Tr = basic::FnTraits<std::decay_t<F>>;
-        static_assert(Tr::IsFunction, "RegProto<InOutAction>: fn is not callable");
-        static_assert(Tr::ArgCnt == 2, "RegProto<InOutAction>: fn must take (Node* in, Node* out)");
-        using Ret = typename Tr::RetT;
-        return [fn = std::forward<F>(fn)](Node* /*ctx*/, Node* in, Node* out) -> Result {
-            return detail::invokeWithExceptionGuard([&]{
-                return detail::invokeAndPackReturn<Ret>(fn, out, in, out);
-            });
-        };
-    }
-
-    template<typename F> static InSchema  inSchemaOf () { return {InSchema::FreeForm}; }
-    template<typename F> static OutSchema outSchemaOf() { return {OutSchema::FreeForm}; }
-};
-
-
-// ============================================================================
-// RegProto<tag::VoidAction>  — side-effect only (no args, no Node*)
+// RegProto<tag::VoidAction>  — side-effect only (no args)
 // ============================================================================
 //
 // user fn signature: void fn() / int fn() / Result fn()
@@ -184,7 +127,7 @@ struct RegProto<tag::VoidAction>
         static_assert(Tr::IsFunction, "RegProto<VoidAction>: fn is not callable");
         static_assert(Tr::ArgCnt == 0, "RegProto<VoidAction>: fn must take no args");
         using Ret = typename Tr::RetT;
-        return [fn = std::forward<F>(fn)](Node* /*ctx*/, Node* /*in*/, Node* out) -> Result {
+        return [fn = std::forward<F>(fn)](Node* /*in*/, Node* out) -> Result {
             return detail::invokeWithExceptionGuard([&]{
                 return detail::invokeAndPackReturn<Ret>(fn, out);
             });
@@ -215,7 +158,7 @@ struct RegProto<tag::VarSingle>
         static_assert(std::is_same_v<Arg0, Var>,
             "RegProto<VarSingle>: fn arg must be Var");
         using Ret = typename Tr::RetT;
-        return [fn = std::forward<F>(fn)](Node* /*ctx*/, Node* in, Node* out) -> Result {
+        return [fn = std::forward<F>(fn)](Node* in, Node* out) -> Result {
             return detail::invokeWithExceptionGuard([&]{
                 Var v = in ? in->get() : Var{};
                 return detail::invokeAndPackReturn<Ret>(fn, out, std::move(v));
@@ -260,19 +203,19 @@ struct RegProto<tag::PositionalArgs>
         static_assert(Tr::ArgCnt > 0,
             "RegProto<PositionalArgs>: fn must take at least one positional arg "
             "(use regAction / VoidAction for no-arg side-effects)");
-        return [fn = std::forward<F>(fn)](Node* ctx, Node* in, Node* out) mutable -> Result {
+        return [fn = std::forward<F>(fn)](Node* in, Node* out) mutable -> Result {
             // Re-derive Tr / Ret / ArgsT inside the lambda (don't rely on outer
             // captures — MSVC's two-phase lookup can fail to see them at the
             // make_index_sequence<N> instantiation point).
-            // `mutable` so the captured fn can be invoked through a non-const F&
-            // (works for both const-callable and mutable-callable lambdas).
             using Tr2    = basic::FnTraits<std::decay_t<F>>;
             using Ret2   = typename Tr2::RetT;
             using ArgsT2 = typename Tr2::ArgsT;
             return detail::invokeWithExceptionGuard([&]{
+                // declare/<param>/_default lookup: declare may be exposed via
+                // the in node's shadow chain (set by caller / RegProto reg helper).
                 Node* declare = nullptr;
-                if (ctx) {
-                    if (const Node* sh = ctx->shadow())
+                if (in) {
+                    if (const Node* sh = in->shadow())
                         declare = const_cast<Node*>(sh);
                 }
                 return detail::invokePositionalImpl<Ret2>(
@@ -293,7 +236,6 @@ struct RegProto<tag::PositionalArgs>
 // ============================================================================
 //
 // Identical wrap to PositionalArgs but enforces Ret = Result at compile time.
-// Useful when the user wants to express full {code, message, data} semantics.
 
 template<>
 struct RegProto<tag::ResultArgs>

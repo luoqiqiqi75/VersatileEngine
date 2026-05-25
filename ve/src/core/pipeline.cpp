@@ -219,7 +219,7 @@ typename CallProtoT::Output Pipeline::call(const typename CallProtoT::Input& inp
         }
 
         // synchronous inline execution (PR C: dispatch via Step.post(_alive))
-        Result r = p(_p->ctx, sr.in, sr.out);
+        Result r = p(sr.in, sr.out);
 
         // D14: Result.data non-null → importAs<VarS> overwrites out
         if (!r.data.isNull() && sr.out) {

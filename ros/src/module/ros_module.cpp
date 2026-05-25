@@ -274,8 +274,8 @@ private:
             return okResult(Var(ros::backendInfoList()));
         }, "List registered ros backends.");
 
-        command::reg("ros.backend.info", [](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.backend.info", [](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             std::string key_name = a.string("key");
             if (key_name.empty()) {
                 if (auto current = ros::defaultBackend())
@@ -296,8 +296,8 @@ private:
             return okResult(Var(ros::envInfo()));
         }, "Show ROS-related environment variables.");
 
-        command::reg("ros.node.list", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.node.list", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto result = ros::listNodes(a.string("filter"));
             writeNamedNodeList("nodes", result);
             Var::ListV names;
@@ -310,8 +310,8 @@ private:
             return okResult(Var(std::move(names)));
         }, "List ROS nodes.");
 
-        command::reg("ros.topic.list", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.topic.list", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto result = ros::listTopics(a.string("filter"));
             writeNamedPathList("topics", result, "name");
             Var::ListV names;
@@ -324,16 +324,16 @@ private:
             return okResult(Var(std::move(names)));
         }, "List ROS topics.");
 
-        command::reg("ros.topic.info", [](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.topic.info", [](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto topic_name = a.string("name");
             if (topic_name.empty())
                 return failResult("topic name is required");
             return okResult(Var(ros::topicInfo(topic_name)));
         }, "Show ROS topic details.");
 
-        command::reg("ros.topic.subscribe", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.topic.subscribe", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             ros::TopicSubscriptionConfig config;
             config.name = a.string("name");
             config.topic = a.string("topic");
@@ -350,8 +350,8 @@ private:
             return okResult(Var(result));
         }, "Subscribe to a topic.");
 
-        command::reg("ros.topic.unsubscribe", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.topic.unsubscribe", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto name = a.string("name");
             if (name.empty())
                 return failResult("name is required");
@@ -362,8 +362,8 @@ private:
             return okResult(Var(result));
         }, "Remove a named topic subscription.");
 
-        command::reg("ros.topic.publish", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.topic.publish", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             ros::TopicPublishRequest request;
             request.topic = a.string("topic");
             request.type = a.string("type");
@@ -378,8 +378,8 @@ private:
             return okResult(Var(result));
         }, "Publish to a topic.");
 
-        command::reg("ros.topic.once", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.topic.once", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             ros::TopicOnceRequest request;
             request.topic = a.string("topic");
             request.target_node = a.string("target_node");
@@ -419,8 +419,8 @@ private:
             return okResult(Var(result));
         }, "Wait for one message.");
 
-        command::reg("ros.service.list", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.service.list", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto result = ros::listServices(a.string("filter"));
             writeNamedPathList("services", result, "name");
             Var::ListV names;
@@ -433,16 +433,16 @@ private:
             return okResult(Var(std::move(names)));
         }, "List ROS services.");
 
-        command::reg("ros.service.info", [](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.service.info", [](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto service_name = a.string("name");
             if (service_name.empty())
                 return failResult("service name is required");
             return okResult(Var(ros::serviceInfo(service_name)));
         }, "Show ROS service details.");
 
-        command::reg("ros.service.call", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.service.call", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             ros::ServiceCallRequest request;
             request.service = a.string("service");
             request.type = a.string("type");
@@ -458,8 +458,8 @@ private:
             return okResult(Var(result));
         }, "Call a ROS service.");
 
-        command::reg("ros.param.list", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.param.list", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto result = ros::listParams(a.string("node"));
             if (!result.value("ok").toBool(false))
                 return failResult(result.value("message").toString("param list failed"));
@@ -496,8 +496,8 @@ private:
             }
         }, "List ROS parameters. Without node: list nodes. With node: params + values.");
 
-        command::reg("ros.param.get", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.param.get", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             const auto node_name = a.string("node");
             const auto param_name = a.string("name");
             if (node_name.empty() || param_name.empty())
@@ -512,8 +512,8 @@ private:
             return okResult(Var(result));
         }, "Get one ROS parameter.");
 
-        command::reg("ros.param.set", [this](Node* ctx) -> Result {
-            auto a = command::args(ctx);
+        command::reg("ros.param.set", [this](Node* in, Node* /*out*/) -> Result {
+            auto a = command::args(in);
             auto node_name = a.string("node");
             auto param_name = a.string("name");
             Var value = a.var("value");
