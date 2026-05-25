@@ -338,6 +338,19 @@ inline typename CallProtoT::Output call(const std::string& key,
     return Command(key).call<CallProtoT>(input);
 }
 
+// callSync — explicitly synchronous (blocks until the command completes).
+//
+// PR A: Pipeline::call is already single-pass synchronous, so this is a thin
+// alias of call<CallProtoT>. PR C will make Pipeline async-capable, at which
+// point this wrapper pumps loop::currentDispatcher() while waiting (so a
+// nested call from a loop's own worker thread doesn't self-starve).
+template<typename CallProtoT>
+inline typename CallProtoT::Output callSync(const std::string& key,
+                                            const typename CallProtoT::Input& input)
+{
+    return call<CallProtoT>(key, input);
+}
+
 inline Result callReply(const std::string& key, const Var& input = {})
 { return Command(key).callReply(input); }
 

@@ -26,6 +26,7 @@ struct LoopTraits<AsioContext>::Context
     int thread_count;
     std::atomic<bool> is_running{false};
     std::mutex mtx;   // protects start/stop
+    LoopRef self_ref;   // populated by setSelfRef; captured by worker threads
 
     explicit Context(int n)
         : io()
@@ -65,8 +66,13 @@ bool LoopTraits<AsioContext>::start(Context* ctx)
     ctx->guard.emplace(asio::make_work_guard(ctx->io));
     ctx->is_running = true;
 
+    LoopRef self_ref = ctx->self_ref;   // captured by value into worker closure
     for (int i = 0; i < ctx->thread_count; ++i) {
-        ctx->threads.emplace_back([ctx] { ctx->io.run(); });
+        ctx->threads.emplace_back([ctx, self_ref] {
+            t_dispatcher = self_ref;
+            ctx->io.run();
+            t_dispatcher = LoopRef();
+        });
     }
     return true;
 }
@@ -110,11 +116,18 @@ size_t LoopTraits<AsioContext>::runOne(Context* ctx)
     return ctx->io.run_one();
 }
 
+void LoopTraits<AsioContext>::setSelfRef(Context* ctx, LoopRef ref)
+{
+    if (!ctx) return;
+    ctx->self_ref = std::move(ref);
+}
+
 // ============================================================================
 // loop:: — context (thread-local, set by owner-aware post)
 // ============================================================================
 
-thread_local void* t_loop_context = nullptr;
+thread_local void*   t_loop_context     = nullptr;
+thread_local LoopRef t_dispatcher;     // set by worker thread on entry; empty on non-worker threads
 
 void* loop::context()              { return t_loop_context; }
 void* loop::setContext(void* ctx)  { auto prev = t_loop_context; t_loop_context = ctx; return prev; }
@@ -139,18 +152,13 @@ void loop::post(LoopRef loop, Alive token, Task task)
 
 // ----- currentDispatcher -----------------------------------------------------
 //
-// PR A: returns empty LoopRef (no thread_local plumbing yet).
-// PR D will:
-//   - declare `thread_local LoopRef t_dispatcher` here
-//   - Loop<T>::start sets t_dispatcher = LoopRef::from(*this) on each worker
-//   - command::callSync uses currentDispatcher to detect re-entrant sync calls
-//     and pump the current loop instead of CV-waiting (avoiding self-starvation).
-//
-// Until then, callSync (if/when added) will fall back to the CV-wait path.
+// Returns the LoopRef of the worker thread the caller is on, or an empty
+// LoopRef when called from a non-worker thread (test main, foreign service
+// thread). command::callSync uses this to choose between CV-wait and pump.
 
 LoopRef loop::currentDispatcher()
 {
-    return LoopRef();
+    return t_dispatcher;
 }
 
 // ============================================================================

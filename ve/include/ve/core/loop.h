@@ -104,11 +104,18 @@ public:
             if (!token.dead()) task();
         });
     }
-    bool start()                { return Traits::start(_ctx); }
+    bool start() {
+        // Publish self LoopRef to backend so worker threads can populate
+        // thread_local currentDispatcher (if backend supports the hook).
+        if constexpr (has_set_self_ref_<Traits>::value) {
+            Traits::setSelfRef(_ctx, LoopRef::from(*this));
+        }
+        return Traits::start(_ctx);
+    }
     bool stop()                 { return Traits::stop(_ctx); }
     bool isRunning() const      { return Traits::running(_ctx); }
 
-    // --- Optional pump API (used by drivePipeline for re-entrant sync calls) ---
+    // --- Optional pump API (used by callSync for re-entrant sync calls) ---
     // SFINAE-detected so backends without these traits stay compilable; absent
     // backends fall back to "not on worker thread" / "no-op pump", which keeps
     // the legacy CV-wait behaviour for them.
@@ -124,6 +131,13 @@ private:
     template<typename Tr>
     struct has_run_one_<Tr, std::void_t<decltype(Tr::runOne(
         std::declval<typename Tr::Context*>()))>> : std::true_type {};
+
+    template<typename Tr, typename = void>
+    struct has_set_self_ref_ : std::false_type {};
+    template<typename Tr>
+    struct has_set_self_ref_<Tr, std::void_t<decltype(Tr::setSelfRef(
+        std::declval<typename Tr::Context*>(),
+        std::declval<LoopRef>()))>> : std::true_type {};
 
 public:
     bool isCurrentThread() const {
@@ -304,9 +318,13 @@ struct LoopTraits<AsioContext>
     static VE_API bool     stop(Context*);
     static VE_API bool     running(const Context*);
 
-    // Pump extensions: re-entrant sync support for drivePipeline.
+    // Pump extensions: re-entrant sync support for callSync.
     static VE_API bool     isCurrentThread(const Context*);
     static VE_API size_t   runOne(Context*);
+
+    // Self-ref hook: Loop<T>::start passes its LoopRef so worker threads can
+    // populate thread_local loop::currentDispatcher() on entry.
+    static VE_API void     setSelfRef(Context*, LoopRef ref);
 };
 
 
