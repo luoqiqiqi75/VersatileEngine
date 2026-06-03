@@ -8,185 +8,331 @@
 #include <asio/executor_work_guard.hpp>
 #include <asio/post.hpp>
 
+#include <atomic>
+#include <mutex>
 #include <optional>
+#include <thread>
+#include <deque>
+#include <vector>
+#include <string>
+#include <unordered_map>
 
 namespace ve {
 
 // ============================================================================
-// AsioContext::Context — internal state
+// LoopContext<AsioContext> — asio io_context backend, single worker thread
 // ============================================================================
 
 using AsioWorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
 
-struct LoopTraits<AsioContext>::Context
+struct LoopContext<AsioContext>::State
 {
     asio::io_context io;
     std::optional<AsioWorkGuard> guard;
-    std::vector<std::thread> threads;
-    int thread_count;
+    std::thread worker;
     std::atomic<bool> is_running{false};
     std::mutex mtx;   // protects start/stop
-    LoopRef self_ref;   // populated by setSelfRef; captured by worker threads
 
-    explicit Context(int n)
-        : io()
+    State()
+        : io(1)   // concurrency hint: single thread
         , guard(asio::make_work_guard(io))
-        , thread_count(std::max(n, 1))
     {}
 };
 
-// Thread-local dispatcher LoopRef — set/cleared at worker thread entry/exit
-// by LoopTraits<AsioContext>::start so loop::currentDispatcher() can return it.
-// Defined here (before LoopTraits<>::start uses it).
-thread_local LoopRef t_dispatcher;
+LoopContext<AsioContext>::LoopContext()
+    : _s(new State())
+{}
 
-// ============================================================================
-// LoopTraits<AsioContext> — static functions
-// ============================================================================
-
-LoopTraits<AsioContext>::Context*
-LoopTraits<AsioContext>::create(int threads)
+LoopContext<AsioContext>::~LoopContext()
 {
-    return new Context(threads);
+    stop();
+    delete _s;
 }
 
-void LoopTraits<AsioContext>::destroy(Context* ctx)
+void LoopContext<AsioContext>::post(Task task)
 {
-    if (!ctx) return;
-    stop(ctx);
-    delete ctx;
+    asio::post(_s->io, std::move(task));
 }
 
-void LoopTraits<AsioContext>::post(Context* ctx, Task task)
+bool LoopContext<AsioContext>::start()
 {
-    asio::post(ctx->io, std::move(task));
-}
+    std::lock_guard<std::mutex> lk(_s->mtx);
+    if (_s->is_running) return false;
 
-bool LoopTraits<AsioContext>::start(Context* ctx)
-{
-    std::lock_guard<std::mutex> lk(ctx->mtx);
-    if (ctx->is_running) return false;
+    _s->io.restart();
+    _s->guard.emplace(asio::make_work_guard(_s->io));
+    _s->is_running = true;
 
-    ctx->io.restart();
-    ctx->guard.emplace(asio::make_work_guard(ctx->io));
-    ctx->is_running = true;
-
-    LoopRef self_ref = ctx->self_ref;   // captured by value into worker closure
-    for (int i = 0; i < ctx->thread_count; ++i) {
-        ctx->threads.emplace_back([ctx, self_ref] {
-            t_dispatcher = self_ref;
-            ctx->io.run();
-            t_dispatcher = LoopRef();
-        });
-    }
+    State* st = _s;
+    _s->worker = std::thread([st]() { st->io.run(); });
     return true;
 }
 
-bool LoopTraits<AsioContext>::stop(Context* ctx)
+bool LoopContext<AsioContext>::stop()
 {
-    std::lock_guard<std::mutex> lk(ctx->mtx);
-    if (!ctx->is_running) return false;
+    std::lock_guard<std::mutex> lk(_s->mtx);
+    if (!_s->is_running) return false;
 
-    ctx->is_running = false;
-    ctx->guard.reset();     // drop work guard → io_context::run() returns when idle
-    ctx->io.stop();         // interrupt immediately
+    _s->is_running = false;
+    _s->guard.reset();     // drop work guard → io_context::run() returns when idle
+    _s->io.stop();         // interrupt immediately
 
-    for (auto& t : ctx->threads) {
-        if (t.joinable()) t.join();
-    }
-    ctx->threads.clear();
+    if (_s->worker.joinable()) _s->worker.join();
     return true;
 }
 
-bool LoopTraits<AsioContext>::running(const Context* ctx)
+bool LoopContext<AsioContext>::running() const
 {
-    return ctx->is_running;
+    return _s->is_running;
 }
 
-bool LoopTraits<AsioContext>::isCurrentThread(const Context* ctx)
+bool LoopContext<AsioContext>::isCurrentThread() const
 {
-    if (!ctx) return false;
     // asio io_context exposes this directly. True iff the calling thread is
-    // currently executing inside one of this io_context's run()/run_one()
-    // invocations — i.e. a worker thread.
-    return const_cast<asio::io_context&>(ctx->io).get_executor().running_in_this_thread();
+    // currently executing inside this io_context's run()/run_one() — i.e. the
+    // worker thread.
+    return _s && _s->io.get_executor().running_in_this_thread();
 }
 
-size_t LoopTraits<AsioContext>::runOne(Context* ctx)
+size_t LoopContext<AsioContext>::processEvents()
 {
-    if (!ctx) return 0;
-    // Blocks until exactly one handler runs (or work is exhausted). Returns 1
-    // on dispatch, 0 when io_context has stopped. Safe to call recursively
-    // from a worker thread — asio re-enters cleanly.
-    return ctx->io.run_one();
-}
-
-void LoopTraits<AsioContext>::setSelfRef(Context* ctx, LoopRef ref)
-{
-    if (!ctx) return;
-    ctx->self_ref = std::move(ref);
+    if (!_s) return 0;
+    // Run all currently-ready handlers without blocking; returns the number run.
+    // Safe to call recursively from the worker thread (asio re-enters cleanly) —
+    // used by re-entrant callSync to drain its target loop instead of CV-waiting.
+    return _s->io.poll();
 }
 
 // ============================================================================
-// loop:: — context (thread-local, set by owner-aware post)
+// LoopContext<AsioPool> — asio io_context backend, N worker threads
 // ============================================================================
 
-thread_local void*   t_loop_context     = nullptr;
-// t_dispatcher is defined near the top of this file (before LoopTraits::start uses it).
-
-void* loop::context()              { return t_loop_context; }
-void* loop::setContext(void* ctx)  { auto prev = t_loop_context; t_loop_context = ctx; return prev; }
-
-void loop::post(Alive token, Task task)
+struct LoopContext<AsioPool>::State
 {
-    main().post(std::move(token), std::move(task));
+    asio::io_context io;
+    std::optional<AsioWorkGuard> guard;
+    std::vector<std::thread> workers;
+    unsigned threads;
+    std::atomic<bool> is_running{false};
+    std::mutex mtx;   // protects start/stop
+
+    explicit State(unsigned n)
+        : io(static_cast<int>(n))             // concurrency hint: N threads
+        , guard(asio::make_work_guard(io))
+        , threads(n ? n : 1)
+    {}
+};
+
+LoopContext<AsioPool>::LoopContext(unsigned threads)
+    : _s(new State(threads ? threads : 1))
+{}
+
+LoopContext<AsioPool>::~LoopContext()
+{
+    stop();
+    delete _s;
 }
 
-void loop::post(Alive token, void* ctx, Task task)
+void LoopContext<AsioPool>::post(Task task)
 {
-    main().post(std::move(token), [ctx, task = std::move(task)]() {
-        ContextGuard _(ctx);
+    asio::post(_s->io, std::move(task));
+}
+
+bool LoopContext<AsioPool>::start()
+{
+    std::lock_guard<std::mutex> lk(_s->mtx);
+    if (_s->is_running) return false;
+
+    _s->io.restart();
+    _s->guard.emplace(asio::make_work_guard(_s->io));
+    _s->is_running = true;
+
+    State* st = _s;
+    _s->workers.reserve(st->threads);
+    for (unsigned i = 0; i < st->threads; ++i)
+        _s->workers.emplace_back([st]() { st->io.run(); });
+    return true;
+}
+
+bool LoopContext<AsioPool>::stop()
+{
+    std::lock_guard<std::mutex> lk(_s->mtx);
+    if (!_s->is_running) return false;
+
+    _s->is_running = false;
+    _s->guard.reset();
+    _s->io.stop();
+
+    for (auto& w : _s->workers)
+        if (w.joinable()) w.join();
+    _s->workers.clear();
+    return true;
+}
+
+bool LoopContext<AsioPool>::running() const
+{
+    return _s->is_running;
+}
+
+bool LoopContext<AsioPool>::isCurrentThread() const
+{
+    // True iff the caller is one of this pool's worker threads.
+    return _s && _s->io.get_executor().running_in_this_thread();
+}
+
+size_t LoopContext<AsioPool>::processEvents()
+{
+    if (!_s) return 0;
+    return _s->io.poll();
+}
+
+// ============================================================================
+// loop:: — current task token (thread-local; set only by Loop::post)
+// ============================================================================
+
+// The token of the task currently executing on this thread's loop. Carries the
+// scheduler's identity (token.as<T>()) + liveness. Set/restored by Loop::post
+// via TokenScope; there is no external setter.
+thread_local Token t_token;
+
+namespace {
+struct TokenScope {
+    Token prev;
+    explicit TokenScope(const Token& cur) : prev(std::move(t_token)) { t_token = cur; }
+    ~TokenScope() { t_token = std::move(prev); }
+};
+} // anonymous
+
+Token loop::token() { return t_token; }
+
+// ============================================================================
+// Loop — runtime methods (here, not the header, because post() drives the
+// thread_local context above).
+// ============================================================================
+
+void Loop::post(Task task) const
+{
+    if (!_ops) return;
+    if (task.guards.empty()) {
+        _ops->post(std::move(task));   // unguarded: run as-is
+        return;
+    }
+    // Guarded: re-check liveness when the loop drains the task (a guard may die
+    // between enqueue and execution), and expose owner (guards[0]) as loop::token().
+    _ops->post(Task{[task = std::move(task)]() {
+        if (!task.alive()) return;          // a guard died after enqueue → drop
+        TokenScope _scope(task.owner());
         task();
-    });
+    }});
 }
 
-void loop::post(LoopRef loop, Alive token, Task task)
-{
-    loop.post(std::move(token), std::move(task));
-}
+bool   Loop::start()           const { return _ops && _ops->start(); }
+bool   Loop::stop()            const { return _ops && _ops->stop(); }
+bool   Loop::isRunning()       const { return _ops && _ops->running(); }
+bool   Loop::isCurrentThread() const { return _ops && _ops->isCurrentThread(); }
+size_t Loop::processEvents()   const { return _ops ? _ops->processEvents() : 0; }
 
-// ----- currentDispatcher -----------------------------------------------------
+// ============================================================================
+// loop store — owns every backend; maps names → lazy factories
+// ============================================================================
 //
-// Returns the LoopRef of the worker thread the caller is on, or an empty
-// LoopRef when called from a non-worker thread (test main, foreign service
-// thread). command::callSync uses this to choose between CV-wait and pump.
+// Intentional-leak singleton (like Pool / ve::factory): owns every LoopContext
+// and Ops for the life of the process. `entries` is a deque so adopted Ops keep
+// stable addresses (handles are bare pointers into it). `named` records a lazy
+// factory per name plus the handle once materialized — reg only records,
+// instance() runs the factory once. Nothing is ever erased ⇒ no dangling.
 
-LoopRef loop::currentDispatcher()
+namespace {
+
+struct Entry {
+    void*       impl;
+    void      (*deleter)(void*);   // unused in practice (leak), kept for symmetry
+    Loop::Ops   ops;
+};
+
+struct Named {
+    loop::Factory make;
+    const Loop::Ops* ops = nullptr;   // null until first instance() materializes it
+};
+
+struct LoopStore {
+    std::recursive_mutex mtx;          // recursive: instance() runs a factory that may re-enter
+    std::deque<Entry> entries;         // stable addresses for &ops
+    std::unordered_map<std::string, Named> named;
+
+    static LoopStore& instance() { static auto* s = new LoopStore(); return *s; }
+};
+
+} // anonymous
+
+const Loop::Ops* loop::storeAdopt(void* impl, Loop::Ops ops, void (*deleter)(void*))
 {
-    return t_dispatcher;
+    auto& st = LoopStore::instance();
+    std::lock_guard<std::recursive_mutex> lk(st.mtx);
+    st.entries.push_back(Entry{impl, deleter, std::move(ops)});
+    return &st.entries.back().ops;
+}
+
+bool loop::reg(const std::string& name, Factory make)
+{
+    auto& st = LoopStore::instance();
+    std::lock_guard<std::recursive_mutex> lk(st.mtx);
+    if (st.named.count(name)) return false;   // first registration wins
+    st.named[name] = Named{std::move(make), nullptr};
+    return true;
+}
+
+Loop loop::instance(const std::string& name)
+{
+    auto& st = LoopStore::instance();
+    std::lock_guard<std::recursive_mutex> lk(st.mtx);
+    auto it = st.named.find(name);
+    if (it == st.named.end()) return Loop();          // never registered
+    Named& n = it->second;
+    if (!n.ops) {                                     // materialize once
+        Loop l = n.make ? n.make() : Loop();
+        n.ops = l ? l._opsPtr() : nullptr;
+    }
+    return Loop(n.ops);
 }
 
 // ============================================================================
-// loop:: — global loop singletons
+// Built-in backend factories — backend type stays in this TU
+// ============================================================================
+
+loop::Factory loop::asio()
+{
+    return [] { return Loop::from<AsioContext>(); };
+}
+
+loop::Factory loop::asioPool(unsigned threads)
+{
+    return [threads] { return Loop::from<AsioPool>(threads); };
+}
+
+// ============================================================================
+// loop:: — the two official loops (intentional-leak, started once)
 // ============================================================================
 //
-// Uses intentional-leak pattern (new without delete) to avoid
-// static destruction order issues with global/static objects.
+// reg installs the default factory only if no host (e.g. veQt) already claimed
+// the name — first registration wins, so an earlier reg("main", ...) pre-empts.
 
-EventLoop& loop::main()
+const Loop& loop::main()
 {
-    static auto* s = [] {
-        auto* l = new EventLoop("ve.loop.main", 1);
+    static Loop* s = [] {
+        loop::reg("main", loop::asio());      // no-op if already registered
+        auto* l = new Loop(loop::instance("main"));
         l->start();
         return l;
     }();
     return *s;
 }
 
-EventLoop& loop::pool(int threads)
+const Loop& loop::pool()
 {
-    static auto* s = [threads] {
-        auto* l = new EventLoop("ve.loop.pool", threads);
+    static Loop* s = [] {
+        loop::reg("pool", loop::asioPool(4));
+        auto* l = new Loop(loop::instance("pool"));
         l->start();
         return l;
     }();

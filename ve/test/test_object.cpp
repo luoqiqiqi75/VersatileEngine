@@ -92,17 +92,6 @@ VE_TEST(object_hasConnection_any) {
     VE_ASSERT(!src.hasConnection<1>());
 }
 
-VE_TEST(object_deleted_signal) {
-    int count = 0;
-    Object obs;
-    {
-        Object src("temp");
-        src.connect<Object::OBJECT_DELETED>(&obs, [&](const Var&) { count++; });
-    }
-    // src destroyed — OBJECT_DELETED should have fired
-    VE_ASSERT_EQ(count, 1);
-}
-
 // --- name immutability ---
 
 VE_TEST(object_name_immutable) {

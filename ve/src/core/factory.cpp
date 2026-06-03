@@ -21,7 +21,7 @@ Factory::~Factory() = default;
 Strings Factory::keys() const { return _p->keys; }
 
 void Factory::reg(const std::string& key, Node* functor_n, Var callable,
-                  const std::string& help, LoopRef lr)
+                  const std::string& help, Loop lr)
 {
     if (!functor_n) return;
 

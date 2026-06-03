@@ -25,15 +25,13 @@ namespace ve {
 void CallProto<tag::VarInVarOut>::import(Node* ctx, const Var& v)
 {
     if (!ctx) return;
-    schema::importAs<schema::VarS>(ctx->atPath("request", true), v);
+    schema::importAs<schema::VarS>(ctx->at("request"), v);
 }
 
 Var CallProto<tag::VarInVarOut>::exportOut(Node* ctx)
 {
     if (!ctx) return {};
-    if (Node* r = ctx->atPath("reply", false))
-        return schema::exportAs<schema::VarS>(r);
-    return {};
+    return schema::exportAs<schema::VarS>(ctx->at("reply"));
 }
 
 Var CallProto<tag::VarInVarOut>::makeFailure(int /*code*/, const std::string& /*msg*/)
@@ -47,16 +45,16 @@ Var CallProto<tag::VarInVarOut>::makeFailure(int /*code*/, const std::string& /*
 void CallProto<tag::RequestReply>::import(Node* ctx, const Var& v)
 {
     if (!ctx) return;
-    schema::importAs<schema::VarS>(ctx->atPath("request", true), v);
+    schema::importAs<schema::VarS>(ctx->at("request"), v);
 }
 
 Result CallProto<tag::RequestReply>::exportOut(Node* ctx)
 {
     if (!ctx) return Result::fail(Result::UNKNOWN_CMD, "ctx is null");
     Result r;
-    if (Node* cn = ctx->atPath("code", false))    r.code    = cn->get().toInt(0);
-    if (Node* mn = ctx->atPath("message", false)) r.message = mn->get().toString();
-    if (Node* rn = ctx->atPath("reply", false))   r.data    = schema::exportAs<schema::VarS>(rn);
+    r.code    = ctx->get("code").toInt(0);
+    r.message = ctx->get("message").toString();
+    r.data    = schema::exportAs<schema::VarS>(ctx->at("reply"));
     return r;
 }
 
@@ -71,7 +69,7 @@ Result CallProto<tag::RequestReply>::makeFailure(int code, const std::string& ms
 void CallProto<tag::ListInDictOut>::import(Node* ctx, const Var::ListV& v)
 {
     if (!ctx) return;
-    Node* req = ctx->atPath("request", true);
+    Node* req = ctx->at("request");
     req->clear();
     for (size_t i = 0; i < v.size(); ++i)
         req->at(static_cast<int>(i))->set(v[i]);
@@ -94,8 +92,8 @@ void CallProto<tag::NodeInOut>::import(Node* ctx, const Input& v)
 {
     if (!ctx) return;
     // Park caller's in/out pointers under _pipe/ — Pipeline reads these to wire bypass.
-    ctx->atPath("_pipe/_bind_in",  true)->set(Var(static_cast<void*>(v.in)));
-    ctx->atPath("_pipe/_bind_out", true)->set(Var(static_cast<void*>(v.out)));
+    ctx->set("_pipe/_bind_in",  Var(static_cast<void*>(v.in)));
+    ctx->set("_pipe/_bind_out", Var(static_cast<void*>(v.out)));
 }
 
 void CallProto<tag::NodeInOut>::exportOut(Node* /*ctx*/) {}

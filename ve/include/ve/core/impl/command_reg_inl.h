@@ -19,7 +19,7 @@ namespace ve::command {
 
 template<typename RegProtoT, typename F>
 inline void reg(const std::string& key, F&& fn,
-                const std::string& help, LoopRef lr,
+                const std::string& help, Loop lr,
                 char sep)
 {
     auto& f = factory();
@@ -90,41 +90,41 @@ public:
 } // namespace detail
 
 template<typename F>
-inline void reg(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
+inline void reg(const std::string& key, F&& fn, const std::string& help, Loop lr)
 {
     using Tag = typename detail::SmartProto<F>::Tag;
     reg<RegProto<Tag>>(key, std::forward<F>(fn), help, std::move(lr));
 }
 
-// Three-arg form: reg(key, fn, LoopRef) — help defaults to empty.
+// Three-arg form: reg(key, fn, Loop) — help defaults to empty.
 // (matches the historical user pattern `command::reg(key, fn, loop)`.)
 template<typename F>
-inline void reg(const std::string& key, F&& fn, LoopRef lr)
+inline void reg(const std::string& key, F&& fn, Loop lr)
 {
     reg(key, std::forward<F>(fn), std::string{}, std::move(lr));
 }
 
-// Four-arg form: reg(key, fn, LoopRef, help) — legacy "loop-before-help" order.
+// Four-arg form: reg(key, fn, Loop, help) — legacy "loop-before-help" order.
 template<typename F>
-inline void reg(const std::string& key, F&& fn, LoopRef lr, const std::string& help)
+inline void reg(const std::string& key, F&& fn, Loop lr, const std::string& help)
 {
     reg(key, std::forward<F>(fn), help, std::move(lr));
 }
 
 template<typename F>
-inline void regProc(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
+inline void regProc(const std::string& key, F&& fn, const std::string& help, Loop lr)
 { reg<RegProto<tag::FullProc>>(key, std::forward<F>(fn), help, std::move(lr)); }
 
 template<typename F>
-inline void regVar(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
+inline void regVar(const std::string& key, F&& fn, const std::string& help, Loop lr)
 { reg<RegProto<tag::VarSingle>>(key, std::forward<F>(fn), help, std::move(lr)); }
 
 template<typename F>
-inline void regAction(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
+inline void regAction(const std::string& key, F&& fn, const std::string& help, Loop lr)
 { reg<RegProto<tag::VoidAction>>(key, std::forward<F>(fn), help, std::move(lr)); }
 
 template<typename F>
-inline void regResult(const std::string& key, F&& fn, const std::string& help, LoopRef lr)
+inline void regResult(const std::string& key, F&& fn, const std::string& help, Loop lr)
 { reg<RegProto<tag::ResultArgs>>(key, std::forward<F>(fn), help, std::move(lr)); }
 
 } // namespace ve::command

@@ -213,7 +213,7 @@ namespace ve {
 //
 //   ve/factory/cmd/{key}/
 //     help                    — help string
-//     loop                    — optional bound LoopRef
+//     loop                    — optional bound Loop
 //     declare/                — parameter declarations (NamedArgs / docs / parseArgs)
 //     _proc                   — Var::custom<Proc>   (framework-internal)
 //     _in_schema              — Var::custom<InSchema>
@@ -288,31 +288,31 @@ VE_API Factory& factory();
 
 template<typename RegProtoT, typename F>
 inline void reg(const std::string& key, F&& fn,
-                const std::string& help = "", LoopRef lr = {},
+                const std::string& help = "", Loop lr = {},
                 char sep = VE_FACTORY_KEY_SEP);
 
 template<typename F>
-inline void reg       (const std::string& key, F&& fn, const std::string& help = "", LoopRef lr = {});
+inline void reg       (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
 
-// Three-arg form: reg(key, fn, LoopRef) — help defaults to empty.
+// Three-arg form: reg(key, fn, Loop) — help defaults to empty.
 template<typename F>
-inline void reg       (const std::string& key, F&& fn, LoopRef lr);
+inline void reg       (const std::string& key, F&& fn, Loop lr);
 
-// Four-arg form: reg(key, fn, LoopRef, help) — legacy "loop-before-help" order.
+// Four-arg form: reg(key, fn, Loop, help) — legacy "loop-before-help" order.
 template<typename F>
-inline void reg       (const std::string& key, F&& fn, LoopRef lr, const std::string& help);
-
-template<typename F>
-inline void regProc   (const std::string& key, F&& fn, const std::string& help = "", LoopRef lr = {});
+inline void reg       (const std::string& key, F&& fn, Loop lr, const std::string& help);
 
 template<typename F>
-inline void regVar    (const std::string& key, F&& fn, const std::string& help = "", LoopRef lr = {});
+inline void regProc   (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
 
 template<typename F>
-inline void regAction (const std::string& key, F&& fn, const std::string& help = "", LoopRef lr = {});
+inline void regVar    (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
 
 template<typename F>
-inline void regResult (const std::string& key, F&& fn, const std::string& help = "", LoopRef lr = {});
+inline void regAction (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
+
+template<typename F>
+inline void regResult (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
 
 
 // --- query ---------------------------------------------------------------
@@ -339,8 +339,9 @@ inline typename CallProtoT::Output call(const std::string& key,
 //
 // PR A: Pipeline::call is already single-pass synchronous, so this is a thin
 // alias of call<CallProtoT>. PR C will make Pipeline async-capable, at which
-// point this wrapper pumps loop::currentDispatcher() while waiting (so a
-// nested call from a loop's own worker thread doesn't self-starve).
+// point this wrapper, when invoked on its target loop's own thread
+// (target.isCurrentThread()), drains it via target.processEvents() instead of
+// CV-waiting (so a nested call from a loop's worker thread doesn't self-starve).
 template<typename CallProtoT>
 inline typename CallProtoT::Output callSync(const std::string& key,
                                             const typename CallProtoT::Input& input)

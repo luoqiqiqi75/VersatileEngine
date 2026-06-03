@@ -5,7 +5,7 @@
 //   - _pipe/ subtree for framework internal state (cleared on completion for external ctx)
 //   - 4 wiring forms (addCtxStep / addLinearStep / addPathStep / addDagStep)
 //   - Single-pass synchronous scheduling (linear chain + sync inline)
-//   - Alive bug fixed: _alive is a member, allocated once at ctor
+//   - Token bug fixed: token is a member, allocated once at ctor
 //
 // Deferred to PR C:
 //   - Proper round-based + atomic-pending scheduling
@@ -31,7 +31,7 @@ struct StepRuntime
 {
     Command         cmd;
     Wiring          wiring = Wiring::Linear;
-    LoopRef         loop;
+    Loop         loop;
     Node*           in  = nullptr;
     Node*           out = nullptr;
     std::string     in_path;
@@ -47,14 +47,14 @@ struct Pipeline::Private
     State                    state    = IDLE;
     Node*                    ctx      = nullptr;
     bool                     owns_ctx = false;
-    Alive                    alive    = Alive::create();   // fixed: member, not per-post
+    Token                    token    = Token::create();   // fixed: member, not per-post
     bool                     owns_self = true;
     Handler                  handler;
     Result                   last;
 
     ~Private()
     {
-        alive.kill();
+        token.kill();
         if (owns_ctx && ctx) delete ctx;
     }
 };
@@ -86,7 +86,7 @@ Pipeline::~Pipeline() = default;
 
 // ----- wiring ----------------------------------------------------------------
 
-Pipeline::Handle Pipeline::addCtxStep(Command cmd, LoopRef loop)
+Pipeline::Handle Pipeline::addCtxStep(Command cmd, Loop loop)
 {
     StepRuntime sr;
     sr.cmd     = std::move(cmd);
@@ -97,7 +97,7 @@ Pipeline::Handle Pipeline::addCtxStep(Command cmd, LoopRef loop)
     return {slot};
 }
 
-Pipeline::Handle Pipeline::addLinearStep(Command cmd, LoopRef loop)
+Pipeline::Handle Pipeline::addLinearStep(Command cmd, Loop loop)
 {
     StepRuntime sr;
     sr.cmd     = std::move(cmd);
@@ -111,7 +111,7 @@ Pipeline::Handle Pipeline::addLinearStep(Command cmd, LoopRef loop)
 Pipeline::Handle Pipeline::addPathStep(Command cmd,
                                        const std::string& in_path,
                                        const std::string& out_path,
-                                       LoopRef loop)
+                                       Loop loop)
 {
     StepRuntime sr;
     sr.cmd      = std::move(cmd);
@@ -126,7 +126,7 @@ Pipeline::Handle Pipeline::addPathStep(Command cmd,
 
 Pipeline::Handle Pipeline::addDagStep(Command cmd,
                                       std::initializer_list<Handle> deps,
-                                      LoopRef loop)
+                                      Loop loop)
 {
     StepRuntime sr;
     sr.cmd     = std::move(cmd);
@@ -154,24 +154,24 @@ void resolveWiring(StepRuntime& sr, int slot, int total, Node* ctx)
     case Wiring::Linear:
         // first step in chain reads ctx/request; otherwise reads previous stage's out
         sr.in = (slot == 0)
-            ? ctx->atPath("request", true)
-            : ctx->atPath("_pipe/stage", true)->at(slot - 1);
+            ? ctx->at("request")
+            : ctx->at("_pipe/stage")->at(slot - 1);
         // last step writes to ctx/reply; otherwise to _pipe/stage/#slot
         sr.out = (slot == total - 1)
-            ? ctx->atPath("reply", true)
-            : ctx->atPath("_pipe/stage", true)->at(slot);
+            ? ctx->at("reply")
+            : ctx->at("_pipe/stage")->at(slot);
         break;
 
     case Wiring::Path:
-        sr.in  = ctx->atPath(sr.in_path,  true);
-        sr.out = ctx->atPath(sr.out_path, true);
+        sr.in  = ctx->at(sr.in_path);
+        sr.out = ctx->at(sr.out_path);
         break;
 
     case Wiring::Dag:
         // PR C: proper merge node with shadow-link of dep outs.
         // Stub: alias in = out = _pipe/stage/#slot so user proc can still run.
-        sr.in  = ctx->atPath("_pipe/stage", true)->at(slot);
-        sr.out = ctx->atPath("_pipe/stage", true)->at(slot);
+        sr.in  = ctx->at("_pipe/stage")->at(slot);
+        sr.out = ctx->at("_pipe/stage")->at(slot);
         break;
     }
 }
@@ -242,9 +242,9 @@ typename CallProtoT::Output Pipeline::call(const typename CallProtoT::Input& inp
 
     // 3. pack envelope (code / message; reply is already on /reply via wiring)
     if (_p->ctx) {
-        _p->ctx->atPath("code", true)->set(Var(_p->last.code));
+        _p->ctx->set("code", _p->last.code);
         if (!_p->last.message.empty()) {
-            _p->ctx->atPath("message", true)->set(Var(_p->last.message));
+            _p->ctx->set("message", _p->last.message);
         }
     }
 
@@ -299,7 +299,7 @@ void Pipeline::onFinished(Handler h) { _p->handler = std::move(h); }
 void Pipeline::cancel()
 {
     if (_p->state != RUNNING) return;
-    if (_p->ctx) _p->ctx->atPath("_pipe/cancel", true)->set(Var(true));
+    if (_p->ctx) _p->ctx->set("_pipe/cancel", true);
     _p->state = ERRORED;
     _p->last  = Result::fail(Result::CANCELLED, "cancelled");
 }

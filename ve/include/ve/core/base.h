@@ -607,18 +607,73 @@ inline constexpr bool is_dict_like_v = basic::is_dict_like<T>::value;
 template<typename V>
 using Dict = OrderedHashMap<std::string, V>;
 
-using Task = std::function<void()>;
-
-// Alive: lightweight lifetime token (null = no tracking = always alive)
-struct Alive : std::shared_ptr<std::atomic<bool>>
+// Token: lightweight lifetime token + optional owner address.
+// Empty token (default-constructed) = no tracking = always alive, no owner.
+// A live token may be tagged with its owner's address, so a holder can recover
+// the owning object's identity (token.as<T>()) without storing a second pointer.
+struct Token
 {
-    using shared_ptr::shared_ptr;
-    Alive() = default;
-    Alive(shared_ptr p) : shared_ptr(std::move(p)) {}
+    struct Block {
+        std::atomic<bool> alive{true};
+        void*             owner = nullptr;
+    };
 
-    static Alive create() { return Alive(std::make_shared<std::atomic<bool>>(true)); }
-    bool dead() const { return *this && !get()->load(std::memory_order_acquire); }
-    void kill()       { if (*this) get()->store(false, std::memory_order_release); }
+    std::shared_ptr<Block> block;
+
+    Token() = default;
+    explicit Token(std::shared_ptr<Block> b) : block(std::move(b)) {}
+
+    // Create a live token, optionally tagged with its owner's address.
+    static Token create(void* owner = nullptr) {
+        auto b = std::make_shared<Block>();
+        b->owner = owner;
+        return Token(std::move(b));
+    }
+
+    bool dead() const { return block && !block->alive.load(std::memory_order_acquire); }
+    void kill()       { if (block) block->alive.store(false, std::memory_order_release); }
+
+    void* owner() const { return block ? block->owner : nullptr; }
+    template<typename T> T* as() const { return static_cast<T*>(owner()); }
+
+    explicit operator bool() const { return static_cast<bool>(block); }
+};
+
+// Task: a unit of deferred work = function + the liveness guards it depends on.
+// A queued task runs iff every guard is still alive; empty guards ⇒ always runs
+// (a plain post). guards[0], when present, is the owner/scheduler — it becomes
+// loop::token() while the task runs (see Loop::post / loop::token()), and dying
+// drops the task like any other guard. The task shares ownership of the guards'
+// liveness blocks (Token holds a shared_ptr<Block>), so reading dead() at run
+// time is always safe even after the owning objects are gone.
+struct Task
+{
+    std::function<void()> fn;
+    SmallVector<Token, 2> guards;
+
+    Task() = default;
+
+    // Implicit from any zero-arg callable (lambda / function / std::function).
+    template<typename F,
+        std::enable_if_t<std::is_invocable_v<F&> &&
+                         !std::is_same_v<std::decay_t<F>, Task>, int> = 0>
+    Task(F&& f) : fn(std::forward<F>(f)) {}
+
+    // Guarded: function + the tokens whose liveness gates it (guards[0] = owner).
+    Task(std::function<void()> f, SmallVector<Token, 2> g)
+        : fn(std::move(f)), guards(std::move(g)) {}
+
+    bool alive() const {
+        for (const auto& t : guards) if (t.dead()) return false;
+        return true;
+    }
+    const Token& owner() const {
+        static const Token none;
+        return guards.empty() ? none : guards.front();
+    }
+
+    void operator()() const { fn(); }
+    explicit operator bool() const { return static_cast<bool>(fn); }
 };
 
 // Result — defined in var.h (requires full Var type).

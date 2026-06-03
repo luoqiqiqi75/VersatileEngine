@@ -108,14 +108,14 @@ VE_TEST(subscribe_service_counts_are_shared) {
 }
 
 VE_TEST(node_protocol_async_command_creates_task_and_event) {
-    EventLoop loop("proto_async");
+    Loop loop = loop::asio()();
     loop.start();
 
     command::reg("_test_proto_async",
         [](Node*) -> Result {
             return Result::ok(Var("async-done"));
         },
-        LoopRef::from(loop),
+        loop,
         "async protocol test");
 
     Node root("root");

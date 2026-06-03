@@ -7,28 +7,29 @@ struct Object::Private
 {
     std::string name;
     mutable MutexT mtx;
-    Alive alive = Alive::create();
+    Token token;   // tagged with the owning Object* in Object's ctor
 
     struct Connection {
-        Object*    observer;
-        ActionT    action;
-        LoopRef    loop;
-        Alive      alive;       // observer's alive token (captured at connect time)
-        Alive      shotToken;   // per-connection token for oneShot (null = persistent)
+        ActionT action;
+        Loop    loop;
+        Token   target;   // observer's token: alive flag + observer address (empty = no observer)
+        Token   shot;     // per-connection oneShot token (empty = persistent)
+
+        Object* observer() const { return target.as<Object>(); }
     };
     UnorderedHashMap<SignalT, Vector<Connection>> connections;
 
 
-    void addConnection(SignalT signal, Object* observer, const ActionT& action,
-                        LoopRef loop = {}, Alive token = {}, bool oneShot = false)
+    void addConnection(SignalT signal, const ActionT& action, Token target,
+                        Loop loop = {}, bool oneShot = false)
     {
-        Alive shot = oneShot ? Alive::create() : Alive{};
-        connections[signal].push_back({observer, action, std::move(loop), std::move(token), std::move(shot)});
+        Token shot = oneShot ? Token::create() : Token{};
+        connections[signal].push_back({action, std::move(loop), std::move(target), std::move(shot)});
     }
 
     static bool isDead(const Connection& c)
     {
-        return c.alive.dead() || c.shotToken.dead();
+        return c.target.dead() || c.shot.dead();
     }
 
     // remove all connections for observer from a signal (internal, already under lock)
@@ -38,60 +39,61 @@ struct Object::Private
         if (it == connections.end()) return;
         auto& vec = it->second;
         vec.erase(std::remove_if(vec.begin(), vec.end(),
-            [observer](const Connection& c) { return c.observer == observer; }), vec.end());
+            [observer](const Connection& c) { return c.observer() == observer; }), vec.end());
     }
 
     void removeObserverAll(Object* observer)
     {
         for (auto& [_, vec] : connections) {
             vec.erase(std::remove_if(vec.begin(), vec.end(),
-                [observer](const Connection& c) { return c.observer == observer; }), vec.end());
+                [observer](const Connection& c) { return c.observer() == observer; }), vec.end());
         }
     }
 };
 
-Object::Object(const std::string& name) : _p(std::make_unique<Private>()) { _p->name = name; }
+Object::Object(const std::string& name) : _p(std::make_unique<Private>())
+{
+    _p->name  = name;
+    _p->token = Token::create(this);   // owner-tagged: connections recover the observer via target.as<Object>()
+}
 
 Object::~Object()
 {
-    _p->alive.kill();
-    trigger(OBJECT_DELETED, Var());
+    _p->token.kill();
     LockT lk(_p->mtx);
     _p->connections.clear();
 }
 
 const std::string& Object::name() const { return _p->name; }
 std::recursive_mutex& Object::mutex() const { return _p->mtx; }
+const Token& Object::token() const { return _p->token; }
 
-bool Object::hasConnection(SignalT signal)
-{
-    LockT lk(_p->mtx);
-    auto it = _p->connections.find(signal);
-    return it != _p->connections.end() && !it->second.empty();
-}
-
-bool Object::hasConnection(SignalT signal, Object* observer)
+bool Object::hasConnection(const SignalT signal, const Object* observer) const
 {
     LockT lk(_p->mtx);
     auto it = _p->connections.find(signal);
     if (it == _p->connections.end()) return false;
-    for (auto& c : it->second)
-        if (c.observer == observer) return true;
+    if (observer) {
+        for (auto& c : it->second)
+            if (c.observer() == observer) return true;
+    } else {
+        return !it->second.empty();
+    }
     return false;
 }
 
-void Object::connect(SignalT signal, Object* observer, const ActionT& action, LoopRef loop)
+void Object::connect(const SignalT signal, const Object* observer, const ActionT& action, Loop loop)
 {
     LockT lk(_p->mtx);
-    _p->addConnection(signal, observer, action, std::move(loop),
-                       observer ? observer->_p->alive : Alive{});
+    _p->addConnection(signal, action,
+                       observer ? observer->_p->token : Token{}, std::move(loop));
 }
 
-void Object::once(SignalT signal, Object* observer, const ActionT& action, LoopRef loop)
+void Object::once(const SignalT signal, const Object* observer, const ActionT& action, Loop loop)
 {
     LockT lk(_p->mtx);
-    _p->addConnection(signal, observer, action, std::move(loop),
-                       observer ? observer->_p->alive : Alive{}, true);
+    _p->addConnection(signal, action,
+                       observer ? observer->_p->token : Token{}, std::move(loop), true);
 }
 
 void Object::disconnect(SignalT signal, Object* observer)
@@ -108,9 +110,9 @@ void Object::disconnect(Object* observer)
 
 void Object::trigger(SignalT signal, const Var& data /*= {}*/)
 {
-    if (signal != OBJECT_DELETED && isSilent()) return;
+    if (isSilent()) return;
 
-    struct Dispatch { Object* observer; ActionT action; LoopRef loop; Alive alive; Alive shotToken; };
+    struct Dispatch { ActionT action; Loop loop; Token target; Token shot; };
     Vector<Dispatch> callbacks;
     {
         LockT lk(_p->mtx);
@@ -118,36 +120,32 @@ void Object::trigger(SignalT signal, const Var& data /*= {}*/)
         if (it != _p->connections.end()) {
             callbacks.reserve(it->second.size());
             for (auto& c : it->second)
-                callbacks.push_back({c.observer, c.action, c.loop, c.alive, c.shotToken});
+                callbacks.push_back({c.action, c.loop, c.target, c.shot});
         }
     }
 
-    auto sender_alive = _p->alive;
-    void* ctx = static_cast<void*>(this);
+    auto sender = _p->token;   // owner-tagged: becomes the slot's loop::token() and guards delivery
     bool has_dead = false;
-    bool check_sender = (signal != OBJECT_DELETED);
 
     for (auto& d : callbacks) {
-        if (d.alive.dead() || d.shotToken.dead()) {
+        if (d.target.dead() || d.shot.dead()) {
             has_dead = true;
             continue;
         }
         if (d.loop) {
-            if (check_sender) {
-                d.loop.post([sender_alive, ctx, action = std::move(d.action), data]() {
-                    if (sender_alive.dead()) return;
-                    loop::ContextGuard _(ctx);
-                    action(data);
-                });
-            } else {
-                d.loop.post([action = std::move(d.action), data]() { action(data); });
-            }
+            // Queued: the task co-owns the liveness of both participants —
+            // sender (guards[0], also the slot's loop::token() while running) and
+            // receiver. The loop drains it iff both are still alive (see Task).
+            d.loop.post(Task{
+                [action = std::move(d.action), data]() { action(data); },
+                {sender, d.target}
+            });
         } else {
-            loop::ContextGuard _(ctx);
+            // Direct: synchronous, on the caller's stack — no context token.
             d.action(data);
         }
-        if (d.shotToken) {
-            d.shotToken.kill();
+        if (d.shot) {
+            d.shot.kill();
             has_dead = true;
         }
     }

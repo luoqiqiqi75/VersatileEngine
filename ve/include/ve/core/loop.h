@@ -1,387 +1,258 @@
 // ----------------------------------------------------------------------------
-// loop.h — Event loop framework (LoopTraits + LoopRef on std::pair)
+// loop.h — Event loop framework (Loop handle + LoopContext<T> backend)
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
 //
-// Design:
-//   Loop<T>        — template loop, backend determined by LoopTraits<T>
-//   LoopTraits<T>  — specialization point per backend (static polymorphism)
-//   LoopRef        — type-erased handle for cross-template usage
+// Two types, one role each:
 //
-//   Core default:  Loop<AsioContext>  (alias: EventLoop)
-//   Qt extension:  Loop<QEventLoop>   — specialize LoopTraits<QEventLoop> in veQt
-//   RTT extension: Loop<RttActivity>  — specialize LoopTraits<RttActivity> in veRtt
+//   Loop            — non-owning, copyable handle (a bare pointer into the global
+//                     loop store). Copying copies the pointer; it never owns or
+//                     tears down a backend. Empty Loop (default-constructed) ⇒
+//                     inline / synchronous dispatch.
+//   LoopContext<T>  — per-backend implementation. Owned permanently by the loop
+//                     store (one cpp-global, intentional-leak — like Pool/factory).
+//
+// A Loop owns a thread (or several): the store is the single place that accounts
+// for how many exist. Create via the factory:
+//
+//   loop::reg(name, factory)     record name → how to build its backend
+//   loop::instance(name)         get-or-create the loop for a name
+//   loop::main() / loop::pool()  the two official loops
+//   Loop::from<T>()              build backend T directly (needs T's definition)
+//
+// Backend factories keep the backend type out of headers:
+//   loop::asio()        → single-thread io_context (affinity / signal dispatch)
+//   loop::asioPool(n)   → N-thread io_context (compute / IO offload)
+//
+// Usage:
+//   loop::reg("sensor-io", loop::asio());
+//   Loop l = loop::instance("sensor-io");
+//   l.start();
+//   l.post([]{ doWork(); });
+//   l.stop();
 //
 // ----------------------------------------------------------------------------
 
 #pragma once
 
+#include <memory>
 #include <utility>
 
 #include "base.h"
 
 namespace ve {
 
-// ============================================================================
-// LoopTraits<T> — specialization point
-// ============================================================================
+// LoopContext<T> — per-backend implementation, owned permanently by the loop
+// store. Specialize per backend with member functions:
 //
-// Each specialization must define:
+//   void   post(Task);              // queue a task (thread-safe)
+//   bool   start();                 // begin processing (spawn worker[s])
+//   bool   stop();                  // stop & join worker[s]
+//   bool   running() const;         // is active?
+//   bool   isCurrentThread() const; // is caller on a worker thread of this loop?
+//   size_t processEvents();         // run all pending tasks (non-blocking); count run
 //
-//   struct Context;                            // backend state (can be opaque)
-//   static Context* create(int threads);       // allocate & init
-//   static void     destroy(Context*);         // stop & free
-//   static void     post(Context*, Task);      // queue a task (thread-safe)
-//   static bool     start(Context*);           // begin processing
-//   static bool     stop(Context*);            // stop processing
-//   static bool     running(const Context*);   // is active?
-//
-// Optional extensions (add if backend supports):
-//   static void     postDelayed(Context*, Task, std::chrono::milliseconds);
-//   static int      postRepeating(Context*, Task, std::chrono::milliseconds);
-//   static void     cancel(Context*, int timer_id);
-//   static bool     isCurrentThread(const Context*);  // is caller on a worker thread?
-//   static size_t   runOne(Context*);                 // pump one queued task; returns count run
-//
-// The isCurrentThread / runOne pair enables sync nested command::call from a
-// loop's own worker thread: drivePipeline detects re-entrancy and pumps events
-// instead of blocking on a condition_variable (which would starve itself).
-// Backends without these become "not pumpable" — sync re-entry stays a deadlock
-// risk on those backends, as it was before.
-//
-
+// isCurrentThread()/processEvents() enable re-entrant sync dispatch: a nested
+// command::callSync on its target loop's own thread drains the loop instead of
+// CV-waiting (which would self-starve). Meaningful only for single-thread
+// backends; a multi-thread pool has no affinity, so don't rely on it there.
 template<typename T>
-struct LoopTraits;   // primary: intentionally undefined — specialize per backend
-
-struct LoopRef;
+struct LoopContext;   // primary: intentionally undefined — specialize per backend
 
 
 // ============================================================================
-// Loop<T> — generic event loop
+// Loop — non-owning, copyable loop handle
 // ============================================================================
-//
-// Wraps a backend via LoopTraits<T>. Non-copyable, non-movable.
-//
-// Usage:
-//   EventLoop main_loop("main");          // asio (default)
-//   main_loop.start();
-//   main_loop.post([]{ doWork(); });
-//   main_loop.stop();
-//
-//   // In veQt:
-//   Loop<QEventLoop> qt_loop("qt");       // Qt backend
-//
 
-template<typename T>
 class Loop
 {
-    using Traits  = LoopTraits<T>;
-    using Context = typename Traits::Context;
-
-    Context*    _ctx;
-    std::string _name;
-    Alive  _alive = Alive::create();
-
 public:
-    explicit Loop(const std::string& name = "", int threads = 1)
-        : _ctx(Traits::create(threads)), _name(name) {}
+    // Type-erased backend operations. One Ops lives permanently in the store
+    // alongside the backend it captures; a Loop just points at it.
+    struct Ops {
+        std::function<void(Task)> post;
+        std::function<bool()>     start;
+        std::function<bool()>     stop;
+        std::function<bool()>     running;
+        std::function<bool()>     isCurrentThread;
+        std::function<size_t()>   processEvents;   // run pending tasks; returns # run
+    };
 
-    ~Loop() {
-        _alive.kill();
-        if (_ctx) { Traits::destroy(_ctx); _ctx = nullptr; }
-    }
+    Loop() = default;
 
-    const Alive& alive() const { return _alive; }
+    // Internal: wrap an Ops owned by the store. Prefer the factory entry points
+    // (Loop::from / loop::reg / loop::instance) over calling this directly.
+    explicit Loop(const Ops* ops) : _ops(ops) {}
 
-    // --- Core API ---
-    void post(Task task)         { Traits::post(_ctx, std::move(task)); }
-    void post(Alive token, Task task) {
-        if (!token) { post(std::move(task)); return; }
-        Traits::post(_ctx, [token = std::move(token), task = std::move(task)]() {
-            if (!token.dead()) task();
-        });
-    }
-    bool start() {
-        // Publish self LoopRef to backend so worker threads can populate
-        // thread_local currentDispatcher (if backend supports the hook).
-        if constexpr (has_set_self_ref_<Traits>::value) {
-            Traits::setSelfRef(_ctx, LoopRef::from(*this));
-        }
-        return Traits::start(_ctx);
-    }
-    bool stop()                 { return Traits::stop(_ctx); }
-    bool isRunning() const      { return Traits::running(_ctx); }
+    // Create a fresh, anonymous LoopContext<T> in the store and return a handle.
+    // The backend is permanent (the store never erases) — the handle is just a
+    // view, so copies and destruction of handles never tear it down.
+    template<typename T, typename... Args>
+    static Loop from(Args&&... args);
 
-    // --- Optional pump API (used by callSync for re-entrant sync calls) ---
-    // SFINAE-detected so backends without these traits stay compilable; absent
-    // backends fall back to "not on worker thread" / "no-op pump", which keeps
-    // the legacy CV-wait behaviour for them.
+    // --- core API (defined in loop.cpp: post() applies the task's guards and
+    //     sets the running task's token, so it needs the thread_local token
+    //     machinery) ---
+    VE_API void   post(Task task) const;
+    VE_API bool   start() const;
+    VE_API bool   stop() const;
+    VE_API bool   isRunning() const;
+    VE_API bool   isCurrentThread() const;
+    VE_API size_t processEvents() const;
+
+    // True iff bound to a backend.
+    explicit operator bool() const { return _ops != nullptr; }
+
+    // Internal: the store-owned Ops this handle points at (null if empty). Used
+    // by the loop store to cache a materialized handle; not for general use.
+    const Ops* _opsPtr() const { return _ops; }
+
 private:
-    template<typename Tr, typename = void>
-    struct has_thread_check_ : std::false_type {};
-    template<typename Tr>
-    struct has_thread_check_<Tr, std::void_t<decltype(Tr::isCurrentThread(
-        std::declval<const typename Tr::Context*>()))>> : std::true_type {};
-
-    template<typename Tr, typename = void>
-    struct has_run_one_ : std::false_type {};
-    template<typename Tr>
-    struct has_run_one_<Tr, std::void_t<decltype(Tr::runOne(
-        std::declval<typename Tr::Context*>()))>> : std::true_type {};
-
-    template<typename Tr, typename = void>
-    struct has_set_self_ref_ : std::false_type {};
-    template<typename Tr>
-    struct has_set_self_ref_<Tr, std::void_t<decltype(Tr::setSelfRef(
-        std::declval<typename Tr::Context*>(),
-        std::declval<LoopRef>()))>> : std::true_type {};
-
-public:
-    bool isCurrentThread() const {
-        if constexpr (has_thread_check_<Traits>::value)
-            return Traits::isCurrentThread(_ctx);
-        else
-            return false;
-    }
-    size_t runOne() {
-        if constexpr (has_run_one_<Traits>::value)
-            return Traits::runOne(_ctx);
-        else
-            return 0;
-    }
-
-    // --- Backend access (requires complete Context type) ---
-    Context*           contextPtr()       { return _ctx; }
-    const Context*     contextPtr() const { return _ctx; }
-    const std::string& name()       const { return _name; }
-
-    // --- Implicit conversion to type-erased handle ---
-    operator LoopRef();
-
-    Loop(const Loop&) = delete;
-    Loop& operator=(const Loop&) = delete;
+    const Ops* _ops = nullptr;   // non-owning: points into the global loop store
 };
 
-
-namespace detail {
-
-template<typename U, typename = void>
-struct has_loop_ref_interface : std::false_type {};
-
-template<typename U>
-struct has_loop_ref_interface<U, std::void_t<
-    decltype(std::declval<U&>().post(std::declval<Task>())),
-    decltype(std::declval<const U&>().alive())
->> : std::true_type {};
-
-template<typename U>
-inline constexpr bool has_loop_ref_interface_v = has_loop_ref_interface<std::decay_t<U>>::value;
-
-// Pumpable = has isCurrentThread() + runOne() on the loop object itself.
-// (Loop<T> exposes these unconditionally via SFINAE-on-traits, so this just
-// detects "is it a real Loop<T>-like".)
-template<typename U, typename = void>
-struct has_pump_interface : std::false_type {};
-
-template<typename U>
-struct has_pump_interface<U, std::void_t<
-    decltype(std::declval<const U&>().isCurrentThread()),
-    decltype(std::declval<U&>().runOne())
->> : std::true_type {};
-
-template<typename U>
-inline constexpr bool has_pump_interface_v = has_pump_interface<std::decay_t<U>>::value;
-
-} // namespace detail
-
-
 // ============================================================================
-// LoopRef — type-erased loop handle
-// ============================================================================
-//
-// Extends std::pair<std::function<void(Task)>, Alive>: first = queue to loop, second = lifetime
-// (Alive false means first may be dangling). Prefer explicit two-arg ctor when wiring by hand.
-//
-// from(T&) binds to an object that exposes post(Task) and alive() (typically Loop<Backend>,
-// e.g. Loop<QEventLoop> after LoopTraits<QEventLoop> exists). It does not copy T; the
-// closure holds &loop until the LoopRef is destroyed. Only Alive is shared by value.
-//
-// Primary use cases:
-//   Object::connect() / once() with queued dispatch
-//   Pipeline Step async completion
-//   loop::post(LoopRef, ...)
-//
-//   obj.connect(SIG, observer, action, LoopRef::from(some_loop));
-//   // trigger → loop.post(action) instead of direct call
-//
-
-struct LoopRef : std::pair<std::function<void(Task)>, Alive>
-{
-    VE_INHERIT_CONSTRUCTOR(pair, LoopRef, std::pair<std::function<void(Task)>, Alive>)
-
-    // Optional pump probe + run-one closures. Filled by LoopRef::from(Loop&)
-    // when the source Loop exposes isCurrentThread()/runOne(); empty otherwise.
-    // drivePipeline reads these to detect re-entrant sync calls from a loop's
-    // own worker thread and pump events instead of CV-blocking.
-    std::function<bool()>   probe;
-    std::function<size_t()> run_one;
-
-    template<typename T, typename = std::enable_if_t<
-        detail::has_loop_ref_interface_v<T> && !std::is_same_v<std::decay_t<T>, LoopRef>>>
-    static LoopRef from(T& loop) {
-        LoopRef r([&loop](Task t) { loop.post(std::move(t)); }, loop.alive());
-        if constexpr (detail::has_pump_interface_v<T>) {
-            r.probe   = [&loop]() { return loop.isCurrentThread(); };
-            r.run_one = [&loop]() { return loop.runOne(); };
-        }
-        return r;
-    }
-
-    void post(Task task) const {
-        if (!first || second.dead()) return;
-        first(std::move(task));
-    }
-
-    void post(Alive token, Task task) const {
-        if (!first || second.dead()) return;
-        if (!token) { first(std::move(task)); return; }
-        first([token = std::move(token), task = std::move(task)]() {
-            if (!token.dead()) task();
-        });
-    }
-
-    // True iff probe is set AND reports the caller is on the loop's worker.
-    bool isCurrentThread() const { return probe && probe(); }
-    // Pump one task; returns 0 when no pump closure is available.
-    size_t runOne() const { return run_one ? run_one() : 0; }
-
-    explicit operator bool() const { return static_cast<bool>(first); }
-};
-
-
-template<typename T>
-inline Loop<T>::operator LoopRef() { return LoopRef::from(*this); }
-
-
-// ============================================================================
-// Step — loop scheduling primitive: (callable + target loop) pair
-// ============================================================================
-//
-// Step is a self-contained scheduling unit: it knows what to run (callable)
-// and where to run (loop). Pipeline binds (Proc + ctx + in + out + on_done)
-// into the callable; the LoopRef tags which loop the binding belongs on.
-// Empty LoopRef ⇒ run inline on caller's thread (synchronous).
-//
-// This keeps Pipeline's StepRuntime free of side-band loop lookup tables —
-// scheduling is just `step.post(alive)`.
-
-struct Step : std::pair<Task, LoopRef>
-{
-    VE_INHERIT_CONSTRUCTOR(pair, Step, std::pair<Task, LoopRef>)
-
-    Step(Task task, LoopRef loop = {})
-        : BaseT(std::move(task), std::move(loop)) {}
-
-    explicit operator bool() const { return static_cast<bool>(first); }
-
-    // Post the callable to the bound loop (guarded by token if non-empty).
-    // Empty LoopRef ⇒ inline invocation on caller's thread.
-    void post(Alive token = {}) const {
-        if (!first) return;
-        if (second) {
-            second.post(std::move(token), first);
-        } else {
-            first();
-        }
-    }
-};
-
-
-// ============================================================================
-// AsioContext — default backend (asio::io_context)
+// Core backends — declared here as the official examples; State + member bodies
+// live in loop.cpp, so this header pulls in NO asio headers. Callers normally
+// reach them through the opaque factories loop::asio() / loop::asioPool(); the
+// tags are public mainly so Loop::from<AsioContext>() works and they document
+// the LoopContext specialization shape for custom backends.
 // ============================================================================
 
-struct AsioContext;   // tag type
+struct AsioContext;   // single-thread io_context backend (affinity / signal dispatch)
+struct AsioPool;      // N-thread io_context backend (compute / IO offload; no affinity)
 
 template<>
-struct LoopTraits<AsioContext>
+struct LoopContext<AsioContext>
 {
-    struct Context;   // opaque — defined in loop.cpp
+    VE_API LoopContext();
+    VE_API ~LoopContext();
 
-    static VE_API Context* create(int threads);
-    static VE_API void     destroy(Context*);
-    static VE_API void     post(Context*, Task);
-    static VE_API bool     start(Context*);
-    static VE_API bool     stop(Context*);
-    static VE_API bool     running(const Context*);
+    VE_API void   post(Task task);
+    VE_API bool   start();
+    VE_API bool   stop();
+    VE_API bool   running() const;
 
-    // Pump extensions: re-entrant sync support for callSync.
-    static VE_API bool     isCurrentThread(const Context*);
-    static VE_API size_t   runOne(Context*);
+    // Re-entrant sync support for callSync.
+    VE_API bool   isCurrentThread() const;
+    VE_API size_t processEvents();   // run all pending tasks (non-blocking)
 
-    // Self-ref hook: Loop<T>::start passes its LoopRef so worker threads can
-    // populate thread_local loop::currentDispatcher() on entry.
-    static VE_API void     setSelfRef(Context*, LoopRef ref);
+    LoopContext(const LoopContext&) = delete;
+    LoopContext& operator=(const LoopContext&) = delete;
+
+private:
+    struct State;            // opaque — defined in loop.cpp (holds asio io_context)
+    State* _s = nullptr;
 };
 
+template<>
+struct LoopContext<AsioPool>
+{
+    VE_API explicit LoopContext(unsigned threads = 4);
+    VE_API ~LoopContext();
 
-// Default alias
-using EventLoop = Loop<AsioContext>;
+    VE_API void   post(Task task);
+    VE_API bool   start();
+    VE_API bool   stop();
+    VE_API bool   running() const;
+
+    VE_API bool   isCurrentThread() const;   // true iff caller is one of the workers
+    VE_API size_t processEvents();
+
+    LoopContext(const LoopContext&) = delete;
+    LoopContext& operator=(const LoopContext&) = delete;
+
+private:
+    struct State;
+    State* _s = nullptr;
+};
+
+// To add your own backend (Qt, RTT, a test double): specialize LoopContext<Tag>
+// in your own TU with the same member shape, then hand Loop::from<Tag>() to a
+// loop::reg(name, ...) factory — only that TU needs the backend's definition.
+
+// Store adoption: build a permanent Ops wrapping `impl` (ownership transferred
+// to the global store — intentional leak, never torn down) and return a
+// non-owning Loop pointing at it. Defined in loop.cpp.
+namespace loop {
+VE_API const Loop::Ops* storeAdopt(void* impl, Loop::Ops ops, void (*deleter)(void*));
+}
+
+// Loop::from<T> — instantiate backend T, adopt it into the store, return a
+// (non-owning) handle. The only place LoopContext<T> must be a complete type,
+// so it is instantiated in the caller's TU where the specialization is visible.
+template<typename T, typename... Args>
+Loop Loop::from(Args&&... args)
+{
+    auto* p = new LoopContext<T>(std::forward<Args>(args)...);
+    const Ops* ops = loop::storeAdopt(p, Ops{
+        [p](Task t) { p->post(std::move(t)); },
+        [p]         { return p->start(); },
+        [p]         { return p->stop(); },
+        [p]         { return p->running(); },
+        [p]         { return p->isCurrentThread(); },
+        [p]         { return p->processEvents(); },
+    }, [](void* q) { delete static_cast<LoopContext<T>*>(q); });
+    return Loop(ops);
+}
 
 
 // ============================================================================
-// loop:: — global loop accessors
+// loop:: — named-loop factory + the two official loops
 // ============================================================================
 //
-// loop::main()  — single-threaded, for signal dispatch / thread-affinity
-// loop::pool()  — multi-threaded, for compute / IO tasks
-// loop::post()  — convenience: post to main loop
+// A loop is registered under a NAME with a lazy FACTORY (how to build its
+// backend). The backend is created on first instance(name); the handle is a
+// non-owning view into the permanent store. This mirrors ve::factory: reg only
+// records, instance() materializes, the store owns forever (no dangling).
 //
+//   loop::main()  — single-thread loop for signal dispatch / thread-affinity
+//   loop::pool()  — N-thread pool for offloading compute / IO
+//   loop::reg     — record name → factory (first registration wins)
+//   loop::instance— get-or-create the loop for a name
+//
+// Backend independence: loop::asio()/asioPool() return factories whose backend
+// type lives entirely in loop.cpp, so callers register/use loops without
+// including any backend header. A host (e.g. veQt) overrides a name by reg-ing
+// it BEFORE first use — then core's loop::main().post(...) lands on that
+// backend (e.g. the Qt main thread) with zero backend-specific code in core.
 
 namespace loop {
 
-VE_API EventLoop& main();
-VE_API EventLoop& pool(int threads = 4);
+// How to build a loop's backend. Returns a non-owning handle (typically via
+// Loop::from<T>()); invoked at most once per name, on first instance().
+using Factory = std::function<Loop()>;
 
-/// Post to main loop
+// Record name → factory. First registration wins (later reg for the same name
+// is ignored), so a host can pre-empt a default by reg-ing earlier. Returns
+// true if this call installed the factory.
+VE_API bool reg(const std::string& name, Factory make);
+
+// Get-or-create the loop for a name. Runs the factory once on first call; later
+// calls return the same handle. Empty Loop if the name was never registered.
+VE_API Loop instance(const std::string& name);
+
+// Built-in backend factories — backend type stays in loop.cpp.
+VE_API Factory asio();                       // single-thread io_context
+VE_API Factory asioPool(unsigned threads = 4); // N-thread io_context
+
+VE_API const Loop& main();
+VE_API const Loop& pool();
+
+// All posting funnels through Loop::post (the only place that applies a task's
+// guards and sets the running task's context). These are thin conveniences.
+// To post a guarded task, build a Task with its guard tokens: Task{fn, {owner, …}}.
+
+/// Post to the main loop.
 inline void post(Task task) { main().post(std::move(task)); }
 
-/// Post to any loop
-template<typename T>
-void post(Loop<T>& loop, Task task) { loop.post(std::move(task)); }
-
-/// Guarded post to main loop. Task is discarded if token is false.
-VE_API void post(Alive token, Task task);
-
-/// Guarded post with context to main loop.
-VE_API void post(Alive token, void* ctx, Task task);
-
-/// Guarded post to a specific loop.
-VE_API void post(LoopRef loop, Alive token, Task task);
-
-/// Returns the owner of the currently executing loop task (nullptr if none).
-VE_API void* context();
-
-/// Sets loop context, returns previous value. For internal / Loop-backend use.
-VE_API void* setContext(void* ctx);
-
-/// Returns the LoopRef of the current thread's dispatcher.
-/// Returns an empty LoopRef when called from a non-loop-worker thread (e.g. test main,
-/// external service threads). command::callSync uses this to detect re-entrant sync
-/// calls and pump the current loop instead of CV-waiting (which would self-starve).
-/// Implementation lives in loop.cpp via thread_local LoopRef.
-VE_API LoopRef currentDispatcher();
-
-struct ContextGuard {
-    void* prev;
-    ContextGuard(void* ctx) : prev(setContext(ctx)) {}
-    ~ContextGuard() { setContext(prev); }
-    ContextGuard(const ContextGuard&) = delete;
-    ContextGuard& operator=(const ContextGuard&) = delete;
-};
+/// The token of the task currently running on this thread's loop. Empty when no
+/// loop task is running (e.g. test main). Set only by Loop::post — there is no
+/// external setter. Recover the scheduler's identity with loop::token().as<T>().
+VE_API Token token();
 
 // ---- Main loop runner (used by entry::run) --------------------------------
 //

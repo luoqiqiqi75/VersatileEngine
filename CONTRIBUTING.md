@@ -143,7 +143,7 @@ switch (s) {
 **Lambda / Namespace**：`{` 不换行
 
 ```cpp
-observer->connect(OBJECT_DELETED, this, [=] { disconnect(observer); });
+observer->connect(DONE, this, [=] { disconnect(observer); });
 
 namespace ve {
 // ...
