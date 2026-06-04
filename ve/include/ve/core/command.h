@@ -213,7 +213,7 @@ namespace ve {
 //
 //   ve/factory/cmd/{key}/
 //     help                    — help string
-//     loop                    — optional bound Loop
+//     loop                    - optional bound Loop*
 //     declare/                — parameter declarations (NamedArgs / docs / parseArgs)
 //     _proc                   — Var::custom<Proc>   (framework-internal)
 //     _in_schema              — Var::custom<InSchema>
@@ -288,31 +288,31 @@ VE_API Factory& factory();
 
 template<typename RegProtoT, typename F>
 inline void reg(const std::string& key, F&& fn,
-                const std::string& help = "", Loop lr = {},
+                const std::string& help = "", Loop* lr = nullptr,
                 char sep = VE_FACTORY_KEY_SEP);
 
 template<typename F>
-inline void reg       (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
+inline void reg       (const std::string& key, F&& fn, const std::string& help = "", Loop* lr = nullptr);
 
-// Three-arg form: reg(key, fn, Loop) — help defaults to empty.
+// Three-arg form: reg(key, fn, Loop*) - help defaults to empty.
 template<typename F>
-inline void reg       (const std::string& key, F&& fn, Loop lr);
+inline void reg       (const std::string& key, F&& fn, Loop* lr);
 
-// Four-arg form: reg(key, fn, Loop, help) — legacy "loop-before-help" order.
+// Four-arg form: reg(key, fn, Loop*, help) - legacy "loop-before-help" order.
 template<typename F>
-inline void reg       (const std::string& key, F&& fn, Loop lr, const std::string& help);
-
-template<typename F>
-inline void regProc   (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
+inline void reg       (const std::string& key, F&& fn, Loop* lr, const std::string& help);
 
 template<typename F>
-inline void regVar    (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
+inline void regProc   (const std::string& key, F&& fn, const std::string& help = "", Loop* lr = nullptr);
 
 template<typename F>
-inline void regAction (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
+inline void regVar    (const std::string& key, F&& fn, const std::string& help = "", Loop* lr = nullptr);
 
 template<typename F>
-inline void regResult (const std::string& key, F&& fn, const std::string& help = "", Loop lr = {});
+inline void regAction (const std::string& key, F&& fn, const std::string& help = "", Loop* lr = nullptr);
+
+template<typename F>
+inline void regResult (const std::string& key, F&& fn, const std::string& help = "", Loop* lr = nullptr);
 
 
 // --- query ---------------------------------------------------------------

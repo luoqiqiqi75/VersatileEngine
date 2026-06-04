@@ -63,20 +63,20 @@ public:
     // --- wiring (D6: 4 forms, method-name disambiguated) ---
 
     // in = out = ctx; for NodeAction-style procs.
-    Handle addCtxStep(Command cmd, Loop loop = {});
+    Handle addCtxStep(Command cmd, Loop* loop = nullptr);
 
     // in = previous stage's out (first stage: ctx/request);
     // out = ctx/_pipe/stage/#i  (last stage: ctx/reply on call completion).
-    Handle addLinearStep(Command cmd, Loop loop = {});
+    Handle addLinearStep(Command cmd, Loop* loop = nullptr);
 
     // Explicit ctx paths (ensure-exists). Any path — envelope, _pipe/, or user.
     Handle addPathStep(Command cmd,
                        const std::string& in_path,
                        const std::string& out_path,
-                       Loop loop = {});
+                       Loop* loop = nullptr);
 
     // DAG fan-in: in node = merge of deps' outs (shadow link); out = ctx/_pipe/stage/#i.
-    Handle addDagStep(Command cmd, std::initializer_list<Handle> deps, Loop loop = {});
+    Handle addDagStep(Command cmd, std::initializer_list<Handle> deps, Loop* loop = nullptr);
 
 
     // --- start / call ---

@@ -21,7 +21,7 @@ Factory::~Factory() = default;
 Strings Factory::keys() const { return _p->keys; }
 
 void Factory::reg(const std::string& key, Node* functor_n, Var callable,
-                  const std::string& help, Loop lr)
+                  const std::string& help, Loop* lr)
 {
     if (!functor_n) return;
 
@@ -35,7 +35,7 @@ void Factory::reg(const std::string& key, Node* functor_n, Var callable,
 
     functor_n->set(std::move(callable));
     if (!help.empty()) functor_n->at("help")->set(help);
-    if (lr) functor_n->at("loop")->set(std::move(lr));
+    if (lr) functor_n->at("loop")->set(Var(static_cast<void*>(lr)));
 }
 
 // ============================================================================

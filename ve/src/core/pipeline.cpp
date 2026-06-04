@@ -5,7 +5,6 @@
 //   - _pipe/ subtree for framework internal state (cleared on completion for external ctx)
 //   - 4 wiring forms (addCtxStep / addLinearStep / addPathStep / addDagStep)
 //   - Single-pass synchronous scheduling (linear chain + sync inline)
-//   - Token bug fixed: token is a member, allocated once at ctor
 //
 // Deferred to PR C:
 //   - Proper round-based + atomic-pending scheduling
@@ -31,7 +30,7 @@ struct StepRuntime
 {
     Command         cmd;
     Wiring          wiring = Wiring::Linear;
-    Loop         loop;
+    Loop*           loop = nullptr;
     Node*           in  = nullptr;
     Node*           out = nullptr;
     std::string     in_path;
@@ -47,14 +46,12 @@ struct Pipeline::Private
     State                    state    = IDLE;
     Node*                    ctx      = nullptr;
     bool                     owns_ctx = false;
-    Token                    token    = Token::create();   // fixed: member, not per-post
     bool                     owns_self = true;
     Handler                  handler;
     Result                   last;
 
     ~Private()
     {
-        token.kill();
         if (owns_ctx && ctx) delete ctx;
     }
 };
@@ -86,23 +83,23 @@ Pipeline::~Pipeline() = default;
 
 // ----- wiring ----------------------------------------------------------------
 
-Pipeline::Handle Pipeline::addCtxStep(Command cmd, Loop loop)
+Pipeline::Handle Pipeline::addCtxStep(Command cmd, Loop* loop)
 {
     StepRuntime sr;
     sr.cmd     = std::move(cmd);
     sr.wiring  = Wiring::Ctx;
-    sr.loop    = std::move(loop);
+    sr.loop    = loop;
     int slot = static_cast<int>(_p->steps.size());
     _p->steps.push_back(std::move(sr));
     return {slot};
 }
 
-Pipeline::Handle Pipeline::addLinearStep(Command cmd, Loop loop)
+Pipeline::Handle Pipeline::addLinearStep(Command cmd, Loop* loop)
 {
     StepRuntime sr;
     sr.cmd     = std::move(cmd);
     sr.wiring  = Wiring::Linear;
-    sr.loop    = std::move(loop);
+    sr.loop    = loop;
     int slot = static_cast<int>(_p->steps.size());
     _p->steps.push_back(std::move(sr));
     return {slot};
@@ -111,14 +108,14 @@ Pipeline::Handle Pipeline::addLinearStep(Command cmd, Loop loop)
 Pipeline::Handle Pipeline::addPathStep(Command cmd,
                                        const std::string& in_path,
                                        const std::string& out_path,
-                                       Loop loop)
+                                       Loop* loop)
 {
     StepRuntime sr;
     sr.cmd      = std::move(cmd);
     sr.wiring   = Wiring::Path;
     sr.in_path  = in_path;
     sr.out_path = out_path;
-    sr.loop     = std::move(loop);
+    sr.loop     = loop;
     int slot = static_cast<int>(_p->steps.size());
     _p->steps.push_back(std::move(sr));
     return {slot};
@@ -126,12 +123,12 @@ Pipeline::Handle Pipeline::addPathStep(Command cmd,
 
 Pipeline::Handle Pipeline::addDagStep(Command cmd,
                                       std::initializer_list<Handle> deps,
-                                      Loop loop)
+                                      Loop* loop)
 {
     StepRuntime sr;
     sr.cmd     = std::move(cmd);
     sr.wiring  = Wiring::Dag;
-    sr.loop    = std::move(loop);
+    sr.loop    = loop;
     sr.deps.reserve(deps.size());
     for (auto h : deps) sr.deps.push_back(h.slot);
     int slot = static_cast<int>(_p->steps.size());
