@@ -25,6 +25,21 @@ namespace ve {
 
 namespace fs = std::filesystem;
 
+static std::string availableSchemaFormatsText()
+{
+    std::vector<std::string> formats = schema::schemaFormatNames();
+    if (std::find(formats.begin(), formats.end(), "var") == formats.end()) {
+        formats.push_back("var");
+    }
+
+    std::string out = "available formats:";
+    for (size_t i = 0; i < formats.size(); ++i) {
+        out += (i == 0 ? " " : ", ");
+        out += formats[i];
+    }
+    return out;
+}
+
 template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port, const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
@@ -182,10 +197,7 @@ void ServerModule::registerFileCommands()
 
         std::string format = a.string("format");
         if (format.empty()) {
-            auto fmts = schema::schemaFormatNames();
-            std::string out = "available formats: json, xml, bin, var";
-            for (auto& fn : fmts) out += ", " + fn;
-            return Result::fail(out);
+            return Result::fail(availableSchemaFormatsText());
         }
 
         // Resolve target from the command context when available.

@@ -155,6 +155,21 @@ static void prepareDeclaredRequest(const Command& cmd,
     }
 }
 
+static std::string availableSchemaFormatsText()
+{
+    std::vector<std::string> formats = schema::schemaFormatNames();
+    if (std::find(formats.begin(), formats.end(), "var") == formats.end()) {
+        formats.push_back("var");
+    }
+
+    std::string out = "available formats:";
+    for (size_t i = 0; i < formats.size(); ++i) {
+        out += (i == 0 ? " " : ", ");
+        out += formats[i];
+    }
+    return out;
+}
+
 
 
 struct TerminalSession::Private
@@ -583,10 +598,7 @@ void TerminalSession::Private::initCommands()
         auto f = parseFlags(args);
         auto format = f.pos(0);
         if (format.empty()) {
-            auto fmts = schema::schemaFormatNames();
-            std::string out = "available formats: json, xml, md, bin, var";
-            for (auto& fn : fmts) out += ", " + fn;
-            s.print(out + "\n"); return;
+            s.print(availableSchemaFormatsText() + "\n"); return;
         }
         auto pathStr = f.pos(1);
         auto* t = pathStr.empty() ? s.cur : s.resolve(pathStr);
