@@ -17,42 +17,64 @@ namespace ve {
 // ============================================================================
 //
 // Loop is a borrowed runtime object. Optional loop parameters use Loop*:
-// nullptr means inline/direct execution. The core owns only loop::main() and
-// loop::pool(); user-defined loops are ordinary objects managed by their owner.
+// nullptr means inline/direct execution. The core keeps only the official
+// loop::main() and loop::pool() pointers; user-defined loops are ordinary
+// objects managed by their owner.
 //
-class VE_API Loop
+class VE_API Loop : public Entity
 {
 public:
     explicit Loop(const std::string& name = "");
     virtual ~Loop();
 
-    const std::string& name() const;
-
     virtual void   post(Task task);
     virtual bool   start();
     virtual bool   stop();
     virtual bool   isRunning() const;
-    virtual bool   isCurrentThread() const;
     virtual size_t processEvents();
+};
+
+// Standard core implementations. These are concrete runtime loops users may
+// construct directly when they need a temporary event loop.
+class VE_API AsioLoop : public Loop
+{
+public:
+    explicit AsioLoop(const std::string& name = "");
+    ~AsioLoop() override;
+
+    void   post(Task task) override;
+    bool   start() override;
+    bool   stop() override;
+    bool   isRunning() const override;
+    size_t processEvents() override;
 
 private:
-    std::string _name;
+    VE_DECLARE_UNIQUE_PRIVATE
+};
+
+class VE_API AsioPoolLoop : public Loop
+{
+public:
+    explicit AsioPoolLoop(const std::string& name = "", unsigned threads = 4);
+    ~AsioPoolLoop() override;
+
+    void   post(Task task) override;
+    bool   start() override;
+    bool   stop() override;
+    bool   isRunning() const override;
+    size_t processEvents() override;
+
+private:
+    VE_DECLARE_UNIQUE_PRIVATE
 };
 
 namespace loop {
 
-// Built-in core loops. Implementations live in loop.cpp and do not expose asio.
+// Built-in core loops. setMain/setPool borrow the pointer and never delete it.
 VE_API Loop* main();
 VE_API Loop* pool();
-
-// ---- Main loop runner (used by entry::run) --------------------------------
-
-using RunFunc  = std::function<int()>;
-using QuitFunc = std::function<void(int)>;
-
-VE_API int  run();
-VE_API void quit(int exit_code = 0);
-VE_API void setMainRunner(RunFunc run_fn, QuitFunc quit_fn);
+VE_API void  setMain(Loop* loop);
+VE_API void  setPool(Loop* loop);
 
 } // namespace loop
 

@@ -1,9 +1,10 @@
 #include "ve/core/log.h"
-#include "ve/core/loop.h"
 #include "ve/core/module.h"
 #include "ve/core/node.h"
+#include "ve/entry.h"
 #include "ve/qt/qml/qml_register.h"
 
+#include <QCoreApplication>
 #include <QQmlApplicationEngine>
 #include <QUrl>
 
@@ -56,7 +57,10 @@ private:
 
         if (engine_->rootObjects().isEmpty()) {
             veLogE << "[ve.qt.launch] Failed to load QML: " << main_qml;
-            loop::quit(-1);
+            if (auto* app = QCoreApplication::instance()) {
+                app->quit();
+            }
+            entry::requestQuit(-1);
             return;
         }
 

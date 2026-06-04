@@ -241,6 +241,7 @@ public:
     Proc        proc()      const;
     InSchema    inSchema()  const;
     OutSchema   outSchema() const;
+    Loop*       loop()      const;
 
     std::string help() const               { return _n ? _n->get("help").toString() : std::string{}; }
     void        setHelp(const std::string& h) { if (_n) _n->set("help", h); }
@@ -335,13 +336,8 @@ inline typename CallProtoT::Output call(const std::string& key,
     return Command(key).call<CallProtoT>(input);
 }
 
-// callSync — explicitly synchronous (blocks until the command completes).
-//
-// PR A: Pipeline::call is already single-pass synchronous, so this is a thin
-// alias of call<CallProtoT>. PR C will make Pipeline async-capable, at which
-// point this wrapper, when invoked on its target loop's own thread
-// (target.isCurrentThread()), drains it via target.processEvents() instead of
-// CV-waiting (so a nested call from a loop's worker thread doesn't self-starve).
+// callSync — explicit spelling for the synchronous command path.
+// Pipeline::call posts loop-bound steps and waits by pumping processEvents().
 template<typename CallProtoT>
 inline typename CallProtoT::Output callSync(const std::string& key,
                                             const typename CallProtoT::Input& input)

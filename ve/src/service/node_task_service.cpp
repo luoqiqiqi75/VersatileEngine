@@ -52,14 +52,15 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
         taskNode->at("id")->set(id);
     }
 
+    Node* root = _p->root;
     auto finished = std::make_shared<std::atomic<bool>>(false);
-    auto finalize = [this, id, taskId, detached, onDone, finished](const Result& res) {
+    auto finalize = [root, id, taskId, detached, onDone, finished](const Result& res) {
         if (finished->exchange(true, std::memory_order_acq_rel)) {
             return;
         }
 
         const bool ok = res.isSuccess() || res.isAccepted();
-        Node* taskNode = _p->root ? _p->root->find("ve/server/tasks/" + taskId) : nullptr;
+        Node* taskNode = root ? root->find("ve/server/tasks/" + taskId) : nullptr;
         if (taskNode) {
             taskNode->set("status", ok ? "done" : "error");
             taskNode->set("ok", ok);
@@ -96,7 +97,7 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
     });
 
     const auto state = detached->state();
-    if (state == Pipeline::DONE || state == Pipeline::ERRORED || state == Pipeline::IDLE) {
+    if (state == Pipeline::DONE || state == Pipeline::ERRORED) {
         finalize(detached->lastResult());
     }
 

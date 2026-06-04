@@ -11,6 +11,7 @@
 #include <iostream>
 #include <queue>
 #include <filesystem>
+#include <thread>
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -40,15 +41,12 @@ struct EntryState {
     entry::Options    options;
     Vector<ModuleSlot> modules;
 
-    // Default main-loop blocking (used when no custom runner is set)
-    std::mutex              quit_mtx;
-    std::condition_variable quit_cv;
-    bool                    quit_requested = false;
-    int                     exit_code = 0;
+    std::atomic<bool>       quit_requested{false};
+    std::atomic<int>        exit_code{0};
 
-    // Custom main-loop runner (set by ve.qt etc. via loop::setMainRunner)
-    loop::RunFunc  custom_run;
-    loop::QuitFunc custom_quit;
+    // Custom entry runner for VE-owned blocking modes.
+    entry::RunFunc  custom_run;
+    entry::QuitFunc custom_quit;
 };
 
 EntryState& G()
@@ -523,12 +521,40 @@ int run()
 {
     auto& g = G();
     g.state = RUNNING;
-    return loop::run();
+    g.quit_requested.store(false, std::memory_order_release);
+    if (g.custom_run) {
+        return g.custom_run();
+    }
+
+    Loop* main_loop = loop::main();
+    while (main_loop && main_loop->isRunning()
+           && !g.quit_requested.load(std::memory_order_acquire)) {
+        size_t processed = main_loop->processEvents();
+        if (processed == 0) {
+            std::this_thread::yield();
+        }
+    }
+    return g.exit_code.load(std::memory_order_acquire);
 }
 
 void requestQuit(int exit_code)
 {
-    loop::quit(exit_code);
+    auto& g = G();
+    if (g.custom_quit) {
+        g.exit_code.store(exit_code, std::memory_order_release);
+        g.custom_quit(exit_code);
+        return;
+    }
+
+    g.exit_code.store(exit_code, std::memory_order_release);
+    g.quit_requested.store(true, std::memory_order_release);
+}
+
+void setMainRunner(RunFunc run_fn, QuitFunc quit_fn)
+{
+    auto& g = G();
+    g.custom_run = std::move(run_fn);
+    g.custom_quit = std::move(quit_fn);
 }
 
 // --- deinit ----------------------------------------------------------------
@@ -555,7 +581,7 @@ void deinit()
     g.modules.clear();
 
     g.state = SHUTDOWN;
-    g.quit_requested = false;
+    g.quit_requested.store(false, std::memory_order_release);
     g.custom_run = nullptr;
     g.custom_quit = nullptr;
 
@@ -792,52 +818,6 @@ const Vector<Info>& loaded()
 }
 
 } // namespace plugin
-
-// ============================================================================
-// loop:: main runner
-// ============================================================================
-
-namespace loop {
-
-int run()
-{
-    auto& g = G();
-    if (g.custom_run) {
-        return g.custom_run();
-    }
-    // Default: block on condition_variable
-    {
-        std::unique_lock<std::mutex> lock(g.quit_mtx);
-        g.quit_cv.wait(lock, [&] { return g.quit_requested; });
-    }
-    return g.exit_code;
-}
-
-void quit(int exit_code)
-{
-    auto& g = G();
-    if (g.custom_quit) {
-        g.exit_code = exit_code;
-        g.custom_quit(exit_code);
-        return;
-    }
-    // Default: notify condition_variable
-    {
-        std::lock_guard<std::mutex> lock(g.quit_mtx);
-        g.exit_code = exit_code;
-        g.quit_requested = true;
-    }
-    g.quit_cv.notify_all();
-}
-
-void setMainRunner(RunFunc run_fn, QuitFunc quit_fn)
-{
-    auto& g = G();
-    g.custom_run = std::move(run_fn);
-    g.custom_quit = std::move(quit_fn);
-}
-
-} // namespace loop
 
 } // namespace ve
 

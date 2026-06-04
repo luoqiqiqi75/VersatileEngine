@@ -507,9 +507,6 @@ bool NodeHttpServer::start()
 
         const bool async = queryBool(req.query(), "async", false);
         if (async) {
-            // PR A: Pipeline::call is single-pass synchronous, so the pipeline
-            // actually completes before attach() — attach handles done state.
-            // PR C will turn this into a true async dispatch.
             if (!_p->taskSvc) {
                 Node reply("rep");
                 fillError(&reply, "internal_error", "task service unavailable");
@@ -520,14 +517,13 @@ bool NodeHttpServer::start()
             auto* detached = new Pipeline(cmdKey);
             detached->keepAlive();
             detached->addPathStep(cmd, "request", "reply");
-            detached->callReply(inputVar);   // sync run
-
             std::string taskId = _p->taskSvc->attach(cmdKey, Var(), detached, {});
             if (taskId.empty()) {
                 Node reply("rep");
                 fillError(&reply, "internal_error", "failed to start task");
                 rep.fill_json(toJson(reply), http::status::internal_server_error);
             } else {
+                detached->startReply(inputVar);
                 Node out("r");
                 out.set("ok", true);
                 out.set("accepted", true);

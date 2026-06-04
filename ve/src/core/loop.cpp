@@ -20,12 +20,10 @@ namespace ve {
 // ============================================================================
 
 Loop::Loop(const std::string& name)
-    : _name(name)
+    : Entity(name)
 {}
 
 Loop::~Loop() = default;
-
-const std::string& Loop::name() const { return _name; }
 
 void Loop::post(Task task)
 {
@@ -35,166 +33,181 @@ void Loop::post(Task task)
 bool Loop::start() { return false; }
 bool Loop::stop() { return false; }
 bool Loop::isRunning() const { return false; }
-bool Loop::isCurrentThread() const { return false; }
 size_t Loop::processEvents() { return 0; }
 
 // ============================================================================
 // Built-in asio loops
 // ============================================================================
 
-namespace {
-
 using AsioWorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
 
-class AsioLoop : public Loop
+struct AsioLoop::Private
 {
-    struct State {
-        asio::io_context io;
-        std::optional<AsioWorkGuard> guard;
-        std::thread worker;
-        std::atomic<bool> is_running{false};
-        std::mutex mtx;
+    asio::io_context io;
+    std::optional<AsioWorkGuard> guard;
+    std::thread worker;
+    std::atomic<bool> is_running{false};
+    std::mutex mtx;
 
-        State()
-            : io(1)
-            , guard(asio::make_work_guard(io))
-        {}
-    };
-
-    mutable State _s;
-
-public:
-    explicit AsioLoop(const std::string& name)
-        : Loop(name)
+    Private()
+        : io(1)
+        , guard(asio::make_work_guard(io))
     {}
-
-    ~AsioLoop() override { stop(); }
-
-    void post(Task task) override
-    {
-        if (task) asio::post(_s.io, std::move(task));
-    }
-
-    bool start() override
-    {
-        std::lock_guard<std::mutex> lk(_s.mtx);
-        if (_s.is_running) return false;
-
-        _s.io.restart();
-        _s.guard.emplace(asio::make_work_guard(_s.io));
-        _s.is_running = true;
-
-        State* st = &_s;
-        _s.worker = std::thread([st]() { st->io.run(); });
-        return true;
-    }
-
-    bool stop() override
-    {
-        std::lock_guard<std::mutex> lk(_s.mtx);
-        if (!_s.is_running) return false;
-
-        _s.is_running = false;
-        _s.guard.reset();
-        _s.io.stop();
-
-        if (_s.worker.joinable()) _s.worker.join();
-        return true;
-    }
-
-    bool isRunning() const override { return _s.is_running; }
-    bool isCurrentThread() const override { return _s.io.get_executor().running_in_this_thread(); }
-    size_t processEvents() override { return _s.io.poll(); }
 };
 
-class AsioPoolLoop : public Loop
+AsioLoop::AsioLoop(const std::string& name) : Loop(name), _p(std::make_unique<Private>())
+{}
+
+AsioLoop::~AsioLoop()
 {
-    struct State {
-        asio::io_context io;
-        std::optional<AsioWorkGuard> guard;
-        std::vector<std::thread> workers;
-        unsigned threads;
-        std::atomic<bool> is_running{false};
-        std::mutex mtx;
+    stop();
+}
 
-        explicit State(unsigned n)
-            : io(static_cast<int>(n ? n : 1))
-            , guard(asio::make_work_guard(io))
-            , threads(n ? n : 1)
-        {}
-    };
+void AsioLoop::post(Task task)
+{
+    if (task) asio::post(_p->io, std::move(task));
+}
 
-    mutable State _s;
+bool AsioLoop::start()
+{
+    std::lock_guard<std::mutex> lk(_p->mtx);
+    if (_p->is_running) return false;
 
-public:
-    explicit AsioPoolLoop(const std::string& name, unsigned threads = 4)
-        : Loop(name)
-        , _s(threads)
+    _p->io.restart();
+    _p->guard.emplace(asio::make_work_guard(_p->io));
+    _p->is_running = true;
+
+    _p->worker = std::thread([st = _p.get()] { st->io.run(); });
+    return true;
+}
+
+bool AsioLoop::stop()
+{
+    std::lock_guard<std::mutex> lk(_p->mtx);
+    if (!_p->is_running) return false;
+
+    _p->is_running = false;
+    _p->guard.reset();
+    _p->io.stop();
+
+    if (_p->worker.joinable()) _p->worker.join();
+    return true;
+}
+
+bool AsioLoop::isRunning() const { return _p->is_running; }
+size_t AsioLoop::processEvents() { return _p->io.poll(); }
+
+struct AsioPoolLoop::Private
+{
+    asio::io_context io;
+    std::optional<AsioWorkGuard> guard;
+    std::vector<std::thread> workers;
+    unsigned threads;
+    std::atomic<bool> is_running{false};
+    std::mutex mtx;
+
+    explicit Private(unsigned n)
+        : io(static_cast<int>(n ? n : 1))
+        , guard(asio::make_work_guard(io))
+        , threads(n ? n : 1)
     {}
-
-    ~AsioPoolLoop() override { stop(); }
-
-    void post(Task task) override
-    {
-        if (task) asio::post(_s.io, std::move(task));
-    }
-
-    bool start() override
-    {
-        std::lock_guard<std::mutex> lk(_s.mtx);
-        if (_s.is_running) return false;
-
-        _s.io.restart();
-        _s.guard.emplace(asio::make_work_guard(_s.io));
-        _s.is_running = true;
-
-        State* st = &_s;
-        _s.workers.reserve(st->threads);
-        for (unsigned i = 0; i < st->threads; ++i)
-            _s.workers.emplace_back([st]() { st->io.run(); });
-        return true;
-    }
-
-    bool stop() override
-    {
-        std::lock_guard<std::mutex> lk(_s.mtx);
-        if (!_s.is_running) return false;
-
-        _s.is_running = false;
-        _s.guard.reset();
-        _s.io.stop();
-
-        for (auto& w : _s.workers)
-            if (w.joinable()) w.join();
-        _s.workers.clear();
-        return true;
-    }
-
-    bool isRunning() const override { return _s.is_running; }
-    bool isCurrentThread() const override { return _s.io.get_executor().running_in_this_thread(); }
-    size_t processEvents() override { return _s.io.poll(); }
 };
 
-} // namespace
+AsioPoolLoop::AsioPoolLoop(const std::string& name, unsigned threads) : Loop(name), _p(std::make_unique<Private>(threads))
+{}
 
-Loop* loop::main()
+AsioPoolLoop::~AsioPoolLoop()
 {
-    static auto* s = [] {
-        auto* l = new AsioLoop("main");
-        l->start();
-        return l;
-    }();
+    stop();
+}
+
+void AsioPoolLoop::post(Task task)
+{
+    if (task) asio::post(_p->io, std::move(task));
+}
+
+bool AsioPoolLoop::start()
+{
+    std::lock_guard<std::mutex> lk(_p->mtx);
+    if (_p->is_running) return false;
+
+    _p->io.restart();
+    _p->guard.emplace(asio::make_work_guard(_p->io));
+    _p->is_running = true;
+
+    _p->workers.reserve(_p->threads);
+    for (unsigned i = 0; i < _p->threads; ++i)
+        _p->workers.emplace_back([st = _p.get()] { st->io.run(); });
+    return true;
+}
+
+bool AsioPoolLoop::stop()
+{
+    std::lock_guard<std::mutex> lk(_p->mtx);
+    if (!_p->is_running) return false;
+
+    _p->is_running = false;
+    _p->guard.reset();
+    _p->io.stop();
+
+    for (auto& w : _p->workers)
+        if (w.joinable()) w.join();
+    _p->workers.clear();
+    return true;
+}
+
+bool AsioPoolLoop::isRunning() const { return _p->is_running; }
+size_t AsioPoolLoop::processEvents() { return _p->io.poll(); }
+
+namespace {
+
+struct CoreLoops
+{
+    AsioLoop* default_main = nullptr;
+    AsioPoolLoop* default_pool = nullptr;
+    Loop* main = nullptr;
+    Loop* pool = nullptr;
+
+    Loop* mainLoop()
+    {
+        if (main) return main;
+        if (!default_main) {
+            default_main = new AsioLoop("main");
+            default_main->start();
+        }
+        return default_main;
+    }
+
+    Loop* poolLoop()
+    {
+        if (pool) return pool;
+        if (!default_pool) {
+            default_pool = new AsioPoolLoop("pool", 4);
+            default_pool->start();
+        }
+        return default_pool;
+    }
+};
+
+CoreLoops& coreLoops()
+{
+    static CoreLoops s;
     return s;
 }
 
-Loop* loop::pool()
+} // namespace
+
+Loop* loop::main() { return coreLoops().mainLoop(); }
+Loop* loop::pool() { return coreLoops().poolLoop(); }
+
+void loop::setMain(Loop* loop)
 {
-    static auto* s = [] {
-        auto* l = new AsioPoolLoop("pool", 4);
-        l->start();
-        return l;
-    }();
-    return s;
+    coreLoops().main = loop;
+}
+
+void loop::setPool(Loop* loop)
+{
+    coreLoops().pool = loop;
 }
 
 } // namespace ve

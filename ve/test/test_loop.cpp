@@ -142,6 +142,17 @@ VE_TEST(loop_custom_post_from_threads) {
     loop.stop();
 }
 
+VE_TEST(loop_asio_direct_construct) {
+    AsioLoop loop("direct.asio");
+    VE_ASSERT(loop.start());
+
+    std::atomic<int> val{0};
+    loop.post([&] { val.store(12); });
+
+    VE_ASSERT(waitUntil([&] { return val.load() == 12; }));
+    loop.stop();
+}
+
 VE_TEST(loop_global_main_pointer) {
     Loop* m = loop::main();
     VE_ASSERT(m != nullptr);
@@ -159,11 +170,22 @@ VE_TEST(loop_global_pool_pointer) {
     VE_ASSERT(p->isRunning());
 }
 
-VE_TEST(loop_convenience_post) {
+VE_TEST(loop_set_main_borrowed_pointer) {
+    TestLoop custom("custom.main");
+    custom.start();
+
+    Loop* original = loop::main();
+    loop::setMain(&custom);
+    VE_ASSERT(loop::main() == &custom);
+
     std::atomic<int> val{0};
     loop::main()->post([&] { val.store(77); });
 
     VE_ASSERT(waitUntil([&] { return val.load() == 77; }));
+
+    loop::setMain(nullptr);
+    VE_ASSERT(loop::main() == original);
+    custom.stop();
 }
 
 VE_TEST(loop_signal_observer_destroyed) {

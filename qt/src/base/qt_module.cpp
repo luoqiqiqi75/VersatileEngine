@@ -1,8 +1,8 @@
 #include "ve/qt/qt_entry.h"
+#include "ve/qt/qt_loop.h"
 
 #include "ve/entry.h"
 #include "ve/core/log.h"
-#include "ve/core/loop.h"
 #include "ve/core/module.h"
 #include "ve/core/node.h"
 
@@ -10,10 +10,12 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QGuiApplication>
 #include <QIODevice>
 #include <QKeyEvent>
+#include <QMetaObject>
 #include <QMouseEvent>
 #include <QThread>
 #include <QTimer>
@@ -204,9 +206,64 @@ void applyEarlySettings()
     }
 }
 
+QtLoop::QtLoop(QEventLoop* loop, const std::string& name)
+    : Loop(name)
+    , loop_(loop)
+{}
+
+QtLoop::~QtLoop() = default;
+
+void QtLoop::post(Task task)
+{
+    if (!task || !loop_) return;
+    QMetaObject::invokeMethod(loop_, [task = std::move(task)]() mutable {
+        task();
+    }, Qt::QueuedConnection);
+}
+
+bool QtLoop::isRunning() const
+{
+    return loop_ && loop_->isRunning();
+}
+
+size_t QtLoop::processEvents()
+{
+    if (!loop_) return 0;
+    loop_->processEvents();
+    return 0;
+}
+
+QtMainLoop::QtMainLoop(QCoreApplication* app, const std::string& name)
+    : Loop(name)
+    , app_(app ? app : QCoreApplication::instance())
+{}
+
+QtMainLoop::~QtMainLoop() = default;
+
+void QtMainLoop::post(Task task)
+{
+    if (!task || !app_) return;
+    QMetaObject::invokeMethod(app_, [task = std::move(task)]() mutable {
+        task();
+    }, Qt::QueuedConnection);
+}
+
+bool QtMainLoop::isRunning() const
+{
+    return app_ != nullptr;
+}
+
+size_t QtMainLoop::processEvents()
+{
+    if (!app_) return 0;
+    QCoreApplication::processEvents();
+    return 0;
+}
+
 class QtModule : public Module
 {
     QCoreApplication* app_ = nullptr;
+    QtMainLoop* main_loop_ = nullptr;
     bool owns_app_ = false;
 
 public:
@@ -239,10 +296,8 @@ protected:
             owns_app_ = true;
         }
 
-        loop::setMainRunner(
-            [this]() -> int { return app_->exec(); },
-            [this](int) { app_->quit(); }
-        );
+        main_loop_ = new QtMainLoop(app_);
+        loop::setMain(main_loop_);
 
         installQtMessageHandlerIfNeeded(cfg);
 
@@ -312,6 +367,11 @@ protected:
 
     void deinit() override
     {
+        if (main_loop_) {
+            loop::setMain(nullptr);
+            delete main_loop_;
+            main_loop_ = nullptr;
+        }
         if (owns_app_) {
             delete app_;
         }

@@ -17,6 +17,8 @@
 #include <ve/core/pipeline.h>
 #include <ve/core/node.h>
 
+#include <atomic>
+
 using namespace ve;
 
 
@@ -221,8 +223,25 @@ VE_TEST(call_proto_node_in_out) {
     Node my_in("in"), my_out("out");
     my_in.set(Var(123));
     command::callNode("_test_copy", &my_in, &my_out);
-    // NodeInOut is zero-copy: caller reads its own out node.
-    // (PR A wiring for NodeInOut is stub; this test mainly ensures no crash.)
+    VE_ASSERT_EQ(my_out.get().toInt(), 123);
+}
+
+VE_TEST(call_proto_declared_args_parse_list_input) {
+    auto* decl = command::declareNode("_test_declared_args");
+    decl->at("format");
+    decl->at("path");
+    decl->at("file")->set("_short", "f");
+
+    command::regProc("_test_declared_args", [](Node* in, Node* /*out*/) -> Result {
+        auto a = command::args(in);
+        return Result::ok(Var(a.string("format") + "|" + a.string("path") + "|" + a.string("file")));
+    });
+
+    Result r = command::callReply("_test_declared_args",
+        Var(Var::ListV{Var("json"), Var("/ve"), Var("-f"), Var("d:/temp/a.json")}));
+
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.data.toString(), std::string("json|/ve|d:/temp/a.json"));
 }
 
 
@@ -283,6 +302,48 @@ VE_TEST(pipeline_addPathStep_explicit) {
     p.addPathStep(Command("_test_pipe_path"), "request", "reply");
     Var r = p.callVar(Var(4));
     VE_ASSERT_EQ(r.toInt(), 40);
+}
+
+VE_TEST(command_bound_loop_callsync_pumps_process_events) {
+    AsioLoop loop("cmd.test.loop");
+    std::atomic<int> called{0};
+
+    command::regProc("_test_cmd_loop_pump", [&](Node* in, Node* out) -> Result {
+        called.fetch_add(1);
+        out->set(Var(in->get().toInt() + 5));
+        return Result::ok();
+    }, "", &loop);
+
+    Result r = command::callReply("_test_cmd_loop_pump", Var(7));
+    VE_ASSERT(r.isSuccess());
+    VE_ASSERT_EQ(r.data.toInt(), 12);
+    VE_ASSERT_EQ(called.load(), 1);
+}
+
+VE_TEST(pipeline_startReply_posts_and_returns) {
+    AsioLoop loop("pipe.test.loop");
+    std::atomic<int> called{0};
+
+    command::regProc("_test_pipe_start_async", [&](Node*, Node* out) -> Result {
+        called.fetch_add(1);
+        out->set(Var(33));
+        return Result::ok();
+    }, "", &loop);
+
+    Pipeline p("pipe");
+    p.addPathStep(Command("_test_pipe_start_async"), "request", "reply");
+    p.startReply(Var());
+
+    VE_ASSERT_EQ(called.load(), 0);
+    VE_ASSERT_EQ(p.state(), Pipeline::RUNNING);
+
+    while (p.state() == Pipeline::RUNNING) {
+        loop.processEvents();
+    }
+
+    VE_ASSERT_EQ(called.load(), 1);
+    VE_ASSERT_EQ(p.lastResult().code, 0);
+    VE_ASSERT_EQ(p.context()->get("reply").toInt(), 33);
 }
 
 VE_TEST(pipeline_aborts_on_error) {

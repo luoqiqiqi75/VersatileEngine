@@ -25,7 +25,12 @@ namespace ve {
 void CallProto<tag::VarInVarOut>::import(Node* ctx, const Var& v)
 {
     if (!ctx) return;
-    schema::importAs<schema::VarS>(ctx->at("request"), v);
+    Node* req = ctx->at("request");
+    if (req->shadow()) {
+        command::parseArgs(req, v);
+        return;
+    }
+    schema::importAs<schema::VarS>(req, v);
 }
 
 Var CallProto<tag::VarInVarOut>::exportOut(Node* ctx)
@@ -45,7 +50,12 @@ Var CallProto<tag::VarInVarOut>::makeFailure(int /*code*/, const std::string& /*
 void CallProto<tag::RequestReply>::import(Node* ctx, const Var& v)
 {
     if (!ctx) return;
-    schema::importAs<schema::VarS>(ctx->at("request"), v);
+    Node* req = ctx->at("request");
+    if (req->shadow()) {
+        command::parseArgs(req, v);
+        return;
+    }
+    schema::importAs<schema::VarS>(req, v);
 }
 
 Result CallProto<tag::RequestReply>::exportOut(Node* ctx)
@@ -70,6 +80,11 @@ void CallProto<tag::ListInDictOut>::import(Node* ctx, const Var::ListV& v)
 {
     if (!ctx) return;
     Node* req = ctx->at("request");
+    if (req->shadow()) {
+        Var input(v);
+        command::parseArgs(req, input);
+        return;
+    }
     req->clear();
     for (size_t i = 0; i < v.size(); ++i)
         req->at(static_cast<int>(i))->set(v[i]);
@@ -168,6 +183,14 @@ OutSchema Command::outSchema() const
     return {};
 }
 
+Loop* Command::loop() const
+{
+    if (!_n) return nullptr;
+    auto* ln = _n->find("loop", false);
+    if (!ln) return nullptr;
+    return static_cast<Loop*>(ln->get().toPointer());
+}
+
 // Independent call: spin up a transient Pipeline + addPathStep wired to
 // /request, /reply; let Pipeline::call<CallProtoT> do the rest.
 template<typename CallProtoT>
@@ -178,7 +201,7 @@ typename CallProtoT::Output Command::call(const typename CallProtoT::Input& inpu
             "unknown command: " + (_n ? _n->name() : std::string{"?"}));
     }
     Pipeline pipe(_n->name());
-    pipe.addPathStep(*this, "request", "reply");
+    pipe.addPathStep(*this, "request", "reply", loop());
     return pipe.template call<CallProtoT>(input);
 }
 

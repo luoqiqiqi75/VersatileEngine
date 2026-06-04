@@ -1,4 +1,5 @@
 #include "ve/qt/qt_entry.h"
+#include "ve/qt/qt_loop.h"
 #include "ve/qt/var_qt.h"
 #include "ve/qt/schema_qt.h"
 #include "ve/qt/node_qobject.h"

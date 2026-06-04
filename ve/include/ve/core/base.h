@@ -607,6 +607,24 @@ inline constexpr bool is_dict_like_v = basic::is_dict_like<T>::value;
 template<typename V>
 using Dict = OrderedHashMap<std::string, V>;
 
+class VE_API Entity
+{
+public:
+    explicit Entity(const std::string& name = "") : _name(name) {}
+    virtual ~Entity() = default;
+
+    Entity(const Entity&) = delete;
+    Entity& operator=(const Entity&) = delete;
+
+    const std::string& name() const { return _name; }
+
+protected:
+    int _flags = 0;
+
+private:
+    std::string _name;
+};
+
 using Task = std::function<void()>;
 
 // Result — defined in var.h (requires full Var type).

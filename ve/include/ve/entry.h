@@ -95,8 +95,14 @@ VE_API int  run();
 // Deinitialize modules in reverse order and release runtime state.
 VE_API void deinit();
 
-// Request run() to return via loop::quit()
+// Request run() to return.
 VE_API void requestQuit(int exit_code = 0);
+
+// Override entry::run() for VE-owned blocking modes such as terminal clients.
+// GUI frameworks normally call their own exec() instead.
+using RunFunc  = std::function<int()>;
+using QuitFunc = std::function<void(int)>;
+VE_API void setMainRunner(RunFunc run_fn, QuitFunc quit_fn);
 
 // Convenience: setup + init + run + deinit
 VE_API int  exec(const std::string& config_file);

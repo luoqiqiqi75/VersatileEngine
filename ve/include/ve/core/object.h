@@ -18,12 +18,6 @@ constexpr const char* VE_UNDEFINED_OBJECT_NAME = "@undefined";
 
 namespace ve {
 
-struct ObjectData
-{
-protected:
-    int _flags = 0;
-};
-
 /**
 * @brief Object — minimal controllable entity with signal/slot
 *
@@ -43,7 +37,7 @@ protected:
 *   connect<S>(obs, [](int a, string b) { ... })       → auto-unpack from Var
 *   connect<S>(obs, []() { ... })                      → ignore data
 */
-struct VE_API Object : public ObjectData
+struct VE_API Object : Entity
 {
     // --- internal: Var → typed args dispatch (uses basic::FnTraits) ---
     //
@@ -79,7 +73,6 @@ public:
     explicit Object(const std::string& name = "");
     ~Object();
 
-    const std::string& name() const;
     MutexT& mutex() const;
 
     // Sender of the Object signal currently being delivered on this thread.

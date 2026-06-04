@@ -87,6 +87,13 @@ public:
     template<typename CallProtoT>
     typename CallProtoT::Output call(const typename CallProtoT::Input& input);
 
+    // Async RequestReply start. Completion is reported through CMD_DONE /
+    // CMD_ERROR and onFinished(); caller owns the Pipeline lifetime until then.
+    void startReply(const Var& input);
+
+    // Start with ctx/request already prepared by caller.
+    void start();
+
     // Convenience family (different names; no overload ambiguity).
     Result  callReply(const Var& input);
     Var     callVar  (const Var& input = {});
@@ -101,8 +108,7 @@ public:
 
     // --- control ---
     void cancel();
-    void keepAlive();   // Default: Pipeline self-deletes on completion. After keepAlive(),
-                        // caller owns the lifetime (must `delete pipe` once finished).
+    void keepAlive();   // Compatibility no-op; caller owns Pipeline lifetime.
 
 
     // --- async progress (proc returned Result with code == ACCEPT) ---
@@ -119,6 +125,10 @@ public:
     const Result& lastResult() const;
 
 private:
+    void startPrepared();
+    void dispatchStep(int slot);
+    void complete(State final_state);
+
     VE_DECLARE_POOL_PRIVATE
 };
 

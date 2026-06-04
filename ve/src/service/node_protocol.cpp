@@ -314,10 +314,6 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
             return;
         }
 
-        // Async detached path. PR A Pipeline::call is single-pass synchronous,
-        // so the pipeline actually completes before this call returns —
-        // attach() then registers onFinished (no-op) + checks state==DONE +
-        // manually finalizes. PR C will turn this into a true async dispatch.
         if (!tasks) {
             errorReply(rep, id, "internal_error", "task service unavailable");
             return;
@@ -326,8 +322,6 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
         auto* detached = new Pipeline(name);
         detached->keepAlive();
         detached->addPathStep(Command(name), "request", "reply");
-        detached->callReply(args);   // sync run (PR A); handler not yet registered
-
         std::string taskId = tasks->attach(name, id, detached,
             [allowAsyncEvents, sendEvent](const Node& event) {
                 if (allowAsyncEvents && sendEvent) {
@@ -337,6 +331,7 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
         if (taskId.empty()) {
             errorReply(rep, id, "internal_error", "failed to start task");
         } else {
+            detached->startReply(args);
             acceptedReply(rep, id, taskId);
         }
         return;

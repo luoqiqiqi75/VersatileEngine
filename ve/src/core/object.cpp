@@ -88,7 +88,6 @@ struct SenderScope {
 
 struct Object::Private
 {
-    std::string name;
     mutable MutexT mtx;
     Token token;   // tagged with the owning Object* in Object's ctor
 
@@ -134,9 +133,8 @@ struct Object::Private
     }
 };
 
-Object::Object(const std::string& name) : _p(std::make_unique<Private>())
+Object::Object(const std::string& name) : Entity(name), _p(std::make_unique<Private>())
 {
-    _p->name  = name;
     _p->token = Token::create(this);   // owner-tagged: connections recover the observer via target.as<Object>()
 }
 
@@ -147,7 +145,6 @@ Object::~Object()
     _p->connections.clear();
 }
 
-const std::string& Object::name() const { return _p->name; }
 std::recursive_mutex& Object::mutex() const { return _p->mtx; }
 Object* Object::sender() { return t_sender; }
 

@@ -59,15 +59,6 @@ protected:
     virtual void deinit();
 };
 
-template<class T>
-class TemplateModule : public Module, public T
-{
-protected:
-    void init() override { return T::init(); }
-    void ready() override { return T::ready(); }
-    void deinit() override { return T::deinit(); }
-};
-
 using ModuleFactory = Factory;
 
 namespace module {

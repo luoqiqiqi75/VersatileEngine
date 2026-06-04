@@ -1,4 +1,4 @@
-#include "ve/core/loop.h"
+#include "ve/entry.h"
 #include "ve/core/module.h"
 #include "ve/core/log.h"
 #include "ve/service/terminal_service.h"
@@ -29,7 +29,7 @@ void ClientModule::ready()
 
     if (stdio_enabled) {
         stdio_ = std::make_unique<service::TerminalStdioClient>(node::root());
-        loop::setMainRunner(
+        entry::setMainRunner(
             [this]() -> int {
                 while (stdio_) {
                     int rc = stdio_->run();
@@ -64,7 +64,7 @@ void ClientModule::ready()
         tcp->at("runtime/active")->set(Var(true));
         tcp->at("runtime/last_error")->set(Var(""));
 
-        loop::setMainRunner(
+        entry::setMainRunner(
             [this]() -> int {
                 int rc = tcp_ ? tcp_->run() : 0;
                 if (tcp_) {

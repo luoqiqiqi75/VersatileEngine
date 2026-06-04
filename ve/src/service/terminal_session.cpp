@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
+#include <thread>
 
 namespace ve {
 namespace service {
@@ -131,6 +132,27 @@ static std::pair<std::string, size_t> resolveCommand(const std::vector<std::stri
             return {candidate, i};
     }
     return {{}, 0};
+}
+
+static void prepareDeclaredRequest(const Command& cmd,
+                                   Node* req,
+                                   Node* current,
+                                   const std::vector<std::string>& args,
+                                   size_t start)
+{
+    if (!req) return;
+    if (Node* decl = cmd.declare()) {
+        req->setShadow(decl);
+    }
+
+    std::vector<std::string> params;
+    for (size_t i = start; i < args.size(); ++i) {
+        params.push_back(args[i]);
+    }
+    command::parseArgs(req, params, 0);
+    if (current) {
+        req->at("current", false)->set(Var(static_cast<void*>(current)));
+    }
 }
 
 
@@ -777,48 +799,60 @@ std::string TerminalSession::execute(const std::string& line)
         Var inputVar = list.empty() ? Var() : Var(std::move(list));
 
         if (asyncMode) {
-            // PR A: async detached-pipeline path disabled (Pipeline::call is
-            // single-pass synchronous until PR C). Fall back to sync execution
-            // and print result inline. The asyncOutput path stays for PR C.
-            Pipeline* detached = nullptr;
-            (void)s.cur;
-            auto r = cmd.callReply(inputVar);
+            auto* detached = new Pipeline(resolvedCmd);
+            detached->keepAlive();
+            detached->addPathStep(cmd, "request", "reply");
 
-            if (detached) {
-                auto asyncOut = s.asyncOutput;
-                std::string cmdName = resolvedCmd;
-                detached->onFinished([asyncOut, detached, cmdName](const Result& res) {
-                    std::string text;
-                    if (res.isSuccess() || res.isAccepted()) {
-                        if (!res.data.isNull())
-                            text = res.data.toString();
-                    } else {
-                        text = res.message;
-                    }
-                    if (asyncOut && !text.empty()) {
-                        if (text.back() != '\n')
-                            text.push_back('\n');
-                        asyncOut("\x1b[33m[" + cmdName + "]\x1b[0m " + text);
-                    }
-                    delete detached;
-                });
-                s.print("accepted\n");
-                return s.output;
+            if (cmd.declare()) {
+                prepareDeclaredRequest(cmd, detached->context()->at("request"), s.cur, args, cmdWordCount);
             }
 
-            // Command completed synchronously despite async request
-            if (r.isSuccess() || r.isAccepted()) {
-                if (!r.data.isNull())
-                    s.print(r.data.toString());
+            auto asyncOut = s.asyncOutput;
+            std::string cmdName = resolvedCmd;
+            detached->onFinished([asyncOut, detached, cmdName](const Result& res) {
+                Result reply = CallProto<tag::RequestReply>::exportOut(detached->context());
+                std::string text;
+                if (reply.isSuccess() || reply.isAccepted()) {
+                    if (!reply.data.isNull())
+                        text = reply.data.toString();
+                } else {
+                    text = reply.message.empty() ? res.message : reply.message;
+                }
+                if (asyncOut && !text.empty()) {
+                    if (text.back() != '\n')
+                        text.push_back('\n');
+                    asyncOut("\x1b[33m[" + cmdName + "]\x1b[0m " + text);
+                }
+                delete detached;
+            });
+            if (cmd.declare()) {
+                detached->start();
             } else {
-                s.print(r.message + "\n");
+                detached->startReply(inputVar);
             }
+            s.print("accepted\n");
             return s.output;
         }
 
-        // Default: synchronous execution (PR A: currentNode hint disabled)
-        (void)s.cur;
-        auto r = cmd.callReply(inputVar);
+        Result r;
+        if (cmd.declare()) {
+            Node ctx("_ctx");
+            prepareDeclaredRequest(cmd, ctx.at("request"), s.cur, args, cmdWordCount);
+            Pipeline pipe(resolvedCmd, &ctx);
+            pipe.addPathStep(cmd, "request", "reply");
+            pipe.start();
+            Loop* dispatchLoop = cmd.loop() ? cmd.loop() : loop::main();
+            while (pipe.state() == Pipeline::RUNNING) {
+                if (dispatchLoop) {
+                    dispatchLoop->processEvents();
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+            r = CallProto<tag::RequestReply>::exportOut(&ctx);
+        } else {
+            r = cmd.callReply(inputVar);
+        }
         if (r.isSuccess() || r.isAccepted()) {
             if (!r.data.isNull())
                 s.print(r.data.toString());

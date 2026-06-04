@@ -184,7 +184,7 @@ public:
     ReverseChildIterator rbegin() const;
     ReverseChildIterator rend()   const;
 
-    // --- flags (reuses Object::_flags, higher bits) ---
+    // --- flags (reuses Entity::_flags, higher bits) ---
     enum NodeFlag : int {
         WATCHING = 0x02,  // participate in signal bubbling (receive NODE_ACTIVATED from descendants)
     };
