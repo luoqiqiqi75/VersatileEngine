@@ -21,7 +21,7 @@ public:
         Options() : banner(true), title(true), prompt_color(true), use_current(true) {}
     };
 
-    explicit TerminalReplServer(Node* root, uint16_t port, const Options& opts = Options());
+    explicit TerminalReplServer(const Node* config_n);
     ~TerminalReplServer();
 
     bool     start();

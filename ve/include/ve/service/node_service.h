@@ -13,7 +13,7 @@ namespace service {
 class VE_API NodeHttpServer
 {
 public:
-    explicit NodeHttpServer(Node* root, uint16_t port);
+    explicit NodeHttpServer(const Node* config_n);
     ~NodeHttpServer();
 
     bool start();
@@ -27,7 +27,7 @@ private:
 class VE_API NodeWsServer
 {
 public:
-    explicit NodeWsServer(Node* root, uint16_t port);
+    explicit NodeWsServer(const Node* config_n);
     ~NodeWsServer();
 
     bool start();
@@ -42,7 +42,7 @@ private:
 class VE_API NodeTcpServer
 {
 public:
-    explicit NodeTcpServer(Node* root, uint16_t port);
+    explicit NodeTcpServer(const Node* config_n);
     ~NodeTcpServer();
 
     bool start();
@@ -57,7 +57,7 @@ private:
 class VE_API NodeUdpServer
 {
 public:
-    explicit NodeUdpServer(Node* root, uint16_t port);
+    explicit NodeUdpServer(const Node* config_n);
     ~NodeUdpServer();
 
     bool start();

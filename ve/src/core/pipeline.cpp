@@ -1,10 +1,6 @@
-// pipeline.cpp - Pipeline: ctx + wiring + scheduling
+// pipeline.cpp - transient command/proc execution graph
 
 #include "ve/core/pipeline.h"
-#include "ve/core/node.h"
-#include "ve/core/schema.h"
-#include "ve/core/factory.h"
-#include "ve/core/log.h"
 
 #include <algorithm>
 #include <atomic>
@@ -14,199 +10,123 @@ namespace ve {
 
 namespace {
 
-enum class Wiring : uint8_t { Ctx, Linear, Path, Dag };
+enum class Wiring : uint8_t { Path, Ctx, Linear };
 
-struct StepRuntime
+struct Step
 {
-    Command          cmd;
-    Wiring           wiring = Wiring::Linear;
-    Loop*            loop = nullptr;
-    Node*            in = nullptr;
-    Node*            out = nullptr;
-    std::string      in_path;
-    std::string      out_path;
-    std::vector<int> deps;
+    Proc proc;
+    Command command;
+    Wiring wiring = Wiring::Path;
+    std::string inPath;
+    std::string outPath;
+    Loop* loop = nullptr;
+    Node* in = nullptr;
+    Node* out = nullptr;
 };
 
-Loop* resolveLoop(const Command& cmd, Loop* explicit_loop)
+void setPipelineError(Node* ctx, Pipeline::Error code, const std::string& message)
 {
-    return explicit_loop ? explicit_loop : cmd.loop();
+    if (!ctx) return;
+    Node* error = ctx->at("_pipe/error");
+    error->set("code", static_cast<int64_t>(code));
+    error->set("message", message);
 }
 
-Loop* dispatchLoop(const StepRuntime& sr)
+Loop* resolveLoop(const Step& step)
 {
-    return sr.loop;
-}
-
-void resolveWiring(StepRuntime& sr, int slot, int total, Node* ctx)
-{
-    if (Node* bind_in = ctx->find("_pipe/_bind_in", false)) {
-        sr.in = static_cast<Node*>(bind_in->get().toPointer());
-        sr.out = nullptr;
-        if (Node* bind_out = ctx->find("_pipe/_bind_out", false)) {
-            sr.out = static_cast<Node*>(bind_out->get().toPointer());
-        }
-        return;
-    }
-
-    switch (sr.wiring) {
-    case Wiring::Ctx:
-        sr.in = sr.out = ctx;
-        break;
-
-    case Wiring::Linear:
-        sr.in = (slot == 0)
-            ? ctx->at("request")
-            : ctx->at("_pipe/stage")->at(slot - 1);
-        sr.out = (slot == total - 1)
-            ? ctx->at("reply")
-            : ctx->at("_pipe/stage")->at(slot);
-        break;
-
-    case Wiring::Path:
-        sr.in  = ctx->at(sr.in_path);
-        sr.out = ctx->at(sr.out_path);
-        break;
-
-    case Wiring::Dag:
-        // PR C: proper merge node with shadow links of dependency outputs.
-        sr.in = ctx->at("_pipe/stage")->at(slot);
-        sr.out = sr.in;
-        break;
-    }
+    if (step.loop) return step.loop;
+    return step.command.loop();
 }
 
 } // namespace
 
 struct Pipeline::Private
 {
-    std::vector<StepRuntime> steps;
-    State                    state = IDLE;
-    Node*                    ctx = nullptr;
-    bool                     owns_ctx = false;
-    std::atomic<bool>        completed{false};
-    Handler                  handler;
-    Result                   last;
+    std::vector<Step> steps;
+    State state = IDLE;
+    Node* ctx = nullptr;
+    std::atomic<bool> completed{false};
+    Handler handler;
+    Result last;
 
     ~Private()
     {
-        if (owns_ctx && ctx) delete ctx;
+        delete ctx;
     }
 };
-
-
-// ----- construction / destruction -----------------------------------------
 
 Pipeline::Pipeline(const std::string& name)
     : Object(name)
 {
     _p->ctx = new Node("_ctx");
-    _p->owns_ctx = true;
 }
 
-Pipeline::Pipeline(const std::string& name, Node* external_ctx)
+Pipeline::Pipeline(const std::string& name, const Node* initialCtx)
     : Object(name)
 {
-    if (external_ctx) {
-        _p->ctx = external_ctx;
-        _p->owns_ctx = false;
-    } else {
-        _p->ctx = new Node("_ctx");
-        _p->owns_ctx = true;
+    _p->ctx = new Node("_ctx");
+    if (initialCtx) {
+        _p->ctx->copy(initialCtx, true, true, true);
     }
 }
 
 Pipeline::~Pipeline() = default;
 
-
-// ----- wiring ---------------------------------------------------------------
-
-Pipeline::Handle Pipeline::addCtxStep(Command cmd, Loop* loop)
+Pipeline::Handle Pipeline::addProc(Proc proc, const std::string& inPath,
+                                   const std::string& outPath, Loop* loop)
 {
-    StepRuntime sr;
-    sr.loop = resolveLoop(cmd, loop);
-    sr.cmd = std::move(cmd);
-    sr.wiring = Wiring::Ctx;
+    Step step;
+    step.proc = std::move(proc);
+    step.inPath = inPath;
+    step.outPath = outPath;
+    step.loop = loop;
+    step.wiring = Wiring::Path;
     int slot = static_cast<int>(_p->steps.size());
-    _p->steps.push_back(std::move(sr));
+    _p->steps.push_back(std::move(step));
     return {slot};
 }
 
-Pipeline::Handle Pipeline::addLinearStep(Command cmd, Loop* loop)
+Pipeline::Handle Pipeline::addCommand(Command command, Loop* loop)
 {
-    StepRuntime sr;
-    sr.loop = resolveLoop(cmd, loop);
-    sr.cmd = std::move(cmd);
-    sr.wiring = Wiring::Linear;
+    Step step;
+    step.command = std::move(command);
+    step.loop = loop;
+    step.wiring = Wiring::Path;
     int slot = static_cast<int>(_p->steps.size());
-    _p->steps.push_back(std::move(sr));
+    _p->steps.push_back(std::move(step));
     return {slot};
 }
 
-Pipeline::Handle Pipeline::addPathStep(Command cmd,
-                                       const std::string& in_path,
-                                       const std::string& out_path,
-                                       Loop* loop)
+Pipeline::Handle Pipeline::addCtxProc(Proc proc, Loop* loop)
 {
-    StepRuntime sr;
-    sr.loop = resolveLoop(cmd, loop);
-    sr.cmd = std::move(cmd);
-    sr.wiring = Wiring::Path;
-    sr.in_path = in_path;
-    sr.out_path = out_path;
-    if (_p->ctx && !in_path.empty()) {
-        if (Node* decl = sr.cmd.declare()) {
-            _p->ctx->at(in_path)->setShadow(decl);
-        }
-    }
+    Step step;
+    step.proc = std::move(proc);
+    step.loop = loop;
+    step.wiring = Wiring::Ctx;
     int slot = static_cast<int>(_p->steps.size());
-    _p->steps.push_back(std::move(sr));
+    _p->steps.push_back(std::move(step));
     return {slot};
 }
 
-Pipeline::Handle Pipeline::addDagStep(Command cmd,
-                                      std::initializer_list<Handle> deps,
-                                      Loop* loop)
+Pipeline::Handle Pipeline::addLinearProc(Proc proc, Loop* loop)
 {
-    StepRuntime sr;
-    sr.loop = resolveLoop(cmd, loop);
-    sr.cmd = std::move(cmd);
-    sr.wiring = Wiring::Dag;
-    sr.deps.reserve(deps.size());
-    for (auto h : deps) sr.deps.push_back(h.slot);
+    Step step;
+    step.proc = std::move(proc);
+    step.loop = loop;
+    step.wiring = Wiring::Linear;
     int slot = static_cast<int>(_p->steps.size());
-    _p->steps.push_back(std::move(sr));
+    _p->steps.push_back(std::move(step));
     return {slot};
-}
-
-
-// ----- start / dispatch -----------------------------------------------------
-
-void Pipeline::startReply(const Var& input)
-{
-    if (!_p->ctx) {
-        _p->last = Result::fail(Result::UNKNOWN_CMD, "pipeline ctx is null");
-        complete(ERRORED);
-        return;
-    }
-
-    CallProto<tag::RequestReply>::import(_p->ctx, input);
-    startPrepared();
 }
 
 void Pipeline::start()
 {
     if (!_p->ctx) {
-        _p->last = Result::fail(Result::UNKNOWN_CMD, "pipeline ctx is null");
+        _p->last = Result::fail("pipeline ctx is null");
         complete(ERRORED);
         return;
     }
 
-    startPrepared();
-}
-
-void Pipeline::startPrepared()
-{
     _p->completed.store(false, std::memory_order_release);
     _p->state = RUNNING;
     _p->last = Result::ok();
@@ -216,42 +136,64 @@ void Pipeline::startPrepared()
         return;
     }
 
-    dispatchStep(0);
+    dispatch(0);
 }
 
-void Pipeline::dispatchStep(int slot)
+void Pipeline::dispatch(int slot)
 {
-    const int total = static_cast<int>(_p->steps.size());
-    if (slot >= total) {
+    if (slot >= static_cast<int>(_p->steps.size())) {
         complete(DONE);
         return;
     }
 
-    StepRuntime& sr = _p->steps[slot];
-    resolveWiring(sr, slot, total, _p->ctx);
+    Step& step = _p->steps[slot];
+    if (step.proc) {
+        switch (step.wiring) {
+        case Wiring::Path:
+            step.in = _p->ctx->at(step.inPath);
+            step.out = _p->ctx->at(step.outPath);
+            break;
+        case Wiring::Ctx:
+            step.in = _p->ctx;
+            step.out = _p->ctx;
+            break;
+        case Wiring::Linear:
+            step.in = slot == 0 ? _p->ctx->at("input") : _p->ctx->at("_pipe/stage")->at(slot - 1, false);
+            step.out = slot + 1 == static_cast<int>(_p->steps.size())
+                ? _p->ctx->at("output")
+                : _p->ctx->at("_pipe/stage")->at(slot, false);
+            break;
+        }
+    } else {
+        step.in = step.command.input();
+        step.out = step.command.output();
+    }
 
-    Proc p = sr.cmd.proc();
-    if (!p) {
-        _p->last = Result::fail(Result::UNKNOWN_CMD,
-            "step #" + std::to_string(slot) + ": no proc bound");
+    const bool hasProc = static_cast<bool>(step.proc);
+    if (!hasProc && !step.command.isValid()) {
+        const std::string message = "pipeline step has no proc";
+        setPipelineError(_p->ctx, ERR_NO_STEP_PROC, message);
+        _p->last = Result::fail(message);
         complete(ERRORED);
         return;
     }
 
-    auto run = [this, slot, p = std::move(p)]() mutable {
+    auto run = [this, slot, hasProc]() mutable {
         if (_p->state != RUNNING) {
             complete(_p->state == ERRORED ? ERRORED : DONE);
             return;
         }
 
-        StepRuntime& sr = _p->steps[slot];
-        Result r;
+        Step& step = _p->steps[slot];
+        Result result;
         try {
-            r = p(sr.in, sr.out);
+            result = hasProc ? step.proc(_p->ctx, step.in, step.out) : step.command.call();
         } catch (const std::exception& e) {
-            r = Result::fail(Result::EXCEPTION, e.what());
+            setPipelineError(_p->ctx, ERR_EXCEPTION, e.what());
+            result = Result::fail(e.what());
         } catch (...) {
-            r = Result::fail(Result::EXCEPTION, "unknown exception");
+            setPipelineError(_p->ctx, ERR_EXCEPTION, "unknown exception");
+            result = Result::fail("unknown exception");
         }
 
         if (_p->state != RUNNING) {
@@ -259,80 +201,58 @@ void Pipeline::dispatchStep(int slot)
             return;
         }
 
-        if (!r.data.isNull() && sr.out) {
-            schema::importAs<schema::VarS>(sr.out, r.data);
-        }
-
-        _p->last = r;
-        if (r.isError()) {
+        _p->last = std::move(result);
+        if (_p->last.isError()) {
             complete(ERRORED);
             return;
         }
-        if (r.isAccepted()) {
+        if (_p->last.isAccepted()) {
             complete(DONE);
             return;
         }
 
-        dispatchStep(slot + 1);
+        dispatch(slot + 1);
     };
 
-    if (Loop* loop = dispatchLoop(sr)) {
+    if (Loop* loop = resolveLoop(step)) {
         loop->post(std::move(run));
     } else {
         run();
     }
 }
 
-void Pipeline::complete(State final_state)
+void Pipeline::complete(State state)
 {
-    _p->state = final_state;
-
-    if (_p->ctx) {
-        _p->ctx->set("code", _p->last.code);
-        if (!_p->last.message.empty()) {
-            _p->ctx->set("message", _p->last.message);
-        }
-        if (_p->last.data.isNull()) {
-            Var reply = schema::exportAs<schema::VarS>(_p->ctx->at("reply"));
-            if (!reply.isNull()) {
-                _p->last.data = std::move(reply);
-            }
-        }
-        if (!_p->owns_ctx) {
-            _p->ctx->remove("_pipe");
-        }
-    }
-
+    _p->state = state;
     Result snapshot = _p->last;
-    Handler h = std::move(_p->handler);
+    Handler handler = std::move(_p->handler);
 
     if (_p->state == DONE) {
-        trigger<CMD_DONE>(Var::custom(snapshot));
+        trigger<DONE_SIGNAL>(Var::custom(snapshot));
     } else if (_p->state == ERRORED) {
-        trigger<CMD_ERROR>(Var::custom(snapshot));
+        trigger<ERROR_SIGNAL>(Var::custom(snapshot));
     }
 
     _p->completed.store(true, std::memory_order_release);
-    if (h) h(snapshot);
+    if (handler) {
+        handler(snapshot);
+    }
 }
 
-
-// ----- synchronous call -----------------------------------------------------
-
-template<typename CallProtoT>
-typename CallProtoT::Output Pipeline::call(const typename CallProtoT::Input& input)
+void Pipeline::cancel()
 {
-    if (!_p->ctx) {
-        return CallProtoT::makeFailure(Result::UNKNOWN_CMD, "pipeline ctx is null");
-    }
+    if (_p->state != RUNNING) return;
+    setPipelineError(_p->ctx, ERR_CANCELLED, "cancelled");
+    _p->last = Result::fail("cancelled");
+    complete(ERRORED);
+}
 
-    CallProtoT::import(_p->ctx, input);
-    startPrepared();
-
+void Pipeline::wait()
+{
     std::vector<Loop*> loops;
     loops.reserve(_p->steps.size());
-    for (auto& sr : _p->steps) {
-        Loop* loop = dispatchLoop(sr);
+    for (const auto& step : _p->steps) {
+        Loop* loop = resolveLoop(step);
         if (loop && std::find(loops.begin(), loops.end(), loop) == loops.end()) {
             loops.push_back(loop);
         }
@@ -347,62 +267,34 @@ typename CallProtoT::Output Pipeline::call(const typename CallProtoT::Input& inp
             std::this_thread::yield();
         }
     }
+}
 
-    if constexpr (std::is_void_v<typename CallProtoT::Output>) {
-        CallProtoT::exportOut(_p->ctx);
-        return;
-    } else {
-        return CallProtoT::exportOut(_p->ctx);
+void Pipeline::onFinished(Handler handler)
+{
+    _p->handler = std::move(handler);
+}
+
+Node* Pipeline::context() const
+{
+    return _p->ctx;
+}
+
+Pipeline::State Pipeline::state() const
+{
+    return _p->state;
+}
+
+const Result& Pipeline::lastResult() const
+{
+    return _p->last;
+}
+
+Node* Pipeline::outputOf(Handle handle) const
+{
+    if (handle.slot < 0 || handle.slot >= static_cast<int>(_p->steps.size())) {
+        return nullptr;
     }
+    return _p->steps[handle.slot].out;
 }
-
-template Var    Pipeline::call<CallProto<tag::VarInVarOut>>  (const Var&);
-template Result Pipeline::call<CallProto<tag::RequestReply>> (const Var&);
-template Result Pipeline::call<CallProto<tag::ListInDictOut>>(const Var::ListV&);
-template void   Pipeline::call<CallProto<tag::NodeInOut>>    (const CallProto<tag::NodeInOut>::Input&);
-
-
-// ----- convenience family ---------------------------------------------------
-
-Result Pipeline::callReply(const Var& input)        { return call<CallProto<tag::RequestReply>> (input); }
-Var    Pipeline::callVar  (const Var& input)        { return call<CallProto<tag::VarInVarOut>>  (input); }
-Result Pipeline::callList (const Var::ListV& input) { return call<CallProto<tag::ListInDictOut>>(input); }
-void   Pipeline::callNode (Node* in, Node* out)     {        call<CallProto<tag::NodeInOut>>    ({in, out}); }
-
-
-// ----- control --------------------------------------------------------------
-
-void Pipeline::onFinished(Handler h) { _p->handler = std::move(h); }
-
-void Pipeline::cancel()
-{
-    if (_p->state != RUNNING) return;
-    if (_p->ctx) _p->ctx->set("_pipe/cancel", true);
-    _p->state = ERRORED;
-    _p->last = Result::fail(Result::CANCELLED, "cancelled");
-}
-
-void Pipeline::keepAlive() {}
-
-void Pipeline::finishStep(Handle h, Result r)
-{
-    (void)h;
-    _p->last = std::move(r);
-}
-
-
-// ----- query ----------------------------------------------------------------
-
-Node* Pipeline::context() const { return _p->ctx; }
-Pipeline::State Pipeline::state() const { return _p->state; }
-int Pipeline::stepCount() const { return static_cast<int>(_p->steps.size()); }
-
-Node* Pipeline::outputOf(Handle h) const
-{
-    if (h.slot < 0 || h.slot >= static_cast<int>(_p->steps.size())) return nullptr;
-    return _p->steps[h.slot].out;
-}
-
-const Result& Pipeline::lastResult() const { return _p->last; }
 
 } // namespace ve

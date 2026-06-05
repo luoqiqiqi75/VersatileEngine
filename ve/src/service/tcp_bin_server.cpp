@@ -19,6 +19,8 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "ve/core/factory.h"
+
 namespace ve {
 namespace service {
 
@@ -119,11 +121,11 @@ struct BinTcpServer::Private
     }
 };
 
-BinTcpServer::BinTcpServer(Node* root, uint16_t port)
+BinTcpServer::BinTcpServer(const Node* config_n)
     : _p(std::make_unique<Private>())
 {
-    _p->root = root;
-    _p->port = port;
+    _p->root = ve::n(config_n->get("root").toString("/"));
+    _p->port = config_n->get("port").toInt(0); // default stop
 }
 
 BinTcpServer::~BinTcpServer()

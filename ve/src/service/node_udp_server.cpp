@@ -40,15 +40,15 @@ struct NodeUdpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12300;
+    
     asio2::udp_server server;
     std::unique_ptr<NodeTaskService> taskSvc;
 };
 
-NodeUdpServer::NodeUdpServer(Node* root, uint16_t port)
-    : _p(std::make_unique<Private>())
+NodeUdpServer::NodeUdpServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
-    _p->root = root;
-    _p->port = port;
+    _p->root = ve::n(config_n->get("root").toString("/"));
+    _p->port = config_n->get("port").toInt(0); // default stop
 }
 
 NodeUdpServer::~NodeUdpServer()

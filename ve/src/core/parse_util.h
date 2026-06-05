@@ -1,7 +1,7 @@
-// parse_util.h — shared parsing utilities for command system and terminal
+// parse_util.h — shared parsing utilities for terminal and service adapters
 //
 // Single implementation of flag parsing, value parsing, and string type detection.
-// Used by command.cpp (command::parseArgs) and terminal_util.h (builtin commands).
+// Used by terminal_util.h and service-side command adapters.
 #pragma once
 
 #include "ve/core/var.h"

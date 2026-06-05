@@ -28,13 +28,19 @@
 #  include <unistd.h>
 #endif
 
-#include <chrono>
-#include <cstdint>
-#include <mutex>
-#include <unordered_map>
-#include <atomic>
-#include <iostream>
-#include <thread>
+namespace ve {
+namespace convert {
+
+template<> bool parse(Node* n, ve::service::TerminalReplServer::Options& opt) {
+    opt.banner = n->get("banner").toBool();
+    opt.title = n->get("title").toBool();
+    opt.prompt_color = n->get("prompt_color").toBool();
+    opt.use_current = n->get("use_current").toBool();
+    return true;
+}
+
+}
+}
 
 namespace ve {
 namespace service {
@@ -320,9 +326,10 @@ struct TerminalTcpClient::Private
 struct TerminalReplServer::Private
 {
     Node*    root = nullptr;
-    bool     ownsRoot = false;
     uint16_t port = 10000;
-    TerminalReplServer::Options opts;
+    Options opts;
+
+    bool     ownsRoot = false;
 
     asio2::tcp_server server;
     std::mutex mtx;
@@ -334,11 +341,12 @@ struct TerminalReplServer::Private
 // TerminalServer
 // ============================================================================
 
-TerminalReplServer::TerminalReplServer(Node* root, uint16_t port, const Options& opts) : _p(std::make_unique<Private>())
+TerminalReplServer::TerminalReplServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
-    _p->root = root ? root : ve::node::root();
-    _p->port = port;
-    _p->opts = opts;
+    _p->root = ve::n(config_n->get("root").toString("/"));
+    _p->port = config_n->get("port").toInt(0); // default stop
+
+    ve::convert::parse(config_n, _p->opts);
 }
 
 TerminalReplServer::~TerminalReplServer()

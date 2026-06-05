@@ -211,12 +211,12 @@ public:
 
     // Core registration: attach callable to an existing node, track key for enumeration.
     // Caller controls node placement explicitly.
-    void reg(const std::string& key, Node* functor_n, Var callable, const std::string& help, Loop* lr);
+    Node* reg(const std::string& key, Node* functor_n, Var callable, const std::string& help, Loop* lr);
 
     // Convenience: ensure node at path-resolved key, then register.
-    void reg(const std::string& key, Var callable, const std::string& help = {}, Loop* lr = nullptr, char sep = VE_FACTORY_KEY_SEP)
+    Node* reg(const std::string& key, Var callable, const std::string& help = {}, Loop* lr = nullptr, char sep = VE_FACTORY_KEY_SEP)
     {
-        reg(key, node(key, sep), std::move(callable), help, lr);
+        return reg(key, node(key, sep), std::move(callable), help, lr);
     }
 
     // Typed call: pack params into Var via Var's official ctor protocol, invoke, unpack result.
@@ -234,6 +234,16 @@ public:
             args = Var(Var::ListV{Var(std::forward<Params>(params))...});
         }
         return functor_n->get().invoke(args).as<RetT>();
+    }
+
+    bool has(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
+    {
+        return node(key, sep)->get().isCallable();
+    }
+
+    std::string help(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
+    {
+        return node(key, sep)->get("help").toString();
     }
 
 private:

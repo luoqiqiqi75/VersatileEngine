@@ -58,11 +58,10 @@ struct NodeWsServer::Private
     }
 };
 
-NodeWsServer::NodeWsServer(Node* root, uint16_t port)
-    : _p(std::make_unique<Private>())
+NodeWsServer::NodeWsServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
-    _p->root = root;
-    _p->port = port;
+    _p->root = ve::n(config_n->get("root").toString("/"));
+    _p->port = config_n->get("port").toInt(0); // default stop
 }
 
 NodeWsServer::~NodeWsServer()

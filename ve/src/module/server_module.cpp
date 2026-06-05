@@ -65,7 +65,8 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
     }
 
     for (int p = port; p <= endPort; ++p) {
-        server = std::make_unique<T>(node::root(), static_cast<uint16_t>(p));
+        n->set("config/port", p);
+        server = std::make_unique<T>(n->at("config"));
         if (server->start()) {
             n->set("runtime/port", p);
             n->set("runtime/listening", true);
@@ -183,12 +184,16 @@ void ServerModule::init() {
     }
 
     _data_root = node()->get("file_io/data_root").toString("./data");
-    registerFileCommands();
-    registerSearchCommand();
+    // Command registration is being rebuilt around Proc(ctx,in,out).
+    // Legacy save/load/search command registration is intentionally disabled
+    // on this refactor branch until it is rewritten on the new command model.
+    // registerFileCommands();
+    // registerSearchCommand();
 }
 
 void ServerModule::registerFileCommands()
 {
+#if 0
     auto data_root = _data_root;
 
     // Declare parameter metadata for save/load
@@ -347,6 +352,7 @@ void ServerModule::registerFileCommands()
             return Result::fail("Import failed (invalid " + format + ")");
         }
     }, "load <format> [path] [-f file] [-i data]");
+#endif
 }
 
 // ============================================================================
@@ -382,6 +388,7 @@ static std::string toLower(const std::string& str)
 
 void ServerModule::registerSearchCommand()
 {
+#if 0
     auto* decl = command::declareNode("search");
     decl->at("pattern");
     decl->at("root");
@@ -467,6 +474,7 @@ void ServerModule::registerSearchCommand()
         walk(root, rootPrefix);
         return Result::ok(Var(std::move(results)));
     }, "search <pattern> [root] [--key|--value|--path] [--ignore-case] [--top N] [--with-value] [--leaf-only]");
+#endif
 }
 
 void ServerModule::bindStaticProxyTargets()
@@ -501,21 +509,11 @@ void ServerModule::ready() {
 
     // AI REPL: no banner, no title, no color (save tokens), but keep cd/current (AI can handle state)
     if (node()->get("terminal/ai/enable").toBool(true)) {
-        int port = node()->get("terminal/ai/config/port").toInt(10100);
-        service::TerminalReplServer::Options ai_opts;
-        ai_opts.banner = false;
-        ai_opts.title = false;
-        ai_opts.prompt_color = false;
-        ai_opts.use_current = true;  // Keep cd - AI can understand navigation
-        _terminal_ai_s = std::make_unique<service::TerminalReplServer>(node::root(), static_cast<uint16_t>(port), ai_opts);
-        if (_terminal_ai_s->start()) {
-            node()->at("terminal/ai")->set("runtime/port", port);
-            node()->at("terminal/ai")->set("runtime/listening", true);
-            veLogI << "TerminalReplServer(AI) started on port " << port;
-        } else {
-            veLogW << "TerminalReplServer(AI) failed to start on port " << port;
-            _terminal_ai_s.reset();
-        }
+        auto ai_config_n = node()->at("terminal/ai/config");
+        ai_config_n->set("banner", false);
+        ai_config_n->set("title", false);
+        ai_config_n->set("prompt_color", false);
+        openServer(_terminal_ai_s, node()->at("terminal/ai"), 10100, "TerminalAiServer");
     }
 
     if (node()->get("bin/tcp/enable").toBool(true)) openServer(_bin_tcp_s, node()->at("bin/tcp"), 11000, "BinTcpServer");
@@ -523,6 +521,7 @@ void ServerModule::ready() {
     if (node()->get("node/ws/enable").toBool(true)) openServer(_node_ws_s, node()->at("node/ws"), 12100, "NodeWsServer");
     if (node()->get("node/tcp/enable").toBool(true)) openServer(_node_tcp_s, node()->at("node/tcp"), 12200, "NodeTcpServer");
     if (node()->get("node/udp/enable").toBool(true)) openServer(_node_udp_s, node()->at("node/udp"), 12300, "NodeUdpServer");
+
     if (node()->get("static/enable").toBool(false)) {
         openServer(_static_s, node()->at("static"), 12400, "StaticServer");
         bindStaticProxyTargets();

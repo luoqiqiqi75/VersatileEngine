@@ -32,7 +32,10 @@ namespace ve {
 
 namespace convert {
 
-template<typename From, typename To> bool parse(const From&, To&) { return false; }
+template<typename From, typename To> bool parse(From, To) { return false; } // impl
+
+template<typename To, typename From> inline To to(const From& from) { To v; parse(from, v); return v; }
+template<typename To, typename From> inline To to(const From& from, const To& default_v) { To v; return parse(from, v) ? v : default_v; }
 
 } // namespace convert
 
@@ -43,15 +46,11 @@ template<typename From, typename To> bool parse(const From&, To&) { return false
 template<typename T, typename Enable = void>
 struct Convert {
     static std::string toString(const T& v) {
-        std::string out;
-        if (convert::parse(v, out)) return out;
-        return std::string("[") + basic::_t_demangle(typeid(T).name()) + "]";
+        return convert::to(v, std::string("[") + basic::_t_demangle(typeid(T).name()) + "]");
     }
-
     static bool fromString(const std::string& s, T& out) {
         return convert::parse(s, out);
     }
-
     static Bytes toBin(const T& v) {
         Bytes out;
         if (convert::parse(v, out)) return out;

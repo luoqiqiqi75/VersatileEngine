@@ -1,7 +1,7 @@
 // terminal_session.cpp - TerminalSession: pure REPL logic
 //
 // All terminal commands are session-local, using cur/root directly.
-// User-registered global commands (command::call) are fallback.
+// Registered commands are executed through Command/Pipeline as fallback.
 
 #include "terminal_session.h"
 #include "ve/core/command.h"
@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
-#include <thread>
 #include <mutex>
 
 namespace ve {
@@ -121,25 +120,23 @@ static std::vector<std::string> completeNodePath(Node* root, Node* cur, const st
 
 // Resolve the longest matching command from the front of tokens in one factory.
 // Returns {factory-node, wordCount}. node is null if nothing matched.
-static std::pair<Node*, size_t> resolveFactoryCommand(Factory& factory,
+static std::pair<Node*, size_t> resolveFactoryCommand(const Factory& factory,
                                                       const std::vector<std::string>& args)
 {
-    const Node* root = factory.node();
     for (size_t i = args.size(); i >= 1; --i) {
         std::string candidate;
         for (size_t j = 0; j < i; ++j) {
             if (j > 0) candidate += ".";
             candidate += args[j];
         }
-        if (Node* n = root ? const_cast<Node*>(root)->find(candidate, false) : nullptr) {
+        if (Node* n = factory.node(candidate, VE_FACTORY_KEY_SEP)) {
             return {n, i};
         }
     }
     return {nullptr, 0};
 }
 
-static void prepareCommandInput(const Command& cmd,
-                                Node* in,
+static void prepareCommandInput(Node* in,
                                 Node* root,
                                 Node* current,
                                 const std::vector<std::string>& args,
@@ -147,20 +144,12 @@ static void prepareCommandInput(const Command& cmd,
 {
     if (!in) return;
     in->clear();
-    if (Node* decl = cmd.declare()) {
-        in->setShadow(decl);
-    }
-
-    std::vector<std::string> params;
-    for (size_t i = start; i < args.size(); ++i) {
-        params.push_back(args[i]);
-    }
-    command::parseArgs(in, params, 0);
-
     Node* argv = in->at("argv", false);
     for (const auto& arg : args) {
         argv->append()->set(arg);
     }
+    in->set("argc", static_cast<int64_t>(args.size()));
+    in->set("command_words", static_cast<int64_t>(start));
     if (root) {
         in->at("root", false)->set(Var(static_cast<void*>(root)));
     }
@@ -191,9 +180,6 @@ static std::string renderCommandOutput(Node* out, const Result& r)
         if (!out->get().isNull()) {
             return out->get().toString();
         }
-    }
-    if (!r.data.isNull()) {
-        return r.data.toString();
     }
     return {};
 }
@@ -284,8 +270,7 @@ static void writeBuiltinOut(BuiltinContext& s, Node* out)
 template<typename F>
 static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::string& help = {})
 {
-    command::regInto<RegProto<tag::FullProc>>(f, key,
-        [key, fn = std::forward<F>(fn)](Node* in, Node* out) -> Result {
+    Proc proc = [key, fn = std::forward<F>(fn)](Node*, Node* in, Node* out) -> Result {
             BuiltinContext s;
             s.root = pointerInput(in, "root", node::root());
             s.cur = pointerInput(in, "current", s.root);
@@ -302,6 +287,11 @@ static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::st
             }
             writeBuiltinOut(s, out);
             return Result::ok();
+    };
+
+    command::regInto(f, key,
+        [key, proc, help](Node* ctx, Node* in, Node* out) -> Command {
+            return Command(key, proc, ctx, in, out, nullptr, help);
         },
         help);
 }
@@ -830,8 +820,8 @@ void TerminalSession::Private::initCommands()
                 builtin = const_cast<Node*>(root)->find(key, false);
             }
             if (builtin) {
-                Command cmd(builtin);
-                s.print(cmd.help().empty() ? key + "\n" : key + ": " + cmd.help() + "\n");
+                auto h = builtin->get("help").toString();
+                s.print(h.empty() ? key + "\n" : key + ": " + h + "\n");
                 return;
             }
             auto h = command::help(key);
@@ -844,9 +834,9 @@ void TerminalSession::Private::initCommands()
         auto builtinKeys = factory::at("builtin").keys();
         std::sort(builtinKeys.begin(), builtinKeys.end());
         for (auto& k : builtinKeys) {
-            Command cmd(factory::at("builtin").node(k));
+            Node* builtin = factory::at("builtin").node(k);
             out += "  " + k;
-            auto h = cmd.help();
+            auto h = builtin ? builtin->get("help").toString() : std::string{};
             if (!h.empty()) { int pad = 18 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
             out += "\n";
         }
@@ -922,30 +912,32 @@ std::string TerminalSession::execute(const std::string& line)
     // Always find the longest match (most words consumed).
     auto [builtinNode, builtinWordCount] = resolveFactoryCommand(factory::at("builtin"), args);
     auto [cmdNode, cmdWordCount] = resolveFactoryCommand(command::factory(), args);
-    Node* resolvedNode = builtinNode ? builtinNode : cmdNode;
+    Factory& resolvedFactory = builtinNode ? factory::at("builtin") : command::factory();
+    std::string resolvedName;
+    for (size_t i = 0; i < (builtinNode ? builtinWordCount : cmdWordCount); ++i) {
+        if (i > 0) resolvedName += ".";
+        resolvedName += args[i];
+    }
     size_t resolvedWordCount = builtinNode ? builtinWordCount : cmdWordCount;
 
-    if (resolvedNode) {
-        Command resolved(resolvedNode);
-        std::string resolvedName = resolvedNode->name();
-
+    if (builtinNode || cmdNode) {
         if (asyncMode) {
             auto* detached = new Pipeline(resolvedName);
-            detached->keepAlive();
-            detached->addPathStep(resolved, "request", "reply");
-            prepareCommandInput(resolved, detached->context()->at("request"),
-                s.root, s.cur, args, resolvedWordCount);
+            Node* request = detached->context()->at("request");
+            Node* reply = detached->context()->at("reply");
+            prepareCommandInput(request, s.root, s.cur, args, resolvedWordCount);
+            Command cmdObj = command::create(resolvedFactory, resolvedName,
+                                             detached->context(), request, reply);
 
             auto asyncOut = s.asyncOutput;
-            std::string cmdName = resolvedName;
-            detached->onFinished([asyncOut, detached, cmdName](const Result& res) {
-                Result reply = CallProto<tag::RequestReply>::exportOut(detached->context());
-                std::string text = renderCommandOutput(detached->context()->find("reply", false),
-                    reply.isError() ? reply : res);
+            detached->addCommand(cmdObj);
+            detached->onFinished([asyncOut, detached, resolvedName](const Result& res) {
+                std::string text = renderCommandOutput(detached->context()->find("reply", false), res);
                 if (asyncOut && !text.empty()) {
-                    if (text.back() != '\n')
+                    if (text.back() != '\n') {
                         text.push_back('\n');
-                    asyncOut("\x1b[33m[" + cmdName + "]\x1b[0m " + text);
+                    }
+                    asyncOut("\x1b[33m[" + resolvedName + "]\x1b[0m " + text);
                 }
                 delete detached;
             });
@@ -954,22 +946,16 @@ std::string TerminalSession::execute(const std::string& line)
             return s.output;
         }
 
-        Node ctx("_ctx");
-        prepareCommandInput(resolved, ctx.at("request"), s.root, s.cur, args, resolvedWordCount);
-        Pipeline pipe(resolvedName, &ctx);
-        pipe.addPathStep(resolved, "request", "reply");
+        Pipeline pipe(resolvedName);
+        Node* request = pipe.context()->at("request");
+        Node* reply = pipe.context()->at("reply");
+        prepareCommandInput(request, s.root, s.cur, args, resolvedWordCount);
+        Command cmdObj = command::create(resolvedFactory, resolvedName, pipe.context(), request, reply);
+        pipe.addCommand(cmdObj);
         pipe.start();
-        Loop* dispatchLoop = resolved.loop() ? resolved.loop() : loop::main();
-        while (pipe.state() == Pipeline::RUNNING) {
-            if (dispatchLoop) {
-                dispatchLoop->processEvents();
-            } else {
-                std::this_thread::yield();
-            }
-        }
-        Result r = CallProto<tag::RequestReply>::exportOut(&ctx);
-        updateCurrentFromOut(s.cur, ctx.find("reply", false));
-        s.print(renderCommandOutput(ctx.find("reply", false), r));
+        pipe.wait();
+        updateCurrentFromOut(s.cur, reply);
+        s.print(renderCommandOutput(reply, pipe.lastResult()));
         return s.output;
     }
 

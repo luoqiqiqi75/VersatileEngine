@@ -354,7 +354,7 @@ VE_API Node* n(const std::string& path, bool auto_create = true);
 // NodeRef — base wrapper for "this object is bound to a Node*"
 // ============================================================================
 //
-// Reusable mixin for Factory / Module / Command / Args and similar. Stores
+// Reusable mixin for Factory / Module and similar node-bound objects. Stores
 // a single Node* with derived-class access (protected). Provides node()
 // accessor and operator bool() to check validity.
 //

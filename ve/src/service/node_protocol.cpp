@@ -62,6 +62,11 @@ CommandOutcome dispatchCommand(const std::string& name, const Var& args, bool wa
                                const Var& id,
                                const NodeEventFn& onEvent)
 {
+    (void)args;
+    (void)wait;
+    (void)tasks;
+    (void)id;
+    (void)onEvent;
     CommandOutcome out;
     if (name.empty()) {
         out.code = CommandOutcome::INVALID;
@@ -69,49 +74,9 @@ CommandOutcome dispatchCommand(const std::string& name, const Var& args, bool wa
         out.message = "command name is required";
         return out;
     }
-
-    Command cmd(name);
-    if (!cmd.isValid()) {
-        out.code = CommandOutcome::NOT_FOUND;
-        out.errCode = "not_found";
-        out.message = "unknown command: " + name;
-        return out;
-    }
-
-    if (wait) {
-        Result result = cmd.callReply(args);
-        if (result.isSuccess() || result.isAccepted()) {
-            out.code = CommandOutcome::OK;
-            out.data = std::move(result.data);
-        } else {
-            out.code = CommandOutcome::FAILED;
-            out.errCode = "command_failed";
-            out.message = result.message;
-        }
-        return out;
-    }
-
-    if (!tasks) {
-        out.code = CommandOutcome::NO_TASKS;
-        out.errCode = "internal_error";
-        out.message = "task service unavailable";
-        return out;
-    }
-
-    auto* detached = new Pipeline(name);
-    detached->keepAlive();
-    detached->addPathStep(cmd, "request", "reply");
-    std::string taskId = tasks->attach(name, id, detached, onEvent);
-    if (taskId.empty()) {
-        out.code = CommandOutcome::FAILED;
-        out.errCode = "internal_error";
-        out.message = "failed to start task";
-        return out;
-    }
-
-    detached->startReply(args);
-    out.code = CommandOutcome::ACCEPTED;
-    out.taskId = std::move(taskId);
+    out.code = CommandOutcome::FAILED;
+    out.errCode = "unsupported";
+    out.message = "command.run is disabled on the command refactor branch; use HTTP /cmd";
     return out;
 }
 

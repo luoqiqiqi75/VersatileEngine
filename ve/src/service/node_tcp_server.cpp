@@ -44,6 +44,7 @@ struct NodeTcpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12200;
+
     asio2::tcp_server server;
     std::mutex mtx;
     std::atomic<int> connCount{0};
@@ -113,11 +114,10 @@ struct NodeTcpServer::Private
     }
 };
 
-NodeTcpServer::NodeTcpServer(Node* root, uint16_t port)
-    : _p(std::make_unique<Private>())
+NodeTcpServer::NodeTcpServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
-    _p->root = root;
-    _p->port = port;
+    _p->root = ve::n(config_n->get("root").toString("/"));
+    _p->port = config_n->get("port").toInt(0); // default stop
 }
 
 NodeTcpServer::~NodeTcpServer()
