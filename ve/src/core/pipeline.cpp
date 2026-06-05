@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <optional>
 #include <thread>
 
 namespace ve {
@@ -15,7 +16,7 @@ enum class Wiring : uint8_t { Path, Ctx, Linear };
 struct Step
 {
     Proc proc;
-    Command command;
+    std::optional<Command> command;
     Wiring wiring = Wiring::Path;
     std::string inPath;
     std::string outPath;
@@ -32,10 +33,11 @@ void setPipelineError(Node* ctx, Pipeline::Error code, const std::string& messag
     error->set("message", message);
 }
 
-Loop* resolveLoop(const Step& step)
+void appendLoop(std::vector<Loop*>& loops, Loop* loop)
 {
-    if (step.loop) return step.loop;
-    return step.command.loop();
+    if (loop && std::find(loops.begin(), loops.end(), loop) == loops.end()) {
+        loops.push_back(loop);
+    }
 }
 
 } // namespace
@@ -89,7 +91,7 @@ Pipeline::Handle Pipeline::addProc(Proc proc, const std::string& inPath,
 Pipeline::Handle Pipeline::addCommand(Command command, Loop* loop)
 {
     Step step;
-    step.command = std::move(command);
+    step.command.emplace(std::move(command));
     step.loop = loop;
     step.wiring = Wiring::Path;
     int slot = static_cast<int>(_p->steps.size());
@@ -147,7 +149,8 @@ void Pipeline::dispatch(int slot)
     }
 
     Step& step = _p->steps[slot];
-    if (step.proc) {
+    const bool hasProc = static_cast<bool>(step.proc);
+    if (hasProc) {
         switch (step.wiring) {
         case Wiring::Path:
             step.in = _p->ctx->at(step.inPath);
@@ -165,12 +168,11 @@ void Pipeline::dispatch(int slot)
             break;
         }
     } else {
-        step.in = step.command.input();
-        step.out = step.command.output();
+        step.in = step.command ? step.command->input() : nullptr;
+        step.out = step.command ? step.command->output() : nullptr;
     }
 
-    const bool hasProc = static_cast<bool>(step.proc);
-    if (!hasProc && !step.command.isValid()) {
+    if (!hasProc && (!step.command || !step.command->valid())) {
         const std::string message = "pipeline step has no proc";
         setPipelineError(_p->ctx, ERR_NO_STEP_PROC, message);
         _p->last = Result::fail(message);
@@ -178,26 +180,8 @@ void Pipeline::dispatch(int slot)
         return;
     }
 
-    auto run = [this, slot, hasProc]() mutable {
+    auto finish = [this, slot](Result result) mutable {
         if (_p->state != RUNNING) {
-            complete(_p->state == ERRORED ? ERRORED : DONE);
-            return;
-        }
-
-        Step& step = _p->steps[slot];
-        Result result;
-        try {
-            result = hasProc ? step.proc(_p->ctx, step.in, step.out) : step.command.call();
-        } catch (const std::exception& e) {
-            setPipelineError(_p->ctx, ERR_EXCEPTION, e.what());
-            result = Result::fail(e.what());
-        } catch (...) {
-            setPipelineError(_p->ctx, ERR_EXCEPTION, "unknown exception");
-            result = Result::fail("unknown exception");
-        }
-
-        if (_p->state != RUNNING) {
-            complete(_p->state == ERRORED ? ERRORED : DONE);
             return;
         }
 
@@ -214,8 +198,32 @@ void Pipeline::dispatch(int slot)
         dispatch(slot + 1);
     };
 
-    if (Loop* loop = resolveLoop(step)) {
-        loop->post(std::move(run));
+    if (!hasProc) {
+        step.command->call([finish](const Command* cmd) mutable {
+            finish(cmd ? cmd->result() : Result::fail("command callback is null"));
+        }, step.loop);
+        return;
+    }
+
+    auto run = [this, slot, finish]() mutable {
+        if (_p->state != RUNNING) {
+            return;
+        }
+
+        try {
+            Step& step = _p->steps[slot];
+            finish(step.proc(_p->ctx, step.in, step.out));
+        } catch (const std::exception& e) {
+            setPipelineError(_p->ctx, ERR_EXCEPTION, e.what());
+            finish(Result::fail(e.what()));
+        } catch (...) {
+            setPipelineError(_p->ctx, ERR_EXCEPTION, "unknown exception");
+            finish(Result::fail("unknown exception"));
+        }
+    };
+
+    if (step.loop) {
+        step.loop->post(std::move(run));
     } else {
         run();
     }
@@ -250,11 +258,11 @@ void Pipeline::cancel()
 void Pipeline::wait()
 {
     std::vector<Loop*> loops;
-    loops.reserve(_p->steps.size());
+    loops.reserve(_p->steps.size() * 2);
     for (const auto& step : _p->steps) {
-        Loop* loop = resolveLoop(step);
-        if (loop && std::find(loops.begin(), loops.end(), loop) == loops.end()) {
-            loops.push_back(loop);
+        appendLoop(loops, step.loop);
+        if (step.command) {
+            appendLoop(loops, step.command->loop());
         }
     }
 

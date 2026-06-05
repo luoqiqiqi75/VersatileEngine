@@ -293,7 +293,7 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
     }
 
     if (op == "command.list") {
-        auto cmds = command::keys();
+        auto cmds = command::factory().keys();
         std::sort(cmds.begin(), cmds.end());
         cmds.erase(std::unique(cmds.begin(), cmds.end()), cmds.end());
 
@@ -302,7 +302,7 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
         for (const auto& key : cmds) {
             Node* item = commands->append();
             item->set("name", key);
-            item->set("help", command::help(key));
+            item->set("help", command::factory().help(key));
         }
         okReply(rep, id, &data);
         return;

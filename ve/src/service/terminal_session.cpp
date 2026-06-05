@@ -151,10 +151,10 @@ static void prepareCommandInput(Node* in,
     in->set("argc", static_cast<int64_t>(args.size()));
     in->set("command_words", static_cast<int64_t>(start));
     if (root) {
-        in->at("root", false)->set(Var(static_cast<void*>(root)));
+        in->at("root", false)->set(Var::ptr(root));
     }
     if (current) {
-        in->at("current", false)->set(Var(static_cast<void*>(current)));
+        in->at("current", false)->set(Var::ptr(current));
     }
 }
 
@@ -260,7 +260,7 @@ static void writeBuiltinOut(BuiltinContext& s, Node* out)
         out->at("text")->set(s.output);
     }
     if (s.cur) {
-        out->at("current")->set(Var(static_cast<void*>(s.cur)));
+        out->at("current")->set(Var::ptr(s.cur));
         if (s.root) {
             out->at("path")->set(s.cur->path(s.root));
         }
@@ -289,11 +289,7 @@ static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::st
             return Result::ok();
     };
 
-    command::regInto(f, key,
-        [key, proc, help](Node* ctx, Node* in, Node* out) -> Command {
-            return Command(key, proc, ctx, in, out, nullptr, help);
-        },
-        help);
+    f.reg(key, proc, help);
 }
 
 static void registerTerminalBuiltins()
@@ -824,7 +820,7 @@ void TerminalSession::Private::initCommands()
                 s.print(h.empty() ? key + "\n" : key + ": " + h + "\n");
                 return;
             }
-            auto h = command::help(key);
+            auto h = command::factory().help(key);
             s.print(h.empty() ? "unknown command: " + key + "\n" : key + ": " + h + "\n");
             return;
         }
@@ -843,12 +839,12 @@ void TerminalSession::Private::initCommands()
         out += "\n=== Session Commands ===\n";
         out += "  take <idx|path>\n  orphans\n  adopt <N>\n  history\n  quit / exit\n";
 
-        auto userCmds = command::keys();
+        auto userCmds = command::factory().keys();
         if (!userCmds.empty()) {
             std::sort(userCmds.begin(), userCmds.end());
             out += "\n=== User Commands ===\n";
             for (auto& k : userCmds) {
-                auto h = command::help(k);
+                auto h = command::factory().help(k);
                 out += "  " + k;
                 if (!h.empty()) { int pad = 18 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
                 out += "\n";
@@ -1049,7 +1045,7 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
     }
 
     // Registered multi-word commands: keys use "." internally, display with spaces.
-    for (auto& key : command::keys()) {
+    for (auto& key : command::factory().keys()) {
         std::string keySpace = key;
         std::replace(keySpace.begin(), keySpace.end(), '.', ' ');
 

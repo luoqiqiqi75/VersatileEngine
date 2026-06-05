@@ -3,12 +3,12 @@
 #include "ve/core/command.h"
 
 #include <algorithm>
+#include <exception>
 
 namespace ve {
 
 struct Command::Private
 {
-    Proc p = nullptr;
     Loop* l = nullptr;
 
     Node* ctx = nullptr;
@@ -18,9 +18,8 @@ struct Command::Private
     Result r;
 };
 
-Command::Command(Node* factory_n) : _p(std::make_shared<Private>())
+Command::Command(Node* factory_n) : NodeRef(factory_n), _p(std::make_shared<Private>())
 {
-    _p->p = factory_n->getAs<Proc>();
     _p->l = factory_n->get("loop").as<Loop*>();
     _p->r = Result::fail(-0x10, "command invalid");
 }
@@ -41,8 +40,6 @@ Command::Command(Node* factory_n, Node* ctx) : Command(factory_n)
 
 Command::~Command() = default;
 
-Proc Command::proc() const { return _p->p; }
-
 Node* Command::context() const { return _p->ctx; }
 void Command::setContext(Node* ctx_n) { _p->ctx = ctx_n; }
 
@@ -52,12 +49,16 @@ void Command::setInput(Node* in_n) { _p->in = in_n; }
 Node* Command::output() const { return _p->out; }
 void Command::setOutput(Node* out_n) { _p->out = out_n; }
 
-bool Command::valid() const { return _p->p != nullptr && _p->ctx != nullptr && _p->in != nullptr && _p->out != nullptr; }
+bool Command::valid() const
+{
+    return node() != nullptr && node()->get().isCallable()
+        && _p->ctx != nullptr && _p->in != nullptr && _p->out != nullptr;
+}
 
 Result Command::run() const
 {
     if (!valid()) return Result::fail("command invalid");
-    return _p->p(_p->ctx, _p->in, _p->out);
+    return node()->get().invoke(_p->ctx, _p->in, _p->out).as<Result>();
 }
 
 Loop* Command::loop() const { return _p->l; }
@@ -68,10 +69,16 @@ Result Command::result() const { return _p->r; }
 void Command::call(Callback cb, Loop* loop) const
 {
     auto task = [c = *this, cb, cb_l = loop] {
-        c._p->r = c.run(); // proc exec in l
+        try {
+            c._p->r = c.run(); // proc exec in l
+        } catch (const std::exception& e) {
+            c._p->r = Result::fail(e.what());
+        } catch (...) {
+            c._p->r = Result::fail("unknown exception");
+        }
         if (cb_l) {
-            cb_l->post([cb, c] { cb(&c); }); // callback exec in loop
-        } else {
+            cb_l->post([cb, c] { if (cb) cb(&c); }); // callback exec in loop
+        } else if (cb) {
             cb(&c); // callback exec in l
         }
     };

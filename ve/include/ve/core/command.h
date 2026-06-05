@@ -25,8 +25,8 @@ struct Result
     std::string message;
 
     bool isSuccess() const { return code == SUCCESS; }
-    bool isError() const { return code == FAILED; }
-    bool isAccepted() const { return code == ACCEPTED; }
+    bool isError() const { return code < 0; }
+    bool isAccepted() const { return code > 0; }
     explicit operator bool() const { return isSuccess(); }
 
     static Result ok() { return {SUCCESS}; }
@@ -50,8 +50,6 @@ public:
     ~Command();
 
     std::string help() const { return node()->get("help").toString(); } // global
-
-    Proc proc() const; // readonly
 
     Node* context() const;
     void setContext(Node* ctx_n);

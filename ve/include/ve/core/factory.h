@@ -219,31 +219,32 @@ public:
         return reg(key, node(key, sep), std::move(callable), help, lr);
     }
 
-    // Typed call: pack params into Var via Var's official ctor protocol, invoke, unpack result.
-    // Raw data pointers must be passed explicitly as Var(static_cast<void*>(p)) — see var.h.
+    // Typed call: Var::invoke owns argument packing, then unpack result.
     // Fallback: RetT{} when key not found or not callable.
+    template<typename RetT = Var, typename... Params>
+    static RetT exec(Var v, Params&&... params)
+    {
+        if (v.isNull() || !v.isCallable()) return RetT{};
+        return v.invoke(std::forward<Params>(params)...).as<RetT>();
+    }
+
     template<typename RetT = Var, typename... Params>
     RetT exec(const std::string& key, Params&&... params) const
     {
-        auto* functor_n = node(key);
-        if (!functor_n || !functor_n->get().isCallable()) return RetT{};
-        Var args;
-        if constexpr (sizeof...(Params) == 1) {
-            args = Var(std::forward<Params>(params)...);
-        } else if constexpr (sizeof...(Params) > 1) {
-            args = Var(Var::ListV{Var(std::forward<Params>(params))...});
-        }
-        return functor_n->get().invoke(args).as<RetT>();
+        const auto* f_n = node(key);
+        return exec(f_n ? f_n->get() : Var(), std::forward<Params>(params)...);
     }
 
-    bool has(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
+    bool has(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const
     {
-        return node(key, sep)->get().isCallable();
+        const auto* f_n = node(key, sep);
+        return f_n ? f_n->get().isCallable() : false;
     }
 
-    std::string help(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
+    std::string help(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const
     {
-        return node(key, sep)->get("help").toString();
+        const auto* f_n = node(key, sep);
+        return f_n ? f_n->get("help").toString() : std::string();
     }
 
 private:

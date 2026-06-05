@@ -110,7 +110,7 @@ static Var makeInitializeResult()
 
 static Var makeToolsListResult()
 {
-    auto keys = ve::command::keys();
+    auto keys = ve::command::factory().keys();
     std::sort(keys.begin(), keys.end());
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
 
@@ -124,7 +124,7 @@ static Var makeToolsListResult()
 
         Var::DictV tool;
         tool["name"] = Var(key);
-        std::string help = ve::command::help(key);
+        std::string help = ve::command::factory().help(key);
         tool["description"] = Var(help.empty() ? ("VE command: " + key) : help);
         tool["inputSchema"] = Var(std::move(schema));
         tools.push_back(Var(std::move(tool)));
@@ -137,22 +137,17 @@ static Var makeToolsListResult()
 
 static Var makeToolCallResult(const std::string& key, const Var& args)
 {
-    auto r = ve::command::callReply(key, args);
-    bool ok = r.isSuccess() || r.isAccepted();
+    (void)args;
 
     Var::ListV content;
     Var::DictV textItem;
     textItem["type"] = Var("text");
-    if (ok) {
-        textItem["text"] = Var(stringify(r.data));
-    } else {
-        textItem["text"] = Var(r.message);
-    }
+    textItem["text"] = Var("command tool call is disabled on the command refactor branch: " + key);
     content.push_back(Var(std::move(textItem)));
 
     Var::DictV result;
     result["content"] = Var(std::move(content));
-    result["isError"] = Var(!ok);
+    result["isError"] = Var(true);
     return Var(std::move(result));
 }
 

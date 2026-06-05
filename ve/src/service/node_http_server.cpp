@@ -214,7 +214,7 @@ static Result parseHttpRequest(Node* ctx, Node*, Node* out)
 
     Node* root = pointerInput(ctx, "http/root");
     if (root) {
-        out->at("root", false)->set(Var(static_cast<void*>(root)));
+        out->at("root", false)->set(Var::ptr(root));
         Node* current = root;
         std::string contextPath = getQueryParam(ctx->get("http/query").toString(), "context");
         if (!contextPath.empty()) {
@@ -230,7 +230,7 @@ static Result parseHttpRequest(Node* ctx, Node*, Node* out)
                 return Result::fail("context not found: " + contextPath);
             }
         }
-        out->at("current", false)->set(Var(static_cast<void*>(current)));
+        out->at("current", false)->set(Var::ptr(current));
     }
 
     return Result::ok();
@@ -274,8 +274,8 @@ static void prepareHttpCommandContext(Node* ctx,
     ctx->set("http/cmd", cmdKey);
     ctx->set("http/body", std::string(req.body()));
     ctx->set("http/query", std::string(req.query()));
-    ctx->set("http/root", Var(static_cast<void*>(root)));
-    ctx->set("http/response", Var(static_cast<void*>(&rep)));
+    ctx->set("http/root", Var::ptr(root));
+    ctx->set("http/response", Var::ptr(&rep));
 }
 
 struct NodeHttpServer::Private
@@ -549,7 +549,7 @@ bool NodeHttpServer::start()
             rep.fill_json(toJson(reply), http::status::bad_request);
             return;
         }
-        if (!command::has(cmdKey)) {
+        if (!command::factory().has(cmdKey)) {
             Node reply("rep");
             fillError(&reply, "not_found", "unknown command: " + cmdKey);
             rep.fill_json(toJson(reply), http::status::not_found);
