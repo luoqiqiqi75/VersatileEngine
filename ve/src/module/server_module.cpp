@@ -40,6 +40,18 @@ static std::string availableSchemaFormatsText()
     return out;
 }
 
+static Node* inputCurrent(Node* in, Node* fallback = node::root())
+{
+    if (in) {
+        if (auto* cn = in->find("current")) {
+            if (auto* p = cn->get().toPointer()) {
+                return static_cast<Node*>(p);
+            }
+        }
+    }
+    return fallback;
+}
+
 template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port, const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
@@ -201,8 +213,7 @@ void ServerModule::registerFileCommands()
         }
 
         // Resolve target from the command context when available.
-        Node* current = command::current(in);
-        Node* base = current ? current : node::root();
+        Node* base = inputCurrent(in);
 
         std::string pathStr = a.string("path");
         Node* target = pathStr.empty() ? base : base->find(pathStr);
@@ -291,8 +302,7 @@ void ServerModule::registerFileCommands()
         }
 
         // Resolve target from the command context when available.
-        Node* current = command::current(in);
-        Node* base = current ? current : node::root();
+        Node* base = inputCurrent(in);
 
         std::string pathStr = a.string("path");
         Node* target = pathStr.empty() ? base : base->at(pathStr);

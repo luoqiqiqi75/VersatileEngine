@@ -292,6 +292,11 @@ inline void reg(const std::string& key, F&& fn,
                 const std::string& help = "", Loop* lr = nullptr,
                 char sep = VE_FACTORY_KEY_SEP);
 
+template<typename RegProtoT, typename F>
+inline void regInto(Factory& factory, const std::string& key, F&& fn,
+                    const std::string& help = "", Loop* lr = nullptr,
+                    char sep = VE_FACTORY_KEY_SEP);
+
 template<typename F>
 inline void reg       (const std::string& key, F&& fn, const std::string& help = "", Loop* lr = nullptr);
 
@@ -387,19 +392,6 @@ VE_API bool parseArgs(Node* ctx, const Var& input);
 inline Node* declareNode(const std::string& key, char sep = VE_FACTORY_KEY_SEP)
 {
     return factory().node(key, sep)->at("declare");
-}
-
-// current(in) — extract the "current node" pointer from in/current field.
-// Conventional protocol: callers inject session.current as the `current` field
-// of the input dict; command body retrieves it via command::current(in), with
-// fall-back to ve::n("/") (root) when absent.
-inline Node* current(Node* in)
-{
-    if (!in) return ve::n("/");
-    if (auto* cn = in->find("current"))
-        if (auto* p = cn->get().toPointer())
-            return static_cast<Node*>(p);
-    return ve::n("/");
 }
 
 } // namespace command

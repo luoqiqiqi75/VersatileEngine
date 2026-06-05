@@ -35,7 +35,7 @@ Loop* resolveLoop(const Command& cmd, Loop* explicit_loop)
 
 Loop* dispatchLoop(const StepRuntime& sr)
 {
-    return sr.loop ? sr.loop : loop::main();
+    return sr.loop;
 }
 
 void resolveWiring(StepRuntime& sr, int slot, int total, Node* ctx)
@@ -291,6 +291,12 @@ void Pipeline::complete(State final_state)
         _p->ctx->set("code", _p->last.code);
         if (!_p->last.message.empty()) {
             _p->ctx->set("message", _p->last.message);
+        }
+        if (_p->last.data.isNull()) {
+            Var reply = schema::exportAs<schema::VarS>(_p->ctx->at("reply"));
+            if (!reply.isNull()) {
+                _p->last.data = std::move(reply);
+            }
         }
         if (!_p->owns_ctx) {
             _p->ctx->remove("_pipe");

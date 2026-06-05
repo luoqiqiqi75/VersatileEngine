@@ -57,6 +57,64 @@ static void errorReply(Node* rep, const Var& id, const std::string& code, const 
     rep->set("error", error);
 }
 
+CommandOutcome dispatchCommand(const std::string& name, const Var& args, bool wait,
+                               NodeTaskService* tasks,
+                               const Var& id,
+                               const NodeEventFn& onEvent)
+{
+    CommandOutcome out;
+    if (name.empty()) {
+        out.code = CommandOutcome::INVALID;
+        out.errCode = "invalid_params";
+        out.message = "command name is required";
+        return out;
+    }
+
+    Command cmd(name);
+    if (!cmd.isValid()) {
+        out.code = CommandOutcome::NOT_FOUND;
+        out.errCode = "not_found";
+        out.message = "unknown command: " + name;
+        return out;
+    }
+
+    if (wait) {
+        Result result = cmd.callReply(args);
+        if (result.isSuccess() || result.isAccepted()) {
+            out.code = CommandOutcome::OK;
+            out.data = std::move(result.data);
+        } else {
+            out.code = CommandOutcome::FAILED;
+            out.errCode = "command_failed";
+            out.message = result.message;
+        }
+        return out;
+    }
+
+    if (!tasks) {
+        out.code = CommandOutcome::NO_TASKS;
+        out.errCode = "internal_error";
+        out.message = "task service unavailable";
+        return out;
+    }
+
+    auto* detached = new Pipeline(name);
+    detached->keepAlive();
+    detached->addPathStep(cmd, "request", "reply");
+    std::string taskId = tasks->attach(name, id, detached, onEvent);
+    if (taskId.empty()) {
+        out.code = CommandOutcome::FAILED;
+        out.errCode = "internal_error";
+        out.message = "failed to start task";
+        return out;
+    }
+
+    detached->startReply(args);
+    out.code = CommandOutcome::ACCEPTED;
+    out.taskId = std::move(taskId);
+    return out;
+}
+
 static Node* findNode(Node* root, Node* req)
 {
     return root->find(req->get("path").toString());
@@ -287,15 +345,6 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
 
     if (op == "command.run") {
         std::string name = req->get("name").toString();
-        if (name.empty()) {
-            errorReply(rep, id, "invalid_params", "command name is required");
-            return;
-        }
-        if (!command::has(name)) {
-            errorReply(rep, id, "not_found", "unknown command: " + name);
-            return;
-        }
-
         Var args;
         if (Node* argsNode = req->find("args")) {
             args = schema::exportAs<schema::VarS>(argsNode);
@@ -304,35 +353,19 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
         }
 
         const bool waitCmd = req->find("wait") ? req->get("wait").toBool(true) : true;
-        if (waitCmd) {
-            Result result = command::callReply(name, args);
-            if (result.isSuccess() || result.isAccepted()) {
-                okReply(rep, id, result.data);
-            } else {
-                errorReply(rep, id, "command_failed", result.message);
-            }
-            return;
-        }
-
-        if (!tasks) {
-            errorReply(rep, id, "internal_error", "task service unavailable");
-            return;
-        }
-
-        auto* detached = new Pipeline(name);
-        detached->keepAlive();
-        detached->addPathStep(Command(name), "request", "reply");
-        std::string taskId = tasks->attach(name, id, detached,
+        CommandOutcome outcome = dispatchCommand(name, args, waitCmd, tasks, id,
             [allowAsyncEvents, sendEvent](const Node& event) {
                 if (allowAsyncEvents && sendEvent) {
                     sendEvent(event);
                 }
             });
-        if (taskId.empty()) {
-            errorReply(rep, id, "internal_error", "failed to start task");
+
+        if (outcome.code == CommandOutcome::OK) {
+            okReply(rep, id, outcome.data);
+        } else if (outcome.code == CommandOutcome::ACCEPTED) {
+            acceptedReply(rep, id, outcome.taskId);
         } else {
-            detached->startReply(args);
-            acceptedReply(rep, id, taskId);
+            errorReply(rep, id, outcome.errCode, outcome.message);
         }
         return;
     }

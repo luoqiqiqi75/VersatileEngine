@@ -42,6 +42,25 @@ inline Var parseValue(const std::string& raw)
     return Var(raw);
 }
 
+inline Var parseValueAs(const std::string& raw, Var::Type type)
+{
+    try {
+        switch (type) {
+            case Var::NONE:   return parseValue(raw);
+            case Var::BOOL:
+                if (raw == "true" || raw == "1" || raw == "yes" || raw == "on") return Var(true);
+                if (raw == "false" || raw == "0" || raw == "no" || raw == "off") return Var(false);
+                return Var(!raw.empty());
+            case Var::INT:    return Var(static_cast<std::int64_t>(std::stoll(raw)));
+            case Var::DOUBLE: return Var(std::stod(raw));
+            case Var::STRING: return Var(raw);
+            default:          return parseValue(raw);
+        }
+    } catch (...) {
+        return parseValue(raw);
+    }
+}
+
 struct Flags {
     std::vector<std::pair<std::string, std::string>> named;
     std::vector<std::string> positional;

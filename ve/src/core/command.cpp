@@ -237,23 +237,55 @@ bool has(const std::string& key, char sep)
 
 namespace {
 
-void buildDeclInfo(const Node* decl,
-                   std::vector<std::string>& paramOrder,
-                   std::map<std::string, std::string>& shortMap,
-                   std::set<std::string>& longNames)
+struct DeclParam
+{
+    const Node* node = nullptr;
+    std::string name;
+};
+
+void buildDeclInfo(const Node* decl, std::vector<DeclParam>& params)
 {
     if (!decl) return;
     for (auto* param : *decl) {
         const auto& nm = param->name();
         if (nm.empty() || nm[0] == '_') continue;
-        longNames.insert(nm);
-        if (auto* shortNode = param->find("_short", false)) {
-            std::string s = shortNode->getString();
-            if (!s.empty()) shortMap[s] = nm;
-        } else {
-            paramOrder.push_back(nm);
+        params.push_back({param, nm});
+    }
+}
+
+const DeclParam* findExactOrPrefix(const std::vector<DeclParam>& params,
+                                   const std::string& name)
+{
+    const DeclParam* prefix = nullptr;
+    for (const auto& p : params) {
+        if (p.name == name) return &p;
+        if (!prefix && p.name.size() >= name.size()
+            && p.name.compare(0, name.size(), name) == 0) {
+            prefix = &p;
         }
     }
+    return prefix;
+}
+
+const DeclParam* findShort(const std::vector<DeclParam>& params,
+                           const std::string& key)
+{
+    for (const auto& p : params) {
+        if (auto* shortNode = p.node->find("_short", false)) {
+            if (shortNode->getString() == key) return &p;
+        }
+    }
+    return findExactOrPrefix(params, key);
+}
+
+Var parseForDecl(const Node* decl, const std::string& raw)
+{
+    return decl ? parse::parseValueAs(raw, decl->get().type()) : parse::parseValue(raw);
+}
+
+bool declIsBool(const Node* decl)
+{
+    return decl && decl->get().type() == Var::BOOL;
 }
 
 } // anonymous
@@ -267,29 +299,25 @@ bool parseArgs(Node* in, const std::vector<std::string>& args, int startIdx)
 
     const Node* decl = in->shadow();   // in may carry declare/ as shadow
 
-    std::vector<std::string> paramOrder;
-    std::map<std::string, std::string> shortMap;
-    std::set<std::string> longNames;
-    buildDeclInfo(decl, paramOrder, shortMap, longNames);
+    std::vector<DeclParam> params;
+    buildDeclInfo(decl, params);
 
-    std::string currentTarget;
+    const DeclParam* currentTarget = nullptr;
     int posIndex = 0;
 
-    auto isKeyword = [&](const std::string& token) -> std::string {
-        if (token.size() < 2 || token[0] != '-') return {};
-        if (parse::isInt(token) || parse::isDouble(token)) return {};
+    auto isKeyword = [&](const std::string& token) -> const DeclParam* {
+        if (token.size() < 2 || token[0] != '-') return nullptr;
+        if (parse::isInt(token) || parse::isDouble(token)) return nullptr;
         if (token[1] == '-') {
             auto eq = token.find('=', 2);
             std::string name = (eq != std::string::npos) ? token.substr(2, eq - 2) : token.substr(2);
-            if (longNames.count(name)) return name;
-            return {};
+            return findExactOrPrefix(params, name);
         }
         if (token.size() == 2) {
             std::string key(1, token[1]);
-            auto it = shortMap.find(key);
-            if (it != shortMap.end()) return it->second;
+            return findShort(params, key);
         }
-        return {};
+        return nullptr;
     };
 
     for (size_t i = static_cast<size_t>(startIdx); i < args.size(); ++i) {
@@ -300,33 +328,37 @@ bool parseArgs(Node* in, const std::vector<std::string>& args, int startIdx)
             auto eq = token.find('=', 2);
             if (eq != std::string::npos) {
                 std::string name = token.substr(2, eq - 2);
-                if (longNames.count(name)) {
-                    currentTarget.clear();
-                    req->at(name, false)->set(parse::parseValue(token.substr(eq + 1)));
+                if (auto* param = findExactOrPrefix(params, name)) {
+                    currentTarget = nullptr;
+                    req->at(param->name, false)->set(parseForDecl(param->node, token.substr(eq + 1)));
                     continue;
                 }
             }
         }
 
-        std::string matched = isKeyword(token);
-        if (!matched.empty()) {
+        const DeclParam* matched = isKeyword(token);
+        if (matched) {
+            if (currentTarget && declIsBool(currentTarget->node)) {
+                req->at(currentTarget->name, false)->set(true);
+            }
             currentTarget = matched;
             continue;
         }
 
-        if (!currentTarget.empty()) {
-            req->at(currentTarget, false)->set(parse::parseValue(token));
-            currentTarget.clear();
-        } else if (posIndex < static_cast<int>(paramOrder.size())) {
-            req->at(paramOrder[posIndex], false)->set(parse::parseValue(token));
+        if (currentTarget) {
+            req->at(currentTarget->name, false)->set(parseForDecl(currentTarget->node, token));
+            currentTarget = nullptr;
+        } else if (posIndex < static_cast<int>(params.size())) {
+            const auto& param = params[posIndex];
+            req->at(param.name, false)->set(parseForDecl(param.node, token));
             ++posIndex;
         } else {
             req->at(req->count(), false)->set(parse::parseValue(token));
         }
     }
 
-    if (!currentTarget.empty()) {
-        req->at(currentTarget, false)->set(true);
+    if (currentTarget) {
+        req->at(currentTarget->name, false)->set(true);
     }
 
     return true;

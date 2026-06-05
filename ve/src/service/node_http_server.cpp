@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace ve {
 namespace service {
@@ -187,6 +188,120 @@ static int jsonRpcErrorCode(Node* reply)
     return JRpcServerError;
 }
 
+static std::string httpCommandErrorCode(int code)
+{
+    if (code == Result::BAD_REQUEST) return "invalid_request";
+    if (code == Result::UNKNOWN_CMD) return "not_found";
+    if (code == Result::TIMEOUT) return "timeout";
+    if (code == Result::CANCELLED) return "cancelled";
+    return "command_failed";
+}
+
+static Node* pointerInput(Node* in, const std::string& path)
+{
+    if (!in) return nullptr;
+    if (auto* n = in->find(path)) {
+        if (auto* p = n->get().toPointer()) {
+            return static_cast<Node*>(p);
+        }
+    }
+    return nullptr;
+}
+
+static void bindLocalProc(Node& node, Proc proc)
+{
+    node.at("_proc")->set(Var::custom(std::move(proc)));
+    node.at("_in_schema")->set(Var::custom(InSchema{InSchema::FreeForm}));
+    node.at("_out_schema")->set(Var::custom(OutSchema{OutSchema::FreeForm}));
+}
+
+static Result httpParseCommand(Node* ctx, Node*)
+{
+    if (!ctx) return Result::fail(Result::BAD_REQUEST, "http parse ctx is null");
+
+    Node* reqNode = ctx->at("request");
+    reqNode->clear();
+
+    std::string body = ctx->get("http/body").toString();
+    if (!body.empty()) {
+        if (!schema::importAs<schema::JsonS>(reqNode, body)) {
+            return Result::fail(Result::BAD_REQUEST, "invalid JSON body");
+        }
+    }
+
+    Node* root = pointerInput(ctx, "http/root");
+    if (root) {
+        reqNode->at("root", false)->set(Var(static_cast<void*>(root)));
+        Node* current = root;
+        std::string contextPath = getQueryParam(ctx->get("http/query").toString(), "context");
+        if (!contextPath.empty()) {
+            std::string rel = contextPath;
+            if (!rel.empty() && rel.front() == '/') {
+                rel.erase(rel.begin());
+            }
+            current = rel.empty() ? root : root->find(rel);
+            if (!current) {
+                return Result::fail(Result::BAD_REQUEST, "context not found: " + contextPath);
+            }
+        }
+        reqNode->at("current", false)->set(Var(static_cast<void*>(current)));
+    }
+
+    return Result::ok();
+}
+
+static Result httpRenderCommand(Node* ctx, Node*)
+{
+    if (!ctx) return Result::fail(Result::BAD_REQUEST, "http render ctx is null");
+    auto* rep = static_cast<http::web_response*>(ctx->get("http/response").toPointer());
+    if (!rep) return Result::fail(Result::BAD_REQUEST, "http response is null");
+
+    Node out("r");
+    const int code = ctx->get("code").toInt(Result::SUCCESS);
+    if (code >= 0) {
+        out.set("ok", true);
+        if (code > 0) {
+            out.set("accepted", true);
+        }
+        if (auto* reply = ctx->find("reply")) {
+            out.at("result")->copy(reply, true, true, true);
+        } else {
+            out.at("result")->set(Var());
+        }
+    } else {
+        fillError(&out, httpCommandErrorCode(code), ctx->get("message").toString());
+    }
+
+    rep->fill_json(toJson(out), statusFromReply(&out));
+    ctx->set("http/responded", true);
+    return Result::ok();
+}
+
+static void prepareHttpCommandContext(Node* ctx,
+                                      const std::string& cmdKey,
+                                      http::web_request& req,
+                                      http::web_response& rep,
+                                      Node* root)
+{
+    ctx->clear();
+    ctx->set("http/cmd", cmdKey);
+    ctx->set("http/body", std::string(req.body()));
+    ctx->set("http/query", std::string(req.query()));
+    ctx->set("http/root", Var(static_cast<void*>(root)));
+    ctx->set("http/response", Var(static_cast<void*>(&rep)));
+}
+
+static void waitPipeline(Pipeline& pipe, Loop* loop)
+{
+    while (pipe.state() == Pipeline::RUNNING) {
+        if (loop) {
+            loop->processEvents();
+        } else {
+            std::this_thread::yield();
+        }
+    }
+}
+
 struct NodeHttpServer::Private
 {
     Node*    root = nullptr;
@@ -196,6 +311,12 @@ struct NodeHttpServer::Private
     std::chrono::steady_clock::time_point startTime;
     std::unique_ptr<SubscribeService> subscribeSvc;
     std::unique_ptr<NodeTaskService> taskSvc;
+    Node httpParse{"http.parse"};
+
+    Private()
+    {
+        bindLocalProc(httpParse, httpParseCommand);
+    }
 
     std::string handleJsonRpc(const std::string& requestJson) const
     {
@@ -478,35 +599,23 @@ bool NodeHttpServer::start()
             return;
         }
 
-        Node* current = nullptr;
-        std::string contextPath = getQueryParam(req.query(), "context");
-        if (!contextPath.empty()) {
-            current = ve::n(contextPath, false);
-            if (!current) {
-                Node reply("rep");
-                fillError(&reply, "not_found", "context not found: " + contextPath);
-                rep.fill_json(toJson(reply), http::status::not_found);
-                return;
-            }
-        }
-
-        Var inputVar;
-        std::string body(req.body());
-        if (!body.empty()) {
-            Node input("input");
-            if (!schema::importAs<schema::JsonS>(&input, body)) {
-                Node reply("rep");
-                fillError(&reply, "invalid_request", "invalid JSON body");
-                rep.fill_json(toJson(reply), http::status::bad_request);
-                return;
-            }
-            inputVar = schema::exportAs<schema::VarS>(&input);
-        }
-
-        (void)current;   // currentNode hint not threaded through new Command::call
+        Node ctx("_ctx");
+        prepareHttpCommandContext(&ctx, cmdKey, req, rep, _p->root);
 
         const bool async = queryBool(req.query(), "async", false);
         if (async) {
+            Pipeline parsePipe("http.cmd.parse", &ctx);
+            parsePipe.addCtxStep(Command(&_p->httpParse));
+            parsePipe.start();
+            waitPipeline(parsePipe, nullptr);
+            Result parsed = CallProto<tag::RequestReply>::exportOut(&ctx);
+            if (parsed.isError()) {
+                Node reply("rep");
+                fillError(&reply, httpCommandErrorCode(parsed.code), parsed.message);
+                rep.fill_json(toJson(reply), statusFromReply(&reply));
+                return;
+            }
+
             if (!_p->taskSvc) {
                 Node reply("rep");
                 fillError(&reply, "internal_error", "task service unavailable");
@@ -516,33 +625,29 @@ bool NodeHttpServer::start()
 
             auto* detached = new Pipeline(cmdKey);
             detached->keepAlive();
+            detached->context()->at("request")->copy(ctx.at("request"), true, true, true);
             detached->addPathStep(cmd, "request", "reply");
             std::string taskId = _p->taskSvc->attach(cmdKey, Var(), detached, {});
             if (taskId.empty()) {
                 Node reply("rep");
                 fillError(&reply, "internal_error", "failed to start task");
                 rep.fill_json(toJson(reply), http::status::internal_server_error);
-            } else {
-                detached->startReply(inputVar);
-                Node out("r");
-                out.set("ok", true);
-                out.set("accepted", true);
-                out.set("task_id", taskId);
-                rep.fill_json(toJson(out), http::status::accepted);
+                return;
             }
-            return;
-        }
 
-        Result result = cmd.callReply(inputVar);
-        if (result.isSuccess() || result.isAccepted()) {
+            detached->start();
             Node out("r");
             out.set("ok", true);
-            out.at("result")->set(result.data);
-            rep.fill_json(toJson(out), http::status::ok);
+            out.set("accepted", true);
+            out.set("task_id", taskId);
+            rep.fill_json(toJson(out), http::status::accepted);
         } else {
-            Node reply("rep");
-            fillError(&reply, "command_failed", result.message);
-            rep.fill_json(toJson(reply), http::status::internal_server_error);
+            Pipeline pipe("http.cmd", &ctx);
+            pipe.addCtxStep(Command(&_p->httpParse));
+            pipe.addPathStep(cmd, "request", "reply");
+            pipe.start();
+            waitPipeline(pipe, cmd.loop());
+            httpRenderCommand(&ctx, nullptr);
         }
     };
 

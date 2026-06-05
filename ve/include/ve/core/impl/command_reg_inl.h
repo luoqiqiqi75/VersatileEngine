@@ -18,12 +18,11 @@ namespace ve::command {
 // ----- full form ----------------------------------------------------------
 
 template<typename RegProtoT, typename F>
-inline void reg(const std::string& key, F&& fn,
-                const std::string& help, Loop* lr,
-                char sep)
+inline void regInto(Factory& factory, const std::string& key, F&& fn,
+                    const std::string& help, Loop* lr,
+                    char sep)
 {
-    auto& f = factory();
-    Node*  nd = f.node(key, sep);   // ensure exists
+    Node* nd = factory.node(key, sep);   // ensure exists
 
     Proc      p   = RegProtoT::template wrap<std::decay_t<F>>(std::forward<F>(fn));
     InSchema  ins = RegProtoT::template inSchemaOf <std::decay_t<F>>();
@@ -38,10 +37,18 @@ inline void reg(const std::string& key, F&& fn,
 
     // tracked-key bookkeeping: call factory::reg with a sentinel callable so the
     // key shows up in factory().keys(). The actual proc is in _proc subnode.
-    auto keys = f.keys();
+    auto keys = factory.keys();
     if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
-        f.reg(key, nd, Var(), help, nullptr);
+        factory.reg(key, nd, Var(), help, nullptr);
     }
+}
+
+template<typename RegProtoT, typename F>
+inline void reg(const std::string& key, F&& fn,
+                const std::string& help, Loop* lr,
+                char sep)
+{
+    regInto<RegProtoT>(factory(), key, std::forward<F>(fn), help, lr, sep);
 }
 
 
