@@ -57,7 +57,15 @@ private:
     void dispatch(int slot);
     void complete(State state);
 
+private:
     VE_DECLARE_POOL_PRIVATE
 };
+
+namespace pipeline {
+
+VE_API void start(Pipeline& p, Pipeline::Callback cb = {});
+VE_API void start(Pipeline* p, Pipeline::Callback cb = {});
+
+} // namespace pipeline
 
 } // namespace ve

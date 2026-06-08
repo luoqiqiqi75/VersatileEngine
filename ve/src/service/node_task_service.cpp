@@ -36,10 +36,9 @@ NodeTaskService::NodeTaskService(Node* root)
 NodeTaskService::~NodeTaskService() = default;
 
 std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
-                                    Pipeline* detached, DoneFn onDone)
+                                    Pipeline* pipeline, DoneFn onDone)
 {
-    if (!_p->root || !detached) {
-        delete detached;
+    if (!_p->root || !pipeline) {
         return {};
     }
 
@@ -54,18 +53,19 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
 
     Node* root = _p->root;
     auto finished = std::make_shared<std::atomic<bool>>(false);
-    auto finalize = [root, id, taskId, detached, onDone, finished](const Result& res) {
+    auto finalize = [root, id, taskId, onDone, finished](Pipeline& pipe) {
         if (finished->exchange(true, std::memory_order_acq_rel)) {
             return;
         }
 
+        const Result& res = pipe.lastResult();
         const bool ok = res.isSuccess() || res.isAccepted();
         Node* taskNode = root ? root->find("ve/server/tasks/" + taskId) : nullptr;
         if (taskNode) {
             taskNode->set("status", ok ? "done" : "error");
             taskNode->set("ok", ok);
             if (ok) {
-                if (Node* reply = detached->context() ? detached->context()->find("reply") : nullptr) {
+                if (Node* reply = pipe.context() ? pipe.context()->find("reply") : nullptr) {
                     taskNode->at("result")->copy(reply, true, true, true);
                 } else {
                     taskNode->at("result")->set(Var());
@@ -84,7 +84,7 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
             event.set("task_id", taskId);
             event.set("ok", ok);
             if (ok) {
-                if (Node* reply = detached->context() ? detached->context()->find("reply") : nullptr) {
+                if (Node* reply = pipe.context() ? pipe.context()->find("reply") : nullptr) {
                     event.at("data")->copy(reply, true, true, true);
                 } else {
                     event.at("data")->set(Var());
@@ -94,17 +94,18 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
             }
             onDone(event);
         }
-
-        delete detached;
     };
 
-    detached->onFinished([finalize](Pipeline& pipe) {
-        finalize(pipe.lastResult());
+    pipeline->connect<Pipeline::DONE_SIGNAL>(pipeline, [finalize](Pipeline* pipe) {
+        if (pipe) finalize(*pipe);
+    });
+    pipeline->connect<Pipeline::ERROR_SIGNAL>(pipeline, [finalize](Pipeline* pipe) {
+        if (pipe) finalize(*pipe);
     });
 
-    const auto state = detached->state();
+    const auto state = pipeline->state();
     if (state == Pipeline::DONE || state == Pipeline::ERRORED) {
-        finalize(detached->lastResult());
+        finalize(*pipeline);
     }
 
     return taskId;

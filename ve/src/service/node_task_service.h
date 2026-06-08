@@ -21,10 +21,10 @@ public:
     explicit NodeTaskService(Node* root);
     ~NodeTaskService();
 
-    // The Pipeline (`detached`) owns its context; deleting the pipeline cleans
-    // up both. Task service takes ownership of `detached`.
+    // The Pipeline owns its context. Task service observes completion and
+    // records the result; lifecycle is owned by the caller or ve::pipeline::start.
     std::string attach(const std::string& cmdKey, const Var& id,
-                       Pipeline* detached, DoneFn onDone);
+                       Pipeline* pipeline, DoneFn onDone);
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

@@ -11,9 +11,11 @@ struct Command::Private
 {
     Loop* l = nullptr;
 
-    Node* ctx = nullptr;
-    Node* in = nullptr;
-    Node* out = nullptr;
+    Node* declare_n = nullptr;
+
+    Node* ctx_n = nullptr;
+    Node* in_n = nullptr;
+    Node* out_n = nullptr;
 
     Result r;
 };
@@ -21,44 +23,45 @@ struct Command::Private
 Command::Command(Node* factory_n) : NodeRef(factory_n), _p(std::make_shared<Private>())
 {
     _p->l = factory_n->get("loop").as<Loop*>();
+    _p->declare_n = factory_n->find("declare");
     _p->r = Result::fail(-0x10, "command invalid");
 }
 
 Command::Command(Node* factory_n, Node* ctx, Node* in, Node* out) : Command(factory_n)
 {
-    _p->ctx = ctx;
-    _p->in = in;
-    _p->out = out;
+    _p->ctx_n = ctx;
+    setInput(in);
+    setOutput(out);
 }
 
 Command::Command(Node* factory_n, Node* ctx) : Command(factory_n)
 {
-    _p->ctx = ctx;
-    _p->in = ctx->at("in");
-    _p->out = ctx->at("out");
+    _p->ctx_n = ctx;
+    setInput(ctx->at("in"));
+    setOutput(ctx->at("out"));
 }
 
 Command::~Command() = default;
 
-Node* Command::context() const { return _p->ctx; }
-void Command::setContext(Node* ctx_n) { _p->ctx = ctx_n; }
+Node* Command::context() const { return _p->ctx_n; }
+void Command::setContext(Node* ctx_n) { _p->ctx_n = ctx_n; }
 
-Node* Command::input() const { return _p->in; }
-void Command::setInput(Node* in_n) { _p->in = in_n; }
+Node* Command::input() const { return _p->in_n; }
+void Command::setInput(Node* in_n) { _p->in_n = in_n; if (_p->in_n) _p->in_n->setShadow(_p->declare_n); }
 
-Node* Command::output() const { return _p->out; }
-void Command::setOutput(Node* out_n) { _p->out = out_n; }
+Node* Command::output() const { return _p->out_n; }
+void Command::setOutput(Node* out_n) { _p->out_n = out_n; }
 
 bool Command::valid() const
 {
     return node() != nullptr && node()->get().isCallable()
-        && _p->ctx != nullptr && _p->in != nullptr && _p->out != nullptr;
+        && _p->ctx_n != nullptr && _p->in_n != nullptr && _p->out_n != nullptr;
 }
 
 Result Command::run() const
 {
     if (!valid()) return Result::fail("command invalid");
-    return node()->get().invoke(_p->ctx, _p->in, _p->out).as<Result>();
+    return node()->get().invoke(_p->ctx_n, _p->in_n, _p->out_n).as<Result>();
 }
 
 Loop* Command::loop() const { return _p->l; }

@@ -195,21 +195,16 @@ void Pipeline::dispatch(int slot)
     }
 
     Step& step = _p->steps[slot];
-    if (!step.command.valid()) {
-        const std::string message = "pipeline command is invalid";
-        setPipelineError(_p->ctx, ERR_NO_STEP_PROC, message);
-        _p->last = Result::fail(message);
-        complete(ERRORED);
-        return;
-    }
-
-    auto finish = [this, slot](Result result) mutable {
+    step.command.call([this, slot](Command& cmd) mutable {
         if (_p->state != RUNNING) {
             return;
         }
 
-        _p->last = std::move(result);
+        _p->last = cmd.result();
         if (_p->last.isError()) {
+            if (!cmd.valid()) {
+                setPipelineError(_p->ctx, ERR_NO_STEP_PROC, _p->last.message);
+            }
             complete(ERRORED);
             return;
         }
@@ -219,10 +214,6 @@ void Pipeline::dispatch(int slot)
         }
 
         dispatch(slot + 1);
-    };
-
-    step.command.call([finish](Command& cmd) mutable {
-        finish(cmd.result());
     });
 }
 
@@ -297,5 +288,29 @@ Node* Pipeline::outputOf(Handle handle) const
     }
     return _p->steps[handle.slot].out;
 }
+
+namespace pipeline {
+
+void start(Pipeline& p, Pipeline::Callback cb)
+{
+    if (cb) {
+        p.onFinished(std::move(cb));
+    }
+    p.start();
+}
+
+void start(Pipeline* p, Pipeline::Callback cb)
+{
+    if (!p) return;
+    p->onFinished([cb = std::move(cb)](Pipeline& pipe) mutable {
+        if (cb) {
+            cb(pipe);
+        }
+        delete &pipe;
+    });
+    p->start();
+}
+
+} // namespace pipeline
 
 } // namespace ve

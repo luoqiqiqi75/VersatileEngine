@@ -125,9 +125,14 @@ VE_TEST(pipeline_linear_proc_chain)
         return Result::ok();
     });
 
-    p.start();
+    bool finished = false;
+    pipeline::start(p, [&](Pipeline& pipe) {
+        finished = true;
+        VE_ASSERT_EQ(pipe.context()->get("output").toInt(), 9);
+    });
     p.wait();
 
+    VE_ASSERT(finished);
     VE_ASSERT_EQ(p.state(), Pipeline::DONE);
     VE_ASSERT(p.lastResult().isSuccess());
     VE_ASSERT_EQ(p.context()->get("output").toInt(), 9);
@@ -162,7 +167,7 @@ VE_TEST(pipeline_connects_command_inputs_and_outputs)
     }, {}, "reply");
 
     p.context()->at("request")->set(6);
-    p.start();
+    pipeline::start(p);
     p.wait();
 
     VE_ASSERT_EQ(p.state(), Pipeline::DONE);
@@ -186,7 +191,7 @@ VE_TEST(pipeline_aborts_on_error)
         return Result::ok();
     });
 
-    p.start();
+    pipeline::start(p);
     p.wait();
 
     VE_ASSERT_EQ(p.state(), Pipeline::ERRORED);
@@ -196,22 +201,29 @@ VE_TEST(pipeline_aborts_on_error)
     VE_ASSERT(p.context()->get("output").isNull());
 }
 
-VE_TEST(pipeline_detached_requires_finished_owner)
+VE_TEST(pipeline_start_takes_detached_ownership)
 {
-    auto* p = new Pipeline("pipe.detached");
+    struct TrackingPipeline : Pipeline {
+        bool* deleted = nullptr;
+        TrackingPipeline(const std::string& name, bool* deletedFlag)
+            : Pipeline(name), deleted(deletedFlag) {}
+        ~TrackingPipeline() { if (deleted) *deleted = true; }
+    };
+
+    bool finished = false;
+    bool deleted = false;
+    auto* p = new TrackingPipeline("pipe.detached", &deleted);
     p->addLinearProc([](Node*, Node*, Node* out) -> Result {
         out->set(42);
         return Result::ok();
     });
 
-    bool deleted = false;
-    p->onFinished([&](Pipeline& pipe) {
+    pipeline::start(p, [&](Pipeline& pipe) {
         VE_ASSERT(pipe.lastResult().isSuccess());
         VE_ASSERT_EQ(pipe.context()->get("output").toInt(), 42);
-        deleted = true;
-        delete p;
+        finished = true;
     });
 
-    p->start();
+    VE_ASSERT(finished);
     VE_ASSERT(deleted);
 }
