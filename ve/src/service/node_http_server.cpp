@@ -200,13 +200,6 @@ static int jsonRpcErrorCode(Node* reply)
     return JRpcServerError;
 }
 
-static int jsonRpcErrorCode(const std::string& code)
-{
-    Node reply("reply");
-    reply.set("code", code);
-    return jsonRpcErrorCode(&reply);
-}
-
 static Node* findNode(Node* root, Node* req)
 {
     return root->find(req->get("path").toString());
@@ -409,77 +402,6 @@ static void writeNodeGetData(Node* data, Node* root, SubscribeService* subscribe
     }
 }
 
-// step1: ve request -> command input (current/path + flags + ptrs the builtin needs)
-static Result veNodeGetRequestToInput(Node* ctx, Node* in, Node* out)
-{
-    auto* root = static_cast<Node*>(ctx->get("ve/root").toPointer());
-    out->clear();
-    out->set("current", Var::ptr(root));
-    out->set("root", Var::ptr(root));
-    if (auto* sub = ctx->get("ve/subscribe").toPointer()) out->set("subscribe", Var::ptr(sub));
-    out->set("data", true);
-    out->set("path", normalizeNodePath(in->get("path").toString()));
-    if (in->find("depth")) out->at("depth")->set(in->get("depth"));
-    if (in->get("meta").toBool(false)) out->set("meta", true);
-
-    return Result::ok();
-}
-
-// step3: builtin already shaped ctx/output -> just envelope it
-static void finishVeNodeGet(Pipeline& pipe, const Var& id, Node* rep)
-{
-    Node* ctx = pipe.context();
-    if (commandTarget(pipe)) {
-        okReply(rep, id, ctx ? ctx->find("output", false) : nullptr);
-        return;
-    }
-
-    std::string error = pipe.lastResult().message;
-    if (error.empty()) {
-        error = "node.get failed";
-    }
-    errorReply(rep, id, "not_found", error);
-}
-
-static Result jsonRpcNodeGetRequestToInput(Node* ctx, Node* in, Node* out)
-{
-    auto* root = static_cast<Node*>(ctx->get("jsonrpc/root").toPointer());
-    out->clear();
-    out->set("current", Var::ptr(root));
-    out->set("root", Var::ptr(root));
-    if (auto* sub = ctx->get("jsonrpc/subscribe").toPointer()) out->set("subscribe", Var::ptr(sub));
-    out->set("data", true);
-    out->set("path", normalizeNodePath(in->get("path").toString()));
-    if (in->find("depth")) out->at("depth")->set(in->get("depth"));
-    if (in->get("meta").toBool(false)) out->set("meta", true);
-
-    return Result::ok();
-}
-
-static void finishJsonRpcNodeGet(Pipeline& pipe, const Var& id, Node* rep)
-{
-    rep->clear();
-    rep->set("jsonrpc", "2.0");
-
-    Node* ctx = pipe.context();
-    if (commandTarget(pipe)) {
-        if (Node* data = ctx ? ctx->find("output", false) : nullptr) {
-            rep->at("result")->copy(data, true, true, true);
-        } else {
-            rep->at("result")->set(Var());
-        }
-    } else {
-        std::string error = pipe.lastResult().message;
-        if (error.empty()) {
-            error = "node.get failed";
-        }
-        rep->at("error")->set("code", static_cast<int64_t>(jsonRpcErrorCode("not_found")));
-        rep->at("error")->set("message", error);
-    }
-
-    rep->at("id")->set(id.isNull() ? Var() : id);
-}
-
 static Result atGetRequestToInput(Node* ctx, Node* in, Node* out)
 {
     Node* root = pointerValue(in, "root");
@@ -596,6 +518,154 @@ static void registerHttpBuiltins()
     }
 }
 
+// ============================================================================
+// standard/node — shared node-protocol command family.
+// Transport-neutral ops over the node tree, dispatched by op-name. Shared by
+// HTTP /ve and /jsonrpc (and, later, ws/tcp/udp/bin, replacing node_protocol).
+//   ctx : node/root (Node*), node/subscribe (SubscribeService*, optional)
+//   in  : the protocol request (path, value, tree, meta, depth, ...)
+//   out : the reply data on success.
+// Failures flow through the unified Result (code + message); the service
+// renderer maps Result::code to a protocol error string via codeString().
+// ============================================================================
+namespace standard_node {
+
+enum Err : int {
+    ERR_NOT_FOUND      = -404,
+    ERR_INVALID_PARAMS = -400,
+};
+
+static std::string codeString(int code)
+{
+    switch (code) {
+        case ERR_NOT_FOUND:      return "not_found";
+        case ERR_INVALID_PARAMS: return "invalid_params";
+        default:                 return "failed";
+    }
+}
+
+static Node* root(Node* ctx) { return ctx->get("node/root").as<Node*>(); }
+static SubscribeService* subscribe(Node* ctx) { return ctx->get("node/subscribe").as<SubscribeService*>(); }
+
+static Result get(Node* ctx, Node* in, Node* out)
+{
+    Node* r = root(ctx);
+    std::string path = normalizeNodePath(in->get("path").toString());
+    Node* target = path.empty() ? r : (r ? r->find(path) : nullptr);
+    if (!target) return Result::fail(ERR_NOT_FOUND, "node not found: " + path);
+    writeNodeGetData(out, r, subscribe(ctx), in, target);
+    return Result::ok();
+}
+
+static Result list(Node* ctx, Node* in, Node* out)
+{
+    Node* r = root(ctx);
+    Node* target = findNode(r, in);
+    if (!target) return Result::fail(ERR_NOT_FOUND, "node not found: " + in->get("path").toString());
+    out->set("path", target->path(r));
+    Node* children = out->at("children");
+    for (auto* child : target->children()) {
+        makeChildInfo(children->append(), r, subscribe(ctx), child, in->get("meta").toBool(false));
+    }
+    return Result::ok();
+}
+
+static Result set(Node* ctx, Node* in, Node* out)
+{
+    Node* valueNode = in->find("value");
+    if (!valueNode) return Result::fail(ERR_INVALID_PARAMS, "value is required");
+    Node* target = ensureNode(root(ctx), in);
+    target->set(schema::exportAs<schema::VarS>(valueNode));
+    out->set("path", target->path(root(ctx)));
+    return Result::ok();
+}
+
+static Result put(Node* ctx, Node* in, Node* out)
+{
+    Node* treeNode = in->find("tree");
+    if (!treeNode) treeNode = in->find("value");
+    if (!treeNode) return Result::fail(ERR_INVALID_PARAMS, "tree is required");
+    Node* target = ensureNode(root(ctx), in);
+    schema::ImportOptions options;
+    options.auto_insert = true;
+    options.auto_remove = true;
+    options.auto_update = true;
+    schema::importAs<schema::VarS>(target, schema::exportAs<schema::VarS>(treeNode), options);
+    out->set("path", target->path(root(ctx)));
+    return Result::ok();
+}
+
+static Result remove(Node* ctx, Node* in, Node* out)
+{
+    Node* r = root(ctx);
+    std::string path = in->get("path").toString();
+    if (path.empty()) return Result::fail(ERR_INVALID_PARAMS, "cannot remove root");
+    if (!r->erase(path)) return Result::fail(ERR_NOT_FOUND, "node not found: " + path);
+    out->set("path", path);
+    return Result::ok();
+}
+
+static Result trigger(Node* ctx, Node* in, Node* out)
+{
+    Node* r = root(ctx);
+    Node* target = findNode(r, in);
+    if (!target) return Result::fail(ERR_NOT_FOUND, "node not found: " + in->get("path").toString());
+    target->trigger<Node::NODE_CHANGED>();
+    if (target->isWatching()) {
+        target->activate(Node::NODE_CHANGED, target);
+    }
+    out->set("path", target->path(r));
+    return Result::ok();
+}
+
+static Result commandList(Node*, Node*, Node* out)
+{
+    auto cmds = command::factory().keys();
+    std::sort(cmds.begin(), cmds.end());
+    cmds.erase(std::unique(cmds.begin(), cmds.end()), cmds.end());
+    Node* commands = out->at("commands");
+    for (const auto& key : cmds) {
+        Node* item = commands->append();
+        item->set("name", key);
+        item->set("help", command::factory().help(key));
+    }
+    return Result::ok();
+}
+
+} // namespace standard_node
+
+static void registerNodeCommands()
+{
+    auto& f = factory::at("standard/node");
+    if (f.has("node.get")) return;   // register-once
+    f.reg("node.get",     Var::callable(standard_node::get),         "read a node (value + optional tree/meta)");
+    f.reg("node.list",    Var::callable(standard_node::list),        "list children");
+    f.reg("node.set",     Var::callable(standard_node::set),         "set a node value");
+    f.reg("node.put",     Var::callable(standard_node::put),         "import a subtree");
+    f.reg("node.remove",  Var::callable(standard_node::remove),      "remove a node");
+    f.reg("node.trigger", Var::callable(standard_node::trigger),     "trigger NODE_CHANGED");
+    f.reg("command.list", Var::callable(standard_node::commandList), "list registered commands");
+}
+
+// /ve service: fixed step1 (parse) and step3 (render), written once. The JSON
+// protocol request maps directly onto the command input; the reply envelope is
+// built from the command's output + the pipeline result.
+static Result veParse(Node* /*ctx*/, Node* in, Node* out)
+{
+    out->copy(in, true, true, true);
+    return Result::ok();
+}
+
+static void veRender(Pipeline& pipe, const Var& id, Node* rep)
+{
+    const Result& r = pipe.lastResult();
+    if (r.isError()) {
+        errorReply(rep, id, standard_node::codeString(r.code), r.message);
+    } else {
+        okReply(rep, id, pipe.context() ? pipe.context()->find("node/data", false) : nullptr);
+    }
+}
+
 struct NodeHttpServer::Private
 {
     Node*    root = nullptr;
@@ -607,44 +677,6 @@ struct NodeHttpServer::Private
     std::chrono::steady_clock::time_point startTime;
     std::unique_ptr<SubscribeService> subscribeSvc;
     std::unique_ptr<NodeTaskService> taskSvc;
-
-    void runNodeGet(Node* req, Node* rep) const
-    {
-        const Var id = req ? req->get("id") : Var();
-
-        Pipeline pipe;
-        pipe.context()->set("ve/root", Var::ptr(root));
-        if (subscribeSvc) {
-            pipe.context()->set("ve/subscribe", Var::ptr(subscribeSvc.get()));
-        }
-        pipe.context()->at("ve/request")->copy(req, true, true, true);
-        pipe.addProc(veNodeGetRequestToInput, "ve/request", {});
-        Command cmd = command::create(factory::at("standard/http"), "node.get",
-                                      pipe.context(), nullptr, nullptr);
-        pipe.addCommand(cmd);
-        pipe.onFinished([id, rep](Pipeline& p) {
-            finishVeNodeGet(p, id, rep);
-        });
-        pipe.sync();
-    }
-
-    void runJsonRpcNodeGet(Node* params, const Var& id, Node* rep) const
-    {
-        Pipeline pipe;
-        pipe.context()->set("jsonrpc/root", Var::ptr(root));
-        if (subscribeSvc) {
-            pipe.context()->set("jsonrpc/subscribe", Var::ptr(subscribeSvc.get()));
-        }
-        pipe.context()->at("jsonrpc/params")->copy(params, true, true, true);
-        pipe.addProc(jsonRpcNodeGetRequestToInput, "jsonrpc/params", {});
-        Command cmd = command::create(factory::at("standard/http"), "node.get",
-                                      pipe.context(), nullptr, nullptr);
-        pipe.addCommand(cmd);
-        pipe.onFinished([id, rep](Pipeline& p) {
-            finishJsonRpcNodeGet(p, id, rep);
-        });
-        pipe.sync();
-    }
 
     void handleBatch(Node* req, Node* rep) const
     {
@@ -684,135 +716,33 @@ struct NodeHttpServer::Private
             return;
         }
 
-        if (op == "node.get") {
-            runNodeGet(req, rep);
-            return;
-        }
-
-        if (op == "node.list") {
-            std::string path = req->get("path").toString();
-            Node* target = findNode(root, req);
-            if (!target) {
-                errorReply(rep, id, "not_found", "node not found: " + path);
-                return;
-            }
-
-            bool withMeta = req->get("meta").toBool(false);
-            Node data("data");
-            data.set("path", target->path(root));
-            Node* children = data.at("children");
-            for (auto* child : target->children()) {
-                makeChildInfo(children->append(), root, subscribeSvc.get(), child, withMeta);
-            }
-            okReply(rep, id, &data);
-            return;
-        }
-
-        if (op == "node.set") {
-            Node* valueNode = req->find("value");
-            if (!valueNode) {
-                errorReply(rep, id, "invalid_params", "value is required");
-                return;
-            }
-
-            Node* target = ensureNode(root, req);
-            target->set(schema::exportAs<schema::VarS>(valueNode));
-
-            Node data("data");
-            data.set("path", target->path(root));
-            okReply(rep, id, &data);
-            return;
-        }
-
-        if (op == "node.put") {
-            Node* treeNode = req->find("tree");
-            if (!treeNode) {
-                treeNode = req->find("value");
-            }
-            if (!treeNode) {
-                errorReply(rep, id, "invalid_params", "tree is required");
-                return;
-            }
-
-            Node* target = ensureNode(root, req);
-            schema::ImportOptions importOptions;
-            importOptions.auto_insert = true;
-            importOptions.auto_remove = true;
-            importOptions.auto_update = true;
-            schema::importAs<schema::VarS>(
-                target, schema::exportAs<schema::VarS>(treeNode), importOptions);
-
-            Node data("data");
-            data.set("path", target->path(root));
-            okReply(rep, id, &data);
-            return;
-        }
-
-        if (op == "node.remove") {
-            std::string path = req->get("path").toString();
-            if (path.empty()) {
-                errorReply(rep, id, "invalid_params", "cannot remove root");
-                return;
-            }
-            if (!root->erase(path)) {
-                errorReply(rep, id, "not_found", "node not found: " + path);
-                return;
-            }
-
-            Node data("data");
-            data.set("path", path);
-            okReply(rep, id, &data);
-            return;
-        }
-
-        if (op == "node.trigger") {
-            std::string path = req->get("path").toString();
-            Node* target = findNode(root, req);
-            if (!target) {
-                errorReply(rep, id, "not_found", "node not found: " + path);
-                return;
-            }
-
-            target->trigger<Node::NODE_CHANGED>();
-            if (target->isWatching()) {
-                target->activate(Node::NODE_CHANGED, target);
-            }
-
-            Node data("data");
-            data.set("path", target->path(root));
-            okReply(rep, id, &data);
-            return;
-        }
-
-        if (op == "command.list") {
-            auto cmds = command::factory().keys();
-            std::sort(cmds.begin(), cmds.end());
-            cmds.erase(std::unique(cmds.begin(), cmds.end()), cmds.end());
-
-            Node data("data");
-            Node* commands = data.at("commands");
-            for (const auto& key : cmds) {
-                Node* item = commands->append();
-                item->set("name", key);
-                item->set("help", command::factory().help(key));
-            }
-            okReply(rep, id, &data);
-            return;
-        }
-
-        if (op == "command.run") {
-            errorReply(rep, id, "unsupported",
-                       "command.run is disabled on the command refactor branch; use HTTP /cmd");
-            return;
-        }
-
+        // subscribe is session-scoped (push); HTTP has no session -> unsupported.
         if (op == "subscribe" || op == "unsubscribe") {
             errorReply(rep, id, "unsupported",
                        "subscriptions are not supported on this transport");
             return;
         }
 
-        errorReply(rep, id, "unknown_op", "unknown op: " + op);
+        Factory& nodeCommands = factory::at("standard/node");
+        if (!nodeCommands.has(op)) {
+            errorReply(rep, id, "unknown_op", "unknown op: " + op);
+            return;
+        }
+
+        // Fixed 3-step /ve pipeline: parse (req -> input) -> op command -> render.
+        // step1/step3 are written once for this service; only step2 varies by op.
+        Pipeline pipe;
+        Node* ctx = pipe.context();
+        ctx->set("node/root", Var::ptr(root));
+        if (subscribeSvc) {
+            ctx->set("node/subscribe", Var::ptr(subscribeSvc.get()));
+        }
+        ctx->at("ve/request")->copy(req, true, true, true);
+        pipe.addProc(veParse, "ve/request", "node/req");
+        pipe.addCommand(command::create(nodeCommands, op, ctx,
+                                        ctx->at("node/req"), ctx->at("node/data")));
+        pipe.onFinished([id, rep](Pipeline& p) { veRender(p, id, rep); });
+        pipe.sync();
     }
 
     std::string handleJsonRpc(const std::string& requestJson) const
@@ -857,12 +787,6 @@ struct NodeHttpServer::Private
         }
         protocolReq.set("op", method);
 
-        if (method == "node.get") {
-            Node out("r");
-            runJsonRpcNodeGet(&protocolReq, id, &out);
-            return toJson(out);
-        }
-
         Node protocolRep("rep");
         handleVe(&protocolReq, &protocolRep);
 
@@ -904,6 +828,7 @@ NodeHttpServer::~NodeHttpServer()
 bool NodeHttpServer::start()
 {
     registerHttpBuiltins();
+    registerNodeCommands();
     _p->startTime = std::chrono::steady_clock::now();
     _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
     _p->subscribeSvc->start();

@@ -253,31 +253,6 @@ static std::vector<std::string> argvInput(Node* in)
     return args;
 }
 
-// ============================================================================
-// terminal service-native builtin (private factory "standard/terminal").
-// A single high-performance Proc: reads terminal-native input (argv + current),
-// writes terminal-native output (text). Driven by the pipeline as one step.
-// NOT shared with other transports — http has its own node.get.
-// ============================================================================
-static Result terminalGet(Node*, Node* in, Node* out)
-{
-    Node* current = pointerInput(in, "current", node::root());
-    std::vector<std::string> args = argvInput(in);
-    std::string path = args.size() > 1 ? args[1] : std::string{};
-    Node* target = path.empty() ? current : current->find(path);
-    if (!target) {
-        out->set("text", "not found: " + path + "\n");
-        return Result::ok();
-    }
-    if (target->get().isNull()) {
-        out->set("text", std::string("(none)\n"));
-        return Result::ok();
-    }
-    const Var& v = target->get();
-    out->set("text", varPreview(v, 256) + "  (" + std::string(varTypeName(v.type())) + ")\n");
-    return Result::ok();
-}
-
 static void writeBuiltinOut(BuiltinContext& s, Node* out)
 {
     if (!out) return;
@@ -324,9 +299,6 @@ static void registerTerminalBuiltins()
         auto& builtins = factory::at("builtin");
         using S = BuiltinContext;
         using Args = const std::vector<std::string>&;
-
-        // service-native builtins live in a private namespaced factory
-        factory::at("standard/terminal").reg("get", Var::callable(terminalGet), "get [path]");
 
         regBuiltin(builtins, "cd", [](S& s, Args args) {
             if (args.size() < 2) { s.print("usage: cd <path>\n"); return; }
@@ -916,29 +888,6 @@ std::string TerminalSession::execute(const std::string& line)
 
     if (cmd == "quit" || cmd == "exit")
         return "\x04";
-
-    // get/g: terminal's own builtin, run as a single-step pipeline.
-    // The command reads terminal-native input and writes terminal-native text.
-    if (cmd == "get" || cmd == "g") {
-        Pipeline pipe;
-        Node* input = pipe.context()->at("input");
-        Node* argv = input->at("argv", false);
-        for (const auto& a : args) argv->append()->set(a);
-        input->at("current", false)->set(Var::ptr(s.cur));
-
-        Command getCmd = command::create(factory::at("standard/terminal"), "get",
-                                         pipe.context(), input, pipe.context()->at("output"));
-        pipe.addCommand(getCmd);
-        pipe.sync();  // synchronous single step -> inline
-
-        if (pipe.lastResult().isError()) {
-            std::string msg = pipe.lastResult().message;
-            s.print(msg.empty() ? "command failed\n" : msg + "\n");
-        } else {
-            s.print(pipe.context()->get("output/text").toString());
-        }
-        return s.output;
-    }
 
     auto it = s.cmds.find(cmd);
     if (it != s.cmds.end()) {
