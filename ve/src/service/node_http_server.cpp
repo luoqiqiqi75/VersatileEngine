@@ -604,10 +604,8 @@ bool NodeHttpServer::start()
             rep.fill_json(toJson(out), http::status::accepted);
         } else {
             Pipeline pipe("http.cmd", &ctx);
-            pipe.addProc(parseHttpRequest, "http", "request");
-            Command cmd = command::create(cmdKey, pipe.context(),
-                                          pipe.context()->at("request"),
-                                          pipe.context()->at("reply"));
+            pipe.addProc(parseHttpRequest, "http", {});
+            Command cmd = command::create(cmdKey, pipe.context(), nullptr, nullptr);
             pipe.addCommand(cmd);
             pipe.addProc(renderHttpResponse, "reply", "http/render");
             pipe.start();

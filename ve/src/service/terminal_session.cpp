@@ -927,8 +927,8 @@ std::string TerminalSession::execute(const std::string& line)
 
             auto asyncOut = s.asyncOutput;
             detached->addCommand(cmdObj);
-            detached->onFinished([asyncOut, detached, resolvedName](const Result& res) {
-                std::string text = renderCommandOutput(detached->context()->find("reply", false), res);
+            detached->onFinished([asyncOut, detached, resolvedName](Pipeline& pipe) {
+                std::string text = renderCommandOutput(pipe.context()->find("reply", false), pipe.lastResult());
                 if (asyncOut && !text.empty()) {
                     if (text.back() != '\n') {
                         text.push_back('\n');

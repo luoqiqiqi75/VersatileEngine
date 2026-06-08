@@ -41,7 +41,7 @@ using Proc = std::function<Result(Node* ctx, Node* in, Node* out)>;
 class VE_API Command : public NodeRef
 {
 public:
-    using Callback = std::function<void(const Command*)>;
+    using Callback = std::function<void(Command&)>;
 
 public:
     explicit Command(Node* factory_n);

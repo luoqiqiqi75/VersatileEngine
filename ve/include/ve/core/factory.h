@@ -232,7 +232,7 @@ public:
     RetT exec(const std::string& key, Params&&... params) const
     {
         const auto* f_n = node(key);
-        return exec(f_n ? f_n->get() : Var(), std::forward<Params>(params)...);
+        return exec<RetT>(f_n ? f_n->get() : Var(), std::forward<Params>(params)...);
     }
 
     bool has(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const

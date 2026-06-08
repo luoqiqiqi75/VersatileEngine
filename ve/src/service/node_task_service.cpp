@@ -98,8 +98,8 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
         delete detached;
     };
 
-    detached->onFinished([finalize](const Result& res) {
-        finalize(res);
+    detached->onFinished([finalize](Pipeline& pipe) {
+        finalize(pipe.lastResult());
     });
 
     const auto state = detached->state();

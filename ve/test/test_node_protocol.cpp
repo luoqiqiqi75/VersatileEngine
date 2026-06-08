@@ -4,28 +4,9 @@
 #include "../src/service/node_task_service.h"
 #include "../src/service/subscribe_service.h"
 
-#include <ve/core/command.h>
-#include <ve/core/loop.h>
 #include <ve/core/node.h>
 
-#include <atomic>
-#include <chrono>
-#include <thread>
-
 using namespace ve;
-
-static bool wait_until(const std::function<bool()>& fn, int timeoutMs = 1000)
-{
-    using clock = std::chrono::steady_clock;
-    const auto deadline = clock::now() + std::chrono::milliseconds(timeoutMs);
-    while (clock::now() < deadline) {
-        if (fn()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    return fn();
-}
 
 VE_TEST(node_protocol_get_set_and_list) {
     Node root("root");
@@ -107,46 +88,21 @@ VE_TEST(subscribe_service_counts_are_shared) {
     VE_ASSERT_EQ(static_cast<int>(s1.getSubscriberCount("watch/me")), 0);
 }
 
-VE_TEST(node_protocol_async_command_creates_task_and_event) {
-    command::reg("_test_proto_async",
-        [](Node*) -> Result {
-            return Result::ok(Var("async-done"));
-        },
-        loop::pool(),
-        "async protocol test");
-
+VE_TEST(node_protocol_command_run_is_disabled_on_refactor_branch) {
     Node root("root");
     service::SubscribeService subscribe(&root);
     service::NodeTaskService tasks(&root);
-
-    Node taskEvent("event");
-    std::atomic<bool> gotEvent{false};
 
     Node req("req");
     Node reply("rep");
     req.set("op", "command.run");
     req.set("id", 99);
-    req.set("name", "_test_proto_async");
+    req.set("name", "_test_proto_disabled");
     req.set("wait", false);
 
-    service::dispatchNodeProtocol(&root, &req, &reply, &subscribe, &tasks, 500, false, 0, true,
-        [&](const Node& event) {
-        taskEvent.copy(&event, true, true, true);
-        gotEvent.store(true, std::memory_order_release);
-    });
-    VE_ASSERT(reply.get("ok").toBool(false));
-    VE_ASSERT(reply.get("accepted").toBool(false));
-    VE_ASSERT(!reply.get("task_id").toString().empty());
-
-    VE_ASSERT(wait_until([&]() { return gotEvent.load(std::memory_order_acquire); }, 1500));
-    VE_ASSERT_EQ(taskEvent.get("event").toString(), "task.result");
-    VE_ASSERT(taskEvent.get("ok").toBool(false));
-    VE_ASSERT_EQ(taskEvent.get("data").toString(), "async-done");
-
-    Node* taskNode = root.find("ve/server/tasks/" + reply.get("task_id").toString());
-    VE_ASSERT(taskNode != nullptr);
-    VE_ASSERT_EQ(taskNode->get("status").toString(), "done");
-    VE_ASSERT_EQ(taskNode->get("result").toString(), "async-done");
-
-    command::factory().node()->erase("_test_proto_async");
+    service::dispatchNodeProtocol(&root, &req, &reply, &subscribe, &tasks, 500);
+    VE_ASSERT(!reply.get("ok").toBool(true));
+    VE_ASSERT_EQ(reply.get("code").toString(), std::string("unsupported"));
+    VE_ASSERT_EQ(reply.get("error").toString(),
+                 std::string("command.run is disabled on the command refactor branch; use HTTP /cmd"));
 }

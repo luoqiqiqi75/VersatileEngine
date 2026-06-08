@@ -45,8 +45,8 @@ public:
     void cancel();
     void wait();
 
-    using Handler = std::function<void(const Result&)>;
-    void onFinished(Handler handler);
+    using Callback = std::function<void(Pipeline&)>;
+    void onFinished(Callback cb);
 
     Node* context() const;
     State state() const;

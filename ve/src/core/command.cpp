@@ -68,7 +68,7 @@ Result Command::result() const { return _p->r; }
 
 void Command::call(Callback cb, Loop* loop) const
 {
-    auto task = [c = *this, cb, cb_l = loop] {
+    auto task = [c = *this, cb, cb_l = loop]() mutable {
         try {
             c._p->r = c.run(); // proc exec in l
         } catch (const std::exception& e) {
@@ -77,9 +77,9 @@ void Command::call(Callback cb, Loop* loop) const
             c._p->r = Result::fail("unknown exception");
         }
         if (cb_l) {
-            cb_l->post([cb, c] { if (cb) cb(&c); }); // callback exec in loop
+            cb_l->post([cb, c]() mutable { if (cb) cb(c); }); // callback exec in loop
         } else if (cb) {
-            cb(&c); // callback exec in l
+            cb(c); // callback exec in l
         }
     };
     if (_p->l) {
