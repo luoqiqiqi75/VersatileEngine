@@ -76,6 +76,13 @@ VE_API Loop* pool();
 VE_API void  setMain(Loop* loop);
 VE_API void  setPool(Loop* loop);
 
+// The loop whose task is currently executing on this thread (thread-local), or
+// nullptr when not inside any loop. Core loops set this while running tasks;
+// custom loops may call setCurrent() to participate. Used as the default driver
+// for Pipeline::sync()/pipeline::async().
+VE_API Loop* current();
+VE_API void  setCurrent(Loop* loop);
+
 } // namespace loop
 
 } // namespace ve

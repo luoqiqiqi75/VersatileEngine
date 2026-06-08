@@ -21,10 +21,11 @@ public:
     explicit NodeTaskService(Node* root);
     ~NodeTaskService();
 
-    // The Pipeline owns its context. Task service observes completion and
-    // records the result; lifecycle is owned by the caller or ve::pipeline::start.
+    // The Pipeline owns its context. Task service observes completion via the
+    // pipeline callback and records the result; lifecycle is the shared Pipeline's
+    // (run it with ve::pipeline::async).
     std::string attach(const std::string& cmdKey, const Var& id,
-                       Pipeline* pipeline, DoneFn onDone);
+                       Pipeline& pipeline, DoneFn onDone);
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

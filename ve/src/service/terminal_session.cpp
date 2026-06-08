@@ -920,7 +920,7 @@ std::string TerminalSession::execute(const std::string& line)
     // get/g: terminal's own builtin, run as a single-step pipeline.
     // The command reads terminal-native input and writes terminal-native text.
     if (cmd == "get" || cmd == "g") {
-        Pipeline pipe("terminal.get");
+        Pipeline pipe;
         Node* input = pipe.context()->at("input");
         Node* argv = input->at("argv", false);
         for (const auto& a : args) argv->append()->set(a);
@@ -929,7 +929,7 @@ std::string TerminalSession::execute(const std::string& line)
         Command getCmd = command::create(factory::at("standard/terminal"), "get",
                                          pipe.context(), input, pipe.context()->at("output"));
         pipe.addCommand(getCmd);
-        pipe.start();  // synchronous single step -> inline, no wait()
+        pipe.sync();  // synchronous single step -> inline
 
         if (pipe.lastResult().isError()) {
             std::string msg = pipe.lastResult().message;
@@ -969,16 +969,16 @@ std::string TerminalSession::execute(const std::string& line)
 
     if (builtinNode || cmdNode) {
         if (asyncMode) {
-            auto* detached = new Pipeline(resolvedName);
-            Node* request = detached->context()->at("request");
-            Node* reply = detached->context()->at("reply");
+            Pipeline detached;
+            Node* request = detached.context()->at("request");
+            Node* reply = detached.context()->at("reply");
             prepareCommandInput(request, s.root, s.cur, args, resolvedWordCount);
             Command cmdObj = command::create(resolvedFactory, resolvedName,
-                                             detached->context(), request, reply);
+                                             detached.context(), request, reply);
 
             auto asyncOut = s.asyncOutput;
-            detached->addCommand(cmdObj);
-            detached->onFinished([asyncOut, detached, resolvedName](Pipeline& pipe) {
+            detached.addCommand(cmdObj);
+            pipeline::async(std::move(detached), nullptr, [asyncOut, resolvedName](Pipeline& pipe) {
                 std::string text = renderCommandOutput(pipe.context()->find("reply", false), pipe.lastResult());
                 if (asyncOut && !text.empty()) {
                     if (text.back() != '\n') {
@@ -986,21 +986,18 @@ std::string TerminalSession::execute(const std::string& line)
                     }
                     asyncOut("\x1b[33m[" + resolvedName + "]\x1b[0m " + text);
                 }
-                delete detached;
             });
-            detached->start();
             s.print("accepted\n");
             return s.output;
         }
 
-        Pipeline pipe(resolvedName);
+        Pipeline pipe;
         Node* request = pipe.context()->at("request");
         Node* reply = pipe.context()->at("reply");
         prepareCommandInput(request, s.root, s.cur, args, resolvedWordCount);
         Command cmdObj = command::create(resolvedFactory, resolvedName, pipe.context(), request, reply);
         pipe.addCommand(cmdObj);
-        pipe.start();
-        pipe.wait();
+        pipe.sync();
         updateCurrentFromOut(s.cur, reply);
         s.print(renderCommandOutput(reply, pipe.lastResult()));
         return s.output;

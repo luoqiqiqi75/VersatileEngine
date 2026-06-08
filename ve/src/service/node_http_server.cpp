@@ -612,7 +612,7 @@ struct NodeHttpServer::Private
     {
         const Var id = req ? req->get("id") : Var();
 
-        Pipeline pipe("http.ve.node.get");
+        Pipeline pipe;
         pipe.context()->set("ve/root", Var::ptr(root));
         if (subscribeSvc) {
             pipe.context()->set("ve/subscribe", Var::ptr(subscribeSvc.get()));
@@ -622,15 +622,15 @@ struct NodeHttpServer::Private
         Command cmd = command::create(factory::at("standard/http"), "node.get",
                                       pipe.context(), nullptr, nullptr);
         pipe.addCommand(cmd);
-        pipeline::start(pipe, [id, rep](Pipeline& p) {
+        pipe.onFinished([id, rep](Pipeline& p) {
             finishVeNodeGet(p, id, rep);
         });
-        pipe.wait();
+        pipe.sync();
     }
 
     void runJsonRpcNodeGet(Node* params, const Var& id, Node* rep) const
     {
-        Pipeline pipe("http.jsonrpc.node.get");
+        Pipeline pipe;
         pipe.context()->set("jsonrpc/root", Var::ptr(root));
         if (subscribeSvc) {
             pipe.context()->set("jsonrpc/subscribe", Var::ptr(subscribeSvc.get()));
@@ -640,10 +640,10 @@ struct NodeHttpServer::Private
         Command cmd = command::create(factory::at("standard/http"), "node.get",
                                       pipe.context(), nullptr, nullptr);
         pipe.addCommand(cmd);
-        pipeline::start(pipe, [id, rep](Pipeline& p) {
+        pipe.onFinished([id, rep](Pipeline& p) {
             finishJsonRpcNodeGet(p, id, rep);
         });
-        pipe.wait();
+        pipe.sync();
     }
 
     void handleBatch(Node* req, Node* rep) const
@@ -934,7 +934,7 @@ bool NodeHttpServer::start()
         });
 
     auto bindAtGet = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
-        Pipeline pipe("http.at.node.get");
+        Pipeline pipe;
         pipe.context()->set("http/response", Var::ptr(&rep));
         Node* request = pipe.context()->at("http/at/request");
         request->set("path", nodePath);
@@ -947,8 +947,8 @@ bool NodeHttpServer::start()
         Command cmd = command::create(factory::at("standard/http"), "node.get",
                                       pipe.context(), nullptr, nullptr);
         pipe.addCommand(cmd);
-        pipeline::start(pipe, finishAtGet);
-        pipe.wait();
+        pipe.onFinished(finishAtGet);
+        pipe.sync();
     };
 
     auto bindAtPut = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
@@ -1047,10 +1047,9 @@ bool NodeHttpServer::start()
 
         const bool async = queryBool(req.query(), "async", false);
         if (async) {
-            Pipeline parsePipe("http.cmd.parse", &ctx);
+            Pipeline parsePipe(&ctx);
             parsePipe.addProc(httpRequestToInput, "http/request", "request");
-            pipeline::start(parsePipe);
-            parsePipe.wait();
+            parsePipe.sync();
             if (parsePipe.lastResult().isError()) {
                 Node reply("rep");
                 Node* error = parsePipe.context()->find("http/error");
@@ -1068,35 +1067,34 @@ bool NodeHttpServer::start()
                 return;
             }
 
-            auto* detached = new Pipeline(cmdKey, parsePipe.context());
-            detached->context()->erase("http/response");
-            Command cmd = command::create(cmdKey, detached->context(),
-                                          detached->context()->at("request"),
-                                          detached->context()->at("reply"));
-            detached->addCommand(cmd);
+            Pipeline detached(parsePipe.context());
+            detached.context()->erase("http/response");
+            Command cmd = command::create(cmdKey, detached.context(),
+                                          detached.context()->at("request"),
+                                          detached.context()->at("reply"));
+            detached.addCommand(cmd);
             std::string taskId = _p->taskSvc->attach(cmdKey, Var(), detached, {});
             if (taskId.empty()) {
-                delete detached;
                 Node reply("rep");
                 fillError(&reply, "internal_error", "failed to start task");
                 rep.fill_json(toJson(reply), http::status::internal_server_error);
                 return;
             }
 
-            pipeline::start(detached);
+            pipeline::async(std::move(detached));
             Node out("r");
             out.set("ok", true);
             out.set("accepted", true);
             out.set("task_id", taskId);
             rep.fill_json(toJson(out), http::status::accepted);
         } else {
-            Pipeline pipe("http.cmd", &ctx);
+            Pipeline pipe(&ctx);
             pipe.addProc(httpRequestToInput, "http/request", {});
             Command cmd = command::create(cmdKey, pipe.context(), nullptr, nullptr);
             pipe.addCommand(cmd);
             pipe.addProc(outputToHttpResponse, "reply", "http/render");
-            pipeline::start(pipe, finishHttpPipeline);
-            pipe.wait();
+            pipe.onFinished(finishHttpPipeline);
+            pipe.sync();
         }
     };
 

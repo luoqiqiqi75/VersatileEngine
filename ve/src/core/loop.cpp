@@ -77,7 +77,10 @@ bool AsioLoop::start()
     _p->guard.emplace(asio::make_work_guard(_p->io));
     _p->is_running = true;
 
-    _p->worker = std::thread([st = _p.get()] { st->io.run(); });
+    _p->worker = std::thread([st = _p.get(), self = this] {
+        loop::setCurrent(self);
+        st->io.run();
+    });
     return true;
 }
 
@@ -95,7 +98,14 @@ bool AsioLoop::stop()
 }
 
 bool AsioLoop::isRunning() const { return _p->is_running; }
-size_t AsioLoop::processEvents() { return _p->io.poll(); }
+size_t AsioLoop::processEvents()
+{
+    Loop* prev = loop::current();
+    loop::setCurrent(this);
+    size_t n = _p->io.poll();
+    loop::setCurrent(prev);
+    return n;
+}
 
 struct AsioPoolLoop::Private
 {
@@ -137,7 +147,10 @@ bool AsioPoolLoop::start()
 
     _p->workers.reserve(_p->threads);
     for (unsigned i = 0; i < _p->threads; ++i)
-        _p->workers.emplace_back([st = _p.get()] { st->io.run(); });
+        _p->workers.emplace_back([st = _p.get(), self = this] {
+            loop::setCurrent(self);
+            st->io.run();
+        });
     return true;
 }
 
@@ -157,7 +170,14 @@ bool AsioPoolLoop::stop()
 }
 
 bool AsioPoolLoop::isRunning() const { return _p->is_running; }
-size_t AsioPoolLoop::processEvents() { return _p->io.poll(); }
+size_t AsioPoolLoop::processEvents()
+{
+    Loop* prev = loop::current();
+    loop::setCurrent(this);
+    size_t n = _p->io.poll();
+    loop::setCurrent(prev);
+    return n;
+}
 
 namespace {
 
@@ -195,6 +215,8 @@ CoreLoops& coreLoops()
     return s;
 }
 
+thread_local Loop* t_currentLoop = nullptr;
+
 } // namespace
 
 Loop* loop::main() { return coreLoops().mainLoop(); }
@@ -209,5 +231,8 @@ void loop::setPool(Loop* loop)
 {
     coreLoops().pool = loop;
 }
+
+Loop* loop::current() { return t_currentLoop; }
+void  loop::setCurrent(Loop* loop) { t_currentLoop = loop; }
 
 } // namespace ve

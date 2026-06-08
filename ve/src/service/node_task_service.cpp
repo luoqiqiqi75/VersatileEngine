@@ -36,9 +36,9 @@ NodeTaskService::NodeTaskService(Node* root)
 NodeTaskService::~NodeTaskService() = default;
 
 std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
-                                    Pipeline* pipeline, DoneFn onDone)
+                                    Pipeline& pipeline, DoneFn onDone)
 {
-    if (!_p->root || !pipeline) {
+    if (!_p->root) {
         return {};
     }
 
@@ -96,16 +96,12 @@ std::string NodeTaskService::attach(const std::string& cmdKey, const Var& id,
         }
     };
 
-    pipeline->connect<Pipeline::DONE_SIGNAL>(pipeline, [finalize](Pipeline* pipe) {
-        if (pipe) finalize(*pipe);
-    });
-    pipeline->connect<Pipeline::ERROR_SIGNAL>(pipeline, [finalize](Pipeline* pipe) {
-        if (pipe) finalize(*pipe);
-    });
+    // Completion is reported through the pipeline callback (no signals).
+    pipeline.onFinished([finalize](Pipeline& pipe) { finalize(pipe); });
 
-    const auto state = pipeline->state();
+    const auto state = pipeline.state();
     if (state == Pipeline::DONE || state == Pipeline::ERRORED) {
-        finalize(*pipeline);
+        finalize(pipeline);
     }
 
     return taskId;
