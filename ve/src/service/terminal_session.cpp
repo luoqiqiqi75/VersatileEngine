@@ -685,7 +685,7 @@ static void registerTerminalBuiltins()
             } else {
                 s.print(result);
             }
-        }, "schema <fmt> [path]");
+        }, "schema <fmt> [path] [-f file] [-i data]  (export; -i/-f import = load/save)");
 
         regBuiltin(builtins, "shadow", [](S& s, Args args) {
             auto f = parseFlags(args);
@@ -825,15 +825,23 @@ void TerminalSession::Private::initCommands()
             return;
         }
 
+        // Deliberate display order (grouped), aliases g/s intentionally omitted.
+        static const char* const kBuiltinOrder[] = {
+            "pwd", "cd", "root", "up", "ls",
+            "first", "last", "prev", "next", "sibling",
+            "get", "set", "mk", "rm", "mv", "cp",
+            "schema", "shadow",
+        };
+
         std::string out;
         out += "=== Builtin Commands ===\n";
-        auto builtinKeys = factory::at("builtin").keys();
-        std::sort(builtinKeys.begin(), builtinKeys.end());
-        for (auto& k : builtinKeys) {
+        for (const char* k : kBuiltinOrder) {
             Node* builtin = factory::at("builtin").node(k);
-            out += "  " + k;
-            auto h = builtin ? builtin->get("help").toString() : std::string{};
-            if (!h.empty()) { int pad = 18 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
+            if (!builtin) continue;
+            std::string key = k;
+            out += "  " + key;
+            auto h = builtin->get("help").toString();
+            if (!h.empty()) { int pad = 18 - (int)key.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
             out += "\n";
         }
         out += "\n=== Session Commands ===\n";

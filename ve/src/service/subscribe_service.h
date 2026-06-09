@@ -31,8 +31,6 @@ public:
 
     void setPushCallback(PushFn fn);
 
-    size_t getSubscriberCount(const std::string& path) const;
-
 private:
     VE_DECLARE_UNIQUE_PRIVATE
 };

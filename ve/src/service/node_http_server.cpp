@@ -6,7 +6,6 @@
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
 #include "server_util.h"
-#include "subscribe_service.h"
 #include "node_task_service.h"
 
 #ifdef _MSC_VER
@@ -210,17 +209,14 @@ static Node* ensureNode(Node* root, Node* req)
     return root->at(req->get("path").toString());
 }
 
-static void makeChildInfo(Node* out, Node* root, SubscribeService* subscribe, Node* child, bool withMeta)
+static void makeChildInfo(Node* out, Node* root, Node* child, bool withMeta)
 {
-    std::string childPath = child->path(root);
     out->set("name", child->name());
-    out->set("path", childPath);
+    out->set("path", child->path(root));
     out->set("has_value", !child->get().isNull());
     out->set("child_count", static_cast<int64_t>(child->count()));
     if (withMeta) {
         out->set("type", static_cast<int64_t>(child->get().type()));
-        out->set("subscribers", static_cast<int64_t>(
-            subscribe ? subscribe->getSubscriberCount(childPath) : 0));
     }
 }
 
@@ -376,21 +372,18 @@ static Node* commandTarget(Pipeline& pipe)
     return ctx ? ctx->get("http/target").as<Node*>() : nullptr;
 }
 
-static void writeNodeMeta(Node* out, Node* root, SubscribeService* subscribe, Node* target)
+static void writeNodeMeta(Node* out, Node* root, Node* target)
 {
     out->set("path", target->path(root));
     out->set("type", static_cast<int64_t>(target->get().type()));
     out->set("child_count", static_cast<int64_t>(target->count()));
     out->set("has_shadow", target->shadow() != nullptr);
-    out->set("subscribers", static_cast<int64_t>(
-        subscribe ? subscribe->getSubscriberCount(target->path(root)) : 0));
     if (target->parent()) {
         out->set("parent_path", target->parent()->path(root));
     }
 }
 
-static void writeNodeGetData(Node* data, Node* root, SubscribeService* subscribe,
-                             Node* request, Node* target)
+static void writeNodeGetData(Node* data, Node* root, Node* request, Node* target)
 {
     data->set("path", target->path(root));
     data->at("value")->set(target->get());
@@ -398,7 +391,7 @@ static void writeNodeGetData(Node* data, Node* root, SubscribeService* subscribe
         data->at("tree")->set(exportNodeTreeVar(target, request->get("depth").toInt(-1), compactJson));
     }
     if (request && request->get("meta").toBool(false)) {
-        writeNodeMeta(data->at("meta"), root, subscribe, target);
+        writeNodeMeta(data->at("meta"), root, target);
     }
 }
 
@@ -413,9 +406,6 @@ static Result atGetRequestToInput(Node* ctx, Node* in, Node* out)
     const int depth = queryInt(query, "depth", -1);
 
     ctx->set("http/at/root", Var::ptr(root));
-    if (auto* subscribe = in->get("subscribe").as<SubscribeService*>()) {
-        ctx->set("http/at/subscribe", Var::ptr(subscribe));
-    }
     ctx->set("http/at/children", wantChildren);
     ctx->set("http/at/meta", wantMeta);
     ctx->set("http/at/structure", wantStructure);
@@ -450,12 +440,11 @@ static void finishAtGet(Pipeline& pipe)
     }
 
     auto* root = ctx->get("http/at/root").as<Node*>();
-    auto* subscribe = ctx->get("http/at/subscribe").as<SubscribeService*>();
 
     if (wantChildren) {
         Node reply("r");
         if (wantMeta) {
-            writeNodeMeta(reply.at("meta"), root, subscribe, target);
+            writeNodeMeta(reply.at("meta"), root, target);
             Node* children = reply.at("children");
             for (auto* child : target->children()) {
                 children->append()->set(target->keyOf(child));
@@ -473,7 +462,7 @@ static void finishAtGet(Pipeline& pipe)
 
     if (wantMeta) {
         Node reply("r");
-        writeNodeMeta(&reply, root, subscribe, target);
+        writeNodeMeta(&reply, root, target);
         rep->fill_json(toJson(reply), http::status::ok);
         return;
     }
@@ -485,14 +474,11 @@ static void finishAtGet(Pipeline& pipe)
     rep->fill_json(impl::json::stringify(body), http::status::ok);
 }
 
-// http service-native builtin (private factory "standard/http").
-// Single Proc: resolves the target and (for data endpoints) shapes the
-// transport-neutral data node. The raw node pointer is parked in ctx for the
-// /at renderer; envelope/format is each endpoint's step3 concern.
-//   in : current(ptr) + path + data(bool) + root(ptr) + subscribe(ptr) + depth/meta
-//   out: { path, value, [tree], [meta] }   (when data=true)
+// /at service-native builtin (private factory "standard/http").
+// Resolves the target into ctx; finishAtGet renders it per the query flags.
+//   in  : current(ptr) + path
 //   ctx/http/target : resolved Node* (or null)
-static Result httpNodeGet(Node* ctx, Node* in, Node* out)
+static Result httpNodeGet(Node* ctx, Node* in, Node*)
 {
     Node* current = in->get("current").as<Node*>();
     if (!current) current = node::root();
@@ -501,12 +487,6 @@ static Result httpNodeGet(Node* ctx, Node* in, Node* out)
 
     ctx->set("http/target", Var::ptr(target));
     if (!target) return Result::fail("node not found: " + path);
-
-    if (in->get("data").toBool(false)) {
-        auto* root = in->get("root").as<Node*>();
-        auto* subscribe = in->get("subscribe").as<SubscribeService*>();
-        writeNodeGetData(out, root, subscribe, in, target);
-    }
     return Result::ok();
 }
 
@@ -522,7 +502,7 @@ static void registerHttpBuiltins()
 // standard/node — shared node-protocol command family.
 // Transport-neutral ops over the node tree, dispatched by op-name. Shared by
 // HTTP /ve and /jsonrpc (and, later, ws/tcp/udp/bin, replacing node_protocol).
-//   ctx : node/root (Node*), node/subscribe (SubscribeService*, optional)
+//   ctx : node/root (Node*)
 //   in  : the protocol request (path, value, tree, meta, depth, ...)
 //   out : the reply data on success.
 // Failures flow through the unified Result (code + message); the service
@@ -545,7 +525,6 @@ static std::string codeString(int code)
 }
 
 static Node* root(Node* ctx) { return ctx->get("node/root").as<Node*>(); }
-static SubscribeService* subscribe(Node* ctx) { return ctx->get("node/subscribe").as<SubscribeService*>(); }
 
 static Result get(Node* ctx, Node* in, Node* out)
 {
@@ -553,7 +532,7 @@ static Result get(Node* ctx, Node* in, Node* out)
     std::string path = normalizeNodePath(in->get("path").toString());
     Node* target = path.empty() ? r : (r ? r->find(path) : nullptr);
     if (!target) return Result::fail(ERR_NOT_FOUND, "node not found: " + path);
-    writeNodeGetData(out, r, subscribe(ctx), in, target);
+    writeNodeGetData(out, r, in, target);
     return Result::ok();
 }
 
@@ -565,7 +544,7 @@ static Result list(Node* ctx, Node* in, Node* out)
     out->set("path", target->path(r));
     Node* children = out->at("children");
     for (auto* child : target->children()) {
-        makeChildInfo(children->append(), r, subscribe(ctx), child, in->get("meta").toBool(false));
+        makeChildInfo(children->append(), r, child, in->get("meta").toBool(false));
     }
     return Result::ok();
 }
@@ -575,7 +554,7 @@ static Result set(Node* ctx, Node* in, Node* out)
     Node* valueNode = in->find("value");
     if (!valueNode) return Result::fail(ERR_INVALID_PARAMS, "value is required");
     Node* target = ensureNode(root(ctx), in);
-    target->set(schema::exportAs<schema::VarS>(valueNode));
+    target->copy(valueNode);
     out->set("path", target->path(root(ctx)));
     return Result::ok();
 }
@@ -586,11 +565,7 @@ static Result put(Node* ctx, Node* in, Node* out)
     if (!treeNode) treeNode = in->find("value");
     if (!treeNode) return Result::fail(ERR_INVALID_PARAMS, "tree is required");
     Node* target = ensureNode(root(ctx), in);
-    schema::ImportOptions options;
-    options.auto_insert = true;
-    options.auto_remove = true;
-    options.auto_update = true;
-    schema::importAs<schema::VarS>(target, schema::exportAs<schema::VarS>(treeNode), options);
+    target->copy(treeNode, true, true);   // replace subtree (insert + remove stale)
     out->set("path", target->path(root(ctx)));
     return Result::ok();
 }
@@ -611,20 +586,14 @@ static Result trigger(Node* ctx, Node* in, Node* out)
     Node* target = findNode(r, in);
     if (!target) return Result::fail(ERR_NOT_FOUND, "node not found: " + in->get("path").toString());
     target->trigger<Node::NODE_CHANGED>();
-    if (target->isWatching()) {
-        target->activate(Node::NODE_CHANGED, target);
-    }
     out->set("path", target->path(r));
     return Result::ok();
 }
 
 static Result commandList(Node*, Node*, Node* out)
 {
-    auto cmds = command::factory().keys();
-    std::sort(cmds.begin(), cmds.end());
-    cmds.erase(std::unique(cmds.begin(), cmds.end()), cmds.end());
     Node* commands = out->at("commands");
-    for (const auto& key : cmds) {
+    for (const auto& key : command::factory().keys()) {
         Node* item = commands->append();
         item->set("name", key);
         item->set("help", command::factory().help(key));
@@ -675,7 +644,6 @@ struct NodeHttpServer::Private
 
     asio2::http_server server;
     std::chrono::steady_clock::time_point startTime;
-    std::unique_ptr<SubscribeService> subscribeSvc;
     std::unique_ptr<NodeTaskService> taskSvc;
 
     void handleBatch(Node* req, Node* rep) const
@@ -734,9 +702,6 @@ struct NodeHttpServer::Private
         Pipeline pipe;
         Node* ctx = pipe.context();
         ctx->set("node/root", Var::ptr(root));
-        if (subscribeSvc) {
-            ctx->set("node/subscribe", Var::ptr(subscribeSvc.get()));
-        }
         ctx->at("ve/request")->copy(req, true, true, true);
         pipe.addProc(veParse, "ve/request", "node/req");
         pipe.addCommand(command::create(nodeCommands, op, ctx,
@@ -830,8 +795,6 @@ bool NodeHttpServer::start()
     registerHttpBuiltins();
     registerNodeCommands();
     _p->startTime = std::chrono::steady_clock::now();
-    _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
-    _p->subscribeSvc->start();
     _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
 
     _p->server.bind<http::verb::get>("/health",
@@ -865,9 +828,6 @@ bool NodeHttpServer::start()
         request->set("path", nodePath);
         request->set("query", std::string(req.query()));
         request->set("root", Var::ptr(_p->root));
-        if (_p->subscribeSvc) {
-            request->set("subscribe", Var::ptr(_p->subscribeSvc.get()));
-        }
         pipe.addProc(atGetRequestToInput, "http/at/request", {});
         Command cmd = command::create(factory::at("standard/http"), "node.get",
                                       pipe.context(), nullptr, nullptr);
@@ -1074,10 +1034,6 @@ bool NodeHttpServer::start()
 void NodeHttpServer::stop()
 {
     _p->server.stop();
-    if (_p->subscribeSvc) {
-        _p->subscribeSvc->stop();
-        _p->subscribeSvc.reset();
-    }
     _p->taskSvc.reset();
 }
 

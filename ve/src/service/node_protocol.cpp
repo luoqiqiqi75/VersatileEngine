@@ -98,29 +98,24 @@ static Var exportTreeVar(Node* target, int depth)
     return impl::json::parse(impl::json::exportTree(target, depth, compactJson));
 }
 
-static void makeNodeMeta(Node* out, Node* root, SubscribeService* subscribe, Node* target)
+static void makeNodeMeta(Node* out, Node* root, Node* target)
 {
     out->set("type", static_cast<int64_t>(target->get().type()));
     out->set("child_count", static_cast<int64_t>(target->count()));
     out->set("has_shadow", target->shadow() != nullptr);
-    out->set("subscribers", static_cast<int64_t>(
-        subscribe ? subscribe->getSubscriberCount(target->path(root)) : 0));
     if (target->parent()) {
         out->set("parent_path", target->parent()->path(root));
     }
 }
 
-static void makeChildInfo(Node* out, Node* root, SubscribeService* subscribe, Node* child, bool withMeta)
+static void makeChildInfo(Node* out, Node* root, Node* child, bool withMeta)
 {
-    std::string childPath = child->path(root);
     out->set("name", child->name());
-    out->set("path", childPath);
+    out->set("path", child->path(root));
     out->set("has_value", !child->get().isNull());
     out->set("child_count", static_cast<int64_t>(child->count()));
     if (withMeta) {
         out->set("type", static_cast<int64_t>(child->get().type()));
-        out->set("subscribers", static_cast<int64_t>(
-            subscribe ? subscribe->getSubscriberCount(childPath) : 0));
     }
 }
 
@@ -192,7 +187,7 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
             data.at("tree")->set(exportTreeVar(target, req->get("depth").toInt(-1)));
         }
         if (req->get("meta").toBool(false)) {
-            makeNodeMeta(data.at("meta"), root, subscribe, target);
+            makeNodeMeta(data.at("meta"), root, target);
         }
         okReply(rep, id, &data);
         return;
@@ -211,7 +206,7 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
         data.set("path", target->path(root));
         Node* children = data.at("children");
         for (auto* child : target->children()) {
-            makeChildInfo(children->append(), root, subscribe, child, withMeta);
+            makeChildInfo(children->append(), root, child, withMeta);
         }
         okReply(rep, id, &data);
         return;

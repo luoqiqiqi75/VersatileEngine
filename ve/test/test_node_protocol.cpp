@@ -71,23 +71,6 @@ VE_TEST(node_protocol_batch_keeps_item_boundaries) {
     VE_ASSERT_EQ(items->child(1)->get("data/value").toInt(), 2);
 }
 
-VE_TEST(subscribe_service_counts_are_shared) {
-    Node root("root");
-    service::SubscribeService s1(&root);
-    service::SubscribeService s2(&root);
-
-    s1.subscribe(1, "watch/me");
-    s2.subscribe(2, "/watch/me");
-    VE_ASSERT_EQ(static_cast<int>(s1.getSubscriberCount("watch/me")), 2);
-    VE_ASSERT_EQ(static_cast<int>(s2.getSubscriberCount("/watch/me")), 2);
-
-    s1.removeSession(1);
-    VE_ASSERT_EQ(static_cast<int>(s2.getSubscriberCount("watch/me")), 1);
-
-    s2.unsubscribe(2, "watch/me");
-    VE_ASSERT_EQ(static_cast<int>(s1.getSubscriberCount("watch/me")), 0);
-}
-
 VE_TEST(node_protocol_command_run_is_disabled_on_refactor_branch) {
     Node root("root");
     service::SubscribeService subscribe(&root);
