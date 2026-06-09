@@ -2,8 +2,7 @@
 #include "ve/service/bin_service.h"
 #include "ve/core/node.h"
 #include "node_session.h"
-#include "node_protocol.h"
-#include "node_task_service.h"
+#include "node_commands.h"
 #include "ve/core/schema.h"
 #include "server_util.h"
 
@@ -61,7 +60,6 @@ struct BinTcpServer::Private
         std::unique_ptr<Session> session;
     };
     std::unordered_map<std::size_t, ConnState> connections;
-    std::unique_ptr<NodeTaskService> taskSvc;
 
     void postToSession(uint64_t sid, uint8_t flag, Var payload)
     {
@@ -120,11 +118,7 @@ struct BinTcpServer::Private
             }
 
             Node reply("rep");
-            dispatchNodeProtocol(root, &req, &reply,
-                                 state->session.get(), taskSvc.get(), 500, true,
-                                 [this, sid = static_cast<uint64_t>(connKey)](const Node& event) {
-                                     postToSession(sid, bin::FLAG_NOTIFY, toVar(event));
-                                 });
+            dispatchNode(root, &req, &reply, state->session.get());
             auto frame = makeFrame(flagFromReply(&reply), toVar(reply));
             session_ptr->async_send(std::string(frame.begin(), frame.end()));
         }
@@ -145,7 +139,7 @@ BinTcpServer::~BinTcpServer()
 
 bool BinTcpServer::start()
 {
-    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
+    registerNodeCommands();
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
@@ -187,7 +181,6 @@ bool BinTcpServer::start()
 void BinTcpServer::stop()
 {
     _p->server.stop();
-    _p->taskSvc.reset();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

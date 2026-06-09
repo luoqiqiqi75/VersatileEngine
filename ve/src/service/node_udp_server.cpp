@@ -2,8 +2,7 @@
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
-#include "node_protocol.h"
-#include "node_task_service.h"
+#include "node_commands.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -42,7 +41,6 @@ struct NodeUdpServer::Private
     uint16_t port = 12300;
     
     asio2::udp_server server;
-    std::unique_ptr<NodeTaskService> taskSvc;
 };
 
 NodeUdpServer::NodeUdpServer(const Node* config_n) : _p(std::make_unique<Private>())
@@ -58,7 +56,7 @@ NodeUdpServer::~NodeUdpServer()
 
 bool NodeUdpServer::start()
 {
-    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
+    registerNodeCommands();
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         std::string msg(data);
@@ -75,7 +73,7 @@ bool NodeUdpServer::start()
         }
 
         Node reply("rep");
-        dispatchNodeProtocol(_p->root, &req, &reply, nullptr, _p->taskSvc.get());
+        dispatchNode(_p->root, &req, &reply);   // no session: sessionless transport
         session_ptr->async_send(toJson(reply));
     });
 
@@ -86,7 +84,6 @@ bool NodeUdpServer::start()
 void NodeUdpServer::stop()
 {
     _p->server.stop();
-    _p->taskSvc.reset();
 }
 
 bool NodeUdpServer::isRunning() const

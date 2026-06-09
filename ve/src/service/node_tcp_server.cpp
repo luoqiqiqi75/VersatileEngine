@@ -3,8 +3,7 @@
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
 #include "node_session.h"
-#include "node_protocol.h"
-#include "node_task_service.h"
+#include "node_commands.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -54,7 +53,6 @@ struct NodeTcpServer::Private
         std::unique_ptr<Session> session;
     };
     std::unordered_map<std::size_t, ConnState> connections;
-    std::unique_ptr<NodeTaskService> taskSvc;
 
     void postToSession(uint64_t sid, std::string message)
     {
@@ -114,11 +112,7 @@ struct NodeTcpServer::Private
             }
 
             Node reply("rep");
-            dispatchNodeProtocol(root, &req, &reply,
-                                 state->session.get(), taskSvc.get(), 500, true,
-                                 [this, sid = static_cast<uint64_t>(connKey)](const Node& event) {
-                                     postToSession(sid, toJson(event) + "\n");
-                                 });
+            dispatchNode(root, &req, &reply, state->session.get());
             session_ptr->async_send(toJson(reply) + "\n");
         }
     }
@@ -137,7 +131,7 @@ NodeTcpServer::~NodeTcpServer()
 
 bool NodeTcpServer::start()
 {
-    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
+    registerNodeCommands();
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
@@ -176,7 +170,6 @@ bool NodeTcpServer::start()
 void NodeTcpServer::stop()
 {
     _p->server.stop();
-    _p->taskSvc.reset();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

@@ -3,8 +3,7 @@
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
 #include "node_session.h"
-#include "node_protocol.h"
-#include "node_task_service.h"
+#include "node_commands.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -47,7 +46,6 @@ struct NodeWsServer::Private
     std::atomic<int> connCount{0};
     std::mutex mtx;
     std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
-    std::unique_ptr<NodeTaskService> taskSvc;
 
     void postToSession(uint64_t sid, std::string message)
     {
@@ -93,7 +91,7 @@ NodeWsServer::~NodeWsServer()
 
 bool NodeWsServer::start()
 {
-    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
+    registerNodeCommands();
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
@@ -117,11 +115,7 @@ bool NodeWsServer::start()
         }
 
         Node reply("rep");
-        dispatchNodeProtocol(_p->root, &req, &reply,
-                             _p->sessionFor(sid), _p->taskSvc.get(), 500, true,
-                             [this, sid](const Node& event) {
-                                 _p->postToSession(sid, toJson(event));
-                             });
+        dispatchNode(_p->root, &req, &reply, _p->sessionFor(sid));
         session_ptr->async_send(toJson(reply));
     });
 
@@ -145,7 +139,6 @@ void NodeWsServer::stop()
         std::lock_guard<std::mutex> lock(_p->mtx);
         _p->sessions.clear();
     }
-    _p->taskSvc.reset();
 }
 
 bool NodeWsServer::isRunning() const
