@@ -1,7 +1,7 @@
 #include "node_protocol.h"
 
 #include "node_task_service.h"
-#include "subscribe_service.h"
+#include "node_session.h"
 
 #include "ve/core/command.h"
 #include "ve/core/node.h"
@@ -120,15 +120,12 @@ static void makeChildInfo(Node* out, Node* root, Node* child, bool withMeta)
 }
 
 static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
-                                        SubscribeService* subscribe, NodeTaskService* tasks,
-                                        int batchLimit, bool allowSubscriptions,
-                                        uint64_t sessionId, bool allowAsyncEvents,
+                                        Session* session, NodeTaskService* tasks,
+                                        int batchLimit, bool allowAsyncEvents,
                                         const NodeEventFn& sendEvent);
 
 static void dispatchBatch(Node* root, Node* req, Node* rep,
-                          SubscribeService* subscribe, NodeTaskService* tasks,
-                          int batchLimit, bool allowSubscriptions,
-                          uint64_t sessionId)
+                          Session* session, NodeTaskService* tasks, int batchLimit)
 {
     Node* itemsNode = req->find("items");
     Var id = req->get("id");
@@ -143,17 +140,15 @@ static void dispatchBatch(Node* root, Node* req, Node* rep,
 
     Node items("items");
     for (auto* child : itemsNode->children()) {
-        dispatchNodeProtocolInternal(root, child, items.append(), subscribe, tasks,
-                                     batchLimit, allowSubscriptions, sessionId,
-                                     false, {});
+        dispatchNodeProtocolInternal(root, child, items.append(), session, tasks,
+                                     batchLimit, false, {});
     }
     okReply(rep, id, &items);
 }
 
 static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
-                                        SubscribeService* subscribe, NodeTaskService* tasks,
-                                        int batchLimit, bool allowSubscriptions,
-                                        uint64_t sessionId, bool allowAsyncEvents,
+                                        Session* session, NodeTaskService* tasks,
+                                        int batchLimit, bool allowAsyncEvents,
                                         const NodeEventFn& sendEvent)
 {
     if (!root || !req || !rep) {
@@ -168,7 +163,7 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
     }
 
     if (op == "batch") {
-        dispatchBatch(root, req, rep, subscribe, tasks, batchLimit, allowSubscriptions, sessionId);
+        dispatchBatch(root, req, rep, session, tasks, batchLimit);
         return;
     }
 
@@ -331,15 +326,13 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
     }
 
     if (op == "subscribe") {
-        if (!allowSubscriptions || !subscribe) {
+        if (!session) {
             errorReply(rep, id, "unsupported", "subscriptions are not supported on this transport");
             return;
         }
 
         std::string path = req->get("path").toString();
-        bool bubble = req->get("bubble").toBool(false);
-        bool tree = req->get("tree").toBool(false);
-        subscribe->subscribe(sessionId, path, bubble, tree);
+        session->subscribe(path, req->get("bubble").toBool(false), req->get("tree").toBool(false));
 
         Node data("data");
         data.set("path", path);
@@ -349,13 +342,13 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
     }
 
     if (op == "unsubscribe") {
-        if (!allowSubscriptions || !subscribe) {
+        if (!session) {
             errorReply(rep, id, "unsupported", "subscriptions are not supported on this transport");
             return;
         }
 
         std::string path = req->get("path").toString();
-        subscribe->unsubscribe(sessionId, path);
+        session->unsubscribe(path);
 
         Node data("data");
         data.set("path", path);
@@ -368,16 +361,14 @@ static void dispatchNodeProtocolInternal(Node* root, Node* req, Node* rep,
 }
 
 void dispatchNodeProtocol(Node* root, Node* req, Node* rep,
-                          SubscribeService* subscribe,
+                          Session* session,
                           NodeTaskService* tasks,
                           int batchLimit,
-                          bool allowSubscriptions,
-                          uint64_t sessionId,
                           bool allowAsyncEvents,
                           const NodeEventFn& sendEvent)
 {
-    dispatchNodeProtocolInternal(root, req, rep, subscribe, tasks, batchLimit,
-                                 allowSubscriptions, sessionId, allowAsyncEvents, sendEvent);
+    dispatchNodeProtocolInternal(root, req, rep, session, tasks, batchLimit,
+                                 allowAsyncEvents, sendEvent);
 }
 
 } // namespace service

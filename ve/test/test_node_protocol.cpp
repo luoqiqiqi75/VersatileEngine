@@ -2,7 +2,7 @@
 
 #include "../src/service/node_protocol.h"
 #include "../src/service/node_task_service.h"
-#include "../src/service/subscribe_service.h"
+#include "../src/service/node_session.h"
 
 #include <ve/core/node.h>
 
@@ -10,7 +10,7 @@ using namespace ve;
 
 VE_TEST(node_protocol_get_set_and_list) {
     Node root("root");
-    service::SubscribeService subscribe(&root);
+    service::Session session(&root, {});
     service::NodeTaskService tasks(&root);
 
     Node setReq("req");
@@ -18,7 +18,7 @@ VE_TEST(node_protocol_get_set_and_list) {
     setReq.set("op", "node.set");
     setReq.set("path", "a/value");
     setReq.at("value")->set(Var(42));
-    service::dispatchNodeProtocol(&root, &setReq, &setReply, &subscribe, &tasks);
+    service::dispatchNodeProtocol(&root, &setReq, &setReply, &session, &tasks);
     VE_ASSERT(setReply.get("ok").toBool(false));
     VE_ASSERT_EQ(root.find("a/value")->getInt(), 42);
 
@@ -27,7 +27,7 @@ VE_TEST(node_protocol_get_set_and_list) {
     getReq.set("op", "node.get");
     getReq.set("path", "a/value");
     getReq.set("meta", true);
-    service::dispatchNodeProtocol(&root, &getReq, &getReply, &subscribe, &tasks);
+    service::dispatchNodeProtocol(&root, &getReq, &getReply, &session, &tasks);
     VE_ASSERT(getReply.get("ok").toBool(false));
     Node* getData = getReply.find("data");
     VE_ASSERT(getData != nullptr);
@@ -38,7 +38,7 @@ VE_TEST(node_protocol_get_set_and_list) {
     Node listReply("rep");
     listReq.set("op", "node.list");
     listReq.set("path", "a");
-    service::dispatchNodeProtocol(&root, &listReq, &listReply, &subscribe, &tasks);
+    service::dispatchNodeProtocol(&root, &listReq, &listReply, &session, &tasks);
     VE_ASSERT(listReply.get("ok").toBool(false));
     Node* children = listReply.find("data/children");
     VE_ASSERT(children != nullptr);
@@ -73,7 +73,7 @@ VE_TEST(node_protocol_batch_keeps_item_boundaries) {
 
 VE_TEST(node_protocol_command_run_is_disabled_on_refactor_branch) {
     Node root("root");
-    service::SubscribeService subscribe(&root);
+    service::Session session(&root, {});
     service::NodeTaskService tasks(&root);
 
     Node req("req");
@@ -83,7 +83,7 @@ VE_TEST(node_protocol_command_run_is_disabled_on_refactor_branch) {
     req.set("name", "_test_proto_disabled");
     req.set("wait", false);
 
-    service::dispatchNodeProtocol(&root, &req, &reply, &subscribe, &tasks, 500);
+    service::dispatchNodeProtocol(&root, &req, &reply, &session, &tasks, 500);
     VE_ASSERT(!reply.get("ok").toBool(true));
     VE_ASSERT_EQ(reply.get("code").toString(), std::string("unsupported"));
     VE_ASSERT_EQ(reply.get("error").toString(),

@@ -13,7 +13,7 @@ class Node;
 
 namespace service {
 
-class SubscribeService;
+class Session;
 class NodeTaskService;
 
 using NodeEventFn = std::function<void(const Node&)>;
@@ -33,12 +33,12 @@ VE_API CommandOutcome dispatchCommand(const std::string& name, const Var& args, 
                                       const Var& id = {},
                                       const NodeEventFn& onEvent = {});
 
+// session: per-connection Session (subscriptions). Null on sessionless transports
+// (udp), where subscribe/unsubscribe are reported unsupported.
 VE_API void dispatchNodeProtocol(Node* root, Node* req, Node* rep,
-                                 SubscribeService* subscribe = nullptr,
+                                 Session* session = nullptr,
                                  NodeTaskService* tasks = nullptr,
                                  int batchLimit = 500,
-                                 bool allowSubscriptions = false,
-                                 uint64_t sessionId = 0,
                                  bool allowAsyncEvents = false,
                                  const NodeEventFn& sendEvent = {});
 

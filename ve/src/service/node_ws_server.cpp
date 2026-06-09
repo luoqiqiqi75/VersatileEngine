@@ -2,7 +2,7 @@
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
-#include "subscribe_service.h"
+#include "node_session.h"
 #include "node_protocol.h"
 #include "node_task_service.h"
 #include "server_util.h"
@@ -17,6 +17,8 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 
 namespace ve {
 namespace service {
@@ -43,7 +45,8 @@ struct NodeWsServer::Private
     uint16_t port = 12100;
     asio2::ws_server server;
     std::atomic<int> connCount{0};
-    std::unique_ptr<SubscribeService> subscribeSvc;
+    std::mutex mtx;
+    std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
     std::unique_ptr<NodeTaskService> taskSvc;
 
     void postToSession(uint64_t sid, std::string message)
@@ -55,6 +58,25 @@ struct NodeWsServer::Private
                 }
             });
         });
+    }
+
+    // Creates a Session whose pushes are framed and sent back to this connection.
+    std::unique_ptr<Session> makeSession(uint64_t sid)
+    {
+        return std::make_unique<Session>(root, [this, sid](const std::string& path, const Var& value) {
+            Node event("event");
+            event.set("event", "node.changed");
+            event.set("path", path);
+            event.at("value")->set(value);
+            postToSession(sid, toJson(event));
+        });
+    }
+
+    Session* sessionFor(uint64_t sid)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = sessions.find(sid);
+        return it == sessions.end() ? nullptr : it->second.get();
     }
 };
 
@@ -71,18 +93,14 @@ NodeWsServer::~NodeWsServer()
 
 bool NodeWsServer::start()
 {
-    _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
-    _p->subscribeSvc->setPushCallback([this](uint64_t sessionId, const std::string& path, const Var& value) {
-        Node event("event");
-        event.set("event", "node.changed");
-        event.set("path", path);
-        event.at("value")->set(value);
-        _p->postToSession(sessionId, toJson(event));
-    });
-    _p->subscribeSvc->start();
     _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
 
-    _p->server.bind_connect([this](auto&) {
+    _p->server.bind_connect([this](auto& session_ptr) {
+        auto sid = static_cast<uint64_t>(session_ptr->hash_key());
+        {
+            std::lock_guard<std::mutex> lock(_p->mtx);
+            _p->sessions[sid] = _p->makeSession(sid);
+        }
         _p->connCount.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -100,8 +118,7 @@ bool NodeWsServer::start()
 
         Node reply("rep");
         dispatchNodeProtocol(_p->root, &req, &reply,
-                             _p->subscribeSvc.get(), _p->taskSvc.get(), 500,
-                             true, sid, true,
+                             _p->sessionFor(sid), _p->taskSvc.get(), 500, true,
                              [this, sid](const Node& event) {
                                  _p->postToSession(sid, toJson(event));
                              });
@@ -110,8 +127,9 @@ bool NodeWsServer::start()
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
-        if (_p->subscribeSvc) {
-            _p->subscribeSvc->removeSession(sid);
+        {
+            std::lock_guard<std::mutex> lock(_p->mtx);
+            _p->sessions.erase(sid);   // Session dtor unsubscribes everything
         }
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
@@ -123,9 +141,9 @@ bool NodeWsServer::start()
 void NodeWsServer::stop()
 {
     _p->server.stop();
-    if (_p->subscribeSvc) {
-        _p->subscribeSvc->stop();
-        _p->subscribeSvc.reset();
+    {
+        std::lock_guard<std::mutex> lock(_p->mtx);
+        _p->sessions.clear();
     }
     _p->taskSvc.reset();
 }

@@ -2,7 +2,7 @@
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
-#include "subscribe_service.h"
+#include "node_session.h"
 #include "node_protocol.h"
 #include "node_task_service.h"
 #include "server_util.h"
@@ -51,9 +51,9 @@ struct NodeTcpServer::Private
 
     struct ConnState {
         std::string recvBuf;
+        std::unique_ptr<Session> session;
     };
     std::unordered_map<std::size_t, ConnState> connections;
-    std::unique_ptr<SubscribeService> subscribeSvc;
     std::unique_ptr<NodeTaskService> taskSvc;
 
     void postToSession(uint64_t sid, std::string message)
@@ -64,6 +64,17 @@ struct NodeTcpServer::Private
                     session_ptr->async_send(message);
                 }
             });
+        });
+    }
+
+    std::unique_ptr<Session> makeSession(uint64_t sid)
+    {
+        return std::make_unique<Session>(root, [this, sid](const std::string& path, const Var& value) {
+            Node event("event");
+            event.set("event", "node.changed");
+            event.set("path", path);
+            event.at("value")->set(value);
+            postToSession(sid, toJson(event) + "\n");
         });
     }
 
@@ -104,8 +115,7 @@ struct NodeTcpServer::Private
 
             Node reply("rep");
             dispatchNodeProtocol(root, &req, &reply,
-                                 subscribeSvc.get(), taskSvc.get(), 500,
-                                 true, static_cast<uint64_t>(connKey), true,
+                                 state->session.get(), taskSvc.get(), 500, true,
                                  [this, sid = static_cast<uint64_t>(connKey)](const Node& event) {
                                      postToSession(sid, toJson(event) + "\n");
                                  });
@@ -127,22 +137,13 @@ NodeTcpServer::~NodeTcpServer()
 
 bool NodeTcpServer::start()
 {
-    _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
-    _p->subscribeSvc->setPushCallback([this](uint64_t sessionId, const std::string& path, const Var& value) {
-        Node event("event");
-        event.set("event", "node.changed");
-        event.set("path", path);
-        event.at("value")->set(value);
-        _p->postToSession(sessionId, toJson(event) + "\n");
-    });
-    _p->subscribeSvc->start();
     _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections[key] = {};
+            _p->connections[key].session = _p->makeSession(static_cast<uint64_t>(key));
         }
         _p->connCount.fetch_add(1, std::memory_order_relaxed);
     });
@@ -161,12 +162,9 @@ bool NodeTcpServer::start()
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
-        if (_p->subscribeSvc) {
-            _p->subscribeSvc->removeSession(static_cast<uint64_t>(key));
-        }
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections.erase(key);
+            _p->connections.erase(key);   // Session dtor unsubscribes everything
         }
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
@@ -178,10 +176,6 @@ bool NodeTcpServer::start()
 void NodeTcpServer::stop()
 {
     _p->server.stop();
-    if (_p->subscribeSvc) {
-        _p->subscribeSvc->stop();
-        _p->subscribeSvc.reset();
-    }
     _p->taskSvc.reset();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
