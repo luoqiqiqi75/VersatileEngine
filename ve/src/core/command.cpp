@@ -17,40 +17,32 @@ struct Command::Private
     Node* in_n = nullptr;
     Node* out_n = nullptr;
 
+    Node internal_ctx_n;
+
     Result r;
 };
 
-Command::Command(Node* factory_n) : NodeRef(factory_n), _p(std::make_shared<Private>())
+Command::Command(Node* factory_n, Node* ctx, Node* in, Node* out) : NodeRef(factory_n), _p(std::make_shared<Private>())
 {
     _p->l = factory_n->get("loop").as<Loop*>();
     _p->declare_n = factory_n->find("declare");
     _p->r = Result::fail(-0x10, "command invalid");
-}
 
-Command::Command(Node* factory_n, Node* ctx, Node* in, Node* out) : Command(factory_n)
-{
-    _p->ctx_n = ctx;
+    setContext(ctx);
     setInput(in);
     setOutput(out);
-}
-
-Command::Command(Node* factory_n, Node* ctx) : Command(factory_n)
-{
-    _p->ctx_n = ctx;
-    setInput(ctx->at("in"));
-    setOutput(ctx->at("out"));
 }
 
 Command::~Command() = default;
 
 Node* Command::context() const { return _p->ctx_n; }
-void Command::setContext(Node* ctx_n) { _p->ctx_n = ctx_n; }
+void Command::setContext(Node* ctx_n) { _p->ctx_n = ctx_n ? ctx_n : &_p->internal_ctx_n; }
 
 Node* Command::input() const { return _p->in_n; }
-void Command::setInput(Node* in_n) { _p->in_n = in_n; if (_p->in_n) _p->in_n->setShadow(_p->declare_n); }
+void Command::setInput(Node* in_n) { _p->in_n = in_n ? in_n : _p->ctx_n->at("in"); _p->in_n->setShadow(_p->declare_n); }
 
 Node* Command::output() const { return _p->out_n; }
-void Command::setOutput(Node* out_n) { _p->out_n = out_n; }
+void Command::setOutput(Node* out_n) { _p->out_n = out_n ? out_n : _p->ctx_n->at("out"); }
 
 bool Command::valid() const
 {
@@ -58,10 +50,11 @@ bool Command::valid() const
         && _p->ctx_n != nullptr && _p->in_n != nullptr && _p->out_n != nullptr;
 }
 
-Result Command::run() const
+Command& Command::run()
 {
-    if (!valid()) return Result::fail("command invalid");
-    return node()->get().invoke(_p->ctx_n, _p->in_n, _p->out_n).as<Result>();
+    if (!valid()) _p->r = Result::fail("command invalid");
+    _p->r = node()->get().invoke(_p->ctx_n, _p->in_n, _p->out_n).as<Result>();
+    return *this;
 }
 
 Loop* Command::loop() const { return _p->l; }

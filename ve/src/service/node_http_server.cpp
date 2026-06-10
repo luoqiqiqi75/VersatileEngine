@@ -44,6 +44,35 @@ enum JsonRpcError
     JRpcServerError    = -32000
 };
 
+struct HttpResult : std::pair<http::status, std::string> { using std::pair<http::status, std::string>::pair; };
+struct HttpProcResult : std::pair<Result, Node*> { using std::pair<Result, Node*>::pair; };
+
+}
+
+namespace convert {
+
+template<> bool parse(const service::HttpResult& r, http::web_response& rep)
+{
+    rep.fill_json(r.second, r.first);
+    return true;
+}
+
+template<> bool parse(const service::HttpProcResult& r, http::web_response& rep)
+{
+    Node proto_n;
+    proto_n.set("code", r.first.code);
+    proto_n.set("message", r.first.message);
+    proto_n.at("data")->copy(r.second);
+    http::status status = http::status::ok;
+    if (r.first.isAccepted()) {
+        status = http::status::accepted;
+    } else if (r.first.isError()) {
+        status = static_cast<http::status>(-r.first.code);
+    }
+    service::HttpResult result = { status, schema::exportAs<schema::JsonS>(&proto_n, service::compactJson) };
+    return parse(result, rep);
+}
+
 }
 
 namespace service {
@@ -524,14 +553,18 @@ bool NodeHttpServer::start()
     registerNodeCommands();
     _p->startTime = std::chrono::steady_clock::now();
 
+    auto& http_f = factory::at("standard/http");
+    auto* http_timestamp_fn = ve::command::reg(http_f, "timestamp", ve::convert::to<Proc>([=] {
+        auto elapsed = std::chrono::steady_clock::now() - _p->startTime;
+        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+        return seconds;
+    }));
+
     _p->server.bind<http::verb::get>("/health",
-        [this](http::web_request&, http::web_response& rep) {
-            auto elapsed = std::chrono::steady_clock::now() - _p->startTime;
-            auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
-            Node out("r");
-            out.set("status", "ok");
-            out.set("uptime_s", static_cast<int64_t>(seconds));
-            rep.fill_json(toJson(out), http::status::ok);
+        [=] (http::web_request&, http::web_response& rep) {
+            int s = Command(http_timestamp_fn).run().output()->getInt64();
+            ve::convert::parse(HttpResult(http::status::ok, "\"status\":\"ok\",\"uptime_s\":"
+                + std::to_string(s) + "}"), rep);
         });
 
     _p->server.bind<http::verb::post>("/ve",
@@ -548,20 +581,20 @@ bool NodeHttpServer::start()
             rep.fill_json(toJson(protocolRep), statusFromReply(&protocolRep));
         });
 
-    auto bindAtGet = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
-        Pipeline pipe;
-        pipe.context()->set("http/response", Var::ptr(&rep));
-        Node* request = pipe.context()->at("http/at/request");
-        request->set("path", nodePath);
-        request->set("query", std::string(req.query()));
-        request->set("root", Var::ptr(_p->root));
-        pipe.addProc(atGetRequestToInput, "http/at/request", {});
-        Command cmd = command::create(factory::at("standard/http"), "node.get",
-                                      pipe.context(), nullptr, nullptr);
-        pipe.addCommand(cmd);
-        pipe.onFinished(finishAtGet);
-        pipe.sync();
-    };
+    // auto bindAtGet = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
+    //     Pipeline pipe;
+    //     pipe.context()->set("http/response", Var::ptr(&rep));
+    //     Node* request = pipe.context()->at("http/at/request");
+    //     request->set("path", nodePath);
+    //     request->set("query", std::string(req.query()));
+    //     request->set("root", Var::ptr(_p->root));
+    //     pipe.addProc(atGetRequestToInput, "http/at/request", {});
+    //     Command cmd = command::create(factory::at("standard/http"), "node.get",
+    //                                   pipe.context(), nullptr, nullptr);
+    //     pipe.addCommand(cmd);
+    //     pipe.onFinished(finishAtGet);
+    //     pipe.sync();
+    // };
 
     auto bindAtPut = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
         std::string body(req.body());
@@ -674,14 +707,17 @@ bool NodeHttpServer::start()
         }
     };
 
-    _p->server.bind<http::verb::get>("/at",
-        [bindAtGet](http::web_request& req, http::web_response& rep) {
-            bindAtGet("", req, rep);
-        });
-    _p->server.bind<http::verb::get>("/at/*",
-        [bindAtGet](http::web_request& req, http::web_response& rep) {
-            bindAtGet(stripPrefix(req.path(), "/at"), req, rep);
-        });
+    // at commands
+    _p->server.bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request& req, http::web_response& rep) {
+        ve::convert::parse(HttpProcResult(Result::ok(), root_n), rep);
+    });
+    _p->server.bind<http::verb::get>("/at/*", [root_n = _p->root] (http::web_request& req, http::web_response& rep) {
+        auto sv = req.path();
+        sv.remove_prefix(3);
+        Node* tar_n = root_n->atPath(sv, false, VE_NODE_PATH_SEP, HTTP_KEY_SEP);
+        ve::convert::parse(HttpProcResult(tar_n ? Result::ok() : Result::fail(http::status::not_found,
+            "node not found: " + std::string(req.path())), tar_n), rep);
+    });
     _p->server.bind<http::verb::post>("/at",
         [bindAtPost](http::web_request& req, http::web_response& rep) {
             bindAtPost("", req, rep);
