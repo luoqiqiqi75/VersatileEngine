@@ -31,7 +31,8 @@
 namespace ve {
 namespace convert {
 
-template<> bool parse(Node* n, ve::service::TerminalReplServer::Options& opt) {
+// plain overload; const Node* — the config passed in is const
+static bool parse(const Node* n, ve::service::TerminalReplServer::Options& opt) {
     opt.banner = n->get("banner").toBool();
     opt.title = n->get("title").toBool();
     opt.prompt_color = n->get("prompt_color").toBool();

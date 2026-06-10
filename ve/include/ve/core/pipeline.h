@@ -8,13 +8,6 @@
 
 namespace ve {
 
-class Pipeline;
-
-namespace pipeline {
-// (declared again below with defaults; this form is what Pipeline friends)
-VE_API void async(Pipeline&& p, Loop* driver, std::function<void(Pipeline&)> cb);
-} // namespace pipeline
-
 // Pipeline is a copyable handle over a shared execution graph.
 // It does NOT inherit Object (so it stays freely copyable/movable); completion
 // is reported purely through the Callback. The shared Private keeps the graph
@@ -22,52 +15,49 @@ VE_API void async(Pipeline&& p, Loop* driver, std::function<void(Pipeline&)> cb)
 class VE_API Pipeline
 {
 public:
-    enum State : uint8_t { IDLE, RUNNING, DONE, ERRORED };
-
-    enum Error : int {
-        ERR_NONE = 0,
-        ERR_NO_CTX,
-        ERR_NO_STEP_PROC,
-        ERR_CANCELLED,
-        ERR_EXCEPTION
-    };
-
+    using Handle = Node*;
     using Callback = std::function<void(Pipeline&)>;
 
-    explicit Pipeline(const Node* initialCtx = nullptr);
+    enum StateSignal : int
+    {
+        IDLE        =   0x00,   // no emit
+        PREPARE     =   0x10,
+        STARTED     =   0x10,
+        CANCELLED   =   0x11,
+        FINISHED    =   0x20,
+        ERRORED     =   0x40
+    };
+
+public:
+    explicit Pipeline(const Node* ctx = nullptr);
     ~Pipeline();
 
-    Pipeline(const Pipeline&) = default;
-    Pipeline& operator=(const Pipeline&) = default;
-    Pipeline(Pipeline&&) = default;
-    Pipeline& operator=(Pipeline&&) = default;
+    Node* contextNode() const;
+    Node* inputNode() const;
+    Node* outputNode() const;
 
-    void addProc(Proc proc, const std::string& inPath, const std::string& outPath,
-                 Loop* loop = nullptr);
-    void addCommand(Command command, Loop* loop = nullptr);
-    void addCtxProc(Proc proc, Loop* loop = nullptr);
-    void addLinearProc(Proc proc, Loop* loop = nullptr);
+    // command link
+    Handle add(Command command);
+    Handle addProc(Proc proc, Loop* loop = nullptr);
 
-    void onFinished(Callback cb);
-
-    // Blocking run on the calling thread. Loop-less steps complete inline; if a
-    // step hops to another loop, the calling thread pumps `driver` (or yields)
-    // until the graph finishes. Pass the loop driving the current thread.
-    void sync(Loop* driver = nullptr);
-
+    // state control
     void cancel();
 
-    Node* context() const;
-    State state() const;
-    const Result& lastResult() const;
+    template<StateSignal SS> void on(Object* observer, Callback cb, Loop* loop = nullptr);
+
+    void onPrepare(Object* observer, Callback cb, Loop* loop = nullptr) { on<PREPARE>(observer, cb, loop); }
+    void onStarted(Object* observer, Callback cb, Loop* loop = nullptr) { on<STARTED>(observer, cb, loop); }
+    void onCanceled(Object* observer, Callback cb, Loop* loop = nullptr) { on<CANCELLED>(observer, cb, loop); }
+    void onFinished(Object* observer, Callback cb, Loop* loop = nullptr) { on<FINISHED>(observer, cb, loop); }
+    void onErrored(Object* observer, Callback cb, Loop* loop = nullptr) { on<ERRORED>(observer, cb, loop); }
+
+    // exec
+    void async();
+    void sync(Loop* cur_l = nullptr);
+
+    const Result& result() const;
 
 private:
-    friend void pipeline::async(Pipeline&&, Loop*, std::function<void(Pipeline&)>);
-
-    void run(Loop* driver, bool deferFirst);
-    void dispatch(int slot);
-    void complete(State state);
-
     VE_DECLARE_SHARED_PRIVATE
 };
 
@@ -77,7 +67,7 @@ namespace pipeline {
 // dispatch is posted to `driver` (defaults to loop::main()), and the shared graph
 // keeps itself alive until completion, then frees automatically. If cb is given
 // it becomes the completion callback; otherwise any onFinished callback is kept.
-VE_API void async(Pipeline&& p, Loop* driver = nullptr, Pipeline::Callback cb = {});
+// VE_API void async(Pipeline&& p, Loop* driver = nullptr, Pipeline::Callback cb = {});
 
 } // namespace pipeline
 

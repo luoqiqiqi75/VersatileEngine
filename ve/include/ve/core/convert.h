@@ -9,7 +9,11 @@
 //  Dependency: base.h only.  Does NOT depend on var.h.
 //  Include order: base.h ← convert.h ← var.h
 //
-//  convert::parse<From, To>   — user extension point (specialize for your types)
+//  convert::parse(From, To&)  — user extension point: write a PLAIN OVERLOAD
+//    (never template<> — function template specializations don't participate
+//    in overload resolution and silently fall back to the primary).
+//    Declare the overload in the type's own namespace so ADL finds it from
+//    anywhere (incl. template contexts), or in ve::convert before first use.
 //  Convert<T>                 — SFINAE-dispatched: toString/fromString/toBin/fromBin
 //    primary                  → unknown types (delegates to convert::parse)
 //    is_numeric partial       → bool, int, int64_t, double, float, ...
@@ -18,9 +22,11 @@
 //
 //  Example — making MyPoint convertible:
 //
-//    template<> bool ve::convert::parse(const MyPoint& p, std::string& out) {
+//    namespace my {                       // MyPoint's namespace (ADL)
+//    inline bool parse(const MyPoint& p, std::string& out) {
 //        out = std::to_string(p.x) + "," + std::to_string(p.y);
 //        return true;
+//    }
 //    }
 //    // Now: Var(MyPoint{1,2}).toString() → "1,2"
 //
@@ -32,7 +38,7 @@ namespace ve {
 
 namespace convert {
 
-template<typename From, typename To> bool parse(From, To) { return false; } // impl
+template<typename From, typename To> bool parse(const From&, To&) { return false; } // fallback, lowest priority
 
 template<typename To, typename From> inline To to(const From& from) { To v; parse(from, v); return v; }
 template<typename To, typename From> inline To to(const From& from, const To& default_v) { To v; return parse(from, v) ? v : default_v; }
@@ -49,11 +55,13 @@ struct Convert {
         return convert::to(v, std::string("[") + basic::_t_demangle(typeid(T).name()) + "]");
     }
     static bool fromString(const std::string& s, T& out) {
-        return convert::parse(s, out);
+        using convert::parse;       // two-step: ADL finds overloads in T's namespace
+        return parse(s, out);
     }
     static Bytes toBin(const T& v) {
         Bytes out;
-        if (convert::parse(v, out)) return out;
+        using convert::parse;
+        if (parse(v, out)) return out;
         if constexpr (std::is_trivially_copyable_v<T> && sizeof(T) <= 64) {
             Bytes b(sizeof(T));
             std::memcpy(b.data(), &v, sizeof(T));
@@ -65,7 +73,8 @@ struct Convert {
     }
 
     static bool fromBin(const Bytes& b, T& out) {
-        if (convert::parse(b, out)) return true;
+        using convert::parse;
+        if (parse(b, out)) return true;
         if constexpr (std::is_trivially_copyable_v<T> && sizeof(T) <= 64) {
             if (b.size() != sizeof(T)) return false;
             std::memcpy(&out, b.data(), sizeof(T));

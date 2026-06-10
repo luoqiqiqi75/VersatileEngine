@@ -44,40 +44,70 @@ using Proc = std::function<Result(Node* ctx, Node* in, Node* out)>;
 namespace convert
 {
 
-// always ok
+namespace detail {
 
-template<> inline bool parse(std::function<void()> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { f(); return Result::ok(); }; return true; }
+// Generic callable -> Proc (the same indexed unpack as Var::wrapCallableIndexed):
+// in is exported once as VarS and treated as the argument list — arg I comes
+// from args[I].as<ArgT>(). The return value, unless Result/void, is imported
+// onto out as VarS; the Proc's own Result is always ok.
+template<typename F, std::size_t... I>
+inline Proc wrapProc(F f, std::index_sequence<I...>)
+{
+    using T = basic::FnTraits<std::decay_t<F>>;
+    using Ret = typename T::RetT;
+    static_assert((!std::is_same_v<basic::_t_bare<typename T::template ArgAt<I>>, Node> && ...),
+        "Node* args must be Result(Node* in, Node* out) or Result(Node*, Node*, Node*)");
+    return [f = std::move(f)] (Node*, Node* in, Node* out) -> Result {
+        [[maybe_unused]] Var args;
+        if constexpr (sizeof...(I) > 0) args = schema::exportAs<schema::VarS>(in);
+        if constexpr (std::is_void_v<Ret>) {
+            f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...);
+            return Result::ok();
+        } else if constexpr (std::is_same_v<Ret, Result>) {
+            return f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...);
+        } else {
+            schema::importAs<schema::VarS>(out, Var(f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...)));
+            return Result::ok();
+        }
+    };
+}
 
-template<> inline bool parse(std::function<Var()> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { out->set(f()); return Result::ok(); }; return true; }
+} // namespace detail
 
-template<> inline bool parse(std::function<void(const Var& v)> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { f(in->get()); return Result::ok(); }; return true; }
+// Any callable -> Proc, dispatched on its real signature via FnTraits.
+//   Result(Node*, Node*, Node*)   already a Proc, assigned as-is
+//   Result(Node* in, Node* out)   Proc without ctx
+//   anything else                 args unpacked from in (VarS list, arg I =
+//                                 args[I].as<ArgT>()); a non-Result return is
+//                                 imported onto out as VarS, Result is ok.
+//   e.g. [](int a, int b) { return a + b; }   reads in/0 + in/1, writes out
+template<typename F, std::enable_if_t<basic::Meta<std::decay_t<F>>::is_callable
+    && !std::is_member_function_pointer_v<std::decay_t<F>>, int> = 0>
+inline bool parse(F f, Proc& p)
+{
+    using T = basic::FnTraits<std::decay_t<F>>;
+    constexpr bool ret_result = std::is_same_v<typename T::RetT, Result>;
 
-template<> inline bool parse(std::function<void(const Var& v1, const Var& v2)> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { f(in->get(0), in->get(1)); return Result::ok(); }; return true; }
-
-template<> inline bool parse(std::function<Var(const Var& v)> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { out->set(f(in->get())); return Result::ok(); }; return true; }
-
-template<> inline bool parse(std::function<Var(const Var& v1, const Var& v2)> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { out->set(f(in->get(0), in->get(1))); return Result::ok(); }; return true; }
-
-// use result
-
-template<> inline bool parse(std::function<Result(const Var& v_in)> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result {
-    return f(schema::exportAs<schema::VarS>(in));
-}; return true; }
-
-template<> inline bool parse(std::function<Result(const Var& v_in, Var& v_out)> f, Proc& p)
-{ p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result {
-    Var v;
-    Result r = f(schema::exportAs<schema::VarS>(in), v);
-    schema::importAs<schema::VarS>(out, v);
-    return r;
-}; return true; }
+    if constexpr (T::ArgCnt == 3) {
+        if constexpr (ret_result
+            && std::is_same_v<typename T::template ArgAt<0>, Node*>
+            && std::is_same_v<typename T::template ArgAt<1>, Node*>
+            && std::is_same_v<typename T::template ArgAt<2>, Node*>)
+            p = std::move(f);
+        else
+            p = detail::wrapProc(std::move(f), std::make_index_sequence<3>{});
+    } else if constexpr (T::ArgCnt == 2) {
+        if constexpr (ret_result
+            && std::is_same_v<typename T::template ArgAt<0>, Node*>
+            && std::is_same_v<typename T::template ArgAt<1>, Node*>)
+            p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { return f(in, out); };
+        else
+            p = detail::wrapProc(std::move(f), std::make_index_sequence<2>{});
+    } else {
+        p = detail::wrapProc(std::move(f), std::make_index_sequence<T::ArgCnt>{});
+    }
+    return true;
+}
 
 }
 
@@ -87,17 +117,15 @@ public:
     using Callback = std::function<void(Command&)>;
 
 public:
-    explicit Command(Node* factory_n, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr);
+    explicit Command(Node* factory_n, Node* ctx_n = nullptr, Node* in_n = nullptr, Node* out_n = nullptr);
     ~Command();
 
     std::string help() const { return node()->get("help").toString(); } // global
 
-    Node* context() const;
-    void setContext(Node* ctx_n);
-    Node* input() const;
-    void setInput(Node* in_n);
-    Node* output() const;
-    void setOutput(Node* out_n);
+    Node* contextNode() const;
+    Node* inputNode() const;
+    Node* outputNode() const;
+    void setContextNodes(Node* ctx_n, Node* in_n, Node* out_n);
 
     bool valid() const;
 
@@ -108,7 +136,7 @@ public:
 
     Result result() const;
 
-    void call(Callback cb, Loop* loop = nullptr) const;
+    void call(Callback cb, Loop* cb_loop = nullptr) const;
 
 private:
     VE_DECLARE_SHARED_PRIVATE
@@ -118,14 +146,24 @@ namespace command {
 
 VE_API Factory& factory();
 
-inline auto reg(Factory& f, const std::string& key, Proc proc)
+// Register any callable: plain functions/lambdas are adapted to Proc via
+// convert::parse(F, Proc&) above (Proc-shaped callables pass straight through).
+template<typename F>
+inline auto reg(Factory& f, const std::string& key, F&& fn)
 {
-    return f.reg(key, Var::callable(std::move(proc)));
+    Proc p;
+    convert::parse(std::forward<F>(fn), p);
+    return f.reg(key, Var::callable(std::move(p)));
+}
+template<typename F>
+inline auto reg(const std::string& key, F&& fn)
+{
+    return reg(factory(), key, std::forward<F>(fn));
 }
 
-inline Command create(const Factory& factory, const std::string& key, Node* ctx, Node* in, Node* out, char sep = VE_FACTORY_KEY_SEP)
+inline Command create(const Factory& factory, const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
 { return Command(factory.node(key, sep), ctx, in, out); }
-inline Command create(const std::string& key, Node* ctx, Node* in, Node* out, char sep = VE_FACTORY_KEY_SEP)
+inline Command create(const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
 { return create(factory(), key, ctx, in, out, sep); }
 
 } // namespace command

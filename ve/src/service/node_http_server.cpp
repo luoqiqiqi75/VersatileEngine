@@ -44,33 +44,36 @@ enum JsonRpcError
     JRpcServerError    = -32000
 };
 
-struct HttpResult : std::pair<http::status, std::string> { using std::pair<http::status, std::string>::pair; };
-struct HttpProcResult : std::pair<Result, Node*> { using std::pair<Result, Node*>::pair; };
+struct HttpRep : std::pair<http::status, std::string>
+{
+    using std::pair<http::status, std::string>::pair;
+    explicit HttpRep() { first = http::status::ok; }
+};
+struct HttpResultRep : std::pair<Result, Node*>
+{
+    using std::pair<Result, Node*>::pair;
+    explicit HttpResultRep(Result&& r) { first = std::move(r); second = nullptr; }
+    explicit HttpResultRep(Node* n) { first = Result::ok(); second = n; }
+};
 
 }
 
 namespace convert {
 
-template<> bool parse(const service::HttpResult& r, http::web_response& rep)
+static bool parse(const service::HttpRep& r, http::web_response& rep)
 {
     rep.fill_json(r.second, r.first);
     return true;
 }
 
-template<> bool parse(const service::HttpProcResult& r, http::web_response& rep)
+static bool parse(const service::HttpResultRep& r, http::web_response& rep)
 {
     Node proto_n;
     proto_n.set("code", r.first.code);
     proto_n.set("message", r.first.message);
     proto_n.at("data")->copy(r.second);
-    http::status status = http::status::ok;
-    if (r.first.isAccepted()) {
-        status = http::status::accepted;
-    } else if (r.first.isError()) {
-        status = static_cast<http::status>(-r.first.code);
-    }
-    service::HttpResult result = { status, schema::exportAs<schema::JsonS>(&proto_n, service::compactJson) };
-    return parse(result, rep);
+    http::status status = r.first.isAccepted() ? http::status::accepted : http::status::ok; // always ok
+    return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, service::compactJson) }, rep);
 }
 
 }
@@ -90,17 +93,6 @@ static void fillError(Node* rep, const std::string& code, const std::string& err
     rep->set("ok", false);
     rep->set("code", code);
     rep->set("error", error);
-}
-
-static std::string stripPrefix(std::string_view path, std::string_view prefix)
-{
-    if (path.size() >= prefix.size() && path.substr(0, prefix.size()) == prefix) {
-        path.remove_prefix(prefix.size());
-    }
-    while (!path.empty() && path.front() == '/') {
-        path.remove_prefix(1);
-    }
-    return std::string(path);
 }
 
 static std::string getQueryParam(std::string_view query, std::string_view key)
@@ -551,23 +543,110 @@ bool NodeHttpServer::start()
 {
     registerHttpBuiltins();
     registerNodeCommands();
-    _p->startTime = std::chrono::steady_clock::now();
 
     auto& http_f = factory::at("standard/http");
-    auto* http_timestamp_fn = ve::command::reg(http_f, "timestamp", ve::convert::to<Proc>([=] {
-        auto elapsed = std::chrono::steady_clock::now() - _p->startTime;
-        auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
-        return seconds;
-    }));
 
-    _p->server.bind<http::verb::get>("/health",
-        [=] (http::web_request&, http::web_response& rep) {
-            int s = Command(http_timestamp_fn).run().output()->getInt64();
-            ve::convert::parse(HttpResult(http::status::ok, "\"status\":\"ok\",\"uptime_s\":"
-                + std::to_string(s) + "}"), rep);
+    { // health protocol
+        _p->startTime = std::chrono::steady_clock::now();
+
+        auto* http_timestamp_fn = ve::command::reg(http_f, "timestamp", [=] {
+            auto elapsed = std::chrono::steady_clock::now() - _p->startTime;
+            auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+            return seconds;
         });
 
-    _p->server.bind<http::verb::post>("/ve",
+        _p->server.bind<http::verb::get>("/health", [=] (http::web_request&, http::web_response& rep) {
+            int s = Command(http_timestamp_fn).run().output()->getInt64();
+            convert::parse(HttpRep(http::status::ok, "\"status\":\"ok\",\"uptime_s\":" + std::to_string(s) + "}"), rep);
+        });
+    }
+
+    { // at protocol
+        auto tar_n_f = [root_n = _p->root] (http::web_request& req, http::web_response& rep) {
+            auto sv = req.path();
+            sv.remove_prefix(4); // /at/
+            Node* tar_n = root_n->atPath(sv, false, VE_NODE_PATH_SEP, HTTP_KEY_SEP);
+            if (!tar_n) convert::parse(HttpRep{http::status::not_found, "node not found"}, rep);
+            return tar_n;
+        };
+
+        // export tree
+        _p->server.bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request&, http::web_response& rep) {
+            convert::parse(HttpResultRep(root_n), rep);
+        });
+        _p->server.bind<http::verb::get>("/at/*", [=] (http::web_request& req, http::web_response& rep) {
+            if (const auto tar_n = tar_n_f(req, rep)) convert::parse(HttpResultRep(tar_n), rep);
+        });
+
+        // import tree
+        // _p->server.bind<http::verb::put>("/at", [] (http::web_request& req, http::web_response& rep) {
+        //     convert::parse(HttpResult(http::status::forbidden, "forbid to import whole node tree"), rep);
+        // });
+        _p->server.bind<http::verb::put>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
+            if (const auto tar_n = tar_n_f(req, rep)) {
+                if (schema::importAs<schema::JsonS>(tar_n, req.body())) { // without deletion
+                    convert::parse(HttpRep(), rep);
+                } else {
+                    convert::parse(HttpResultRep(Result::fail(JRpcParseError, "invalid json")), rep); // todo error code control
+                }
+            }
+        });
+
+        // _p->server.bind<http::verb::post>("/at", [] (http::web_request&, http::web_response& rep) {
+        //     convert::parse(HttpResult(http::status::forbidden, "forbid to import whole node tree"), rep);
+        // });
+        _p->server.bind<http::verb::post>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
+            if (auto const tar_n = tar_n_f(req, rep)) {
+                if (schema::importAs<schema::JsonS>(tar_n, req.body(), schema::ImportOptions { true, true, false})) { // with deletion
+                    convert::parse(HttpRep(), rep);
+                } else {
+                    convert::parse(HttpResultRep(Result::fail(JRpcParseError, "invalid json")), rep); // todo error code control
+                }
+            }
+        });
+
+        _p->server.bind<http::verb::delete_>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
+            if (auto const tar_n = tar_n_f(req, rep)) {
+                if (tar_n->parent()->remove(tar_n)) {
+                    convert::parse(HttpRep(), rep);
+                } else {
+                    convert::parse(HttpResultRep{Result::fail(JRpcInternalError, "failed")}, rep);
+                }
+            }
+        });
+    }
+
+    { // cmd protocol
+        _p->server.bind<http::verb::post>("/cmd/*", [] (http::web_request& req, http::web_response& rep) {
+            auto cmd_sv = req.path();
+            cmd_sv.remove_prefix(5); // /cmd/
+            std::string cmd_key(cmd_sv);
+            if (!command::factory().has(cmd_key)) {
+                convert::parse(HttpResultRep(Result::fail(JRpcMethodNotFound, "unkonwn command")), rep);
+                return;
+            }
+
+            Node ctx("_ctx");
+            prepareHttpCommandContext(&ctx, cmdKey, req, rep, _p->root);
+
+
+            Pipeline pipe(&ctx);
+            pipe.addProc(httpRequestToInput, "http/request", {});
+            pipe.addCommand(command::create(cmdKey, pipe.context(), nullptr, nullptr));
+            pipe.addProc(outputToHttpResponse, "reply", "http/render");
+
+            if (queryBool(req.query(), "async", false)) {
+                auto guard = rep.defer();   // hold the response open until completion
+                pipeline::async(std::move(pipe), nullptr, [guard](Pipeline& p) { finishHttpPipeline(p); });
+            } else {
+                pipe.onFinished(finishHttpPipeline);
+                pipe.sync();
+            }
+        });
+    }
+
+    { // ve standard protocol
+        _p->server.bind<http::verb::post>("/ve",
         [this](http::web_request& req, http::web_response& rep) {
             Node protocolReq("req");
             if (!schema::importAs<schema::JsonS>(&protocolReq, std::string(req.body()))) {
@@ -580,175 +659,15 @@ bool NodeHttpServer::start()
             _p->handleVe(&protocolReq, &protocolRep);
             rep.fill_json(toJson(protocolRep), statusFromReply(&protocolRep));
         });
+    }
 
-    // auto bindAtGet = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
-    //     Pipeline pipe;
-    //     pipe.context()->set("http/response", Var::ptr(&rep));
-    //     Node* request = pipe.context()->at("http/at/request");
-    //     request->set("path", nodePath);
-    //     request->set("query", std::string(req.query()));
-    //     request->set("root", Var::ptr(_p->root));
-    //     pipe.addProc(atGetRequestToInput, "http/at/request", {});
-    //     Command cmd = command::create(factory::at("standard/http"), "node.get",
-    //                                   pipe.context(), nullptr, nullptr);
-    //     pipe.addCommand(cmd);
-    //     pipe.onFinished(finishAtGet);
-    //     pipe.sync();
-    // };
+    { // jsonrpc protocol
+        _p->server.bind<http::verb::post>("/jsonrpc", [this](http::web_request& req, http::web_response& rep) {
+           rep.fill_json(_p->handleJsonRpc(std::string(req.body())), http::status::ok);
+       });
+    }
 
-    auto bindAtPut = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
-        std::string body(req.body());
-        if (body.empty()) {
-            Node protocolRep("rep");
-            fillError(&protocolRep, "invalid_params", "request body is required");
-            rep.fill_json(toJson(protocolRep), http::status::bad_request);
-            return;
-        }
-
-        Node* target = _p->root->atPath(nodePath, true, '/', HTTP_KEY_SEP);
-        schema::ImportOptions options;
-        options.auto_insert = queryBool(req.query(), "auto_insert", true);
-        options.auto_remove = queryBool(req.query(), "auto_remove", false);
-        options.auto_update = queryBool(req.query(), "auto_update", false);
-        if (!schema::importAs<schema::JsonS>(target, body, options)) {
-            Node protocolRep("rep");
-            fillError(&protocolRep, "invalid_request", "invalid JSON body");
-            rep.fill_json(toJson(protocolRep), http::status::bad_request);
-            return;
-        }
-
-        Node out("r");
-        out.set("ok", true);
-        out.set("path", target->path(_p->root));
-        rep.fill_json(toJson(out), http::status::ok);
-    };
-
-    auto bindAtPost = [this](const std::string& nodePath, http::web_request& req, http::web_response& rep) {
-        const bool trigger = queryBool(req.query(), "trigger", false);
-        std::string body(req.body());
-        Node* target = (trigger || body.empty())
-            ? const_cast<const Node*>(_p->root)->atPath(nodePath, false, '/', HTTP_KEY_SEP)
-            : _p->root->atPath(nodePath, true, '/', HTTP_KEY_SEP);
-
-        if (!target) {
-            Node protocolRep("rep");
-            fillError(&protocolRep, "not_found", "node not found");
-            rep.fill_json(toJson(protocolRep), http::status::not_found);
-            return;
-        }
-
-        if (trigger || body.empty()) {
-            target->trigger<Node::NODE_CHANGED>();
-            if (target->isWatching()) {
-                target->activate(Node::NODE_CHANGED, target);
-            }
-        } else {
-            target->set(impl::json::parse(body));
-        }
-
-        Node out("r");
-        out.set("ok", true);
-        out.set("path", target->path(_p->root));
-        rep.fill_json(toJson(out), http::status::ok);
-    };
-
-    auto bindAtDelete = [this](const std::string& nodePath, http::web_response& rep) {
-        if (nodePath.empty()) {
-            Node reply("rep");
-            fillError(&reply, "invalid_params", "cannot remove root");
-            rep.fill_json(toJson(reply), http::status::bad_request);
-            return;
-        }
-        Node* target = const_cast<const Node*>(_p->root)->atPath(nodePath, false, '/', HTTP_KEY_SEP);
-        if (!target || !target->parent() || !target->parent()->remove(target)) {
-            Node reply("rep");
-            fillError(&reply, "not_found", "node not found");
-            rep.fill_json(toJson(reply), http::status::not_found);
-            return;
-        }
-        Node out("r");
-        out.set("ok", true);
-        out.set("path", nodePath);
-        rep.fill_json(toJson(out), http::status::ok);
-    };
-
-    auto bindCmdPost = [this](const std::string& rawCmdKey, http::web_request& req, http::web_response& rep) {
-        std::string cmdKey = rawCmdKey;
-        if (cmdKey.empty()) {
-            Node reply("rep");
-            fillError(&reply, "invalid_params", "command key required");
-            rep.fill_json(toJson(reply), http::status::bad_request);
-            return;
-        }
-        if (!command::factory().has(cmdKey)) {
-            Node reply("rep");
-            fillError(&reply, "not_found", "unknown command: " + cmdKey);
-            rep.fill_json(toJson(reply), http::status::not_found);
-            return;
-        }
-
-        Node ctx("_ctx");
-        prepareHttpCommandContext(&ctx, cmdKey, req, rep, _p->root);
-
-        // Same pipeline (parse -> command -> render) either way; async defers the
-        // HTTP response (releases the network thread) and replies when the command
-        // finishes, sync runs it inline. No task node, no task service.
-        Pipeline pipe(&ctx);
-        pipe.addProc(httpRequestToInput, "http/request", {});
-        pipe.addCommand(command::create(cmdKey, pipe.context(), nullptr, nullptr));
-        pipe.addProc(outputToHttpResponse, "reply", "http/render");
-
-        if (queryBool(req.query(), "async", false)) {
-            auto guard = rep.defer();   // hold the response open until completion
-            pipeline::async(std::move(pipe), nullptr, [guard](Pipeline& p) { finishHttpPipeline(p); });
-        } else {
-            pipe.onFinished(finishHttpPipeline);
-            pipe.sync();
-        }
-    };
-
-    // at commands
-    _p->server.bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request& req, http::web_response& rep) {
-        ve::convert::parse(HttpProcResult(Result::ok(), root_n), rep);
-    });
-    _p->server.bind<http::verb::get>("/at/*", [root_n = _p->root] (http::web_request& req, http::web_response& rep) {
-        auto sv = req.path();
-        sv.remove_prefix(3);
-        Node* tar_n = root_n->atPath(sv, false, VE_NODE_PATH_SEP, HTTP_KEY_SEP);
-        ve::convert::parse(HttpProcResult(tar_n ? Result::ok() : Result::fail(http::status::not_found,
-            "node not found: " + std::string(req.path())), tar_n), rep);
-    });
-    _p->server.bind<http::verb::post>("/at",
-        [bindAtPost](http::web_request& req, http::web_response& rep) {
-            bindAtPost("", req, rep);
-        });
-    _p->server.bind<http::verb::post>("/at/*",
-        [bindAtPost](http::web_request& req, http::web_response& rep) {
-            bindAtPost(stripPrefix(req.path(), "/at"), req, rep);
-        });
-    _p->server.bind<http::verb::put>("/at",
-        [bindAtPut](http::web_request& req, http::web_response& rep) {
-            bindAtPut("", req, rep);
-        });
-    _p->server.bind<http::verb::put>("/at/*",
-        [bindAtPut](http::web_request& req, http::web_response& rep) {
-            bindAtPut(stripPrefix(req.path(), "/at"), req, rep);
-        });
-    _p->server.bind<http::verb::delete_>("/at/*",
-        [bindAtDelete](http::web_request& req, http::web_response& rep) {
-            bindAtDelete(stripPrefix(req.path(), "/at"), rep);
-        });
-    _p->server.bind<http::verb::post>("/cmd/*",
-        [bindCmdPost](http::web_request& req, http::web_response& rep) {
-            bindCmdPost(stripPrefix(req.path(), "/cmd"), req, rep);
-        });
-
-    _p->server.bind<http::verb::post>("/jsonrpc",
-        [this](http::web_request& req, http::web_response& rep) {
-            rep.fill_json(_p->handleJsonRpc(std::string(req.body())), http::status::ok);
-        });
-
-    _p->server.bind_not_found([](http::web_request&, http::web_response& rep) {
+    _p->server.bind_not_found([] (http::web_request&, http::web_response& rep) {
         Node reply("rep");
         fillError(&reply, "not_found", "not found");
         rep.fill_json(toJson(reply), http::status::not_found);

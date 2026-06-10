@@ -34,39 +34,39 @@ inline QString varToQString(const Var& v) { return varToQVariant(v).toString(); 
 namespace ve::convert {
 
 // QString <-> std::string
-template<> inline bool parse(const QString& from, std::string& out)
+inline bool parse(const QString& from, std::string& out)
 {
     out = ve::qt::qStringToUtf8(from);
     return true;
 }
 
-template<> inline bool parse(const std::string& from, QString& out)
+inline bool parse(const std::string& from, QString& out)
 {
     out = ve::qt::utf8ToQString(from);
     return true;
 }
 
 // Var <-> QString
-template<> inline bool parse(const Var& from, QString& out)
+inline bool parse(const Var& from, QString& out)
 {
     out = ve::qt::utf8ToQString(from.toString());
     return true;
 }
 
-template<> inline bool parse(const QString& from, Var& out)
+inline bool parse(const QString& from, Var& out)
 {
     out = Var(ve::qt::qStringToUtf8(from));
     return true;
 }
 
 // Var <-> QVariant
-template<> inline bool parse(const Var& from, QVariant& out)
+inline bool parse(const Var& from, QVariant& out)
 {
     out = ve::qt::varToQVariant(from);
     return true;
 }
 
-template<> inline bool parse(const QVariant& from, Var& out)
+inline bool parse(const QVariant& from, Var& out)
 {
     out = ve::qt::qVariantToVar(from);
     return true;

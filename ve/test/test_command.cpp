@@ -13,15 +13,6 @@
 
 using namespace ve;
 
-namespace {
-
-static Command makeCommand(const std::string& key, Node* ctx, Node* in, Node* out)
-{
-    return command::create(key, ctx, in, out);
-}
-
-} // namespace
-
 VE_TEST(result_code_segments)
 {
     Result ok = Result::ok();
@@ -55,13 +46,113 @@ VE_TEST(factory_reg_proc_and_command_run)
     Node* out = ctx.at("out");
     in->set(7);
 
-    Command cmd = makeCommand("_test_cmd_add", &ctx, in, out);
+    Command cmd = command::create("_test_cmd_add", &ctx, in, out);
     VE_ASSERT(cmd.valid());
     VE_ASSERT_EQ(cmd.help(), std::string("add five"));
 
-    Result r = cmd.run();
+    Result r = cmd.run().result();   // run() is chainable, result() reads back
     VE_ASSERT(r.isSuccess());
     VE_ASSERT_EQ(out->get().toInt(), 12);
+}
+
+VE_TEST(command_single_step_run_with_internal_context)
+{
+    // The /health idiom: a single-step sync command needs no pipeline and no
+    // external ctx — Command(fn) defaults ctx to its internal node, in/out to
+    // ctx/in and ctx/out, and run() chains straight into output().
+    auto* fn = command::reg(command::factory(), "_test_single_inc",
+        [](Node*, Node* in, Node* out) -> Result {
+            out->set(in->get().toInt(0) + 1);
+            return Result::ok();
+        });
+
+    Command cmd(fn);
+    VE_ASSERT(cmd.valid());
+    VE_ASSERT(cmd.context() != nullptr);
+    VE_ASSERT_EQ(cmd.input(), cmd.context()->at("in"));
+    VE_ASSERT_EQ(cmd.output(), cmd.context()->at("out"));
+
+    cmd.input()->set(41);
+    VE_ASSERT_EQ(cmd.run().output()->getInt(), 42);
+    VE_ASSERT(cmd.result().isSuccess());
+}
+
+VE_TEST(convert_parse_selects_callable_overload)
+{
+    // The FnTraits overload must actually be selected: an unmatched
+    // convert::parse falls back to the primary template and leaves the Proc empty.
+    Proc p0;
+    VE_ASSERT(convert::parse([] {}, p0));
+    VE_ASSERT(p0 != nullptr);
+
+    Proc p1;
+    VE_ASSERT(convert::parse([]() -> int64_t { return 1; }, p1));   // any Var-able return
+    VE_ASSERT(p1 != nullptr);
+
+    Proc p2;
+    VE_ASSERT(convert::parse([](const Var& v) -> Var { return v; }, p2));
+    VE_ASSERT(p2 != nullptr);
+}
+
+VE_TEST(command_reg_wraps_plain_callables)
+{
+    auto& f = command::factory();
+
+    // void(): pure side effect, always ok
+    int hits = 0;
+    Command cVoid(command::reg(f, "_test_wrap_void", [&] { ++hits; }));
+    VE_ASSERT(cVoid.run().result().isSuccess());
+    VE_ASSERT_EQ(hits, 1);
+
+    // R(): produced value lands on the out node (the /health timestamp shape)
+    Command cVal(command::reg(f, "_test_wrap_val", [] { return int64_t(7); }));
+    VE_ASSERT_EQ(cVal.run().output()->getInt(), 7);
+
+    // plain typed args: in is the argument list, arg I = in/I
+    Command cSum(command::reg(f, "_test_wrap_sum", [](int a, int b) { return a + b; }));
+    cSum.input()->append()->set(40);
+    cSum.input()->append()->set(2);
+    VE_ASSERT_EQ(cSum.run().output()->getInt(), 42);
+
+    // void(const Var&): consumes args[0]
+    Var seen;
+    Command cSink(command::reg(f, "_test_wrap_sink", [&](const Var& v) { seen = v; }));
+    cSink.input()->append()->set(5);
+    VE_ASSERT(cSink.run().result().isSuccess());
+    VE_ASSERT_EQ(seen.toInt(), 5);
+
+    // Var in, Var out: the echo shape — return value replaces out
+    Command cEcho(command::reg(f, "_test_wrap_echo", [](const Var& v) { return v; }));
+    cEcho.input()->append()->set(7);
+    VE_ASSERT(cEcho.run().result().isSuccess());
+    VE_ASSERT_EQ(cEcho.output()->getInt(), 7);
+}
+
+VE_TEST(command_reg_result_returns_pass_through)
+{
+    auto& f = command::factory();
+
+    // Result return passes through verbatim — nothing is written to out
+    Command cCheck(command::reg(f, "_test_wrap_check",
+        [](int v) -> Result {
+            return v == 1 ? Result::ok() : Result::fail(-42, "refused");
+        }));
+    Node* arg = cCheck.input()->append();
+    arg->set(1);
+    VE_ASSERT(cCheck.run().result().isSuccess());
+    arg->set(2);
+    VE_ASSERT_EQ(cCheck.run().result().code, -42);
+    VE_ASSERT_EQ(cCheck.result().message, std::string("refused"));
+
+    // Result(Node* in, Node* out): Proc without ctx, the ros-module shape
+    Command cNode(command::reg(f, "_test_wrap_node",
+        [](Node* in, Node* out) -> Result {
+            out->set(in->get(0).toInt() + 1);
+            return Result::ok();
+        }));
+    cNode.input()->append()->set(41);
+    VE_ASSERT_EQ(cNode.run().output()->getInt(), 42);
+    VE_ASSERT(cNode.result().isSuccess());
 }
 
 VE_TEST(command_call_uses_bound_loop)
@@ -83,7 +174,7 @@ VE_TEST(command_call_uses_bound_loop)
     Node* out = ctx.at("out");
     in->set(11);
 
-    Command cmd = makeCommand("_test_cmd_loop", &ctx, in, out);
+    Command cmd = command::create("_test_cmd_loop", &ctx, in, out);
     bool finished = false;
     cmd.call([&](Command& done) {
         finished = true;
@@ -160,7 +251,7 @@ VE_TEST(pipeline_connects_command_inputs_and_outputs)
         return Result::ok();
     }, "request", {});
 
-    Command cmd = makeCommand("_test_pipe_double", p.context(), nullptr, nullptr);
+    Command cmd = command::create("_test_pipe_double", p.context(), nullptr, nullptr);
     p.addCommand(cmd);
 
     p.addProc([](Node*, Node* in, Node* out) -> Result {
@@ -320,7 +411,7 @@ VE_TEST(pipeline_slow_command_sync)
 
     Pipeline p;
     p.context()->at("input")->set(5);
-    Command cmd = makeCommand("_test_slow", p.context(), nullptr, nullptr);
+    Command cmd = command::create("_test_slow", p.context(), nullptr, nullptr);
     p.addCommand(cmd, &worker);             // command runs on the worker loop
 
     // Blocks here, pumping `driver`, until the 50ms command finishes off-thread.
@@ -345,7 +436,7 @@ VE_TEST(pipeline_slow_command_async)
     std::atomic<bool> done{false};
     Pipeline p;
     p.context()->at("input")->set(7);
-    Command cmd = makeCommand("_test_slow", p.context(), nullptr, nullptr);
+    Command cmd = command::create("_test_slow", p.context(), nullptr, nullptr);
     p.addCommand(cmd, &worker);
 
     pipeline::async(std::move(p), &driver, [&](Pipeline& pipe) {

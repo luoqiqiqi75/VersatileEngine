@@ -22,27 +22,27 @@ struct Command::Private
     Result r;
 };
 
-Command::Command(Node* factory_n, Node* ctx, Node* in, Node* out) : NodeRef(factory_n), _p(std::make_shared<Private>())
+Command::Command(Node* factory_n, Node* ctx_n, Node* in_n, Node* out_n) : NodeRef(factory_n), _p(std::make_shared<Private>())
 {
     _p->l = factory_n->get("loop").as<Loop*>();
     _p->declare_n = factory_n->find("declare");
     _p->r = Result::fail(-0x10, "command invalid");
 
-    setContext(ctx);
-    setInput(in);
-    setOutput(out);
+    setContextNodes(ctx_n, in_n, out_n);
 }
 
 Command::~Command() = default;
 
-Node* Command::context() const { return _p->ctx_n; }
-void Command::setContext(Node* ctx_n) { _p->ctx_n = ctx_n ? ctx_n : &_p->internal_ctx_n; }
+Node* Command::contextNode() const { return _p->ctx_n; }
+Node* Command::inputNode() const { return _p->in_n; }
+Node* Command::outputNode() const { return _p->out_n; }
 
-Node* Command::input() const { return _p->in_n; }
-void Command::setInput(Node* in_n) { _p->in_n = in_n ? in_n : _p->ctx_n->at("in"); _p->in_n->setShadow(_p->declare_n); }
-
-Node* Command::output() const { return _p->out_n; }
-void Command::setOutput(Node* out_n) { _p->out_n = out_n ? out_n : _p->ctx_n->at("out"); }
+void Command::setContextNodes(Node* ctx_n, Node* in_n, Node* out_n)
+{
+    _p->ctx_n = ctx_n ? ctx_n : &_p->internal_ctx_n;
+    _p->in_n = in_n ? in_n : _p->ctx_n->at("in"); _p->in_n->setShadow(_p->declare_n);
+    _p->out_n = out_n ? out_n : _p->ctx_n->at("out");
+}
 
 bool Command::valid() const
 {
@@ -52,7 +52,7 @@ bool Command::valid() const
 
 Command& Command::run()
 {
-    if (!valid()) _p->r = Result::fail("command invalid");
+    if (!valid()) { _p->r = Result::fail("command invalid"); return *this; }
     _p->r = node()->get().invoke(_p->ctx_n, _p->in_n, _p->out_n).as<Result>();
     return *this;
 }
@@ -62,11 +62,11 @@ void Command::setLoop(Loop* l) { _p->l = l; }
 
 Result Command::result() const { return _p->r; }
 
-void Command::call(Callback cb, Loop* loop) const
+void Command::call(Callback cb, Loop* cb_loop) const
 {
-    auto task = [c = *this, cb, cb_l = loop]() mutable {
+    auto task = [c = *this, cb, cb_l = cb_loop]() mutable {
         try {
-            c._p->r = c.run(); // proc exec in l
+            c.run(); // proc exec in l
         } catch (const std::exception& e) {
             c._p->r = Result::fail(e.what());
         } catch (...) {

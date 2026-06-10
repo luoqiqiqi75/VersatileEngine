@@ -5,280 +5,147 @@
 #include <atomic>
 #include <thread>
 
+#include "ve/core/log.h"
+
 namespace ve {
-
-namespace {
-
-struct Step
-{
-    Node* node = nullptr;
-    Command command;
-    Node* in = nullptr;
-    Node* out = nullptr;
-
-    Step(Node* n, Command c) : node(n), command(std::move(c)) {}
-};
-
-void setPipelineError(Node* ctx, Pipeline::Error code, const std::string& message)
-{
-    if (!ctx) return;
-    Node* error = ctx->at("_pipe/error");
-    error->set("code", static_cast<int64_t>(code));
-    error->set("message", message);
-}
-
-} // namespace
 
 struct Pipeline::Private
 {
-    std::vector<Step> steps;
-    std::atomic<State> state{IDLE};   // written on the finishing thread, read by sync()
-    Node* ctx = nullptr;
-    Callback callback;
-    Result last;
-    Loop* driver = nullptr;   // loop pumped by sync() / posted to by async()
+    Object* obj = nullptr;
 
-    ~Private()
-    {
-        delete ctx;
-    }
+    Node* ctx_n = new Node;
+    Node* in_n = nullptr;
+    Node* out_n = nullptr;
 
-    Node* commandRoot() const { return ctx->at("_pipe/commands"); }
+    Node* pipe_n = nullptr;
 
-    Node* stageRoot() const { return ctx->at("_pipe/stage"); }
+    std::atomic_bool running = false;
 
-    Node* appendCommandNode() const
-    {
-        return commandRoot()->append();
-    }
+    List<Command> commands;
 
-    Node* factoryNode(Node* commandNode) const
-    {
-        return commandNode->at("factory");
-    }
+    Result result = Result::ok();
 
-    void wireCommands()
-    {
-        Node* prevOut = nullptr;
-        Node* stages = stageRoot();
-        const int last = static_cast<int>(steps.size()) - 1;
-        for (int i = 0; i <= last; ++i) {
-            Step& step = steps[i];
-            if (!step.in) {
-                step.in = prevOut ? prevOut : ctx->at("input");
-            }
-            if (!step.out) {
-                Node* nextIn = (i < last) ? steps[i + 1].in : nullptr;
-                step.out = nextIn ? nextIn : ((i == last) ? ctx->at("output") : stages->at(i, false));
-            }
-            step.command.setContext(ctx);
-            step.command.setInput(step.in);
-            step.command.setOutput(step.out);
-            if (step.node) {
-                step.node->at("in")->set(Var::ptr(step.in));
-                step.node->at("out")->set(Var::ptr(step.out));
-            }
-            prevOut = step.out;
-        }
-    }
+public:
+    void execute(std::shared_ptr<Private> self);
 };
 
-Pipeline::Pipeline(const Node* initialCtx)
-    : _p(std::make_shared<Private>())
+void Pipeline::Private::execute(std::shared_ptr<Private> self)
 {
-    _p->ctx = new Node("_ctx");
-    if (initialCtx) {
-        _p->ctx->copy(initialCtx, true, true, true);
-        _p->ctx->erase("_pipe");
-    }
-}
-
-Pipeline::~Pipeline() = default;
-
-void Pipeline::addProc(Proc proc, const std::string& inPath,
-                       const std::string& outPath, Loop* loop)
-{
-    Node* commandNode = _p->appendCommandNode();
-    Node* factoryNode = _p->factoryNode(commandNode);
-    factoryNode->set(Var::callable(std::move(proc)));
-    if (loop) factoryNode->at("loop")->set(Var::ptr(loop));
-
-    Step step(commandNode, Command(factoryNode, _p->ctx,
-        inPath.empty() ? nullptr : _p->ctx->at(inPath),
-        outPath.empty() ? nullptr : _p->ctx->at(outPath)));
-    step.in = step.command.input();
-    step.out = step.command.output();
-    _p->steps.push_back(std::move(step));
-}
-
-void Pipeline::addCommand(Command command, Loop* loop)
-{
-    Node* commandNode = _p->appendCommandNode();
-    Node* factoryNode = _p->factoryNode(commandNode);
-    if (command.node()) {
-        factoryNode->copy(command.node(), true, true, true);
-    }
-
-    Loop* commandLoop = loop ? loop : command.loop();
-    if (commandLoop) factoryNode->at("loop")->set(Var::ptr(commandLoop));
-
-    Step step(commandNode, Command(factoryNode, _p->ctx, command.input(), command.output()));
-    step.in = step.command.input();
-    step.out = step.command.output();
-    _p->steps.push_back(std::move(step));
-}
-
-void Pipeline::addCtxProc(Proc proc, Loop* loop)
-{
-    Node* commandNode = _p->appendCommandNode();
-    Node* factoryNode = _p->factoryNode(commandNode);
-    factoryNode->set(Var::callable(std::move(proc)));
-    if (loop) factoryNode->at("loop")->set(Var::ptr(loop));
-
-    Step step(commandNode, Command(factoryNode, _p->ctx, _p->ctx, _p->ctx));
-    step.in = step.command.input();
-    step.out = step.command.output();
-    _p->steps.push_back(std::move(step));
-}
-
-void Pipeline::addLinearProc(Proc proc, Loop* loop)
-{
-    addProc(std::move(proc), {}, {}, loop);
-}
-
-void Pipeline::onFinished(Callback cb)
-{
-    _p->callback = std::move(cb);
-}
-
-void Pipeline::run(Loop* driver, bool deferFirst)
-{
-    _p->driver = driver;
-
-    if (!_p->ctx) {
-        _p->last = Result::fail("pipeline ctx is null");
-        complete(ERRORED);
-        return;
-    }
-
-    _p->state.store(RUNNING);
-    _p->last = Result::ok();
-
-    if (_p->steps.empty()) {
-        complete(DONE);
-        return;
-    }
-
-    _p->wireCommands();
-
-    if (deferFirst && driver) {
-        Pipeline self = *this;                       // keep the graph alive on the loop
-        driver->post([self]() mutable { self.dispatch(0); });
-    } else {
-        dispatch(0);
-    }
-}
-
-void Pipeline::sync(Loop* driver)
-{
-    if (!driver) driver = loop::current();   // default: the loop driving this thread
-    run(driver, /*deferFirst=*/false);
-
-    // Loop-less graphs are already terminal here. Otherwise, pump the driver
-    // (keeping the current loop responsive) until an off-thread step finishes.
-    while (_p->state.load() == RUNNING) {
-        if (driver) {
-            if (driver->processEvents() == 0) std::this_thread::yield();
-        } else {
-            std::this_thread::yield();
+    if (result.isSuccess()) { // will continue
+        if (commands.empty()) { // finished
+            obj->trigger<FINISHED>();
+            running = false;
+        } else if (!running) { // canceled
+            obj->trigger<CANCELLED>();
+            commands.clear();
+        } else { // execute
+            commands.front().call([self] (Command& c) {
+                self->result = c.result();
+                self->commands.pop_front();
+                std::swap(self->in_n, self->out_n);
+                self->execute(self);
+            });
         }
+    } else { // will stop
+        if (result.isError()) obj->trigger<ERRORED>(); // errored, self handle accepted
+        running = false;
+        commands.clear();
     }
 }
 
-void Pipeline::dispatch(int slot)
+Pipeline::Pipeline(const Node* ctx) : _p(std::make_shared<Private>())
 {
-    if (slot >= static_cast<int>(_p->steps.size())) {
-        complete(DONE);
-        return;
-    }
+    _p->ctx_n->copy(ctx);
 
-    Step& step = _p->steps[slot];
-    // Share the graph into the continuation so it outlives the calling handle
-    // across loop-bound (asynchronous) steps.
-    Pipeline self = *this;
-    step.command.call([self, slot](Command& cmd) mutable {
-        if (self._p->state.load() != RUNNING) {
-            return;
-        }
+    _p->ctx_n->remove("_pipe");
+    _p->pipe_n = _p->ctx_n->at("_pipe");
 
-        self._p->last = cmd.result();
-        if (self._p->last.isError()) {
-            if (!cmd.valid()) {
-                setPipelineError(self._p->ctx, ERR_NO_STEP_PROC, self._p->last.message);
-            }
-            self.complete(ERRORED);
-            return;
-        }
-        if (self._p->last.isAccepted()) {
-            self.complete(DONE);
-            return;
-        }
+    _p->in_n = _p->pipe_n->at("i");
+    _p->out_n = _p->pipe_n->at("o");
 
-        self.dispatch(slot + 1);
-    });
+    _p->obj = _p->pipe_n;
 }
 
-void Pipeline::complete(State state)
+Pipeline::~Pipeline()
 {
-    _p->state.store(state);
-    Callback callback = std::move(_p->callback);
-    _p->callback = {};
-    if (callback) {
-        callback(*this);
+    delete _p->ctx_n;
+}
+
+Node* Pipeline::contextNode() const { return _p->ctx_n; }
+Node* Pipeline::inputNode() const { return _p->in_n; }
+Node* Pipeline::outputNode() const { return _p->out_n; }
+
+const Result& Pipeline::result() const { return _p->result; }
+
+Pipeline::Handle Pipeline::add(Command command)
+{
+    if (_p->running) {
+        veLogW << "<ve::pipeline> commands cannot change while running";
+        return nullptr;
     }
-    // Wake a sync() pump that may be waiting on the driver loop.
-    if (_p->driver) {
-        _p->driver->post([] {});
+    _p->commands.push_back(std::move(command));
+    return command.node();
+}
+
+Pipeline::Handle Pipeline::addProc(Proc proc, Loop* loop)
+{
+    if (_p->running) {
+        veLogW << "<ve::pipeline> commands cannot change while running";
+        return nullptr;
     }
+    Node* fac_n = _p->pipe_n->at("proc")->append();
+    fac_n->set(Var::callable(std::move(proc)));
+    if (loop) fac_n->set("loop", Var::ptr(loop));
+    return add(Command(fac_n));
+}
+
+template<Pipeline::StateSignal SS> void Pipeline::on(Object* observer, Callback cb, Loop* loop)
+{
+    _p->obj->connect<SS>(observer, [self = *this, cb] {
+        Pipeline p = std::move(self);
+        cb(p);
+    }, loop);
 }
 
 void Pipeline::cancel()
 {
-    if (_p->state.load() != RUNNING) return;
-    setPipelineError(_p->ctx, ERR_CANCELLED, "cancelled");
-    _p->last = Result::fail("cancelled");
-    complete(ERRORED);
+    _p->running = false;
 }
 
-Node* Pipeline::context() const
+void Pipeline::async()
 {
-    return _p->ctx;
+    if (_p->running) {
+        veLogE << "<ve::pipeline> already running";
+        return;
+    }
+    _p->running = true;
+    _p->obj->trigger<PREPARE>();
+    _p->obj->trigger<STARTED>();
+    _p->execute(_p);
 }
 
-Pipeline::State Pipeline::state() const
+void Pipeline::sync(Loop* cur_l)
 {
-    return _p->state.load();
-}
-
-const Result& Pipeline::lastResult() const
-{
-    return _p->last;
+    async();
+    while (_p->running) {
+        cur_l->processEvents();
+    }
 }
 
 namespace pipeline {
 
-void async(Pipeline&& p, Loop* driver, Pipeline::Callback cb)
-{
-    Pipeline pipe = std::move(p);
-    if (cb) {
-        pipe.onFinished(std::move(cb));
-    }
-    // Default driver: the loop driving this thread, else the main loop (async must
-    // post somewhere that will actually run the first dispatch).
-    if (!driver) driver = loop::current();
-    if (!driver) driver = loop::main();
-    pipe.run(driver, /*deferFirst=*/true);
-}
+// void async(Pipeline&& p, Loop* driver, Pipeline::Callback cb)
+// {
+//     Pipeline pipe = std::move(p);
+//     if (cb) {
+//         pipe.onFinished(std::move(cb));
+//     }
+//     // Default driver: the loop driving this thread, else the main loop (async must
+//     // post somewhere that will actually run the first dispatch).
+//     if (!driver) driver = loop::current();
+//     if (!driver) driver = loop::main();
+//     pipe.run(driver, /*deferFirst=*/true);
+// }
 
 } // namespace pipeline
 
