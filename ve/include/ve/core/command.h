@@ -30,7 +30,10 @@ struct Result
     Result& operator=(Result&& o) noexcept { _code = o.code(); _message = std::move(o._message); return *this; }
 
     int code() const { return _code; }
-    const std::string& message() const { return _message; }
+    // rvalue overload returns by value: result().message() on a temporary
+    // would otherwise hand out a reference into a destroyed Result
+    const std::string& message() const& { return _message; }
+    std::string message() && { return std::move(_message); }
 
     void setCode(int c) { _code = c; }
     template<typename E> std::enable_if_t<std::is_enum_v<E>> setCode(E ec) { setCode(static_cast<int>(ec)); }
@@ -73,7 +76,7 @@ inline Proc wrapProc(F f, std::index_sequence<I...>)
     using T = basic::FnTraits<std::decay_t<F>>;
     using Ret = typename T::RetT;
     static_assert((!std::is_same_v<basic::_t_bare<typename T::template ArgAt<I>>, Node> && ...),
-        "Node* args must be Result(Node* in, Node* out) or Result(Node*, Node*, Node*)");
+        "Node* args must be Result(Node* ctx), Result(Node* in, Node* out) or Result(Node*, Node*, Node*)");
     return [f = std::move(f)] (Node*, Node* in, Node* out) -> Result {
         [[maybe_unused]] Var args;
         if constexpr (sizeof...(I) > 0) args = schema::exportAs<schema::VarS>(in);
@@ -94,6 +97,8 @@ inline Proc wrapProc(F f, std::index_sequence<I...>)
 // Any callable -> Proc, dispatched on its real signature via FnTraits.
 //   Result(Node*, Node*, Node*)   already a Proc, assigned as-is
 //   Result(Node* in, Node* out)   Proc without ctx
+//   Result(Node* ctx)             Proc input output use ctx
+//   Result()                      Proc with nothing
 //   anything else                 args unpacked from in (VarS list, arg I =
 //                                 args[I].as<ArgT>()); a non-Result return is
 //                                 imported onto out as VarS, Result is ok.
@@ -103,23 +108,20 @@ template<typename F, std::enable_if_t<basic::Meta<std::decay_t<F>>::is_callable
 inline bool parse(F f, Proc& p)
 {
     using T = basic::FnTraits<std::decay_t<F>>;
-    constexpr bool ret_result = std::is_same_v<typename T::RetT, Result>;
+    constexpr bool is_ret_result = std::is_same_v<typename T::RetT, Result>;
+    using ArgsT = typename T::ArgsTuple;
+    constexpr bool is_args_n1 = std::is_same_v<ArgsT, std::tuple<Node*>>;
+    constexpr bool is_args_n2 = std::is_same_v<ArgsT, std::tuple<Node*, Node*>>;
+    constexpr bool is_args_n3 = std::is_same_v<ArgsT, std::tuple<Node*, Node*, Node*>>;
 
-    if constexpr (T::ArgCnt == 3) {
-        if constexpr (ret_result
-            && std::is_same_v<typename T::template ArgAt<0>, Node*>
-            && std::is_same_v<typename T::template ArgAt<1>, Node*>
-            && std::is_same_v<typename T::template ArgAt<2>, Node*>)
-            p = std::move(f);
-        else
-            p = detail::wrapProc(std::move(f), std::make_index_sequence<3>{});
-    } else if constexpr (T::ArgCnt == 2) {
-        if constexpr (ret_result
-            && std::is_same_v<typename T::template ArgAt<0>, Node*>
-            && std::is_same_v<typename T::template ArgAt<1>, Node*>)
-            p = [f = std::move(f)] (Node*, Node* in, Node* out) -> Result { return f(in, out); };
-        else
-            p = detail::wrapProc(std::move(f), std::make_index_sequence<2>{});
+    if constexpr (is_ret_result && is_args_n3) {
+        p = std::move(f); // Result(Node* ctx_n, Node* in_n, Node* out_n)
+    } else if constexpr (is_ret_result && is_args_n2) {
+        p = [f = std::move(f)] (Node*, Node* in_n, Node* out_n) -> Result { return f(in_n, out_n); }; // Result(Node* in_n, Node* out_n)
+    } else if constexpr (is_ret_result && is_args_n1) {
+        p = [f = std::move(f)] (Node* ctx_n, Node*, Node*) -> Result { return f(ctx_n); }; // Result(Node* ctx_n)
+    } else if constexpr (is_ret_result && T::ArgCnt == 0) {
+        p = [f = std::move(f)] (Node*, Node*, Node*) -> Result { return f(); }; // Result()
     } else {
         p = detail::wrapProc(std::move(f), std::make_index_sequence<T::ArgCnt>{});
     }
