@@ -11,9 +11,7 @@ namespace ve {
 
 struct Pipeline::Private
 {
-    Object* obj = nullptr;
-
-    Node* ctx_n = new Node;
+    Node* ctx_n = nullptr;
     Node* in_n = nullptr;
     Node* out_n = nullptr;
 
@@ -23,32 +21,34 @@ struct Pipeline::Private
 
     List<Command> commands;
 
-    Result result = Result::ok();
+    Result result;
 
 public:
+    Private() { ctx_n = new Node; }
+    ~Private() { delete ctx_n; }
+
     void execute(std::shared_ptr<Private> self);
 };
 
 void Pipeline::Private::execute(std::shared_ptr<Private> self)
 {
-    if (result.isSuccess()) { // will continue
-        if (commands.empty()) { // finished
-            obj->trigger<FINISHED>();
-            running = false;
-        } else if (!running) { // canceled
-            obj->trigger<CANCELLED>();
-            commands.clear();
-        } else { // execute
-            commands.front().call([self] (Command& c) {
-                self->result = c.result();
-                self->commands.pop_front();
-                std::swap(self->in_n, self->out_n);
-                self->execute(self);
-            });
-        }
-    } else { // will stop
-        if (result.isError()) obj->trigger<ERRORED>(); // errored, self handle accepted
+    if (running && result.isSuccess() && !commands.empty()) { // continue
+        Command exec_c = commands.front();
+        exec_c.setContextNodes(ctx_n, in_n, out_n);
+        commands.pop_front();
+        if (!commands.empty()) std::swap(in_n, out_n);
+        exec_c.call([self] (Command& c) {
+            Result r = c.result();
+            if (self->running && !r.isSuccess()) {
+                self->result = std::move(r); // save result if still running
+                self->running = false;
+            }
+            self->execute(self);
+        });
+    } else { // stop
+        pipe_n->trigger<FINISHED>();
         running = false;
+        pipe_n->disconnectAll(); // must reconnect if restart
         commands.clear();
     }
 }
@@ -62,18 +62,15 @@ Pipeline::Pipeline(const Node* ctx) : _p(std::make_shared<Private>())
 
     _p->in_n = _p->pipe_n->at("i");
     _p->out_n = _p->pipe_n->at("o");
-
-    _p->obj = _p->pipe_n;
 }
 
-Pipeline::~Pipeline()
-{
-    delete _p->ctx_n;
-}
+Pipeline::~Pipeline() = default;
 
 Node* Pipeline::contextNode() const { return _p->ctx_n; }
 Node* Pipeline::inputNode() const { return _p->in_n; }
 Node* Pipeline::outputNode() const { return _p->out_n; }
+
+Object* Pipeline::object() const { return _p->pipe_n; }
 
 const Result& Pipeline::result() const { return _p->result; }
 
@@ -83,7 +80,7 @@ Pipeline::Handle Pipeline::add(Command command)
         veLogW << "<ve::pipeline> commands cannot change while running";
         return nullptr;
     }
-    _p->commands.push_back(std::move(command));
+    _p->commands.push_back(command);
     return command.node();
 }
 
@@ -99,16 +96,12 @@ Pipeline::Handle Pipeline::addProc(Proc proc, Loop* loop)
     return add(Command(fac_n));
 }
 
-template<Pipeline::StateSignal SS> void Pipeline::on(Object* observer, Callback cb, Loop* loop)
-{
-    _p->obj->connect<SS>(observer, [self = *this, cb] {
-        Pipeline p = std::move(self);
-        cb(p);
-    }, loop);
-}
+void Pipeline::onStarted(Object* observer, Callback cb, Loop* loop) { on<STARTED>(observer, std::move(cb), loop); }
+void Pipeline::onFinished(Object* observer, Callback cb, Loop* loop) { on<FINISHED>(observer, std::move(cb), loop); }
 
-void Pipeline::cancel()
+void Pipeline::cancel() const
 {
+    _p->result.setCode(CANCELED);
     _p->running = false;
 }
 
@@ -119,33 +112,23 @@ void Pipeline::async()
         return;
     }
     _p->running = true;
-    _p->obj->trigger<PREPARE>();
-    _p->obj->trigger<STARTED>();
+    _p->result = Result::ok();
+    _p->pipe_n->trigger<STARTED>();
     _p->execute(_p);
 }
 
 void Pipeline::sync(Loop* cur_l)
 {
+    if (!cur_l) cur_l = loop::current();   // the loop driving this thread, if any
     async();
     while (_p->running) {
-        cur_l->processEvents();
+        if (cur_l) cur_l->processEvents(); // keep pumping so loop-bound steps can hop back
+        std::this_thread::yield();
     }
 }
 
 namespace pipeline {
 
-// void async(Pipeline&& p, Loop* driver, Pipeline::Callback cb)
-// {
-//     Pipeline pipe = std::move(p);
-//     if (cb) {
-//         pipe.onFinished(std::move(cb));
-//     }
-//     // Default driver: the loop driving this thread, else the main loop (async must
-//     // post somewhere that will actually run the first dispatch).
-//     if (!driver) driver = loop::current();
-//     if (!driver) driver = loop::main();
-//     pipe.run(driver, /*deferFirst=*/true);
-// }
 
 } // namespace pipeline
 

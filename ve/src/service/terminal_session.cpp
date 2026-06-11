@@ -171,7 +171,7 @@ static void updateCurrentFromOut(Node*& current, Node* out)
 static std::string renderCommandOutput(Node* out, const Result& r)
 {
     if (r.isError()) {
-        return r.message.empty() ? std::string("command failed\n") : r.message + "\n";
+        return r.message().empty() ? std::string("command failed\n") : r.message() + "\n";
     }
     if (out) {
         if (auto* text = out->find("text", false)) {

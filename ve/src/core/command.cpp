@@ -24,10 +24,11 @@ struct Command::Private
 
 Command::Command(Node* factory_n, Node* ctx_n, Node* in_n, Node* out_n) : NodeRef(factory_n), _p(std::make_shared<Private>())
 {
-    _p->l = factory_n->get("loop").as<Loop*>();
-    _p->declare_n = factory_n->find("declare");
-    _p->r = Result::fail(-0x10, "command invalid");
-
+    _p->r = Result::fail(-0xff01, "command invalid");
+    if (factory_n) {
+        _p->l = factory_n->get("loop").as<Loop*>();
+        _p->declare_n = factory_n->find("declare");
+    }
     setContextNodes(ctx_n, in_n, out_n);
 }
 

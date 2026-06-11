@@ -166,6 +166,7 @@ public:
     void disconnect(SignalT signal, Object* observer);
     void disconnect(Object* observer);
     template<SignalT S> void disconnect(Object* observer) { disconnect(S, observer); }
+    void disconnectAll();
 
 protected:
     // Runtime-signal connect/trigger — prefer compile-time template versions above.

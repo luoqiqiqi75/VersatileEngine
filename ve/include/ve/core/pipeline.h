@@ -18,14 +18,15 @@ public:
     using Handle = Node*;
     using Callback = std::function<void(Pipeline&)>;
 
+    enum StateCode : int
+    {
+        CANCELED    =   0x10,
+    };
+
     enum StateSignal : int
     {
-        IDLE        =   0x00,   // no emit
-        PREPARE     =   0x10,
         STARTED     =   0x10,
-        CANCELLED   =   0x11,
-        FINISHED    =   0x20,
-        ERRORED     =   0x40
+        FINISHED    =   0x20
     };
 
 public:
@@ -41,15 +42,19 @@ public:
     Handle addProc(Proc proc, Loop* loop = nullptr);
 
     // state control
-    void cancel();
+    void cancel() const;
 
-    template<StateSignal SS> void on(Object* observer, Callback cb, Loop* loop = nullptr);
+    template<StateSignal SS> void on(Object* observer, Callback cb, Loop* loop = nullptr)
+    {
+        auto action = [self = *this, cb = std::move(cb)] {
+            Pipeline p = std::move(self);
+            cb(p);
+        };
+        object()->connect<SS>(observer, action, loop);
+    }
 
-    void onPrepare(Object* observer, Callback cb, Loop* loop = nullptr) { on<PREPARE>(observer, cb, loop); }
-    void onStarted(Object* observer, Callback cb, Loop* loop = nullptr) { on<STARTED>(observer, cb, loop); }
-    void onCanceled(Object* observer, Callback cb, Loop* loop = nullptr) { on<CANCELLED>(observer, cb, loop); }
-    void onFinished(Object* observer, Callback cb, Loop* loop = nullptr) { on<FINISHED>(observer, cb, loop); }
-    void onErrored(Object* observer, Callback cb, Loop* loop = nullptr) { on<ERRORED>(observer, cb, loop); }
+    void onStarted(Object* observer, Callback cb, Loop* loop = nullptr);
+    void onFinished(Object* observer, Callback cb, Loop* loop = nullptr);
 
     // exec
     void async();
@@ -57,17 +62,16 @@ public:
 
     const Result& result() const;
 
+protected:
+    Object* object() const;
+
 private:
     VE_DECLARE_SHARED_PRIVATE
 };
 
 namespace pipeline {
 
-// Take ownership of a pipeline and run it without blocking the caller: the first
-// dispatch is posted to `driver` (defaults to loop::main()), and the shared graph
-// keeps itself alive until completion, then frees automatically. If cb is given
-// it becomes the completion callback; otherwise any onFinished callback is kept.
-// VE_API void async(Pipeline&& p, Loop* driver = nullptr, Pipeline::Callback cb = {});
+
 
 } // namespace pipeline
 

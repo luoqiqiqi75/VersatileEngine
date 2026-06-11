@@ -69,8 +69,8 @@ static bool parse(const service::HttpRep& r, http::web_response& rep)
 static bool parse(const service::HttpResultRep& r, http::web_response& rep)
 {
     Node proto_n;
-    proto_n.set("code", r.first.code);
-    proto_n.set("message", r.first.message);
+    proto_n.set("code", r.first.code());
+    proto_n.set("message", r.first.message());
     proto_n.at("data")->copy(r.second);
     http::status status = r.first.isAccepted() ? http::status::accepted : http::status::ok; // always ok
     return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, service::compactJson) }, rep);
@@ -290,7 +290,7 @@ static void finishHttpPipeline(Pipeline& pipe)
 
     if (!ctx->find("http/error") && pipe.lastResult().isError()) {
         setHttpError(ctx, "command_failed", http::status::internal_server_error,
-                     pipe.lastResult().message);
+                     pipe.lastResult().message());
     }
     if (pipe.lastResult().isAccepted()) {
         ctx->set("http/accepted", true);
@@ -444,6 +444,7 @@ static void registerHttpBuiltins()
 
 struct NodeHttpServer::Private
 {
+    Object   obj;
     Node*    root = nullptr;
     uint16_t port = 12000;
 
@@ -617,31 +618,32 @@ bool NodeHttpServer::start()
     }
 
     { // cmd protocol
-        _p->server.bind<http::verb::post>("/cmd/*", [] (http::web_request& req, http::web_response& rep) {
+        _p->server.bind<http::verb::post>("/cmd/*", [o = &_p->obj] (http::web_request& req, http::web_response& rep) {
             auto cmd_sv = req.path();
             cmd_sv.remove_prefix(5); // /cmd/
             std::string cmd_key(cmd_sv);
-            if (!command::factory().has(cmd_key)) {
-                convert::parse(HttpResultRep(Result::fail(JRpcMethodNotFound, "unkonwn command")), rep);
+            Command cmd = command::create(cmd_key);
+            if (!cmd.valid()) {
+                convert::parse(HttpResultRep(Result::fail(JRpcMethodNotFound, "unknown command")), rep);
                 return;
             }
 
-            Node ctx("_ctx");
-            prepareHttpCommandContext(&ctx, cmdKey, req, rep, _p->root);
-
-
-            Pipeline pipe(&ctx);
-            pipe.addProc(httpRequestToInput, "http/request", {});
-            pipe.addCommand(command::create(cmdKey, pipe.context(), nullptr, nullptr));
-            pipe.addProc(outputToHttpResponse, "reply", "http/render");
+            Pipeline pipe;
+            if (!schema::importAs<schema::JsonS>(pipe.inputNode(), req.body())) {
+                convert::parse(HttpResultRep(Result::fail(JRpcInvalidRequest, "bad request")), rep);
+                return;
+            }
+            pipe.add(cmd);
 
             if (queryBool(req.query(), "async", false)) {
-                auto guard = rep.defer();   // hold the response open until completion
-                pipeline::async(std::move(pipe), nullptr, [guard](Pipeline& p) { finishHttpPipeline(p); });
-            } else {
-                pipe.onFinished(finishHttpPipeline);
-                pipe.sync();
-            }
+               pipe.onFinished(o, [guard = rep.defer(), rep_ptr = &rep] (Pipeline& p) {
+                   convert::parse(HttpResultRep(p.result(), p.outputNode()), *rep_ptr);
+               });
+               pipe.async();
+           } else {
+               pipe.sync();
+               convert::parse(HttpResultRep(pipe.result(), pipe.outputNode()), rep);
+           }
         });
     }
 

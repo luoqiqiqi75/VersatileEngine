@@ -188,6 +188,12 @@ void Object::disconnect(Object* observer)
     _p->removeObserverAll(observer);
 }
 
+void Object::disconnectAll()
+{
+    LockT lk(_p->mtx);
+    _p->connections.clear();
+}
+
 void Object::trigger(SignalT signal, const Var& data /*= {}*/)
 {
     if (isSilent()) return;

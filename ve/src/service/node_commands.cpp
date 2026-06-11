@@ -95,8 +95,8 @@ static void renderReply(Node* rep, const Var& id, Node* data, const Result& r)
     if (!id.isNull()) rep->at("id")->set(id);
     if (r.isError()) {
         rep->set("ok", false);
-        rep->set("code", codeString(r.code));
-        rep->set("error", r.message);
+        rep->set("code", codeString(r.code()));
+        rep->set("error", r.message());
     } else {
         rep->set("ok", true);
         if (data && data->count()) rep->at("data")->copy(data, true, true, true);

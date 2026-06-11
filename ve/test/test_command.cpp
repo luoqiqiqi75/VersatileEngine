@@ -19,17 +19,17 @@ VE_TEST(result_code_segments)
     VE_ASSERT(ok.isSuccess());
     VE_ASSERT(!ok.isError());
     VE_ASSERT(!ok.isAccepted());
-    VE_ASSERT_EQ(ok.code, 0);
+    VE_ASSERT_EQ(ok.code(), 0);
 
     Result fail = Result::fail(-7, "bad");
     VE_ASSERT(fail.isError());
-    VE_ASSERT_EQ(fail.code, -7);
-    VE_ASSERT_EQ(fail.message, std::string("bad"));
+    VE_ASSERT_EQ(fail.code(), -7);
+    VE_ASSERT_EQ(fail.message(), std::string("bad"));
 
     Result accepted = Result::accept(9, "queued");
     VE_ASSERT(accepted.isAccepted());
-    VE_ASSERT_EQ(accepted.code, 9);
-    VE_ASSERT_EQ(accepted.message, std::string("queued"));
+    VE_ASSERT_EQ(accepted.code(), 9);
+    VE_ASSERT_EQ(accepted.message(), std::string("queued"));
 }
 
 VE_TEST(factory_reg_proc_and_command_run)
@@ -141,8 +141,8 @@ VE_TEST(command_reg_result_returns_pass_through)
     arg->set(1);
     VE_ASSERT(cCheck.run().result().isSuccess());
     arg->set(2);
-    VE_ASSERT_EQ(cCheck.run().result().code, -42);
-    VE_ASSERT_EQ(cCheck.result().message, std::string("refused"));
+    VE_ASSERT_EQ(cCheck.run().result().code(), -42);
+    VE_ASSERT_EQ(cCheck.result().message(), std::string("refused"));
 
     // Result(Node* in, Node* out): Proc without ctx, the ros-module shape
     Command cNode(command::reg(f, "_test_wrap_node",
@@ -287,8 +287,8 @@ VE_TEST(pipeline_aborts_on_error)
 
     VE_ASSERT_EQ(p.state(), Pipeline::ERRORED);
     VE_ASSERT(p.lastResult().isError());
-    VE_ASSERT_EQ(p.lastResult().code, -9);
-    VE_ASSERT_EQ(p.lastResult().message, std::string("stop"));
+    VE_ASSERT_EQ(p.lastResult().code(), -9);
+    VE_ASSERT_EQ(p.lastResult().message(), std::string("stop"));
     VE_ASSERT(p.context()->get("output").isNull());
 }
 

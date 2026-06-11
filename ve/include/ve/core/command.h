@@ -6,6 +6,7 @@
 #include "node.h"
 #include "var.h"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -21,12 +22,22 @@ struct Result
         ACCEPTED        = 1
     };
 
-    int         code = FAILED;
-    std::string message;
+    Result() = default;
+    Result(const int c, std::string m = {}) : _code(c), _message(std::move(m)) {}
+    Result(const Result& o) : _code(o.code()), _message(o._message) {}
+    Result(Result&& o) noexcept : _code(o.code()), _message(std::move(o._message)) {}
+    Result& operator=(const Result& o) { _code = o.code(); _message = o._message; return *this; }
+    Result& operator=(Result&& o) noexcept { _code = o.code(); _message = std::move(o._message); return *this; }
 
-    bool isSuccess() const { return code == SUCCESS; }
-    bool isError() const { return code < 0; }
-    bool isAccepted() const { return code > 0; }
+    int code() const { return _code; }
+    const std::string& message() const { return _message; }
+
+    void setCode(int c) { _code = c; }
+    template<typename E> std::enable_if_t<std::is_enum_v<E>> setCode(E ec) { setCode(static_cast<int>(ec)); }
+
+    bool isSuccess() const { return code() == SUCCESS; }
+    bool isError() const { return code() < 0; }
+    bool isAccepted() const { return code() > 0; }
     explicit operator bool() const { return isSuccess(); }
 
     static Result ok() { return {SUCCESS}; }
@@ -37,6 +48,12 @@ struct Result
 
     template<typename E> static std::enable_if_t<std::is_enum_v<E>, Result> fail(E ec, std::string message = {})
     { return fail(static_cast<int>(ec), std::move(message)); }
+    template<typename E> static std::enable_if_t<std::is_enum_v<E>, Result> accept(E ec, std::string message = {})
+    { return accept(static_cast<int>(ec), std::move(message)); }
+
+private:
+    std::atomic<int> _code{FAILED};
+    std::string      _message;
 };
 
 using Proc = std::function<Result(Node* ctx, Node* in, Node* out)>;
