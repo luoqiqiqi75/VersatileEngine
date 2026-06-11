@@ -11,7 +11,6 @@
 
 #include "ve/core/node.h"
 #include "ve/core/command.h"
-#include "ve/core/pipeline.h"
 #include "ve/core/impl/json.h"
 
 namespace ve {
@@ -248,7 +247,7 @@ void registerNodeCommands()
 }
 
 // ============================================================================
-// The single entry: resolve op via factory, run it through a pipeline, render.
+// The single entry: resolve op via factory, run the command, render.
 // ============================================================================
 static void runOp(Node* root, Node* req, Node* rep, Session* session, int batchLimit)
 {
@@ -265,19 +264,15 @@ static void runOp(Node* root, Node* req, Node* rep, Session* session, int batchL
         return;
     }
 
-    Pipeline pipe;
-    Node* in = pipe.context()->at("in");
-    in->copy(req, true, true, true);                 // request maps onto command input
-    in->at("root", false)->set(Var::ptr(root));      // root the command needs (point 4)
-    if (session) in->at("session", false)->set(Var::ptr(session));
-    in->set("batch_limit", static_cast<int64_t>(batchLimit));
-    Node* out = pipe.context()->at("out");
+    // Single synchronous command — no pipeline needed.
+    Command cmd = command::create(f, op);
+    cmd.inputNode()->copy(req, true, true, true);
+    cmd.inputNode()->at("root", false)->set(Var::ptr(root));
+    if (session) cmd.inputNode()->at("session", false)->set(Var::ptr(session));
+    cmd.inputNode()->set("batch_limit", static_cast<int64_t>(batchLimit));
 
-    pipe.addCommand(command::create(f, op, pipe.context(), in, out));
-    pipe.onFinished([rep, id, out](Pipeline& p) {
-        renderReply(rep, id, out, p.lastResult());   // error comes from Result, generically
-    });
-    pipe.sync();
+    cmd.run();
+    renderReply(rep, id, cmd.outputNode(), cmd.result());
 }
 
 void dispatchNode(Node* root, Node* req, Node* rep, Session* session, int batchLimit)

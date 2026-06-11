@@ -68,12 +68,12 @@ VE_TEST(command_single_step_run_with_internal_context)
 
     Command cmd(fn);
     VE_ASSERT(cmd.valid());
-    VE_ASSERT(cmd.context() != nullptr);
-    VE_ASSERT_EQ(cmd.input(), cmd.context()->at("in"));
-    VE_ASSERT_EQ(cmd.output(), cmd.context()->at("out"));
+    VE_ASSERT(cmd.contextNode() != nullptr);
+    VE_ASSERT_EQ(cmd.inputNode(), cmd.contextNode()->at("in"));
+    VE_ASSERT_EQ(cmd.outputNode(), cmd.contextNode()->at("out"));
 
-    cmd.input()->set(41);
-    VE_ASSERT_EQ(cmd.run().output()->getInt(), 42);
+    cmd.inputNode()->set(41);
+    VE_ASSERT_EQ(cmd.run().outputNode()->getInt(), 42);
     VE_ASSERT(cmd.result().isSuccess());
 }
 
@@ -106,26 +106,26 @@ VE_TEST(command_reg_wraps_plain_callables)
 
     // R(): produced value lands on the out node (the /health timestamp shape)
     Command cVal(command::reg(f, "_test_wrap_val", [] { return int64_t(7); }));
-    VE_ASSERT_EQ(cVal.run().output()->getInt(), 7);
+    VE_ASSERT_EQ(cVal.run().outputNode()->getInt(), 7);
 
     // plain typed args: in is the argument list, arg I = in/I
     Command cSum(command::reg(f, "_test_wrap_sum", [](int a, int b) { return a + b; }));
-    cSum.input()->append()->set(40);
-    cSum.input()->append()->set(2);
-    VE_ASSERT_EQ(cSum.run().output()->getInt(), 42);
+    cSum.inputNode()->append()->set(40);
+    cSum.inputNode()->append()->set(2);
+    VE_ASSERT_EQ(cSum.run().outputNode()->getInt(), 42);
 
     // void(const Var&): consumes args[0]
     Var seen;
     Command cSink(command::reg(f, "_test_wrap_sink", [&](const Var& v) { seen = v; }));
-    cSink.input()->append()->set(5);
+    cSink.inputNode()->append()->set(5);
     VE_ASSERT(cSink.run().result().isSuccess());
     VE_ASSERT_EQ(seen.toInt(), 5);
 
     // Var in, Var out: the echo shape — return value replaces out
     Command cEcho(command::reg(f, "_test_wrap_echo", [](const Var& v) { return v; }));
-    cEcho.input()->append()->set(7);
+    cEcho.inputNode()->append()->set(7);
     VE_ASSERT(cEcho.run().result().isSuccess());
-    VE_ASSERT_EQ(cEcho.output()->getInt(), 7);
+    VE_ASSERT_EQ(cEcho.outputNode()->getInt(), 7);
 }
 
 VE_TEST(command_reg_result_returns_pass_through)
@@ -137,7 +137,7 @@ VE_TEST(command_reg_result_returns_pass_through)
         [](int v) -> Result {
             return v == 1 ? Result::ok() : Result::fail(-42, "refused");
         }));
-    Node* arg = cCheck.input()->append();
+    Node* arg = cCheck.inputNode()->append();
     arg->set(1);
     VE_ASSERT(cCheck.run().result().isSuccess());
     arg->set(2);
@@ -150,8 +150,8 @@ VE_TEST(command_reg_result_returns_pass_through)
             out->set(in->get(0).toInt() + 1);
             return Result::ok();
         }));
-    cNode.input()->append()->set(41);
-    VE_ASSERT_EQ(cNode.run().output()->getInt(), 42);
+    cNode.inputNode()->append()->set(41);
+    VE_ASSERT_EQ(cNode.run().outputNode()->getInt(), 42);
     VE_ASSERT(cNode.result().isSuccess());
 }
 
@@ -207,39 +207,32 @@ VE_TEST(var_invoke_packs_pointer_args)
 VE_TEST(pipeline_linear_proc_chain)
 {
     Pipeline p;
-    p.context()->at("input")->set(1);
+    p.inputNode()->set(1);
 
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() + 2);
         return Result::ok();
     });
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() * 3);
         return Result::ok();
     });
 
     bool finished = false;
-    p.onFinished([&](Pipeline& pipe) {
+    p.onFinished(nullptr, [&](Pipeline& pipe) {
         finished = true;
-        VE_ASSERT_EQ(pipe.context()->get("output").toInt(), 9);
+        VE_ASSERT_EQ(pipe.outputNode()->getInt(), 9);
     });
     p.sync();
 
     VE_ASSERT(finished);
-    VE_ASSERT_EQ(p.state(), Pipeline::DONE);
-    VE_ASSERT(p.lastResult().isSuccess());
-    VE_ASSERT_EQ(p.context()->get("output").toInt(), 9);
-
-    Node* commands = p.context()->find("_pipe/commands");
-    VE_ASSERT(commands);
-    VE_ASSERT_EQ(commands->count(), 2);
-    VE_ASSERT(commands->child(0)->find("factory"));
-    VE_ASSERT(commands->child(1)->find("factory"));
+    VE_ASSERT(p.result().isSuccess());
+    VE_ASSERT_EQ(p.outputNode()->getInt(), 9);   // out stays on the final output (no trailing swap)
 }
 
 VE_TEST(pipeline_connects_command_inputs_and_outputs)
 {
-    command::factory().reg("_test_pipe_double",
+    command::reg("_test_pipe_double",
         [](Node*, Node* in, Node* out) -> Result {
             out->set(in->get().toInt() * 2);
             return Result::ok();
@@ -249,103 +242,94 @@ VE_TEST(pipeline_connects_command_inputs_and_outputs)
     p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() + 4);
         return Result::ok();
-    }, "request", {});
-
-    Command cmd = command::create("_test_pipe_double", p.context(), nullptr, nullptr);
-    p.addCommand(cmd);
-
+    });
+    p.add(command::create("_test_pipe_double"));   // pipeline rebinds ctx/in/out at dispatch
     p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() + 1);
         return Result::ok();
-    }, {}, "reply");
+    });
 
-    p.context()->at("request")->set(6);
+    p.inputNode()->set(6);
     p.sync();
 
-    VE_ASSERT_EQ(p.state(), Pipeline::DONE);
-    VE_ASSERT_EQ(p.context()->get("reply").toInt(), 21);
+    VE_ASSERT(p.result().isSuccess());
+    VE_ASSERT_EQ(p.outputNode()->getInt(), 21);   // (6 + 4) * 2 + 1
 }
 
 VE_TEST(pipeline_aborts_on_error)
 {
     Pipeline p;
-    p.context()->at("input")->set(1);
+    p.inputNode()->set(1);
 
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    int third_ran = 0;
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() + 1);
         return Result::ok();
     });
-    p.addLinearProc([](Node*, Node*, Node*) -> Result {
+    p.addProc([](Node*, Node*, Node*) -> Result {
         return Result::fail(-9, "stop");
     });
-    p.addLinearProc([](Node*, Node*, Node* out) -> Result {
+    p.addProc([&](Node*, Node*, Node* out) -> Result {
+        ++third_ran;
         out->set(999);
         return Result::ok();
     });
 
+    bool finished = false;
+    p.onFinished(nullptr, [&](Pipeline&) { finished = true; });
     p.sync();
 
-    VE_ASSERT_EQ(p.state(), Pipeline::ERRORED);
-    VE_ASSERT(p.lastResult().isError());
-    VE_ASSERT_EQ(p.lastResult().code(), -9);
-    VE_ASSERT_EQ(p.lastResult().message(), std::string("stop"));
-    VE_ASSERT(p.context()->get("output").isNull());
+    VE_ASSERT(finished);                            // FINISHED fires on error too; result carries it
+    VE_ASSERT(p.result().isError());
+    VE_ASSERT_EQ(p.result().code(), -9);
+    VE_ASSERT_EQ(p.result().message(), std::string("stop"));
+    VE_ASSERT_EQ(third_ran, 0);                     // chain stopped at the failing step
 }
 
-VE_TEST(pipeline_async_runs_to_completion)
+VE_TEST(pipeline_async_inline_completes)
 {
-    AsioLoop loop("test.async");
-    loop.start();
-
-    std::atomic<bool> finished{false};
+    // No loop-bound steps: async() dispatches inline and completes before returning.
+    bool finished = false;
     Pipeline p;
-    p.addLinearProc([](Node*, Node*, Node* out) -> Result {
+    p.addProc([](Node*, Node*, Node* out) -> Result {
         out->set(42);
         return Result::ok();
     });
-
-    // async moves the handle and posts the first dispatch onto the given loop;
-    // the shared graph keeps itself alive until completion, then frees. It does
-    // NOT block the caller, so we wait on the completion callback.
-    pipeline::async(std::move(p), &loop, [&](Pipeline& pipe) {
-        VE_ASSERT(pipe.lastResult().isSuccess());
-        VE_ASSERT_EQ(pipe.context()->get("output").toInt(), 42);
-        finished.store(true);
+    p.onFinished(nullptr, [&](Pipeline& pipe) {
+        finished = true;
+        VE_ASSERT(pipe.result().isSuccess());
+        VE_ASSERT_EQ(pipe.outputNode()->getInt(), 42);
     });
+    p.async();
 
-    while (!finished.load()) std::this_thread::yield();
-    loop.stop();
-
-    VE_ASSERT(finished.load());
+    VE_ASSERT(finished);
 }
 
 VE_TEST(pipeline_cross_loop_proc_chain)
 {
-    // Two procs bound to two different running loops; sync() pumps a third
-    // (caller-side) loop while the work hops loopA -> loopB and back to finish.
+    // Two procs bound to two different running loops; sync() blocks (pumping the
+    // current-thread loop if any, else yielding) while the work hops a -> b.
     AsioLoop a("pipe.loopA");
     AsioLoop b("pipe.loopB");
-    AsioLoop driver("pipe.driver");   // not started: sync() pumps it on this thread
     a.start();
     b.start();
 
     Pipeline p;
-    p.context()->at("input")->set(1);
+    p.inputNode()->set(1);
 
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() + 2);
         return Result::ok();
     }, &a);
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() * 10);
         return Result::ok();
     }, &b);
 
-    p.sync(&driver);
+    p.sync();
 
-    VE_ASSERT_EQ(p.state(), Pipeline::DONE);
-    VE_ASSERT(p.lastResult().isSuccess());
-    VE_ASSERT_EQ(p.context()->get("output").toInt(), 30);  // (1 + 2) * 10
+    VE_ASSERT(p.result().isSuccess());
+    VE_ASSERT_EQ(p.outputNode()->getInt(), 30);  // (1 + 2) * 10
 
     a.stop();
     b.stop();
@@ -353,35 +337,33 @@ VE_TEST(pipeline_cross_loop_proc_chain)
 
 VE_TEST(pipeline_cross_loop_async)
 {
-    // Same cross-loop graph driven by async: no blocking, completion via callback.
+    // Same cross-loop graph, non-blocking: completion observed via onFinished.
     AsioLoop a("pipe.async.loopA");
     AsioLoop b("pipe.async.loopB");
-    AsioLoop driver("pipe.async.driver");
     a.start();
     b.start();
-    driver.start();
 
     std::atomic<bool> finished{false};
     Pipeline p;
-    p.context()->at("input")->set(3);
+    p.inputNode()->set(3);
 
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() + 4);
         return Result::ok();
     }, &a);
-    p.addLinearProc([](Node*, Node* in, Node* out) -> Result {
+    p.addProc([](Node*, Node* in, Node* out) -> Result {
         out->set(in->get().toInt() * 2);
         return Result::ok();
     }, &b);
 
-    pipeline::async(std::move(p), &driver, [&](Pipeline& pipe) {
-        VE_ASSERT(pipe.lastResult().isSuccess());
-        VE_ASSERT_EQ(pipe.context()->get("output").toInt(), 14);  // (3 + 4) * 2
+    p.onFinished(nullptr, [&](Pipeline& pipe) {
+        VE_ASSERT(pipe.result().isSuccess());
+        VE_ASSERT_EQ(pipe.outputNode()->getInt(), 14);  // (3 + 4) * 2
         finished.store(true);
     });
+    p.async();
 
     while (!finished.load()) std::this_thread::yield();
-    driver.stop();
     a.stop();
     b.stop();
 
@@ -389,68 +371,64 @@ VE_TEST(pipeline_cross_loop_async)
 }
 
 // A registered command that takes real wall-clock time, bound to a worker loop
-// so it never runs on the calling/driver thread.
-static void regSlowCommand()
+// so it never runs on the calling thread.
+static Node* regSlowCommand()
 {
-    command::factory().reg("_test_slow",
+    return command::reg("_test_slow",
         [](Node*, Node* in, Node* out) -> Result {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             out->set(in->get().toInt() + 100);
             return Result::ok();
-        },
-        "sleep 50ms then add 100");
+        });
 }
 
 VE_TEST(pipeline_slow_command_sync)
 {
-    regSlowCommand();
+    auto* slow_n = regSlowCommand();
 
     AsioLoop worker("slow.sync.worker");
-    AsioLoop driver("slow.sync.driver");   // not started: sync() pumps it here
     worker.start();
 
     Pipeline p;
-    p.context()->at("input")->set(5);
-    Command cmd = command::create("_test_slow", p.context(), nullptr, nullptr);
-    p.addCommand(cmd, &worker);             // command runs on the worker loop
+    p.inputNode()->set(5);
+    Command cmd(slow_n);
+    cmd.setLoop(&worker);              // command runs on the worker loop
+    p.add(cmd);
 
-    // Blocks here, pumping `driver`, until the 50ms command finishes off-thread.
-    p.sync(&driver);
+    p.sync();                          // blocks until the 50ms command finishes off-thread
 
-    VE_ASSERT_EQ(p.state(), Pipeline::DONE);
-    VE_ASSERT(p.lastResult().isSuccess());
-    VE_ASSERT_EQ(p.context()->get("output").toInt(), 105);
+    VE_ASSERT(p.result().isSuccess());
+    VE_ASSERT_EQ(p.outputNode()->getInt(), 105);
 
     worker.stop();
 }
 
 VE_TEST(pipeline_slow_command_async)
 {
-    regSlowCommand();
+    auto* slow_n = regSlowCommand();
 
     AsioLoop worker("slow.async.worker");
-    AsioLoop driver("slow.async.driver");
     worker.start();
-    driver.start();
 
     std::atomic<bool> done{false};
     Pipeline p;
-    p.context()->at("input")->set(7);
-    Command cmd = command::create("_test_slow", p.context(), nullptr, nullptr);
-    p.addCommand(cmd, &worker);
+    p.inputNode()->set(7);
+    Command cmd(slow_n);
+    cmd.setLoop(&worker);
+    p.add(cmd);
 
-    pipeline::async(std::move(p), &driver, [&](Pipeline& pipe) {
-        VE_ASSERT(pipe.lastResult().isSuccess());
-        VE_ASSERT_EQ(pipe.context()->get("output").toInt(), 107);  // 7 + 100
+    p.onFinished(nullptr, [&](Pipeline& pipe) {
+        VE_ASSERT(pipe.result().isSuccess());
+        VE_ASSERT_EQ(pipe.outputNode()->getInt(), 107);  // 7 + 100
         done.store(true);
     });
+    p.async();
 
     // async must NOT block: the 50ms command cannot have finished yet.
     VE_ASSERT(!done.load());
 
     while (!done.load()) std::this_thread::yield();
     worker.stop();
-    driver.stop();
 
     VE_ASSERT(done.load());
 }

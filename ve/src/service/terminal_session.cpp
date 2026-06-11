@@ -926,17 +926,16 @@ std::string TerminalSession::execute(const std::string& line)
 
     if (builtinNode || cmdNode) {
         if (asyncMode) {
-            Pipeline detached;
-            Node* request = detached.context()->at("request");
-            Node* reply = detached.context()->at("reply");
-            prepareCommandInput(request, s.root, s.cur, args, resolvedWordCount);
-            Command cmdObj = command::create(resolvedFactory, resolvedName,
-                                             detached.context(), request, reply);
+            // Detached run: the Pipeline graph keeps itself alive (strong self in
+            // the dispatch chain) until FINISHED has been delivered. The pipeline
+            // rebinds the command's i/o at dispatch, so input goes on the PIPELINE.
+            Pipeline pipe;
+            prepareCommandInput(pipe.inputNode(), s.root, s.cur, args, resolvedWordCount);
+            pipe.add(command::create(resolvedFactory, resolvedName));
 
             auto asyncOut = s.asyncOutput;
-            detached.addCommand(cmdObj);
-            pipeline::async(std::move(detached), nullptr, [asyncOut, resolvedName](Pipeline& pipe) {
-                std::string text = renderCommandOutput(pipe.context()->find("reply", false), pipe.lastResult());
+            pipe.onFinished(nullptr, [asyncOut, resolvedName](Pipeline& pipe) {
+                std::string text = renderCommandOutput(pipe.outputNode(), pipe.result());
                 if (asyncOut && !text.empty()) {
                     if (text.back() != '\n') {
                         text.push_back('\n');
@@ -944,19 +943,17 @@ std::string TerminalSession::execute(const std::string& line)
                     asyncOut("\x1b[33m[" + resolvedName + "]\x1b[0m " + text);
                 }
             });
+            pipe.async();
             s.print("accepted\n");
             return s.output;
         }
 
-        Pipeline pipe;
-        Node* request = pipe.context()->at("request");
-        Node* reply = pipe.context()->at("reply");
-        prepareCommandInput(request, s.root, s.cur, args, resolvedWordCount);
-        Command cmdObj = command::create(resolvedFactory, resolvedName, pipe.context(), request, reply);
-        pipe.addCommand(cmdObj);
-        pipe.sync();
-        updateCurrentFromOut(s.cur, reply);
-        s.print(renderCommandOutput(reply, pipe.lastResult()));
+        // Single synchronous command — no pipeline needed.
+        Command cmdObj = command::create(resolvedFactory, resolvedName);
+        prepareCommandInput(cmdObj.inputNode(), s.root, s.cur, args, resolvedWordCount);
+        cmdObj.run();
+        updateCurrentFromOut(s.cur, cmdObj.outputNode());
+        s.print(renderCommandOutput(cmdObj.outputNode(), cmdObj.result()));
         return s.output;
     }
 
