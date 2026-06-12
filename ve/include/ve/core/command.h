@@ -157,6 +157,12 @@ public:
 
     void call(Callback cb, Loop* cb_loop = nullptr) const;
 
+public:
+    template<typename SchemaS = schema::VarS, typename... Args>
+    bool input(Args&&... args) { return schema::importAs<SchemaS>(inputNode(), std::forward<Args>(args)...); }
+    template<typename SchemaS = schema::VarS, typename... Args>
+    bool input(const std::string& path, Args&&... args) { return schema::importAs<SchemaS>(inputNode()->at(path), std::forward<Args>(args)...); }
+
 private:
     VE_DECLARE_SHARED_PRIVATE
 };

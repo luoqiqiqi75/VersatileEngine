@@ -400,7 +400,7 @@ VE_TEST(node_copy_into_empty_tree) {
     VE_ASSERT(dst.child("item", 0) != src.child("item", 0));
 }
 
-VE_TEST(node_copy_inserts_before_matched_anchor) {
+VE_TEST(node_copy_appends_unmatched_named_children) {
     Node src("src");
     src.append("head")->set(1);
     src.append("tail")->set(2);
@@ -412,9 +412,75 @@ VE_TEST(node_copy_inserts_before_matched_anchor) {
     dst.copy(&src);
 
     VE_ASSERT_EQ(dst.count(), 2);
-    VE_ASSERT_EQ(dst.child(0)->name(), "head");
-    VE_ASSERT_EQ(dst.child(1), tail);
+    VE_ASSERT_EQ(dst.child(0), tail);
     VE_ASSERT_EQ(tail->getInt(), 2);
+    VE_ASSERT_EQ(dst.child(1)->name(), "head");
+    VE_ASSERT_EQ(dst.child(1)->getInt(), 1);
+}
+
+VE_TEST(node_copy_anonymous_keys_land_on_named_children) {
+    // schema import: {a:1,b:2,c:3} <- [4,5,6] fills by position, #i = i-th child
+    Node src("src");
+    src.append("")->set(4);
+    src.append("")->set(5);
+    src.append("")->set(6);
+
+    Node dst("dst");
+    Node* a = dst.append("a"); a->set(1);
+    Node* b = dst.append("b"); b->set(2);
+    Node* c = dst.append("c"); c->set(3);
+
+    dst.copy(&src);
+
+    VE_ASSERT_EQ(dst.count(), 3);
+    VE_ASSERT_EQ(dst.child(0), a);
+    VE_ASSERT_EQ(a->getInt(), 4);
+    VE_ASSERT_EQ(b->getInt(), 5);
+    VE_ASSERT_EQ(c->getInt(), 6);
+}
+
+VE_TEST(node_copy_named_keys_insert_alongside_anonymous) {
+    // [4,5,6] <- {a:1,b:2,c:3}: keys a/b/c don't exist here, so they are
+    // inserted; anonymous children are untouched and stay findable by #i
+    Node src("src");
+    src.append("a")->set(1);
+    src.append("b")->set(2);
+    src.append("c")->set(3);
+
+    Node dst("dst");
+    Node* n0 = dst.append(""); n0->set(4);
+    Node* n1 = dst.append(""); n1->set(5);
+    Node* n2 = dst.append(""); n2->set(6);
+
+    dst.copy(&src);
+
+    VE_ASSERT_EQ(dst.count(), 6);
+    VE_ASSERT_EQ(n0->getInt(), 4);
+    VE_ASSERT_EQ(n1->getInt(), 5);
+    VE_ASSERT_EQ(n2->getInt(), 6);
+    VE_ASSERT_EQ(dst.child("a")->getInt(), 1);
+    VE_ASSERT_EQ(dst.child("b")->getInt(), 2);
+    VE_ASSERT_EQ(dst.child("c")->getInt(), 3);
+}
+
+VE_TEST(node_copy_auto_remove_judges_keys_strictly) {
+    // auto_remove drops children whose key has no strict match in src: named
+    // children are not saved by anonymous source nodes at the same position
+    Node src("src");
+    src.append("")->set(4);
+    src.append("")->set(5);
+
+    Node dst("dst");
+    dst.append("a")->set(1);
+    dst.append("b")->set(2);
+
+    dst.copy(&src, true, true);
+
+    VE_ASSERT_EQ(dst.count(), 2);
+    VE_ASSERT(dst.child(0)->name().empty());
+    VE_ASSERT(dst.child(1)->name().empty());
+    VE_ASSERT_EQ(dst.child(0)->getInt(), 4);
+    VE_ASSERT_EQ(dst.child(1)->getInt(), 5);
 }
 
 VE_TEST(node_copy_preserves_extra_children_when_auto_remove_false) {

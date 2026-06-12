@@ -97,12 +97,19 @@ public:
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
-    // Sync this node from another node using key/path semantics.
-    // - Named-sibling insertion order is not part of copy semantics; same-name overlap
-    //   order and anonymous occurrence (#N) are matched when reusing children.
-    // - For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
-    //   (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
-    // - Default value sync uses set() (always emits NODE_CHANGED); auto_update=true uses update().
+    // Sync this node from another node using key semantics (name#overlap | #index).
+    // Key resolution: named n#k → the k-th child named n; anonymous #i → the
+    // i-th child, whatever its name.
+    // Steps:
+    //   1. auto_remove: children here whose key does not exist in other are
+    //      removed (keys judged on the pre-remove layout).
+    //   2. one pass over other's children: each lands on the node here at its
+    //      key and is copied recursively; an unresolved key is appended first
+    //      (auto_insert) or skipped. Lookups are live, so children appended
+    //      during the pass can resolve later #i keys.
+    //   3. own value: auto_update ? update() : set() (set always emits NODE_CHANGED).
+    // For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
+    // (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
     void  copy(const Node* other, bool auto_insert = true, bool auto_remove = false, bool auto_update = false);
 
     // -- key (key = name | name#N | #N) ---

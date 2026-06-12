@@ -44,50 +44,6 @@ struct Node::Private
     }
 };
 
-namespace {
-
-struct CopyMatchState
-{
-    Hash<SmallVector<Node*>> named_children;
-    Node::Nodes              anonymous_children;
-    Hash<int>                named_cursor;
-    int                      anonymous_cursor = 0;
-    std::unordered_set<Node*> matched;
-};
-
-static void _bucket_children(const Node::Nodes& children, CopyMatchState& state)
-{
-    for (auto* child : children) {
-        if (!child) continue;
-        if (child->name().empty()) state.anonymous_children.push_back(child);
-        else                       state.named_children[child->name()].push_back(child);
-    }
-}
-
-static Node* _take_copy_match(const Node* src_child, CopyMatchState& state)
-{
-    if (!src_child) return nullptr;
-
-    if (src_child->name().empty()) {
-        while (state.anonymous_cursor < state.anonymous_children.sizeAsInt()) {
-            auto* match = state.anonymous_children[state.anonymous_cursor++];
-            if (state.matched.insert(match).second) return match;
-        }
-        return nullptr;
-    }
-
-    int& cursor = state.named_cursor[src_child->name()];
-    if (auto* bucket = state.named_children.ptr(src_child->name())) {
-        while (cursor < bucket->sizeAsInt()) {
-            auto* match = (*bucket)[cursor++];
-            if (state.matched.insert(match).second) return match;
-        }
-    }
-    return nullptr;
-}
-
-} // namespace
-
 // ============================================================================
 // Node — construction / static
 // ============================================================================
@@ -459,61 +415,48 @@ void Node::clear(bool auto_delete)
     }
 }
 
+namespace {
+
+// Walk children, calling fn(child, name, overlap, index) with each child's key parts
+// (key = name#overlap for named children, #index for anonymous ones).
+template <typename Fn>
+void forEachKeyed(const Node::Nodes& children, Fn fn)
+{
+    Hash<int> seen;
+    for (int i = 0; i < children.sizeAsInt(); ++i) {
+        auto* c = children[i];
+        if (!c) continue;
+        const int overlap = c->name().empty() ? 0 : seen[c->name()]++;
+        fn(c, c->name(), overlap, i);
+    }
+}
+
+} // namespace
+
 void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto_update)
 {
     if (!other || other == this) return;
 
-    auto src_children = other->children();
-    auto dst_children = children();
+    // 1. remove children whose key does not exist in other
+    if (auto_remove)
+        forEachKeyed(children(), [&](Node* d, const std::string& name, int overlap, int index) {
+            if (!(name.empty() ? other->child(index) : other->child(name, overlap))) remove(d);
+        });
 
-    if (auto_remove && !dst_children.empty()) {
-        CopyMatchState remove_state;
-        _bucket_children(dst_children, remove_state);
-        for (const auto* src_child : src_children)
-            (void)_take_copy_match(src_child, remove_state);
-
-        for (int i = dst_children.sizeAsInt() - 1; i >= 0; --i) {
-            auto* dst_child = dst_children[i];
-            if (remove_state.matched.count(dst_child) == 0)
-                remove(dst_child);
+    // 2. each child of other lands on the node at its key — named n#k → the k-th
+    //    child named n, anonymous #i → the i-th child whatever its name — and is
+    //    copied recursively; an unresolved key is appended first (auto_insert)
+    forEachKeyed(other->children(), [&](Node* s, const std::string& name, int overlap, int index) {
+        auto* d = name.empty() ? child(index) : child(name, overlap);
+        if (!d) {
+            if (!auto_insert) return;
+            d = append(name);
+            if (!d) return;
         }
-    }
+        d->copy(s, auto_insert, auto_remove, auto_update);
+    });
 
-    dst_children = children();
-    CopyMatchState copy_state;
-    _bucket_children(dst_children, copy_state);
-
-    Vector<const Node*> pending_sources;
-    if (auto_insert) pending_sources.reserve(src_children.size());
-
-    auto flush_pending_before = [&](Node* anchor) {
-        if (pending_sources.empty()) return;
-        for (const auto* pending_src : pending_sources) {
-            auto* inserted = new Node(pending_src->name());
-            int insert_index = anchor ? indexOf(anchor) : count();
-            if (insert_index < 0) insert_index = count();
-            if (!insert(inserted, insert_index)) {
-                delete inserted;
-                continue;
-            }
-            inserted->copy(pending_src, auto_insert, auto_remove, auto_update);
-        }
-        pending_sources.clear();
-    };
-
-    for (const auto* src_child : src_children) {
-        auto* match = _take_copy_match(src_child, copy_state);
-        if (!match) {
-            if (auto_insert) pending_sources.push_back(src_child);
-            continue;
-        }
-
-        flush_pending_before(match);
-        match->copy(src_child, auto_insert, auto_remove, auto_update);
-    }
-
-    flush_pending_before(nullptr);
-
+    // 3. own value
     if (auto_update) update(other->get());
     else             set(other->get());
 }
