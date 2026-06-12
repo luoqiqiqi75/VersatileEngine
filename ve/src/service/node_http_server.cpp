@@ -246,21 +246,19 @@ bool NodeHttpServer::start()
                 return;
             }
 
-            Pipeline pipe;
-            if (!schema::importAs<schema::JsonS>(pipe.inputNode(), req.body())) {
+
+            if (!cmd.input(req.body())) {
                 convert::parse(HttpResultRep(Result::fail(JRpcInvalidRequest, "bad request")), rep);
                 return;
             }
-            pipe.add(cmd);
 
             if (queryBool(req.query(), "async", false)) {
-               pipe.onFinished(o, [guard = rep.defer(), rep_ptr = &rep] (Pipeline& p) {
-                   convert::parse(HttpResultRep(p.result(), p.outputNode()), *rep_ptr);
-               });
-               pipe.async();
+                cmd.call([guard = rep.defer(), rep_ptr = &rep] (Command& c) {
+                    convert::parse(HttpResultRep(c.result(), c.outputNode()), *rep_ptr);
+                });
            } else {
-               pipe.sync();
-               convert::parse(HttpResultRep(pipe.result(), pipe.outputNode()), rep);
+                cmd.run();
+                convert::parse(HttpResultRep(cmd.result(), cmd.outputNode()), rep);
            }
         });
     }
