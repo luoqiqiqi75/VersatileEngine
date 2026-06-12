@@ -35,6 +35,21 @@ bool Loop::stop() { return false; }
 bool Loop::isRunning() const { return false; }
 size_t Loop::processEvents() { return 0; }
 
+int Loop::exec()
+{
+    while (isRunning() && !_quit.load(std::memory_order_acquire)) {
+        if (processEvents() == 0) std::this_thread::yield();
+    }
+    _quit.store(false, std::memory_order_release);   // consumed; allow re-exec
+    return _exit_code.load(std::memory_order_acquire);
+}
+
+void Loop::quit(int exit_code)
+{
+    _exit_code.store(exit_code, std::memory_order_release);
+    _quit.store(true, std::memory_order_release);
+}
+
 // ============================================================================
 // Built-in asio loops
 // ============================================================================

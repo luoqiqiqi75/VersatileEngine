@@ -32,6 +32,17 @@ public:
     virtual bool   stop();
     virtual bool   isRunning() const;
     virtual size_t processEvents();
+
+    // Block as the process main loop until quit(). Default: poll processEvents()
+    // while isRunning(). Framework loops override exec() with the native one
+    // (QApplication::exec etc.); quit() must unblock exec() from any thread.
+    // A quit() issued before exec() makes exec() return immediately.
+    virtual int    exec();
+    virtual void   quit(int exit_code = 0);
+
+protected:
+    std::atomic<bool> _quit{false};
+    std::atomic<int>  _exit_code{0};
 };
 
 // Standard core implementations. These are concrete runtime loops users may

@@ -260,6 +260,21 @@ size_t QtMainLoop::processEvents()
     return 0;
 }
 
+int QtMainLoop::exec()
+{
+    if (!app_) return 0;
+    if (_quit.exchange(false)) return _exit_code.load();   // quit() before exec()
+    int code = app_->exec();
+    _quit.store(false);
+    return code;
+}
+
+void QtMainLoop::quit(int exit_code)
+{
+    Loop::quit(exit_code);
+    QCoreApplication::exit(exit_code);
+}
+
 class QtModule : public Module
 {
     QCoreApplication* app_ = nullptr;

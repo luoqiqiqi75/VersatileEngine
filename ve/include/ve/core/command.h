@@ -6,12 +6,6 @@
 #include "node.h"
 #include "var.h"
 
-#include <atomic>
-#include <cstdint>
-#include <functional>
-#include <string>
-#include <utility>
-
 namespace ve {
 
 struct Result

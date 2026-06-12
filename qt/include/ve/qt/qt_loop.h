@@ -34,6 +34,9 @@ public:
     bool   isRunning() const override;
     size_t processEvents() override;
 
+    int    exec() override;   // native QCoreApplication::exec()
+    void   quit(int exit_code = 0) override;
+
 private:
     QCoreApplication* app_ = nullptr;
 };

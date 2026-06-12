@@ -16,20 +16,13 @@
   .subtitle { color: #888; margin-bottom: 32px; }
   .card {
     background: #16213e; border-radius: 12px; padding: 24px;
-    width: 100%; max-width: 600px; margin-bottom: 16px;
+    width: 100%; max-width: 720px; margin-bottom: 16px;
     box-shadow: 0 4px 24px rgba(0,0,0,.3);
   }
   .card h2 { font-size: 1rem; color: #e94560; margin-bottom: 12px; }
   #status { color: #0f3460; font-weight: 600; }
   #status.online { color: #4ecca3; }
   #status.offline { color: #e94560; }
-  .node-list { list-style: none; }
-  .node-list li {
-    padding: 6px 0; border-bottom: 1px solid #1a1a2e;
-    display: flex; justify-content: space-between;
-  }
-  .node-list li:last-child { border-bottom: none; }
-  .key { color: #4ecca3; } .val { color: #ccc; }
   button {
     background: #e94560; color: #fff; border: none;
     padding: 10px 20px; border-radius: 8px; cursor: pointer;
@@ -39,9 +32,31 @@
   #log {
     background: #0f3460; border-radius: 8px; padding: 12px;
     font-family: monospace; font-size: 0.85rem; color: #aaa;
-    max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+    max-height: 160px; overflow-y: auto; white-space: pre-wrap;
     margin-top: 12px;
   }
+  /* --- tree --- */
+  .tree, .tree ul { list-style: none; }
+  .tree ul { margin-left: 18px; border-left: 1px solid #1a1a2e; padding-left: 6px; }
+  .tree { font-family: monospace; font-size: 0.9rem; max-height: 480px; overflow-y: auto; }
+  .tree .row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 4px; border-radius: 4px; cursor: default;
+  }
+  .tree .row:hover { background: #1a1a2e; }
+  .tree .caret {
+    width: 14px; flex: none; text-align: center; cursor: pointer;
+    color: #e94560; user-select: none; font-size: 0.75rem;
+  }
+  .tree .caret.leaf { color: #444; cursor: default; }
+  .tree .name { color: #4ecca3; flex: none; }
+  .tree .name.anon { color: #888; font-style: italic; }
+  .tree .val { color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree .val.flash { color: #ffd166; transition: color 0.2s; }
+  .tree .badge {
+    color: #666; font-size: 0.75rem; flex: none; margin-left: auto;
+  }
+  .tree .empty { color: #666; font-style: italic; padding: 3px 4px; }
 </style>
 </head>
 <body>
@@ -56,10 +71,10 @@
 
 <div class="card">
   <h2>Node Tree</h2>
-  <ul id="nodeList" class="node-list">
-    <li><em style="color:#666">Connect to load nodes...</em></li>
+  <ul id="tree" class="tree">
+    <li class="empty">Connect to load nodes...</li>
   </ul>
-  <button onclick="refreshTree()">Refresh</button>
+  <button onclick="reloadRoot()">Refresh</button>
   <button onclick="testSet()">Set Test Value</button>
 </div>
 
@@ -81,42 +96,136 @@ function updateStatus(online) {
   el.className = online ? 'online' : 'offline';
 }
 
-function renderNodes(data) {
-  var ul = document.getElementById('nodeList');
-  ul.innerHTML = '';
-  if (!data || typeof data !== 'object') {
-    ul.innerHTML = '<li><em style="color:#666">No data</em></li>';
-    return;
-  }
-  function flatten(obj, prefix) {
-    for (var k in obj) {
-      var path = prefix ? prefix + '/' + k : k;
-      if (obj[k] !== null && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
-        flatten(obj[k], path);
-      } else {
-        var li = document.createElement('li');
-        li.innerHTML = '<span class="key">' + path + '</span><span class="val">' + JSON.stringify(obj[k]) + '</span>';
-        ul.appendChild(li);
-      }
-    }
-  }
-  flatten(data, '');
-  if (ul.children.length === 0) {
-    ul.innerHTML = '<li><em style="color:#666">Empty tree</em></li>';
-  }
+// path -> value <span>, for live updates from node.changed events
+var valueSpans = {};
+
+function fmtValue(v) {
+  if (v === undefined) return '';
+  var s = JSON.stringify(v);
+  return s.length > 80 ? s.slice(0, 77) + '...' : s;
 }
 
-function refreshTree() {
+function setRowValue(path, value) {
+  var span = valueSpans[path];
+  if (!span) return;
+  span.textContent = fmtValue(value);
+  span.classList.add('flash');
+  setTimeout(function() { span.classList.remove('flash'); }, 400);
+}
+
+// One tree row. info comes from node.list: {name, path, has_value, child_count}.
+// `value` (optional) comes from the parent's depth-1 node.get merge.
+function makeNodeLi(info, value) {
+  var li = document.createElement('li');
+  var row = document.createElement('div');
+  row.className = 'row';
+
+  var caret = document.createElement('span');
+  caret.className = 'caret';
+  var expandable = info.child_count > 0;
+  caret.textContent = expandable ? '▶' : '·';
+  if (!expandable) caret.classList.add('leaf');
+  row.appendChild(caret);
+
+  var name = document.createElement('span');
+  name.className = 'name' + (info.name ? '' : ' anon');
+  name.textContent = info.name || info.path.split('/').pop();
+  row.appendChild(name);
+
+  var val = document.createElement('span');
+  val.className = 'val';
+  if (value !== undefined) val.textContent = fmtValue(value);
+  row.appendChild(val);
+  valueSpans[info.path] = val;
+
+  if (expandable) {
+    var badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = info.child_count;
+    row.appendChild(badge);
+  }
+
+  li.appendChild(row);
+
+  if (expandable) {
+    var ul = document.createElement('ul');
+    ul.style.display = 'none';
+    li.appendChild(ul);
+    var loaded = false;
+    caret.onclick = function() {
+      var open = ul.style.display !== 'none';
+      if (open) {
+        ul.style.display = 'none';
+        caret.textContent = '▶';
+        return;
+      }
+      ul.style.display = '';
+      caret.textContent = '▼';
+      if (!loaded) {
+        loaded = true;
+        loadChildren(info.path, ul);
+      }
+    };
+  } else if (info.has_value && value === undefined) {
+    // value not resolvable from the parent merge (duplicate name / anonymous):
+    // fetch it individually on click
+    row.style.cursor = 'pointer';
+    row.onclick = function() {
+      veService.val(info.path).then(function(v) { setRowValue(info.path, v); });
+    };
+    val.textContent = '(click to load)';
+  }
+
+  return li;
+}
+
+// Lazy-load one level: node.list for exact structure (child_count, duplicate
+// names, anonymous children), node.get depth=1 for the visible child values.
+function loadChildren(path, ul) {
+  ul.textContent = '';
+  Promise.all([
+    veService.list(path),
+    veService.get(path, 1)
+  ]).then(function(results) {
+    var children = (results[0] && results[0].children) || [];
+    var tree = results[1];
+
+    // count name occurrences: a depth-1 tree keys named children once, so a
+    // value from tree[name] is only trustworthy when the name is unique
+    var nameCount = {};
+    children.forEach(function(c) {
+      if (c.name) nameCount[c.name] = (nameCount[c.name] || 0) + 1;
+    });
+
+    if (children.length === 0) {
+      var li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = '(no children)';
+      ul.appendChild(li);
+      return;
+    }
+
+    children.forEach(function(c) {
+      var value;  // undefined = unknown, do not display
+      if (c.child_count === 0 && c.has_value && c.name && nameCount[c.name] === 1
+          && tree && typeof tree === 'object' && !Array.isArray(tree)) {
+        value = tree[c.name];
+      }
+      ul.appendChild(makeNodeLi(c, value));
+    });
+  }).catch(function(err) {
+    log('Load ' + (path || '/') + ' failed: ' + err.message);
+  });
+}
+
+function reloadRoot() {
   if (typeof veService === 'undefined' || !veService.isConnected) {
     log('Not connected');
     return;
   }
-  veService.get('').then(function(data) {
-    log('Tree loaded');
-    renderNodes(data);
-  }).catch(function(err) {
-    log('Error: ' + err.message);
-  });
+  valueSpans = {};
+  loadChildren('', document.getElementById('tree'));
+  log('Tree reloaded');
 }
 
 function testSet() {
@@ -125,15 +234,28 @@ function testSet() {
     return;
   }
   var ts = new Date().toISOString();
-  veService.set('browser/test', ts);
-  log('Set browser/test = ' + ts);
-  setTimeout(refreshTree, 300);
+  veService.val('browser/test', ts).then(function() {
+    log('Set browser/test = ' + ts);
+  }).catch(function(err) {
+    log('Set failed: ' + err.message);
+  });
 }
 
 function veServiceCallback(svc) {
   log('veService connected');
   updateStatus(true);
-  refreshTree();
+  reloadRoot();
+
+  // Live updates for the browser subtree. Note: bubble events carry the
+  // *source* node path, so veservice.js per-path callbacks never match a
+  // bubble subscription — route through the raw message handler instead.
+  svc.watch('browser', function() {}, { bubble: true, tree: false });
+  svc.onMessage(function(message) {
+    if (message.event === 'node.changed' && message.path !== undefined) {
+      setRowValue(message.path, message.value);
+    }
+  });
+  svc.onConnectionChange(updateStatus);
 }
 </script>
 
