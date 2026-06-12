@@ -159,7 +159,7 @@ void ServerModule::bindStaticProxyTargets()
             std::string pfx = rule->get("prefix").toString();
             if (pfx.empty()) continue;
 
-            Node* targetNode = rule->find("target", false);
+            Node* targetNode = rule->find("target");
             if (!targetNode) continue;
 
             targetNode->onChanged(this, [this, prefix, pfx](const Var& newVal, const Var&) {

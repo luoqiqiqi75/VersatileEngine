@@ -17,7 +17,6 @@ namespace ve {
 //
 // children : Vector<Node*>            flat array, true insertion order
 //            Hash<SmallVector<int>>   name → [indices into vector]
-// shadow   : Node*                    prototype-chain fallback
 //
 // name  = real child name (no # no /)
 // key   = name | name#N | #N
@@ -123,18 +122,15 @@ public:
 
     std::string keyOf(const Node* child, int guess = -1) const;
 
-    const Node* shadow() const;
-    void  setShadow(Node* shadow);
-
     // Single-level key access: "name" | "name#N" | "#N"
-    Node* atKey(int index, bool use_shadow) const;
-    Node* atKey(const std::string& name, int overlap, bool use_shadow) const;
-    Node* atKey(std::string_view key, bool use_shadow,
+    Node* atKey(int index) const;
+    Node* atKey(const std::string& name, int overlap) const;
+    Node* atKey(std::string_view key,
                 char key_sep = VE_NODE_KEY_SEP) const;
 
-    Node* atKey(int index, bool use_shadow);
-    Node* atKey(const std::string& name, int overlap, bool use_shadow);
-    Node* atKey(std::string_view key, bool use_shadow,
+    Node* atKey(int index);
+    Node* atKey(const std::string& name, int overlap);
+    Node* atKey(std::string_view key,
                 char key_sep = VE_NODE_KEY_SEP);        // ensure exists, creates if not found
 
 
@@ -147,10 +143,10 @@ public:
                        char key_sep  = VE_NODE_KEY_SEP);
 
     // Multi-level path access: "a/b/c"
-    Node*       atPath(std::string_view path, bool use_shadow,
+    Node*       atPath(std::string_view path,
                        char path_sep = VE_NODE_PATH_SEP,
                        char key_sep  = VE_NODE_KEY_SEP) const;  // find only
-    Node*       atPath(std::string_view path, bool use_shadow,
+    Node*       atPath(std::string_view path,
                        char path_sep = VE_NODE_PATH_SEP,
                        char key_sep  = VE_NODE_KEY_SEP);        // ensure exists
 
@@ -158,7 +154,7 @@ public:
 
     // --- container interface ---
     Node* operator[](int index) const { return child(index); }
-    Node* operator[](const std::string& key) const { return atKey(key, false); }
+    Node* operator[](const std::string& key) const { return atKey(key); }
 
     class ChildIterator {
         Node* const* _p = nullptr;
@@ -233,11 +229,11 @@ public:
     Node* next() const { return sibling(1); }
 
     // path usage
-    Node* find(std::string_view path, bool use_shadow = true) const { return atPath(path, use_shadow); }
+    Node* find(std::string_view path) const { return atPath(path); }
 
-    Node* at(int index, bool use_shadow = true) { return atKey(index, use_shadow); }
-    Node* at(const std::string& name, int overlap, bool use_shadow = true) { return atKey(name, overlap, use_shadow); }
-    Node* at(const std::string& path, bool use_shadow = true) { return atPath(path, use_shadow); }
+    Node* at(int index) { return atKey(index); }
+    Node* at(const std::string& name, int overlap) { return atKey(name, overlap); }
+    Node* at(const std::string& path) { return atPath(path); }
 
     // subpath usage
     Var get(int index) const { if (auto n = child(index)) return n->value(); return Var {}; }
@@ -365,9 +361,9 @@ VE_API Node* n(const std::string& path, bool auto_create = true);
 // a single Node* with derived-class access (protected). Provides node()
 // accessor and operator bool() to check validity.
 //
-// Path ctor uses ensure-exists semantics (atPath with create=true). Callers
-// wanting find-only should construct from an existing Node* (e.g. via
-// const_cast<const Node*>(root)->atPath(..., false, ...)).
+// Path ctor uses ensure-exists semantics (non-const atPath). Callers wanting
+// find-only should construct from an existing Node* (e.g. via
+// const_cast<const Node*>(root)->atPath(...)).
 
 struct VE_API NodeRef
 {
@@ -380,7 +376,7 @@ public:
     explicit NodeRef(const std::string& path,
                      char path_sep = VE_NODE_PATH_SEP,
                      char key_sep  = VE_NODE_KEY_SEP)
-        : _n(node::root()->atPath(path, true, path_sep, key_sep))
+        : _n(node::root()->atPath(path, path_sep, key_sep))
     {}
 
     Node* node() const { return _n; }
@@ -393,13 +389,13 @@ public:
                char path_sep = VE_NODE_PATH_SEP,
                char key_sep  = VE_NODE_KEY_SEP) const
     {
-        return _n ? const_cast<const Node*>(_n)->atPath(key, false, path_sep, key_sep) : nullptr;
+        return _n ? const_cast<const Node*>(_n)->atPath(key, path_sep, key_sep) : nullptr;
     }
     Node* node(const std::string& key,
                char path_sep = VE_NODE_PATH_SEP,
                char key_sep  = VE_NODE_KEY_SEP)
     {
-        return _n ? _n->atPath(key, true, path_sep, key_sep) : nullptr;
+        return _n ? _n->atPath(key, path_sep, key_sep) : nullptr;
     }
 };
 

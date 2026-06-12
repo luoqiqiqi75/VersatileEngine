@@ -42,7 +42,6 @@ export type VeReply<T = VarValue> = VeOkReply<T> | VeAcceptedReply | VeErrorRepl
 export interface NodeMeta {
   type: number;
   child_count: number;
-  has_shadow: boolean;
   subscribers: number;
   parent_path?: string;
 }

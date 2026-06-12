@@ -174,36 +174,6 @@ VE_TEST(node_complex_deep_tree) {
     veLogI << "deep tree path length: " << p.size() << " chars";
 }
 
-VE_TEST(node_complex_shadow_mixed) {
-    Node proto("proto");
-    proto.append("camera");
-    proto.append("lidar");
-    proto.append("imu");
-
-    Node inst("inst");
-    inst.setShadow(&proto);
-    inst.append("camera");  // override
-    inst.append("gps");
-
-    for (int i = 0; i < 5; ++i) inst.append("");
-
-    veLogI << "=== Shadow mixed ===\n" << inst.dump();
-
-    // child() only sees local children
-    VE_ASSERT(inst.child("camera") != nullptr);
-    VE_ASSERT(inst.child("camera") != proto.child("camera"));
-    VE_ASSERT(inst.child("gps") != nullptr);
-    VE_ASSERT(inst.child("lidar") == nullptr);   // not local
-
-    // find() uses shadow fallback
-    VE_ASSERT(inst.find("lidar") == proto.child("lidar"));
-    VE_ASSERT(inst.find("imu") == proto.child("imu"));
-    VE_ASSERT(inst.find("nonexistent") == nullptr);
-
-    // count("") = count() = total local children (camera + gps + 5 anon = 7)
-    VE_ASSERT_EQ(inst.count(), 7);
-}
-
 VE_TEST(node_complex_wide_tree) {
     Node root("root");
     for (int g = 0; g < 1000; ++g) {

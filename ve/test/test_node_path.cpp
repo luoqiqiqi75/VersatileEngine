@@ -1,4 +1,4 @@
-// test_node_path.cpp — key, path, find, at, erase, shadow, schema, static root, mutex
+// test_node_path.cpp — key, path, find, at, erase, schema, static root, mutex
 #include "ve_test.h"
 #include "ve/core/node.h"
 
@@ -89,7 +89,7 @@ VE_TEST(node_childAt_global) {
 
 VE_TEST(node_childAt_empty) {
     Node root("root");
-    VE_ASSERT(root.atKey("", true) == nullptr);
+    VE_ASSERT(root.atKey("") == nullptr);
 }
 
 // ============================================================================
@@ -325,68 +325,6 @@ VE_TEST(node_erase_no_delete) {
     VE_ASSERT(a->parent() == nullptr);
 
     delete a;
-}
-
-// ============================================================================
-// Shadow (prototype chain)
-// ============================================================================
-
-VE_TEST(node_shadow_fallback) {
-    Node proto("proto");
-    proto.append("default_x");
-    proto.append("default_y");
-
-    Node inst("inst");
-    inst.append("local_z");
-    inst.setShadow(&proto);
-
-    // child() does NOT use shadow — only path methods do
-    VE_ASSERT(inst.child("local_z") != nullptr);
-    VE_ASSERT(inst.child("default_x") == nullptr);
-
-    // find() uses shadow fallback
-    VE_ASSERT(inst.find("local_z") != nullptr);
-    VE_ASSERT(inst.find("default_x") != nullptr);
-    VE_ASSERT(inst.find("default_y") != nullptr);
-    VE_ASSERT(inst.find("nope") == nullptr);
-}
-
-VE_TEST(node_shadow_chain) {
-    Node base("base");
-    base.append("from_base");
-
-    Node mid("mid");
-    mid.append("from_mid");
-    mid.setShadow(&base);
-
-    Node leaf("leaf");
-    leaf.append("from_leaf");
-    leaf.setShadow(&mid);
-
-    // find walks shadow chain
-    VE_ASSERT(leaf.find("from_leaf") != nullptr);
-    VE_ASSERT(leaf.find("from_mid") != nullptr);
-    VE_ASSERT(leaf.find("from_base") != nullptr);
-    VE_ASSERT(leaf.find("nope") == nullptr);
-
-    // child() only sees local children
-    VE_ASSERT(leaf.child("from_leaf") != nullptr);
-    VE_ASSERT(leaf.child("from_mid") == nullptr);
-    VE_ASSERT(leaf.child("from_base") == nullptr);
-}
-
-VE_TEST(node_shadow_has) {
-    Node proto("proto");
-    proto.append("field");
-
-    Node inst("inst");
-    inst.setShadow(&proto);
-
-    // has() uses child() → no shadow
-    VE_ASSERT(!inst.has("field"));
-
-    // find for shadow access
-    VE_ASSERT(inst.find("field") != nullptr);
 }
 
 // ============================================================================

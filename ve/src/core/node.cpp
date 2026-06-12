@@ -12,7 +12,6 @@ namespace ve {
 struct Node::Private
 {
     Node* parent  = nullptr;
-    Node* shadow  = nullptr;
 
     struct Children {
         Hash<SmallVector<int>> indices;   // name → [global indices in nodes]
@@ -576,41 +575,30 @@ Node::ReverseChildIterator Node::rend() const
 // Node — path
 // ============================================================================
 
-const Node* Node::shadow() const { return _p->shadow; }
-void  Node::setShadow(Node* s) { LockT lk(mutex()); _p->shadow = s; }
-
 // ============================================================================
 // Node — atKey (single-level key access)
 // ============================================================================
 
-Node* Node::atKey(int index, bool use_shadow) const
+Node* Node::atKey(int index) const
 {
-    if (Node* cn = child(index)) return cn;
-    if (use_shadow) {
-        if (auto* sn = shadow()) return sn->atKey(index, true);
-    }
-    return nullptr;
+    return child(index);
 }
 
-Node *Node::atKey(const std::string &name, int overlap, bool use_shadow) const
+Node *Node::atKey(const std::string &name, int overlap) const
 {
-    if (Node* cn = child(name, overlap)) return cn;
-    if (use_shadow) {
-        if (auto* sn = shadow()) return sn->atKey(name, overlap, true);
-    }
-    return nullptr;
+    return child(name, overlap);
 }
 
-Node* Node::atKey(std::string_view key, bool use_shadow, char key_sep) const
+Node* Node::atKey(std::string_view key, char key_sep) const
 {
     std::string_view nm; int idx;
     if (!parseKey(key, nm, idx, key_sep)) return nullptr;
-    return nm.empty() && idx >= 0 ? atKey(idx, use_shadow) : atKey(std::string(nm), idx < 0 ? 0 : idx, use_shadow);
+    return nm.empty() && idx >= 0 ? atKey(idx) : atKey(std::string(nm), idx < 0 ? 0 : idx);
 }
 
-Node* Node::atKey(int index, bool use_shadow)
+Node* Node::atKey(int index)
 {
-    if (Node* cn = const_cast<const Node*>(this)->atKey(index, use_shadow)) return cn;
+    if (Node* cn = const_cast<const Node*>(this)->atKey(index)) return cn;
 
     if (index < 0) return nullptr;
     if (!append(index - count())) {
@@ -622,9 +610,9 @@ Node* Node::atKey(int index, bool use_shadow)
     return cn;
 }
 
-Node* Node::atKey(const std::string& name, int overlap, bool use_shadow)
+Node* Node::atKey(const std::string& name, int overlap)
 {
-    if (Node* cn = const_cast<const Node*>(this)->atKey(name, overlap, use_shadow)) return cn;
+    if (Node* cn = const_cast<const Node*>(this)->atKey(name, overlap)) return cn;
 
     if (overlap < 0) return nullptr;
     if (!append(name, overlap - count(name))) {
@@ -636,11 +624,11 @@ Node* Node::atKey(const std::string& name, int overlap, bool use_shadow)
     return cn;
 }
 
-Node* Node::atKey(std::string_view key, bool use_shadow, char key_sep)
+Node* Node::atKey(std::string_view key, char key_sep)
 {
     std::string_view nm; int idx;
     if (!parseKey(key, nm, idx, key_sep)) return nullptr;
-    return (nm.empty() && idx >= 0) ? at(idx, use_shadow) : at(std::string(nm), idx, use_shadow);
+    return (nm.empty() && idx >= 0) ? at(idx) : at(std::string(nm), idx);
 }
 
 // ============================================================================
@@ -666,7 +654,7 @@ bool Node::isName(std::string_view name, char path_sep, char key_sep)
         && name.find(key_sep)  == std::string_view::npos;
 }
 
-Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char key_sep) const
+Node* Node::atPath(std::string_view path, char path_sep, char key_sep) const
 {
     if (path.empty()) return const_cast<Node*>(this);
     const Node* cur = this;
@@ -682,12 +670,12 @@ Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char k
         path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        cur = cur->atKey(seg, use_shadow, key_sep);
+        cur = cur->atKey(seg, key_sep);
     }
     return const_cast<Node*>(cur);
 }
 
-Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char key_sep)
+Node* Node::atPath(std::string_view path, char path_sep, char key_sep)
 {
     if (path.empty()) return this;
     Node* cur = this;
@@ -703,14 +691,14 @@ Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char k
         path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        cur = cur->atKey(seg, use_shadow, key_sep);
+        cur = cur->atKey(seg, key_sep);
     }
     return cur;
 }
 
 bool Node::erase(const std::string& path, bool auto_delete)
 {
-    auto* t = find(path, false);
+    auto* t = find(path);
     if (!t || !t->_p->parent) return false;
     if (auto_delete) return t->_p->parent->remove(t);
     return t->_p->parent->take(t) != nullptr;
@@ -817,7 +805,6 @@ std::string Node::dump(int depth) const
 
     std::string out = indent + key;
     if (!_p->value.isNull()) out += " = " + _p->value.toString();
-    if (_p->shadow) out += "  -> " + _p->shadow->name();
     out += "\n";
 
     if (_p->children)

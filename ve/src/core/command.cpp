@@ -41,7 +41,7 @@ Node* Command::outputNode() const { return _p->out_n; }
 void Command::setContextNodes(Node* ctx_n, Node* in_n, Node* out_n)
 {
     _p->ctx_n = ctx_n ? ctx_n : &_p->internal_ctx_n;
-    _p->in_n = in_n ? in_n : _p->ctx_n->at("in"); _p->in_n->setShadow(_p->declare_n);
+    _p->in_n = in_n ? in_n : _p->ctx_n->at("in");
     _p->out_n = out_n ? out_n : _p->ctx_n->at("out");
 }
 

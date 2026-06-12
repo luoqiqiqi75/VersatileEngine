@@ -71,7 +71,7 @@ inline Module* instance(const std::string& key)
 {
     auto* nd = factory().node(key, VE_FACTORY_KEY_SEP);
     if (!nd) return nullptr;
-    if (auto* inst = nd->find("instance", false))
+    if (auto* inst = nd->find("instance"))
         return static_cast<Module*>(inst->get().toPointer());
     return nullptr;
 }

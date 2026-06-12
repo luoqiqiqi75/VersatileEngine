@@ -62,7 +62,6 @@ void writeNodeMeta(Node* out, Node* root, Node* target)
     out->set("path", target->path(root));
     out->set("type", static_cast<int64_t>(target->get().type()));
     out->set("child_count", static_cast<int64_t>(target->count()));
-    out->set("has_shadow", target->shadow() != nullptr);
     if (target->parent()) out->set("parent_path", target->parent()->path(root));
 }
 
@@ -267,8 +266,8 @@ static void runOp(Node* root, Node* req, Node* rep, Session* session, int batchL
     // Single synchronous command — no pipeline needed.
     Command cmd = command::create(f, op);
     cmd.inputNode()->copy(req, true, true, true);
-    cmd.inputNode()->at("root", false)->set(Var::ptr(root));
-    if (session) cmd.inputNode()->at("session", false)->set(Var::ptr(session));
+    cmd.inputNode()->at("root")->set(Var::ptr(root));
+    if (session) cmd.inputNode()->at("session")->set(Var::ptr(session));
     cmd.inputNode()->set("batch_limit", static_cast<int64_t>(batchLimit));
 
     cmd.run();

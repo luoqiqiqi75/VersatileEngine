@@ -308,7 +308,7 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
         auto* nd = factory.node(key, VE_FACTORY_KEY_SEP);
         int priority = 100;
         if (nd) {
-            if (auto* pn = nd->find("priority", false))
+            if (auto* pn = nd->find("priority"))
                 priority = pn->getInt(100);
         }
         bool enabled = true;

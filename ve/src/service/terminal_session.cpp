@@ -102,9 +102,9 @@ static std::vector<std::string> completeNodePath(Node* root, Node* cur, const st
         if (absolute) {
             std::string rel = parentPath;
             if (!rel.empty() && rel[0] == '/') rel.erase(rel.begin());
-            base = rel.empty() ? root : root->find(rel, false);
+            base = rel.empty() ? root : root->find(rel);
         } else {
-            base = cur->find(parentPath, false);
+            base = cur->find(parentPath);
         }
     }
     if (!base) return {};
@@ -144,24 +144,24 @@ static void prepareCommandInput(Node* in,
 {
     if (!in) return;
     in->clear();
-    Node* argv = in->at("argv", false);
+    Node* argv = in->at("argv");
     for (const auto& arg : args) {
         argv->append()->set(arg);
     }
     in->set("argc", static_cast<int64_t>(args.size()));
     in->set("command_words", static_cast<int64_t>(start));
     if (root) {
-        in->at("root", false)->set(Var::ptr(root));
+        in->at("root")->set(Var::ptr(root));
     }
     if (current) {
-        in->at("current", false)->set(Var::ptr(current));
+        in->at("current")->set(Var::ptr(current));
     }
 }
 
 static void updateCurrentFromOut(Node*& current, Node* out)
 {
     if (!out) return;
-    if (auto* cn = out->find("current", false)) {
+    if (auto* cn = out->find("current")) {
         if (auto* p = cn->get().toPointer()) {
             current = static_cast<Node*>(p);
         }
@@ -174,7 +174,7 @@ static std::string renderCommandOutput(Node* out, const Result& r)
         return r.message().empty() ? std::string("command failed\n") : r.message() + "\n";
     }
     if (out) {
-        if (auto* text = out->find("text", false)) {
+        if (auto* text = out->find("text")) {
             return text->getString();
         }
         if (!out->get().isNull()) {
@@ -245,7 +245,7 @@ static std::vector<std::string> argvInput(Node* in)
 {
     std::vector<std::string> args;
     if (!in) return args;
-    if (auto* argv = in->find("argv", false)) {
+    if (auto* argv = in->find("argv")) {
         for (auto* arg : *argv) {
             args.push_back(arg->getString());
         }
@@ -383,7 +383,6 @@ static void registerTerminalBuiltins()
                 out += "  parent:    " + std::string(t->parent() ? nodeSummary(t->parent()) : "(none)") + "\n";
                 out += "  children:  " + std::to_string(t->count()) + "\n";
                 out += "  empty:     " + std::string(t->empty() ? "yes" : "no") + "\n";
-                out += "  shadow:    " + std::string(t->shadow() ? nodeSummary(t->shadow()) : "(none)") + "\n";
                 if (!t->get().isNull()) {
                     const auto& v = t->get();
                     out += "  value:     " + varPreview(v) + "\n";
@@ -686,22 +685,6 @@ static void registerTerminalBuiltins()
                 s.print(result);
             }
         }, "schema <fmt> [path] [-f file] [-i data]  (export; -i/-f import = load/save)");
-
-        regBuiltin(builtins, "shadow", [](S& s, Args args) {
-            auto f = parseFlags(args);
-            auto* t = s.target(args);
-            if (f.has("clear")) { t->setShadow(nullptr); s.print("shadow cleared\n"); return; }
-            auto setPath = f.get("set");
-            if (f.has("set")) {
-                if (setPath.empty()) { s.print("usage: shadow --set <path>\n"); return; }
-                auto* sh = s.resolve(setPath);
-                if (!sh) { s.print("not found: " + setPath + "\n"); return; }
-                t->setShadow(sh);
-                s.print("shadow set to: " + sh->path(s.root) + "\n"); return;
-            }
-            auto* sh = t->shadow();
-            s.print(sh ? "shadow: " + nodeSummary(sh) + " (/" + sh->path(s.root) + ")\n" : "(no shadow)\n");
-        }, "shadow [path]");
     });
 }
 
@@ -763,7 +746,7 @@ void TerminalSession::Private::initCommands()
         if (isInt(args[1])) {
             taken = s.cur->take(std::stoi(args[1]));
         } else {
-            auto* c = s.cur->find(args[1], false);
+            auto* c = s.cur->find(args[1]);
             if (c && c->parent() == s.cur) taken = s.cur->take(c);
             else if (c) s.print("not a direct child\n");
             else s.print("not found: " + args[1] + "\n");
@@ -813,7 +796,7 @@ void TerminalSession::Private::initCommands()
             }
             Node* builtin = nullptr;
             if (const Node* root = factory::at("builtin").node()) {
-                builtin = const_cast<Node*>(root)->find(key, false);
+                builtin = const_cast<Node*>(root)->find(key);
             }
             if (builtin) {
                 auto h = builtin->get("help").toString();
@@ -830,7 +813,7 @@ void TerminalSession::Private::initCommands()
             "pwd", "cd", "root", "up", "ls",
             "first", "last", "prev", "next", "sibling",
             "get", "set", "mk", "rm", "mv", "cp",
-            "schema", "shadow",
+            "schema",
         };
 
         std::string out;
