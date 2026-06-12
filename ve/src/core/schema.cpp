@@ -45,9 +45,9 @@ bool SchemaTraits<JsonS>::importNode(Node* node, const std::string& data)
     return impl::json::importTree(node, data);
 }
 
-bool SchemaTraits<JsonS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+bool SchemaTraits<JsonS>::importNode(Node* node, const std::string& data, int copy_flags)
 {
-    return impl::json::importTree(node, data, options);
+    return impl::json::importTree(node, data, copy_flags);
 }
 
 // ============================================================================
@@ -69,9 +69,9 @@ bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len)
     return impl::bin::importTree(node, data, len);
 }
 
-bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len, const ImportOptions& options)
+bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len, int copy_flags)
 {
-    return impl::bin::importTree(node, data, len, options);
+    return impl::bin::importTree(node, data, len, copy_flags);
 }
 
 // ============================================================================
@@ -93,16 +93,16 @@ bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data)
     return impl::xml::importTree(node, data);
 }
 
-bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data, int copy_flags)
 {
-    return impl::xml::importTree(node, data, options);
+    return impl::xml::importTree(node, data, copy_flags);
 }
 
 // ============================================================================
 // SchemaTraits<Var>
 // ============================================================================
 
-static Var nodeToVarImpl(const Node* node, const ExportOptions& options)
+static Var nodeToVarImpl(const Node* node, const ExportOptions<VarS>& options)
 {
     if (!node) return Var();
 
@@ -174,8 +174,7 @@ static Var nodeToVarImpl(const Node* node, const ExportOptions& options)
 
 Var SchemaTraits<VarS>::exportNode(const Node* node)
 {
-    ExportOptions options;
-    return exportNode(node, options);
+    return exportNode(node, ExportOptions{});
 }
 
 Var SchemaTraits<VarS>::exportNode(const Node* node, const ExportOptions& options)
@@ -257,15 +256,15 @@ static void varToNodeImpl(const Var& var, Node* node)
 
 bool SchemaTraits<VarS>::importNode(Node* node, const Var& data)
 {
-    return importNode(node, data, ImportOptions{});
+    return importNode(node, data, Node::COPY_DEFAULT);
 }
 
-bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, const ImportOptions& options)
+bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, int copy_flags)
 {
     if (!node) return false;
     Node parsed("var_import");
     varToNodeImpl(data, &parsed);
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+    node->copy(&parsed, copy_flags);
     return true;
 }
 
@@ -288,9 +287,9 @@ bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data)
     return impl::md::importTree(node, data);
 }
 
-bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data, int copy_flags)
 {
-    return impl::md::importTree(node, data, options);
+    return impl::md::importTree(node, data, copy_flags);
 }
 
 // ============================================================================

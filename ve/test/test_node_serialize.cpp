@@ -56,13 +56,12 @@ VE_TEST(node_serialize_json_roundtrip_default) {
     Node src("r");
     buildJsonTree(src);
 
-    schema::ExportOptions ex;
+    schema::ExportOptions<schema::JsonS> ex;
     ex.indent = 2;
     std::string json = schema::exportAs<schema::JsonS>(&src, ex);
 
     Node dst("r");
-    schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT(nodeStructEqual(&src, &dst));
 }
 
@@ -71,14 +70,12 @@ VE_TEST(node_serialize_json_merge_preserves_extra_child) {
     src.set(1);
     src.append("a")->set(2);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions{});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{});
 
     Node dst("r");
     dst.append("extra")->set(42);
 
-    schema::ImportOptions im;
-    im.auto_remove = false;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT(dst.has("extra"));
     VE_ASSERT_EQ(dst.child("a")->getInt(), 2);
     VE_ASSERT_EQ(dst.getInt(), 1);
@@ -90,10 +87,10 @@ VE_TEST(node_serialize_json_ignores_duplicate_named_children) {
     src.append("a")->set(2);
     src.append("b")->set(3);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions{});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{});
 
     Node dst("r");
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, schema::ImportOptions{}));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT_EQ(dst.count("a"), 1);
     VE_ASSERT_EQ(dst.child("a")->getInt(), 1);
     VE_ASSERT_EQ(dst.child("b")->getInt(), 3);
@@ -101,7 +98,7 @@ VE_TEST(node_serialize_json_ignores_duplicate_named_children) {
 
 VE_TEST(node_serialize_json_duplicate_key_last_wins) {
     Node dst("r");
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, "{\"a\":1,\"a\":2}", schema::ImportOptions{}));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, "{\"a\":1,\"a\":2}", Node::COPY_DEFAULT));
     VE_ASSERT_EQ(dst.count("a"), 1);
     VE_ASSERT_EQ(dst.child("a")->getInt(), 2);
 }
@@ -112,9 +109,7 @@ VE_TEST(node_serialize_json_auto_remove_prunes_extra_duplicates) {
     dst.append("a")->set(2);
     dst.append("extra")->set(3);
 
-    schema::ImportOptions im;
-    im.auto_remove = true;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, "{\"a\":5}", im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, "{\"a\":5}", Node::COPY_STRICT));
     VE_ASSERT_EQ(dst.count("a"), 1);
     VE_ASSERT_EQ(dst.child("a")->getInt(), 5);
     VE_ASSERT(!dst.has("extra"));
@@ -129,12 +124,12 @@ VE_TEST(node_serialize_json_export_auto_ignore_roundtrip) {
     src.append("pub")->set(1);
     src.append("_hid")->set(2);
 
-    schema::ExportOptions ex;
+    schema::ExportOptions<schema::JsonS> ex;
     ex.auto_ignore = true;
     std::string json = schema::exportAs<schema::JsonS>(&src, ex);
 
     Node dst("r");
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, schema::ImportOptions{}));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT(dst.has("pub"));
     VE_ASSERT(!dst.has("_hid"));
 }
@@ -144,12 +139,12 @@ VE_TEST(node_serialize_json_export_no_ignore_includes_underscore_child) {
     src.append("pub")->set(1);
     src.append("_hid")->set(2);
 
-    schema::ExportOptions ex;
+    schema::ExportOptions<schema::JsonS> ex;
     ex.auto_ignore = false;
     std::string json = schema::exportAs<schema::JsonS>(&src, ex);
 
     Node dst("r");
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, schema::ImportOptions{}));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT(dst.has("pub"));
     VE_ASSERT(dst.has("_hid"));
     VE_ASSERT_EQ(dst.child("_hid")->getInt(), 2);
@@ -163,10 +158,10 @@ VE_TEST(node_serialize_bin_roundtrip_default) {
     Node src("r");
     buildFullTree(src);
 
-    auto bytes = schema::exportAs<schema::BinS>(&src, schema::ExportOptions{});
+    auto bytes = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
 
     Node dst("r");
-    VE_ASSERT(schema::importAs<schema::BinS>(&dst, bytes.data(), bytes.size(), schema::ImportOptions{}));
+    VE_ASSERT(schema::importAs<schema::BinS>(&dst, bytes.data(), bytes.size(), Node::COPY_DEFAULT));
     VE_ASSERT(nodeStructEqual(&src, &dst));
 }
 
@@ -174,17 +169,12 @@ VE_TEST(node_serialize_json_bin_import_equivalent) {
     Node src("r");
     buildJsonTree(src);
 
-    schema::ExportOptions ex;
-    ex.auto_ignore = false;
-    std::string json = schema::exportAs<schema::JsonS>(&src, ex);
-    auto          bin  = schema::exportAs<schema::BinS>(&src, ex);
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{2, false});
+    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{false});
 
     Node fromJson("r");
     Node fromBin("r");
-    schema::ImportOptions im;
-    im.auto_insert  = true;
-    im.auto_remove  = true;
-    im.auto_update  = true;
+    int im = Node::COPY_STRICT | Node::COPY_UPDATE;
     VE_ASSERT(schema::importAs<schema::JsonS>(&fromJson, json, im));
     VE_ASSERT(schema::importAs<schema::BinS>(&fromBin, bin.data(), bin.size(), im));
     VE_ASSERT(nodeStructEqual(&fromJson, &fromBin));
@@ -194,13 +184,13 @@ VE_TEST(node_serialize_json_bin_duplicate_named_children_differ) {
     Node src("r");
     buildFullTree(src);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions{});
-    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions{});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{});
+    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
 
     Node fromJson("r");
     Node fromBin("r");
-    VE_ASSERT(schema::importAs<schema::JsonS>(&fromJson, json, schema::ImportOptions{}));
-    VE_ASSERT(schema::importAs<schema::BinS>(&fromBin, bin.data(), bin.size(), schema::ImportOptions{}));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&fromJson, json, Node::COPY_DEFAULT));
+    VE_ASSERT(schema::importAs<schema::BinS>(&fromBin, bin.data(), bin.size(), Node::COPY_DEFAULT));
 
     VE_ASSERT_EQ(fromJson.count("dup"), 1);
     VE_ASSERT_EQ(fromBin.count("dup"), 2);
@@ -212,18 +202,13 @@ VE_TEST(node_serialize_bin_auto_ignore_matches_json) {
     src.append("a")->set(1);
     src.append("_b")->set(2);
 
-    schema::ExportOptions ex;
-    ex.auto_ignore = true;
-    std::string json = schema::exportAs<schema::JsonS>(&src, ex);
-    auto        bin  = schema::exportAs<schema::BinS>(&src, ex);
-
-    schema::ImportOptions im;
-    im.auto_remove = true;
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{2, true});
+    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{true});
 
     Node j("r");
     Node b("r");
-    VE_ASSERT(schema::importAs<schema::JsonS>(&j, json, im));
-    VE_ASSERT(schema::importAs<schema::BinS>(&b, bin.data(), bin.size(), im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&j, json, Node::COPY_STRICT));
+    VE_ASSERT(schema::importAs<schema::BinS>(&b, bin.data(), bin.size(), Node::COPY_STRICT));
     VE_ASSERT(nodeStructEqual(&j, &b));
 }
 
@@ -236,15 +221,11 @@ VE_TEST(node_serialize_copy_matches_bin_import_full_tree) {
     buildFullTree(src);
 
     Node byCopy("r");
-    byCopy.copy(&src, true, true, true);
+    byCopy.copy(&src, Node::COPY_STRICT | Node::COPY_UPDATE);
 
-    auto bytes = schema::exportAs<schema::BinS>(&src, schema::ExportOptions{});
+    auto bytes = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
     Node byBin("r");
-    schema::ImportOptions im;
-    im.auto_insert  = true;
-    im.auto_remove  = true;
-    im.auto_update  = true;
-    VE_ASSERT(schema::importAs<schema::BinS>(&byBin, bytes.data(), bytes.size(), im));
+    VE_ASSERT(schema::importAs<schema::BinS>(&byBin, bytes.data(), bytes.size(), Node::COPY_STRICT | Node::COPY_UPDATE));
 
     VE_ASSERT(nodeStructEqual(&byCopy, &byBin));
 }
@@ -258,8 +239,7 @@ VE_TEST(node_serialize_json_invalid_preserves_dst) {
     dst.append("marker")->set(123);
     Node* marker = dst.child("marker");
 
-    schema::ImportOptions im;
-    VE_ASSERT(!schema::importAs<schema::JsonS>(&dst, "{ not json", im));
+    VE_ASSERT(!schema::importAs<schema::JsonS>(&dst, "{ not json", Node::COPY_DEFAULT));
     VE_ASSERT(dst.has("marker"));
     VE_ASSERT_EQ(dst.child("marker"), marker);
     VE_ASSERT_EQ(marker->getInt(), 123);
@@ -268,8 +248,7 @@ VE_TEST(node_serialize_json_invalid_preserves_dst) {
 VE_TEST(node_serialize_json_invalid_unclosed_preserves_dst) {
     Node dst("dst");
     dst.set(1);
-    schema::ImportOptions im;
-    VE_ASSERT(!schema::importAs<schema::JsonS>(&dst, "{\"a\":", im));
+    VE_ASSERT(!schema::importAs<schema::JsonS>(&dst, "{\"a\":", Node::COPY_DEFAULT));
     VE_ASSERT_EQ(dst.count(), 0);
     VE_ASSERT_EQ(dst.getInt(), 1);
 }
@@ -277,7 +256,7 @@ VE_TEST(node_serialize_json_invalid_unclosed_preserves_dst) {
 VE_TEST(node_serialize_bin_truncated_merge_preserves_dst) {
     Node src("s");
     src.append("x")->set(5);
-    auto full = schema::exportAs<schema::BinS>(&src, schema::ExportOptions{});
+    auto full = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
 
     Node dst("dst");
     dst.append("marker")->set(7);
@@ -287,8 +266,7 @@ VE_TEST(node_serialize_bin_truncated_merge_preserves_dst) {
     }
     Bytes truncated(full.begin(), full.begin() + full.size() / 2);
 
-    schema::ImportOptions im;
-    VE_ASSERT(!schema::importAs<schema::BinS>(&dst, truncated.data(), truncated.size(), im));
+    VE_ASSERT(!schema::importAs<schema::BinS>(&dst, truncated.data(), truncated.size(), Node::COPY_DEFAULT));
     VE_ASSERT(dst.has("marker"));
     VE_ASSERT_EQ(dst.child("marker")->getInt(), 7);
 }
@@ -304,12 +282,11 @@ VE_TEST(node_serialize_json_double_import_preserves_named_child_identity) {
 
     std::string json = "{\"a\": 1}";
 
-    schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT_EQ(dst.child("a"), a);
     VE_ASSERT_EQ(a->getInt(), 1);
 
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     VE_ASSERT_EQ(dst.child("a"), a);
     VE_ASSERT_EQ(a->getInt(), 1);
 }
@@ -329,9 +306,7 @@ VE_TEST(node_serialize_json_import_signals_auto_remove) {
         events.push_back("removed:" + key);
     });
 
-    schema::ImportOptions im;
-    im.auto_remove = true;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&root, "{\"stay\":3}", im));
+    VE_ASSERT(schema::importAs<schema::JsonS>(&root, "{\"stay\":3}", Node::COPY_STRICT));
 
     VE_ASSERT_EQ(root.count(), 1);
     VE_ASSERT_EQ(root.child("stay")->getInt(), 3);
@@ -364,11 +339,10 @@ VE_TEST(node_serialize_var_roundtrip_default) {
     Node src("r");
     buildJsonTree(src);
 
-    schema::ExportOptions ex;
+    schema::ExportOptions<schema::VarS> ex;
     auto var = schema::exportAs<schema::VarS>(&src, ex);
 
     Node dst("r");
-    schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::VarS>(&dst, var, im));
+    VE_ASSERT(schema::importAs<schema::VarS>(&dst, var, Node::COPY_DEFAULT));
     VE_ASSERT(nodeStructEqual(&src, &dst));
 }

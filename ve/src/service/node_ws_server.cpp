@@ -22,7 +22,7 @@
 namespace ve {
 namespace service {
 
-static const schema::ExportOptions compactJson{0};
+static const schema::ExportOptions<schema::JsonS> compactJson{0};
 
 static std::string toJson(const Node& n)
 {

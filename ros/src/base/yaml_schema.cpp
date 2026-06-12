@@ -108,7 +108,7 @@ namespace ve::schema {
 
 std::string SchemaTraits<YamlS>::exportNode(const Node* node, int indent)
 {
-    return exportNode(node, ExportOptions{indent, false});
+    return exportNode(node, ExportOptions{indent});
 }
 
 std::string SchemaTraits<YamlS>::exportNode(const Node* node, const ExportOptions&)
@@ -120,19 +120,19 @@ std::string SchemaTraits<YamlS>::exportNode(const Node* node, const ExportOption
 
 bool SchemaTraits<YamlS>::importNode(Node* node, const std::string& data)
 {
-    return importNode(node, data, ImportOptions{});
+    return importNode(node, data, Node::COPY_DEFAULT);
 }
 
 bool SchemaTraits<YamlS>::importNode(Node* node,
                                      const std::string& data,
-                                     const ImportOptions& options)
+                                     int copy_flags)
 {
     if (!node)
         return false;
 
     try {
         const Var decoded = ve::ros::yaml::yamlToVar(YAML::Load(data));
-        return schema::importAs<schema::VarS>(node, decoded, options);
+        return schema::importAs<schema::VarS>(node, decoded, copy_flags);
     } catch (...) {
         return false;
     }

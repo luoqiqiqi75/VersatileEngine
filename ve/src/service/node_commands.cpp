@@ -16,7 +16,7 @@
 namespace ve {
 namespace service {
 
-static const schema::ExportOptions compactJson{0};
+static const schema::ExportOptions<schema::JsonS> compactJson{0};
 
 // ============================================================================
 // Error codes carried by Result; codeString() maps them to protocol strings.
@@ -51,9 +51,9 @@ static std::string normalizePath(std::string path)
     return path;
 }
 
-Var exportNodeTree(Node* target, int depth, const schema::ExportOptions& options)
+Var exportNodeTree(Node* target, int depth, const schema::ExportOptions<schema::JsonS>& options)
 {
-    if (depth < 0) return schema::exportAs<schema::VarS>(target, options);
+    if (depth < 0) return schema::exportAs<schema::VarS>(target, schema::ExportOptions<schema::VarS>{options.auto_ignore});
     return impl::json::parse(impl::json::exportTree(target, depth, options));
 }
 
@@ -97,7 +97,7 @@ static void renderReply(Node* rep, const Var& id, Node* data, const Result& r)
         rep->set("error", r.message());
     } else {
         rep->set("ok", true);
-        if (data && data->count()) rep->at("data")->copy(data, true, true, true);
+        if (data && data->count()) rep->at("data")->copy(data, Node::COPY_STRICT | Node::COPY_UPDATE);
     }
 }
 
@@ -154,7 +154,7 @@ static Result put(Node*, Node* in, Node* out)
     if (!treeNode) treeNode = in->find("value");
     if (!treeNode) return Result::fail(ERR_INVALID_PARAMS, "tree is required");
     Node* target = reqRoot(in)->at(in->get("path").toString());
-    target->copy(treeNode, true, true);   // replace subtree (insert + remove stale)
+    target->copy(treeNode, Node::COPY_STRICT);   // replace subtree (insert + remove stale)
     out->set("path", target->path(reqRoot(in)));
     return Result::ok();
 }
@@ -265,7 +265,7 @@ static void runOp(Node* root, Node* req, Node* rep, Session* session, int batchL
 
     // Single synchronous command — no pipeline needed.
     Command cmd = command::create(f, op);
-    cmd.inputNode()->copy(req, true, true, true);
+    cmd.inputNode()->copy(req, Node::COPY_STRICT | Node::COPY_UPDATE);
     cmd.inputNode()->at("root")->set(Var::ptr(root));
     if (session) cmd.inputNode()->at("session")->set(Var::ptr(session));
     cmd.inputNode()->set("batch_limit", static_cast<int64_t>(batchLimit));

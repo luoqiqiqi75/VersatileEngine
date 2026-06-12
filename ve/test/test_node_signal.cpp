@@ -345,7 +345,7 @@ VE_TEST(node_signal_copy_triggers_added_and_removed) {
         events.push_back("removed:" + key);
     });
 
-    dst.copy(&src, true, true);
+    dst.copy(&src, Node::COPY_STRICT);
 
     VE_ASSERT_EQ(added, 1);
     VE_ASSERT_EQ(added_key, "head");

@@ -474,7 +474,7 @@ VE_TEST(node_copy_auto_remove_judges_keys_strictly) {
     dst.append("a")->set(1);
     dst.append("b")->set(2);
 
-    dst.copy(&src, true, true);
+    dst.copy(&src, Node::COPY_STRICT);
 
     VE_ASSERT_EQ(dst.count(), 2);
     VE_ASSERT(dst.child(0)->name().empty());
@@ -492,7 +492,7 @@ VE_TEST(node_copy_preserves_extra_children_when_auto_remove_false) {
     Node* keep  = dst.append("keep");
     keep->set(-1);
 
-    dst.copy(&src, true, false);
+    dst.copy(&src, Node::COPY_DEFAULT);
 
     VE_ASSERT_EQ(dst.count(), 2);
     VE_ASSERT_EQ(dst.child("keep"), keep);
@@ -509,7 +509,7 @@ VE_TEST(node_copy_auto_insert_false_does_not_add_missing_children) {
     Node* keep = dst.append("keep");
     keep->set(-1);
 
-    dst.copy(&src, false, false);
+    dst.copy(&src, Node::COPY_REPLACE);
 
     VE_ASSERT_EQ(dst.count(), 1);
     VE_ASSERT_EQ(dst.child("keep"), keep);
@@ -526,7 +526,7 @@ VE_TEST(node_copy_removes_extra_children_when_auto_remove_true) {
     Node* keep = dst.append("keep");
     keep->set(-1);
 
-    dst.copy(&src, true, true);
+    dst.copy(&src, Node::COPY_STRICT);
 
     VE_ASSERT_EQ(dst.count(), 1);
     VE_ASSERT_EQ(dst.child("keep"), keep);
@@ -544,7 +544,7 @@ VE_TEST(node_copy_matches_duplicate_names_by_overlap) {
     Node* second = dst.append("item");
     dst.append("item")->set(99);
 
-    dst.copy(&src, true, true);
+    dst.copy(&src, Node::COPY_STRICT);
 
     VE_ASSERT_EQ(dst.count("item"), 2);
     VE_ASSERT_EQ(dst.child("item", 0), first);
@@ -565,7 +565,7 @@ VE_TEST(node_copy_matches_anonymous_children_by_occurrence) {
     Node* anon1 = dst.append("");
     dst.append("")->set(99);
 
-    dst.copy(&src, true, true);
+    dst.copy(&src, Node::COPY_STRICT);
 
     VE_ASSERT_EQ(dst.count(), 3);
     VE_ASSERT_EQ(dst.child(0), anon0);
@@ -589,7 +589,7 @@ VE_TEST(node_copy_reuses_nested_anonymous_children_in_place) {
     second->set(-2);
     extra->set(99);
 
-    dst.copy(&src, true, false);
+    dst.copy(&src, Node::COPY_DEFAULT);
 
     VE_ASSERT_EQ(joint_types->count(), 3);
     VE_ASSERT_EQ(joint_types->child(0), first);
@@ -615,7 +615,7 @@ VE_TEST(node_copy_reuses_nested_duplicate_named_children_by_overlap) {
     second->set(-2);
     extra->set(99);
 
-    dst.copy(&src, true, false);
+    dst.copy(&src, Node::COPY_DEFAULT);
 
     VE_ASSERT_EQ(dst_cfg->count("joint"), 3);
     VE_ASSERT_EQ(dst_cfg->child("joint", 0), first);
@@ -639,7 +639,7 @@ VE_TEST(node_copy_nested_auto_remove_clears_extra_children) {
     first->set(-1);
     second->set(-2);
 
-    value->copy(src.at("value"), true, true, false);
+    value->copy(src.at("value"), Node::COPY_STRICT);
 
     VE_ASSERT_EQ(value->count("joint"), 2);
     VE_ASSERT_EQ(value->child("joint", 0), first);
@@ -686,12 +686,32 @@ VE_TEST(node_copy_auto_update_suppresses_equal_value_signal) {
     dst.connect<Node::NODE_CHANGED>(&dst, [&](const Var&, const Var&) { ++root_changed; });
     keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++keep_changed; });
 
-    dst.copy(&src, true, false, true);
+    dst.copy(&src, Node::COPY_DEFAULT | Node::COPY_UPDATE);
 
     VE_ASSERT_EQ(root_changed, 0);
     VE_ASSERT_EQ(keep_changed, 0);
     VE_ASSERT_EQ(dst.getInt(), 9);
     VE_ASSERT_EQ(keep->getInt(), 7);
+}
+
+VE_TEST(node_copy_without_replace_only_fills_null_values) {
+    Node src("src");
+    src.set(100);
+    src.append("filled")->set(1);
+    src.append("blank")->set(2);
+    src.append("added")->set(3);
+
+    Node dst("dst");
+    dst.set(9);                     // non-null, survives
+    dst.append("filled")->set(-1);  // non-null, survives
+    dst.append("blank");            // null, gets filled
+
+    dst.copy(&src, Node::COPY_INSERT);
+
+    VE_ASSERT_EQ(dst.getInt(), 9);
+    VE_ASSERT_EQ(dst.child("filled")->getInt(), -1);
+    VE_ASSERT_EQ(dst.child("blank")->getInt(), 2);
+    VE_ASSERT_EQ(dst.child("added")->getInt(), 3);  // inserted nodes start null, get filled
 }
 
 // ============================================================================

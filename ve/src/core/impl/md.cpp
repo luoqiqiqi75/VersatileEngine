@@ -59,7 +59,7 @@ static std::string stripNodeNameSuffix(const std::string& name)
 // ============================================================================
 
 static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int parentLevel,
-                                const schema::ExportOptions& options)
+                                const schema::ExportOptions<schema::MdS>& options)
 {
     if (!node) {
         return;
@@ -121,12 +121,12 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int p
 
 std::string exportTree(const Node* node, int indent)
 {
-    schema::ExportOptions options;
+    schema::ExportOptions<schema::MdS> options;
     options.indent = indent;
     return exportTree(node, options);
 }
 
-std::string exportTree(const Node* node, const schema::ExportOptions& options)
+std::string exportTree(const Node* node, const schema::ExportOptions<schema::MdS>& options)
 {
     if (!node) {
         return "";
@@ -361,20 +361,20 @@ bool importTree(Node* node, const std::string& md)
     return true;
 }
 
-bool importTree(Node* node, const std::string& md, const schema::ImportOptions& options)
+bool importTree(Node* node, const std::string& md, int copy_flags)
 {
     if (!node || md.empty()) {
         return false;
     }
 
-    if (!options.auto_insert && !options.auto_remove && !options.auto_update) {
+    if ((copy_flags & (Node::COPY_INSERT | Node::COPY_REMOVE | Node::COPY_UPDATE)) == 0) {
         importDirect(node, md);
         return true;
     }
 
     Node parsed("md_import");
     importDirect(&parsed, md);
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+    node->copy(&parsed, copy_flags);
     return true;
 }
 

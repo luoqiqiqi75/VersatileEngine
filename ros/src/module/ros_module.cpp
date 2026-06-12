@@ -63,8 +63,8 @@ void writeNamedNodeList(const std::string& path, const Var::ListV& list)
             ? it->second.toString()
             : "node";
         Node temp(key);
-        schema::importAs<schema::VarS>(&temp, item, schema::ImportOptions{true, true, true});
-        target->append(key)->copy(&temp, true, true, true);
+        schema::importAs<schema::VarS>(&temp, item, Node::COPY_STRICT | Node::COPY_UPDATE);
+        target->append(key)->copy(&temp, Node::COPY_STRICT | Node::COPY_UPDATE);
     }
 }
 
@@ -97,8 +97,8 @@ void writeNamedPathList(const std::string& path, const Var::ListV& list, const s
             (it != dict.end() && !it->second.toString().empty()) ? it->second.toString() : "",
             "item");
         Node temp("temp");
-        schema::importAs<schema::VarS>(&temp, item, schema::ImportOptions{true, true, true});
-        target->at(key)->copy(&temp, true, true, true);
+        schema::importAs<schema::VarS>(&temp, item, Node::COPY_STRICT | Node::COPY_UPDATE);
+        target->at(key)->copy(&temp, Node::COPY_STRICT | Node::COPY_UPDATE);
     }
 }
 

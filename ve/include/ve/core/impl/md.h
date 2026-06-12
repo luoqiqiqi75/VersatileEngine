@@ -32,26 +32,22 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
-#include "ve/core/var.h"
+#include "ve/core/schema.h"
 #include <string>
 
 namespace ve {
 
 class Node;
-namespace schema {
-struct ImportOptions;
-struct ExportOptions;
-}
 
 namespace impl::md {
 
 // Node tree → MD string
 VE_API std::string exportTree(const Node* node, int indent = 2);
-VE_API std::string exportTree(const Node* node, const schema::ExportOptions& options);
+VE_API std::string exportTree(const Node* node, const schema::ExportOptions<schema::MdS>& options);
 
 // MD string → Node tree
 VE_API bool importTree(Node* node, const std::string& md);
-VE_API bool importTree(Node* node, const std::string& md, const schema::ImportOptions& options);
+VE_API bool importTree(Node* node, const std::string& md, int copy_flags);
 
 } // namespace md
 } // namespace ve

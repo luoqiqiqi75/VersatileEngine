@@ -25,7 +25,7 @@ namespace ve {
 // defines
 namespace service {
 
-static const schema::ExportOptions compactJson{0};
+static const schema::ExportOptions<schema::JsonS> compactJson{0};
 
 // HTTP-specific key separator: ':' instead of '#' so that
 // /at/leo/mu:1 is reachable from a browser without URL-encoding
@@ -216,7 +216,7 @@ bool NodeHttpServer::start()
         // });
         _p->server.bind<http::verb::post>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
             if (auto const tar_n = tar_n_f(req, rep)) {
-                if (schema::importAs<schema::JsonS>(tar_n, req.body(), schema::ImportOptions { true, true, false})) { // with deletion
+                if (schema::importAs<schema::JsonS>(tar_n, req.body(), Node::COPY_STRICT)) { // with deletion
                     convert::parse(HttpRep(), rep);
                 } else {
                     convert::parse(HttpResultRep(Result::fail(JRpcParseError, "invalid json")), rep); // todo error code control

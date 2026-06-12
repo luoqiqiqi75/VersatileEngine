@@ -152,17 +152,21 @@ The schema layer is the format-facing import and export surface for node trees.
 
 Use:
 
-- `schema::exportAs<schema::Json>(node)`
-- `schema::exportAs<schema::Json>(node, schema::ExportOptions{...})`
-- `schema::importAs<schema::Json>(node, text)`
-- `schema::importAs<schema::Json>(node, text, schema::ImportOptions{...})`
+- `schema::exportAs<schema::JsonS>(node)`
+- `schema::exportAs<schema::JsonS>(node, schema::ExportOptions<schema::JsonS>{...})`
+- `schema::importAs<schema::JsonS>(node, text)`
+- `schema::importAs<schema::JsonS>(node, text, copy_flags)`
 
 Important behavior:
 
-- no-options import keeps the direct fast path
-- options-based import performs merge-style synchronization
-- `ExportOptions::auto_ignore` hides `_`-prefixed internal children
-- `ImportOptions` controls `auto_insert`, `auto_remove`, and `auto_replace`
+- no-flags import keeps the direct fast path
+- flags-based import performs merge-style synchronization through `Node::copy()`
+- export options are per format (nested in each `SchemaTraits` specialization);
+  `auto_ignore` (JsonS/BinS/VarS) hides `_`-prefixed internal children and
+  defaults to true — pass `auto_ignore = false` to export the full tree
+- `copy_flags` are `Node::CopyFlag` bits: `COPY_INSERT`, `COPY_REMOVE`,
+  `COPY_UPDATE`, `COPY_REPLACE`, plus the presets `COPY_DEFAULT`
+  (insert + replace) and `COPY_STRICT` (default + remove)
 
 ### `ve::Module`
 
@@ -229,11 +233,12 @@ Use `copy()` when one tree should drive another.
 
 ```cpp
 ve::Node snapshot;
-snapshot.copy(ve::n("robot"), true, true);
+snapshot.copy(ve::n("robot"), ve::Node::COPY_STRICT);
 ```
 
-Use `auto_remove = true` when the destination should mirror the source.
-Use `auto_remove = false` when the destination may carry local extra state.
+Use `COPY_STRICT` when the destination should mirror the source.
+Use `COPY_DEFAULT` when the destination may carry local extra state.
+Drop `COPY_REPLACE` to only fill in destination values that are still null.
 
 ## Service Defaults
 

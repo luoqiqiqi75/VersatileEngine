@@ -129,7 +129,7 @@ static Var unpackVar(const msgpack::object& obj)
 // Node tree → MessagePack (format: {_v: value, _c: [[name, node], ...]})
 // ============================================================================
 
-static bool isIgnoredChild(const Node* child, const schema::ExportOptions& options)
+static bool isIgnoredChild(const Node* child, const schema::ExportOptions<schema::BinS>& options)
 {
     return options.auto_ignore
         && child
@@ -137,7 +137,7 @@ static bool isIgnoredChild(const Node* child, const schema::ExportOptions& optio
         && child->name()[0] == '_';
 }
 
-static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, const schema::ExportOptions& options)
+static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, const schema::ExportOptions<schema::BinS>& options)
 {
     int fieldCount = 0;
     const Var& nodeValue = node->get();
@@ -261,10 +261,10 @@ Var readVar(const uint8_t*& ptr, const uint8_t* end)
 
 Bytes exportTree(const Node* node)
 {
-    return exportTree(node, schema::ExportOptions{});
+    return exportTree(node, schema::ExportOptions<schema::BinS>{});
 }
 
-Bytes exportTree(const Node* node, const schema::ExportOptions& options)
+Bytes exportTree(const Node* node, const schema::ExportOptions<schema::BinS>& options)
 {
     if (!node) {
         return {};
@@ -279,10 +279,10 @@ Bytes exportTree(const Node* node, const schema::ExportOptions& options)
 
 bool importTree(Node* node, const uint8_t* data, size_t len)
 {
-    return importTree(node, data, len, schema::ImportOptions{});
+    return importTree(node, data, len, Node::COPY_DEFAULT);
 }
 
-bool importTree(Node* node, const uint8_t* data, size_t len, const schema::ImportOptions& options)
+bool importTree(Node* node, const uint8_t* data, size_t len, int copy_flags)
 {
     if (!node || !data || len == 0) {
         return false;
@@ -295,7 +295,7 @@ bool importTree(Node* node, const uint8_t* data, size_t len, const schema::Impor
         Node parsed("bin_import");
         unpackNode(obj, &parsed);
 
-        node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+        node->copy(&parsed, copy_flags);
         return true;
     }
     catch (...) {

@@ -26,10 +26,12 @@ struct QJsonS {};
 template<>
 struct SchemaTraits<QJsonS>
 {
+    struct ExportOptions { bool auto_ignore = true; };
+
     VE_API static QJsonValue exportNode(const Node* node);
     VE_API static QJsonValue exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool importNode(Node* node, const QJsonValue& data);
-    VE_API static bool importNode(Node* node, const QJsonValue& data, const ImportOptions& options);
+    VE_API static bool importNode(Node* node, const QJsonValue& data, int copy_flags);
 };
 
 // --- QVariantS: QVariant-based Node serialization --------------------------
@@ -39,10 +41,12 @@ struct QVariantS {};
 template<>
 struct SchemaTraits<QVariantS>
 {
+    struct ExportOptions { bool auto_ignore = true; };
+
     VE_API static QVariant exportNode(const Node* node);
     VE_API static QVariant exportNode(const Node* node, const ExportOptions& options);
     VE_API static bool importNode(Node* node, const QVariant& data);
-    VE_API static bool importNode(Node* node, const QVariant& data, const ImportOptions& options);
+    VE_API static bool importNode(Node* node, const QVariant& data, int copy_flags);
 };
 
 } // namespace ve::schema

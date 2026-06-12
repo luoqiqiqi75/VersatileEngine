@@ -600,7 +600,7 @@ static void registerTerminalBuiltins()
         regBuiltin(builtins, "cp", [](S& s, Args args) {
             auto f = parseFlags(args);
             auto srcPath = f.pos(0);
-            if (srcPath.empty()) { s.print("usage: cp <src> [dest] [-r] [-u] [-I]\n"); return; }
+            if (srcPath.empty()) { s.print("usage: cp <src> [dest] [-r] [-u] [-I] [-R]\n"); return; }
             auto* src = s.resolve(srcPath);
             if (!src) { s.print("not found: " + srcPath + "\n"); return; }
             auto destPath = f.pos(1);
@@ -610,11 +610,13 @@ static void registerTerminalBuiltins()
             if (src->isAncestorOf(dest) || dest->isAncestorOf(src)) {
                 s.print("cannot copy between overlapping subtrees\n"); return;
             }
-            bool ai = !f.has("no-insert", 'I'), ar = f.has("remove", 'r'), au = f.has("update", 'u');
-            dest->copy(src, ai, ar, au);
+            bool ai = !f.has("no-insert", 'I'), ar = f.has("remove", 'r'), au = f.has("update", 'u'), arp = !f.has("no-replace", 'R');
+            int copy_flags = (ai ? Node::COPY_INSERT : 0) | (ar ? Node::COPY_REMOVE : 0)
+                           | (au ? Node::COPY_UPDATE : 0) | (arp ? Node::COPY_REPLACE : 0);
+            dest->copy(src, copy_flags);
             s.print("copied /" + src->path(s.root) + " -> /" + dest->path(s.root)
                 + "  (insert:" + std::string(ai?"on":"off") + ", remove:" + std::string(ar?"on":"off")
-                + ", update:" + std::string(au?"on":"off") + ")\n");
+                + ", update:" + std::string(au?"on":"off") + ", replace:" + std::string(arp?"on":"off") + ")\n");
         }, "cp <src> [dest]");
 
         regBuiltin(builtins, "schema", [](S& s, Args args) {

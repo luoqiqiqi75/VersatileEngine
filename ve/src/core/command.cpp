@@ -11,7 +11,7 @@ struct Command::Private
 {
     Loop* l = nullptr;
 
-    Node* declare_n = nullptr;
+    Node* template_n = nullptr;
 
     Node* ctx_n = nullptr;
     Node* in_n = nullptr;
@@ -27,7 +27,7 @@ Command::Command(Node* factory_n, Node* ctx_n, Node* in_n, Node* out_n) : NodeRe
     _p->r = Result::fail(-0xff01, "command invalid");
     if (factory_n) {
         _p->l = factory_n->get("loop").as<Loop*>();
-        _p->declare_n = factory_n->find("declare");
+        _p->template_n = factory_n->find("template");
     }
     setContextNodes(ctx_n, in_n, out_n);
 }
@@ -43,6 +43,7 @@ void Command::setContextNodes(Node* ctx_n, Node* in_n, Node* out_n)
     _p->ctx_n = ctx_n ? ctx_n : &_p->internal_ctx_n;
     _p->in_n = in_n ? in_n : _p->ctx_n->at("in");
     _p->out_n = out_n ? out_n : _p->ctx_n->at("out");
+    if (_p->template_n) _p->in_n->copy(_p->template_n, ve::Node::COPY_INSERT); // insert only
 }
 
 bool Command::valid() const
@@ -54,7 +55,13 @@ bool Command::valid() const
 Command& Command::run()
 {
     if (!valid()) { _p->r = Result::fail("command invalid"); return *this; }
-    _p->r = node()->get().invoke(_p->ctx_n, _p->in_n, _p->out_n).as<Result>();
+    try {
+        _p->r = node()->get().invoke(_p->ctx_n, _p->in_n, _p->out_n).as<Result>();
+    } catch (const std::exception& e) {
+        _p->r = Result::fail(e.what());
+    } catch (...) {
+        _p->r = Result::fail("unknown exception");
+    }
     return *this;
 }
 
@@ -66,24 +73,14 @@ Result Command::result() const { return _p->r; }
 void Command::call(Callback cb, Loop* cb_loop) const
 {
     auto task = [c = *this, cb, cb_l = cb_loop]() mutable {
-        try {
-            c.run(); // proc exec in l
-        } catch (const std::exception& e) {
-            c._p->r = Result::fail(e.what());
-        } catch (...) {
-            c._p->r = Result::fail("unknown exception");
-        }
+        c.run(); // proc exec in l
         if (cb_l) {
             cb_l->post([cb, c]() mutable { if (cb) cb(c); }); // callback exec in loop
         } else if (cb) {
             cb(c); // callback exec in l
         }
     };
-    if (_p->l) {
-        _p->l->post(task);
-    } else {
-        task();
-    }
+    _p->l ? _p->l->post(task) : task();
 }
 
 namespace command {

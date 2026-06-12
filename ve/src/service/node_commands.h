@@ -33,7 +33,7 @@ VE_API void dispatchNode(Node* root, Node* req, Node* rep, Session* session = nu
                          int batchLimit = 500);
 
 // Shared render helpers, reused by transport-specific renderers (e.g. http /at).
-VE_API Var  exportNodeTree(Node* target, int depth, const schema::ExportOptions& options);
+VE_API Var  exportNodeTree(Node* target, int depth, const schema::ExportOptions<schema::JsonS>& options);
 VE_API void writeNodeMeta(Node* out, Node* root, Node* target);
 
 } // namespace service

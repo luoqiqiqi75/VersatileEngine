@@ -59,12 +59,12 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node)
 std::string exportTree(const Node* node, int indent)
 {
     if (!node) return "";
-    schema::ExportOptions opts;
+    schema::ExportOptions<schema::XmlS> opts;
     opts.indent = indent;
     return exportTree(node, opts);
 }
 
-std::string exportTree(const Node* node, const schema::ExportOptions& options)
+std::string exportTree(const Node* node, const schema::ExportOptions<schema::XmlS>& options)
 {
     if (!node) return "";
 
@@ -307,11 +307,10 @@ static std::string fixHtmlToXml(const std::string& html) {
 
 bool importTree(Node* node, const std::string& xml)
 {
-    schema::ImportOptions opts;
-    return importTree(node, xml, opts);
+    return importTree(node, xml, Node::COPY_DEFAULT);
 }
 
-bool importTree(Node* node, const std::string& xml, const schema::ImportOptions& options)
+bool importTree(Node* node, const std::string& xml, int copy_flags)
 {
     if (!node || xml.empty()) return false;
 
@@ -345,7 +344,7 @@ bool importTree(Node* node, const std::string& xml, const schema::ImportOptions&
         }
     }
 
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+    node->copy(&parsed, copy_flags);
     return true;
 }
 

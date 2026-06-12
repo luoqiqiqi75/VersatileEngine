@@ -432,32 +432,37 @@ void forEachKeyed(const Node::Nodes& children, Fn fn)
 
 } // namespace
 
-void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto_update)
+void Node::copy(const Node* other, int copy_flags)
 {
     if (!other || other == this) return;
 
     // 1. remove children whose key does not exist in other
-    if (auto_remove)
+    if (flags::get(copy_flags, COPY_REMOVE))
         forEachKeyed(children(), [&](Node* d, const std::string& name, int overlap, int index) {
             if (!(name.empty() ? other->child(index) : other->child(name, overlap))) remove(d);
         });
 
     // 2. each child of other lands on the node at its key — named n#k → the k-th
     //    child named n, anonymous #i → the i-th child whatever its name — and is
-    //    copied recursively; an unresolved key is appended first (auto_insert)
+    //    copied recursively; an unresolved key is appended first (COPY_INSERT)
     forEachKeyed(other->children(), [&](Node* s, const std::string& name, int overlap, int index) {
         auto* d = name.empty() ? child(index) : child(name, overlap);
         if (!d) {
-            if (!auto_insert) return;
+            if (!flags::get(copy_flags, COPY_INSERT)) return;
             d = append(name);
             if (!d) return;
         }
-        d->copy(s, auto_insert, auto_remove, auto_update);
+        d->copy(s, copy_flags);
     });
 
-    // 3. own value
-    if (auto_update) update(other->get());
-    else             set(other->get());
+    // 3. own value — COPY_REPLACE overwrites anything, otherwise only fill null
+    if (flags::get(copy_flags, COPY_REPLACE) || get().isNull()) {
+        if (flags::get(copy_flags, COPY_UPDATE)) {
+            update(other->get());
+        } else {
+            set(other->get());
+        }
+    }
 }
 
 // ============================================================================

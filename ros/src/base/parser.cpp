@@ -123,13 +123,11 @@ bool applySchemaJson(const std::string& json_text, Node* target, Node* schema_no
         return false;
 
     if (schema_node)
-        target->copy(schema_node, true, true, false);
+        target->copy(schema_node, Node::COPY_STRICT);
 
-    schema::ImportOptions options;
-    options.auto_insert = schema_node == nullptr;
-    options.auto_remove = false;
-    options.auto_update = true;
-    return schema::importAs<schema::JsonS>(target, json_text, options);
+    int copy_flags = Node::COPY_UPDATE | Node::COPY_REPLACE
+                   | (schema_node == nullptr ? Node::COPY_INSERT : 0);
+    return schema::importAs<schema::JsonS>(target, json_text, copy_flags);
 }
 
 void insertParserLocked(const ParserDescriptor& parser)

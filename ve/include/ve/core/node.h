@@ -96,20 +96,34 @@ public:
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
+
+    // --- copy flags ---
+    enum CopyFlag : int {
+        COPY_INSERT  = 0x01,  // append children for keys missing here
+        COPY_REMOVE  = 0x02,  // remove children whose key does not exist in other
+        COPY_UPDATE  = 0x04,  // write value via update() (suppress unchanged signal) instead of set()
+        COPY_REPLACE = 0x08,  // overwrite non-null values; without it only null values are written
+
+        COPY_DEFAULT = COPY_INSERT | COPY_REPLACE,
+        COPY_STRICT  = COPY_DEFAULT | COPY_REMOVE,  // dest becomes an exact copy of other
+    };
+
     // Sync this node from another node using key semantics (name#overlap | #index).
     // Key resolution: named n#k → the k-th child named n; anonymous #i → the
     // i-th child, whatever its name.
     // Steps:
-    //   1. auto_remove: children here whose key does not exist in other are
+    //   1. COPY_REMOVE: children here whose key does not exist in other are
     //      removed (keys judged on the pre-remove layout).
     //   2. one pass over other's children: each lands on the node here at its
     //      key and is copied recursively; an unresolved key is appended first
-    //      (auto_insert) or skipped. Lookups are live, so children appended
+    //      (COPY_INSERT) or skipped. Lookups are live, so children appended
     //      during the pass can resolve later #i keys.
-    //   3. own value: auto_update ? update() : set() (set always emits NODE_CHANGED).
+    //   3. own value: written only when COPY_REPLACE is set or the current
+    //      value is null; COPY_UPDATE ? update() : set() (set always emits
+    //      NODE_CHANGED).
     // For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
     // (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
-    void  copy(const Node* other, bool auto_insert = true, bool auto_remove = false, bool auto_update = false);
+    void  copy(const Node* other, int copy_flags = COPY_DEFAULT);
 
     // -- key (key = name | name#N | #N) ---
     //  parseKey: "name" → (name,-1)  "name#N" → (name,N)  "#N" → ("",N)
