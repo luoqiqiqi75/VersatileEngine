@@ -91,22 +91,41 @@ struct BinTcpServer::Private
                 continue;
             }
 
-            std::string cmd_str = pipe.contextNode()->get("cmd").toString();
-            auto ref = resolveCmd(cmd_str);
-            if (!ref.factory) {
-                pipe.contextNode()->erase("params");
-                pipe.contextNode()->set("code", int64_t(cmd_str.empty() ? ERR_INVALID : ERR_NOT_FOUND));
-                pipe.contextNode()->set("message", cmd_str.empty() ? std::string("cmd required") : "unknown: " + cmd_str);
-                auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(*pipe.contextNode()));
-                session_ptr->async_send(std::string(frame.begin(), frame.end()));
-                continue;
+            pipe.contextNode()->set("_session", Var::ptr(state->session.get()));
+
+            Node* batch_n = pipe.contextNode()->find("batch");
+            if (batch_n) {
+                Node* out = pipe.contextNode()->at("data");
+                bool valid = true;
+                for (auto* item : batch_n->children()) {
+                    auto ref = resolveCmd(item);
+                    if (!ref.factory) {
+                        pipe.contextNode()->erase("batch");
+                        pipe.contextNode()->set("code", int64_t(ERR_NOT_FOUND));
+                        pipe.contextNode()->set("message", "unknown: " + ref.key);
+                        auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(*pipe.contextNode()));
+                        session_ptr->async_send(std::string(frame.begin(), frame.end()));
+                        valid = false;
+                        break;
+                    }
+                    Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                    c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
+                }
+                if (!valid) continue;
+            } else {
+                auto ref = resolveCmd(pipe.contextNode());
+                if (!ref.factory) {
+                    pipe.contextNode()->set("code", int64_t(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+                    pipe.contextNode()->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
+                    auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(*pipe.contextNode()));
+                    session_ptr->async_send(std::string(frame.begin(), frame.end()));
+                    continue;
+                }
+                Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
             }
 
-            pipe.contextNode()->set("_session", Var::ptr(state->session.get()));
-            Command* c = pipe.add(command::create(*ref.factory, ref.key));
-            c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
             pipe.sync();
-
             if (finalizeReply(pipe)) {
                 int code = pipe.contextNode()->get("code").toInt(0);
                 uint8_t repFlag = code < 0 ? bin::FLAG_ERROR : bin::FLAG_RESPONSE;

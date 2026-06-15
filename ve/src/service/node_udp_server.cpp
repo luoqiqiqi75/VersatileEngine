@@ -64,21 +64,36 @@ bool NodeUdpServer::start()
             return;
         }
 
-        std::string cmd_str = pipe.contextNode()->get("cmd").toString();
-        auto ref = resolveCmd(cmd_str);
-        if (!ref.factory) {
-            pipe.contextNode()->erase("params");
-            pipe.contextNode()->set("code", int64_t(cmd_str.empty() ? ERR_INVALID : ERR_NOT_FOUND));
-            pipe.contextNode()->set("message", cmd_str.empty() ? std::string("cmd required") : "unknown: " + cmd_str);
-            session_ptr->async_send(toJson(*pipe.contextNode()));
-            return;
+        pipe.contextNode()->set("_session", Var::ptr(_p->session.get()));
+
+        Node* batch_n = pipe.contextNode()->find("batch");
+        if (batch_n) {
+            Node* out = pipe.contextNode()->at("data");
+            for (auto* item : batch_n->children()) {
+                auto ref = resolveCmd(item);
+                if (!ref.factory) {
+                    pipe.contextNode()->erase("batch");
+                    pipe.contextNode()->set("code", int64_t(ERR_NOT_FOUND));
+                    pipe.contextNode()->set("message", "unknown: " + ref.key);
+                    session_ptr->async_send(toJson(*pipe.contextNode()));
+                    return;
+                }
+                Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
+            }
+        } else {
+            auto ref = resolveCmd(pipe.contextNode());
+            if (!ref.factory) {
+                pipe.contextNode()->set("code", int64_t(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+                pipe.contextNode()->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
+                session_ptr->async_send(toJson(*pipe.contextNode()));
+                return;
+            }
+            Command* c = pipe.add(command::create(*ref.factory, ref.key));
+            c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
         }
 
-        pipe.contextNode()->set("_session", Var::ptr(_p->session.get()));
-        Command* c = pipe.add(command::create(*ref.factory, ref.key));
-        c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
         pipe.sync();
-
         if (finalizeReply(pipe))
             session_ptr->async_send(toJson(*pipe.contextNode()));
     });

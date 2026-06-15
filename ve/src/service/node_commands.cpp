@@ -1,7 +1,7 @@
-// node_commands.cpp — envelope v2: cmd/params → code/message/data
+// node_commands.cpp — envelope v2: op|cmd/params → code/message/data
 //
 // Command implementations registered in factory::at("std").
-// resolveCmd() parses optional "prefix:key" from the envelope cmd field.
+// resolveCmd() reads "op" (std factory) or "cmd" (command factory) from ctx.
 // finalizeReply() mutates a Pipeline's contextNode into reply format.
 
 #include "node_commands.h"
@@ -146,33 +146,6 @@ static Result commandList(Node*, Node*, Node* data)
     return Result::ok();
 }
 
-static Result batch(Node* ctx, Node* params, Node* data)
-{
-    Session* s = session(ctx);
-    if (params->count() > 500)
-        return Result::fail(ERR_INVALID, "batch exceeds limit");
-
-    for (auto* item : params->children()) {
-        Node* sub = data->append();
-        std::string cmd_str = item->get("cmd").toString();
-        auto ref = resolveCmd(cmd_str);
-        if (!ref.factory) {
-            sub->set("code", int64_t(ERR_NOT_FOUND));
-            sub->set("message", "unknown: " + cmd_str);
-            continue;
-        }
-        Pipeline pipe;
-        pipe.contextNode()->set("_session", Var::ptr(s));
-        Command* c = pipe.add(command::create(*ref.factory, ref.key));
-        c->setContextNodes(pipe.contextNode(), item->at("params"), sub);
-        pipe.sync();
-        sub->set("code", int64_t(pipe.result().code()));
-        if (pipe.result().isError() && !pipe.result().message().empty())
-            sub->set("message", pipe.result().message());
-    }
-    return Result::ok();
-}
-
 } // namespace cmd
 
 // ============================================================================
@@ -192,30 +165,30 @@ void registerNodeCommands()
     f.reg("node.watch",    Var::callable(cmd::watch),       "watch node changes");
     f.reg("node.unwatch",  Var::callable(cmd::unwatch),     "stop watching");
     f.reg("command.list",  Var::callable(cmd::commandList), "list commands");
-    f.reg("batch",         Var::callable(cmd::batch),       "run batch requests");
 }
 
-CmdRef resolveCmd(const std::string& cmd)
+CmdRef resolveCmd(Node* ctx)
 {
-    auto pos = cmd.find(':');
-    if (pos != std::string::npos) {
-        std::string prefix = cmd.substr(0, pos);
-        std::string key = cmd.substr(pos + 1);
-        Factory& f = factory::at(prefix);
-        return {f.has(key) ? &f : nullptr, key};
+    std::string op = ctx->get("op").toString();
+    if (!op.empty()) {
+        Factory& f = factory::at("std");
+        return {f.has(op) ? &f : nullptr, op};
     }
-    Factory& stdF = factory::at("std");
-    if (stdF.has(cmd)) return {&stdF, cmd};
-    Factory& cmdF = command::factory();
-    if (cmdF.has(cmd)) return {&cmdF, cmd};
-    return {nullptr, cmd};
+    std::string cmd = ctx->get("cmd").toString();
+    if (!cmd.empty()) {
+        Factory& f = command::factory();
+        return {f.has(cmd) ? &f : nullptr, cmd};
+    }
+    return {nullptr, {}};
 }
 
 bool finalizeReply(Pipeline& pipe)
 {
     if (pipe.result().isAccepted()) return false;
     Node* ctx = pipe.contextNode();
+    ctx->erase("op");
     ctx->erase("cmd");
+    ctx->erase("batch");
     ctx->erase("params");
     ctx->set("code", static_cast<std::int64_t>(pipe.result().code()));
     if (pipe.result().isError()) {

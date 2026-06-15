@@ -35,7 +35,7 @@ struct Session : Object
 VE_API void registerNodeCommands();
 
 struct CmdRef { Factory* factory = nullptr; std::string key; };
-VE_API CmdRef resolveCmd(const std::string& cmd);
+VE_API CmdRef resolveCmd(Node* ctx);
 
 // Mutate pipe.contextNode() into reply format (erase cmd/params, set code/message).
 // Returns true if reply should be sent; false = accepted.

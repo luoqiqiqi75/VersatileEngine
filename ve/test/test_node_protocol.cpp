@@ -11,16 +11,32 @@ using namespace ve;
 
 static bool runEnvelope(service::Session* session, Pipeline& pipe)
 {
-    std::string cmd_str = pipe.contextNode()->get("cmd").toString();
-    auto ref = service::resolveCmd(cmd_str);
-    if (!ref.factory) {
-        pipe.contextNode()->set("code", int64_t(service::ERR_NOT_FOUND));
-        pipe.contextNode()->set("message", "unknown: " + cmd_str);
-        return true;
-    }
     pipe.contextNode()->set("_session", Var::ptr(session));
-    Command* c = pipe.add(command::create(*ref.factory, ref.key));
-    c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+
+    Node* batch_n = pipe.contextNode()->find("batch");
+    if (batch_n) {
+        Node* out = pipe.contextNode()->at("data");
+        for (auto* item : batch_n->children()) {
+            auto ref = service::resolveCmd(item);
+            if (!ref.factory) {
+                pipe.contextNode()->set("code", int64_t(service::ERR_NOT_FOUND));
+                pipe.contextNode()->set("message", "unknown: " + ref.key);
+                return true;
+            }
+            Command* c = pipe.add(command::create(*ref.factory, ref.key));
+            c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
+        }
+    } else {
+        auto ref = service::resolveCmd(pipe.contextNode());
+        if (!ref.factory) {
+            pipe.contextNode()->set("code", int64_t(ref.key.empty() ? service::ERR_INVALID : service::ERR_NOT_FOUND));
+            pipe.contextNode()->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
+            return true;
+        }
+        Command* c = pipe.add(command::create(*ref.factory, ref.key));
+        c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+    }
+
     pipe.sync();
     return service::finalizeReply(pipe);
 }
@@ -33,7 +49,7 @@ VE_TEST(node_dispatch_get_set_and_children) {
     // set
     {
         Pipeline pipe;
-        pipe.contextNode()->set("cmd", "node.set");
+        pipe.contextNode()->set("op", "node.set");
         pipe.contextNode()->at("params")->set("path", "a/value");
         pipe.contextNode()->at("params")->at("value")->set(Var(42));
         runEnvelope(&session, pipe);
@@ -44,7 +60,7 @@ VE_TEST(node_dispatch_get_set_and_children) {
     // get
     {
         Pipeline pipe;
-        pipe.contextNode()->set("cmd", "node.get");
+        pipe.contextNode()->set("op", "node.get");
         pipe.contextNode()->at("params")->set("path", "a/value");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -54,7 +70,7 @@ VE_TEST(node_dispatch_get_set_and_children) {
     // children
     {
         Pipeline pipe;
-        pipe.contextNode()->set("cmd", "node.children");
+        pipe.contextNode()->set("op", "node.children");
         pipe.contextNode()->at("params")->set("path", "a");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -72,15 +88,14 @@ VE_TEST(node_dispatch_batch) {
     service::Session session(&root, &root);
 
     Pipeline pipe;
-    pipe.contextNode()->set("cmd", "batch");
-    Node* params = pipe.contextNode()->at("params");
+    Node* batch = pipe.contextNode()->at("batch");
 
-    Node* item1 = params->append();
-    item1->set("cmd", "node.get");
+    Node* item1 = batch->append();
+    item1->set("op", "node.get");
     item1->at("params")->set("path", "one");
 
-    Node* item2 = params->append();
-    item2->set("cmd", "node.get");
+    Node* item2 = batch->append();
+    item2->set("op", "node.get");
     item2->at("params")->set("path", "two");
 
     runEnvelope(&session, pipe);
@@ -98,7 +113,7 @@ VE_TEST(node_dispatch_watch_unsupported_without_send) {
     service::Session session(&root, &root);
 
     Pipeline pipe;
-    pipe.contextNode()->set("cmd", "node.watch");
+    pipe.contextNode()->set("op", "node.watch");
     pipe.contextNode()->at("params")->set("path", "a");
     runEnvelope(&session, pipe);
     VE_ASSERT(pipe.contextNode()->get("code").toInt(0) < 0);
@@ -117,7 +132,7 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
     // watch
     {
         Pipeline pipe;
-        pipe.contextNode()->set("cmd", "node.watch");
+        pipe.contextNode()->set("op", "node.watch");
         pipe.contextNode()->at("params")->set("path", "watch/me");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -137,7 +152,7 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
     lastPush.clear();
     {
         Pipeline pipe;
-        pipe.contextNode()->set("cmd", "node.unwatch");
+        pipe.contextNode()->set("op", "node.unwatch");
         pipe.contextNode()->at("params")->set("path", "watch/me");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);

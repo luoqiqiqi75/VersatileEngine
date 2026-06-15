@@ -186,53 +186,43 @@ bool NodeHttpServer::start()
         });
     }
 
-    { // standard protocol with envelop
+    { // standard protocol with envelope
         _p->server.bind<http::verb::post>("/ve", [this] (http::web_request& req, http::web_response& rep) {
-            // Node ctx;
-
-            //
-            // if (dispatch(_p->session.get(), &ctx)) {
-            //     int code = ctx.get("code").toInt(0);
-            //     rep.fill_json(toJson(ctx), mapHttpStatus(code));
-            // } else {
-            //     rep.fill_json("{\"code\":1}", http::status::accepted);
-            // }
-            //
-            // std::string cmd = ctx->get("cmd").toString();
-            // if (cmd.empty()) {
-            //     setError(ctx, ERR_INVALID, "cmd required");
-            //     return true;
-            // }
-
             Pipeline pipe;
             if (!schema::importAs<schema::JsonS>(pipe.contextNode(), std::string(req.body()))) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "invalid JSON")), rep);
                 return;
             }
 
-            std::string cmd_key = pipe.contextNode()->get("cmd").toString();
-            auto ref = resolveCmd(cmd_key);
-            if (!ref.factory) {
-                convert::parse(HttpResultRep(Result::fail(cmd_key.empty() ? ERR_INVALID : ERR_NOT_FOUND,
-                    cmd_key.empty() ? "cmd required" : "unknown: " + cmd_key)), rep);
-                return;
-            }
-            Command* cmd = pipe.add(command::create(*ref.factory, ref.key));
-            if (!cmd->valid()) {
-                convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "invalid: " + cmd_key)), rep);
-                return;
-            }
-
             pipe.contextNode()->set("_session", Var::ptr(_p->session.get()));
 
-            cmd->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data")); // todo: single / batch control
+            Node* batch_n = pipe.contextNode()->find("batch");
+            if (batch_n) {
+                Node* out = pipe.contextNode()->at("data");
+                for (auto* item : batch_n->children()) {
+                    auto ref = resolveCmd(item);
+                    if (!ref.factory) {
+                        convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "unknown: " + ref.key)), rep);
+                        return;
+                    }
+                    Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                    c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
+                }
+            } else {
+                auto ref = resolveCmd(pipe.contextNode());
+                if (!ref.factory) {
+                    convert::parse(HttpResultRep(Result::fail(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND,
+                        ref.key.empty() ? "op or cmd required" : "unknown: " + ref.key)), rep);
+                    return;
+                }
+                Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+            }
 
-            // sync
             pipe.sync();
 
-            // result
             if (pipe.result().isAccepted()) {
-                convert::parse(HttpRep(http::status::accepted, "{code:" + std::to_string(pipe.result().code()) + ",cmd:\"" + cmd_key + "\"}"), rep);
+                convert::parse(HttpRep(http::status::accepted, "{\"code\":" + std::to_string(pipe.result().code()) + "}"), rep);
             } else {
                 convert::parse(HttpResultRep(pipe.result(), pipe.contextNode()->at("data")), rep);
             }
