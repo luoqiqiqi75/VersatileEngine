@@ -56,11 +56,32 @@ struct VE_API Schema
 
 namespace schema {
 
-struct JsonS {};
-struct BinS  {};
-struct XmlS  {};  // pugixml based; attrs stored as Dict in Var value; only NODE_CHANGED for attr CRUD
-struct VarS  {};  // Var based; exports Node tree to a single Var (Dict/List/Value)
-struct MdS   {};  // Markdown based; headings -> Node hierarchy, content -> _content child
+struct JsonS
+{
+    struct ExportOptions
+    {
+        int indent = 2;
+        bool auto_ignore = true;
+    };
+
+    static ExportOptions compact() { return {0, true}; }
+};
+struct BinS
+{
+    struct ExportOptions { bool auto_ignore = true; };
+};
+struct XmlS // pugixml based; attrs stored as Dict in Var value; only NODE_CHANGED for attr CRUD
+{
+    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
+};
+struct VarS // Var based; exports Node tree to a single Var (Dict/List/Value)
+{
+    struct ExportOptions { bool auto_ignore = true; };
+};
+struct MdS // Markdown based; headings -> Node hierarchy, content -> _content child
+{
+    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
+};
 
 // --- SchemaTraits (customization point) ------------------------------------
 // Specialize for each format tag to provide exportNode / importNode.
@@ -74,16 +95,8 @@ struct SchemaTraits;
 template<>
 struct SchemaTraits<JsonS>
 {
-    struct ExportOptions
-    {
-        int indent = 2;
-        bool auto_ignore = true;
-
-        static ExportOptions compact() { return {0, true}; }
-    };
-
     VE_API static std::string exportNode(const Node* node, int indent = 2);
-    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
+    VE_API static std::string exportNode(const Node* node, const JsonS::ExportOptions& options);
     VE_API static bool        importNode(Node* node, const std::string& data);
     VE_API static bool        importNode(Node* node, const std::string& data, int copy_flags);
 };
@@ -91,10 +104,8 @@ struct SchemaTraits<JsonS>
 template<>
 struct SchemaTraits<BinS>
 {
-    struct ExportOptions { bool auto_ignore = true; };
-
     VE_API static Bytes exportNode(const Node* node);
-    VE_API static Bytes exportNode(const Node* node, const ExportOptions& options);
+    VE_API static Bytes exportNode(const Node* node, const BinS::ExportOptions& options);
     VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len);
     VE_API static bool  importNode(Node* node, const uint8_t* data, size_t len, int copy_flags);
 };
@@ -102,10 +113,8 @@ struct SchemaTraits<BinS>
 template<>
 struct SchemaTraits<XmlS>
 {
-    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
-
     VE_API static std::string exportNode(const Node* node, int indent = 2);
-    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
+    VE_API static std::string exportNode(const Node* node, const XmlS::ExportOptions& options);
     VE_API static bool        importNode(Node* node, const std::string& data);
     VE_API static bool        importNode(Node* node, const std::string& data, int copy_flags);
 };
@@ -113,10 +122,8 @@ struct SchemaTraits<XmlS>
 template<>
 struct SchemaTraits<VarS>
 {
-    struct ExportOptions { bool auto_ignore = true; };
-
     VE_API static Var exportNode(const Node* node);
-    VE_API static Var exportNode(const Node* node, const ExportOptions& options);
+    VE_API static Var exportNode(const Node* node, const VarS::ExportOptions& options);
     VE_API static bool    importNode(Node* node, const Var& data);
     VE_API static bool    importNode(Node* node, const Var& data, int copy_flags);
 };
@@ -124,17 +131,11 @@ struct SchemaTraits<VarS>
 template<>
 struct SchemaTraits<MdS>
 {
-    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
-
     VE_API static std::string exportNode(const Node* node, int indent = 2);
-    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
+    VE_API static std::string exportNode(const Node* node, const MdS::ExportOptions& options);
     VE_API static bool        importNode(Node* node, const std::string& data);
     VE_API static bool        importNode(Node* node, const std::string& data, int copy_flags);
 };
-
-template<typename Format>
-using ExportOptions = typename SchemaTraits<Format>::ExportOptions;
-using ImportOptions = int; // only copy options
 
 // --- Convenience functions -------------------------------------------------
 

@@ -5,7 +5,6 @@
 // ordinary registered command that recurses through the same dispatch.
 
 #include "node_commands.h"
-#include "node_session.h"
 
 #include "ve/core/node.h"
 #include "ve/core/command.h"
@@ -14,11 +13,9 @@
 namespace ve {
 namespace service {
 
-static const schema::ExportOptions<schema::JsonS> compactJson{0};
-
 static std::string toJson(const Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, compactJson);
+    return schema::exportAs<schema::JsonS>(&n, schema::JsonS::compact());
 }
 
 static std::string normalizePath(std::string path)

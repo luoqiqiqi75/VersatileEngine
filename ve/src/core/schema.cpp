@@ -35,7 +35,7 @@ std::string SchemaTraits<JsonS>::exportNode(const Node* node, int indent)
     return impl::json::exportTree(node, indent, true);
 }
 
-std::string SchemaTraits<JsonS>::exportNode(const Node* node, const ExportOptions& options)
+std::string SchemaTraits<JsonS>::exportNode(const Node* node, const JsonS::ExportOptions& options)
 {
     return impl::json::exportTree(node, options.indent, options.auto_ignore);
 }
@@ -59,7 +59,7 @@ Bytes SchemaTraits<BinS>::exportNode(const Node* node)
     return impl::bin::exportTree(node);
 }
 
-Bytes SchemaTraits<BinS>::exportNode(const Node* node, const ExportOptions& options)
+Bytes SchemaTraits<BinS>::exportNode(const Node* node, const BinS::ExportOptions& options)
 {
     return impl::bin::exportTree(node, options.auto_ignore);
 }
@@ -83,7 +83,7 @@ std::string SchemaTraits<XmlS>::exportNode(const Node* node, int indent)
     return impl::xml::exportTree(node, indent, true);
 }
 
-std::string SchemaTraits<XmlS>::exportNode(const Node* node, const ExportOptions& options)
+std::string SchemaTraits<XmlS>::exportNode(const Node* node, const XmlS::ExportOptions& options)
 {
     return impl::xml::exportTree(node, options.indent, options.auto_ignore);
 }
@@ -102,7 +102,7 @@ bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data, int cop
 // SchemaTraits<Var>
 // ============================================================================
 
-static Var nodeToVarImpl(const Node* node, const ExportOptions<VarS>& options)
+static Var nodeToVarImpl(const Node* node, const VarS::ExportOptions& options)
 {
     if (!node) return Var();
 
@@ -174,10 +174,10 @@ static Var nodeToVarImpl(const Node* node, const ExportOptions<VarS>& options)
 
 Var SchemaTraits<VarS>::exportNode(const Node* node)
 {
-    return exportNode(node, ExportOptions{});
+    return exportNode(node, VarS::ExportOptions{});
 }
 
-Var SchemaTraits<VarS>::exportNode(const Node* node, const ExportOptions& options)
+Var SchemaTraits<VarS>::exportNode(const Node* node, const VarS::ExportOptions& options)
 {
     return nodeToVarImpl(node, options);
 }
@@ -277,7 +277,7 @@ std::string SchemaTraits<MdS>::exportNode(const Node* node, int indent)
     return impl::md::exportTree(node, indent, true);
 }
 
-std::string SchemaTraits<MdS>::exportNode(const Node* node, const ExportOptions& options)
+std::string SchemaTraits<MdS>::exportNode(const Node* node, const MdS::ExportOptions& options)
 {
     return impl::md::exportTree(node, options.indent, options.auto_ignore);
 }

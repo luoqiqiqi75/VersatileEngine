@@ -51,7 +51,7 @@ static bool parse(const service::HttpResultRep& r, http::web_response& rep)
     proto_n.set("message", r.first.message());
     proto_n.at("data")->copy(r.second);
     http::status status = r.first.isAccepted() ? http::status::accepted : http::status::ok; // always ok
-    return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, schema::ExportOptions<schema::JsonS>::compact()) }, rep);
+    return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, schema::JsonS::compact()) }, rep);
 }
 
 }
