@@ -32,12 +32,12 @@ namespace schema {
 
 std::string SchemaTraits<JsonS>::exportNode(const Node* node, int indent)
 {
-    return impl::json::exportTree(node, indent);
+    return impl::json::exportTree(node, indent, true);
 }
 
 std::string SchemaTraits<JsonS>::exportNode(const Node* node, const ExportOptions& options)
 {
-    return impl::json::exportTree(node, options);
+    return impl::json::exportTree(node, options.indent, options.auto_ignore);
 }
 
 bool SchemaTraits<JsonS>::importNode(Node* node, const std::string& data)
@@ -61,7 +61,7 @@ Bytes SchemaTraits<BinS>::exportNode(const Node* node)
 
 Bytes SchemaTraits<BinS>::exportNode(const Node* node, const ExportOptions& options)
 {
-    return impl::bin::exportTree(node, options);
+    return impl::bin::exportTree(node, options.auto_ignore);
 }
 
 bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len)
@@ -80,12 +80,12 @@ bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len,
 
 std::string SchemaTraits<XmlS>::exportNode(const Node* node, int indent)
 {
-    return impl::xml::exportTree(node, indent);
+    return impl::xml::exportTree(node, indent, true);
 }
 
 std::string SchemaTraits<XmlS>::exportNode(const Node* node, const ExportOptions& options)
 {
-    return impl::xml::exportTree(node, options);
+    return impl::xml::exportTree(node, options.indent, options.auto_ignore);
 }
 
 bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data)
@@ -274,12 +274,12 @@ bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, int copy_flags)
 
 std::string SchemaTraits<MdS>::exportNode(const Node* node, int indent)
 {
-    return impl::md::exportTree(node, indent);
+    return impl::md::exportTree(node, indent, true);
 }
 
 std::string SchemaTraits<MdS>::exportNode(const Node* node, const ExportOptions& options)
 {
-    return impl::md::exportTree(node, options);
+    return impl::md::exportTree(node, options.indent, options.auto_ignore);
 }
 
 bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data)

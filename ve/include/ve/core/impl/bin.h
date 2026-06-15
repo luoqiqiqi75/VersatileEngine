@@ -3,7 +3,7 @@
 // Node tree: each node stores one Var (NONE encodes as TAG_NULL) then child count and children (name prefix + recurse).
 #pragma once
 
-#include "ve/core/schema.h"
+#include "ve/core/var.h"
 
 namespace ve {
 
@@ -11,8 +11,7 @@ class Node;
 
 namespace impl::bin {
 
-VE_API Bytes exportTree(const Node* node);
-VE_API Bytes exportTree(const Node* node, const schema::ExportOptions<schema::BinS>& options);
+VE_API Bytes exportTree(const Node* node, bool auto_ignore = true);
 VE_API bool  importTree(Node* node, const uint8_t* data, size_t len);
 VE_API bool  importTree(Node* node, const uint8_t* data, size_t len, int copy_flags);
 

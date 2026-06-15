@@ -11,7 +11,7 @@
 // bits (copy_flags) — see node.h for the per-flag semantics.
 // ExportOptions<Format> drives formatting and hidden-node filtering; each
 // format specializes it with only the knobs it supports (VarS/BinS have no
-// indent, XmlS/MdS have no auto_ignore).
+// indent).
 // auto_ignore defaults to true: "_"-prefixed internal children stay unexported.
 // JsonS is schema-oriented and ignores repeated named siblings.
 // BinS preserves the full tree, including repeated names and order.
@@ -74,7 +74,13 @@ struct SchemaTraits;
 template<>
 struct SchemaTraits<JsonS>
 {
-    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
+    struct ExportOptions
+    {
+        int indent = 2;
+        bool auto_ignore = true;
+
+        static ExportOptions compact() { return {0, true}; }
+    };
 
     VE_API static std::string exportNode(const Node* node, int indent = 2);
     VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
@@ -96,7 +102,7 @@ struct SchemaTraits<BinS>
 template<>
 struct SchemaTraits<XmlS>
 {
-    struct ExportOptions { int indent = 2; };
+    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
 
     VE_API static std::string exportNode(const Node* node, int indent = 2);
     VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
@@ -118,7 +124,7 @@ struct SchemaTraits<VarS>
 template<>
 struct SchemaTraits<MdS>
 {
-    struct ExportOptions { int indent = 2; };
+    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
 
     VE_API static std::string exportNode(const Node* node, int indent = 2);
     VE_API static std::string exportNode(const Node* node, const ExportOptions& options);

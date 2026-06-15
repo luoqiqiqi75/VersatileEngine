@@ -129,15 +129,15 @@ static Var unpackVar(const msgpack::object& obj)
 // Node tree → MessagePack (format: {_v: value, _c: [[name, node], ...]})
 // ============================================================================
 
-static bool isIgnoredChild(const Node* child, const schema::ExportOptions<schema::BinS>& options)
+static bool isIgnoredChild(const Node* child, bool auto_ignore)
 {
-    return options.auto_ignore
+    return auto_ignore
         && child
         && !child->name().empty()
         && child->name()[0] == '_';
 }
 
-static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, const schema::ExportOptions<schema::BinS>& options)
+static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, bool auto_ignore)
 {
     int fieldCount = 0;
     const Var& nodeValue = node->get();
@@ -147,7 +147,7 @@ static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, co
     Vector<const Node*> visible_children;
     visible_children.reserve(all_children.sizeAsInt());
     for (auto* child : all_children) {
-        if (!isIgnoredChild(child, options)) {
+        if (!isIgnoredChild(child, auto_ignore)) {
             visible_children.push_back(child);
         }
     }
@@ -173,7 +173,7 @@ static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, co
             const std::string& name = child->name();
             pk.pack_str(static_cast<uint32_t>(name.size()));
             pk.pack_str_body(name.data(), name.size());
-            packNode(child, pk, options);
+            packNode(child, pk, auto_ignore);
         }
     }
 }
@@ -259,12 +259,7 @@ Var readVar(const uint8_t*& ptr, const uint8_t* end)
     }
 }
 
-Bytes exportTree(const Node* node)
-{
-    return exportTree(node, schema::ExportOptions<schema::BinS>{});
-}
-
-Bytes exportTree(const Node* node, const schema::ExportOptions<schema::BinS>& options)
+Bytes exportTree(const Node* node, bool auto_ignore)
 {
     if (!node) {
         return {};
@@ -272,7 +267,7 @@ Bytes exportTree(const Node* node, const schema::ExportOptions<schema::BinS>& op
 
     msgpack::sbuffer sbuf;
     msgpack::packer<msgpack::sbuffer> pk(&sbuf);
-    packNode(node, pk, options);
+    packNode(node, pk, auto_ignore);
 
     return Bytes(sbuf.data(), sbuf.data() + sbuf.size());
 }

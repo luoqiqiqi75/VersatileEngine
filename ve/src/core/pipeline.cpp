@@ -74,17 +74,17 @@ Object* Pipeline::object() const { return _p->pipe_n; }
 
 const Result& Pipeline::result() const { return _p->result; }
 
-Pipeline::Handle Pipeline::add(Command command)
+Command* Pipeline::add(Command command)
 {
     if (_p->running) {
         veLogW << "<ve::pipeline> commands cannot change while running";
         return nullptr;
     }
     _p->commands.push_back(command);
-    return command.node();
+    return &_p->commands.back();
 }
 
-Pipeline::Handle Pipeline::addProc(Proc proc, Loop* loop)
+Command* Pipeline::addProc(Proc proc, Loop* loop)
 {
     if (_p->running) {
         veLogW << "<ve::pipeline> commands cannot change while running";
@@ -105,7 +105,7 @@ void Pipeline::cancel() const
     _p->running = false;
 }
 
-void Pipeline::async()
+void Pipeline::async() const
 {
     if (_p->running) {
         veLogE << "<ve::pipeline> already running";
@@ -117,7 +117,7 @@ void Pipeline::async()
     _p->execute(_p);
 }
 
-void Pipeline::sync(Loop* cur_l)
+void Pipeline::sync(Loop* cur_l) const
 {
     if (!cur_l) cur_l = loop::current();   // the loop driving this thread, if any
     async();

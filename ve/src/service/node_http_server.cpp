@@ -25,8 +25,6 @@ namespace ve {
 // defines
 namespace service {
 
-static const schema::ExportOptions<schema::JsonS> compactJson{0};
-
 // HTTP-specific key separator: ':' instead of '#' so that
 // /at/leo/mu:1 is reachable from a browser without URL-encoding
 // (URL '#' is the fragment delimiter, truncated by browsers).
@@ -71,27 +69,12 @@ static bool parse(const service::HttpResultRep& r, http::web_response& rep)
     proto_n.set("message", r.first.message());
     proto_n.at("data")->copy(r.second);
     http::status status = r.first.isAccepted() ? http::status::accepted : http::status::ok; // always ok
-    return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, service::compactJson) }, rep);
+    return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, schema::ExportOptions<schema::JsonS>::compact()) }, rep);
 }
 
 }
 
 namespace service {
-
-static std::string toJson(Node& n)
-{
-    return schema::exportAs<schema::JsonS>(&n, compactJson);
-}
-
-static void fillError(Node* rep, const std::string& code, const std::string& error)
-{
-    if (!rep) return;
-    rep->clear();
-    rep->set(Var());
-    rep->set("ok", false);
-    rep->set("code", code);
-    rep->set("error", error);
-}
 
 static std::string getQueryParam(std::string_view query, std::string_view key)
 {
@@ -264,9 +247,7 @@ bool NodeHttpServer::start()
     }
 
     _p->server.bind_not_found([] (http::web_request&, http::web_response& rep) {
-        Node reply("rep");
-        fillError(&reply, "not_found", "not found");
-        rep.fill_json(toJson(reply), http::status::not_found);
+        convert::parse(HttpRep(http::status::not_found, "not found"), rep);
     });
 
     ve::service::disableWindowsPortReuse(_p->server);

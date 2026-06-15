@@ -15,7 +15,6 @@ namespace ve {
 class VE_API Pipeline
 {
 public:
-    using Handle = Node*;
     using Callback = std::function<void(Pipeline&)>;
 
     enum StateCode : int
@@ -38,8 +37,8 @@ public:
     Node* outputNode() const;
 
     // command link
-    Handle add(Command command);
-    Handle addProc(Proc proc, Loop* loop = nullptr);
+    Command* add(Command command);
+    Command* addProc(Proc proc, Loop* loop = nullptr);
 
     // state control
     void cancel() const;
@@ -57,8 +56,8 @@ public:
     void onFinished(Object* observer, Callback cb, Loop* loop = nullptr);
 
     // exec
-    void async();
-    void sync(Loop* cur_l = nullptr);
+    void async() const;
+    void sync(Loop* cur_l = nullptr) const;
 
     const Result& result() const;
 

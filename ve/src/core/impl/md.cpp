@@ -3,7 +3,6 @@
 // ----------------------------------------------------------------------------
 #include "ve/core/impl/md.h"
 #include "ve/core/node.h"
-#include "ve/core/schema.h"
 #include "ve/core/log.h"
 
 #include <sstream>
@@ -59,7 +58,7 @@ static std::string stripNodeNameSuffix(const std::string& name)
 // ============================================================================
 
 static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int parentLevel,
-                                const schema::ExportOptions<schema::MdS>& options)
+                                bool auto_ignore)
 {
     if (!node) {
         return;
@@ -105,29 +104,25 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int p
         oss << "\n";
     }
 
-    // Export children (skip _ prefixed meta nodes)
+    // Export children
     for (const Node* child : node->children()) {
         if (!child) {
             continue;
         }
-        std::string childName = child->name();
-        if (!childName.empty() && childName[0] == '_') {
-            continue;
+        if (auto_ignore) {
+            std::string childName = child->name();
+            if (!childName.empty() && childName[0] == '_') {
+                continue;
+            }
         }
 
-        exportNodeRecursive(child, oss, actualLevel, options);
+        exportNodeRecursive(child, oss, actualLevel, auto_ignore);
     }
 }
 
-std::string exportTree(const Node* node, int indent)
+std::string exportTree(const Node* node, int indent, bool auto_ignore)
 {
-    schema::ExportOptions<schema::MdS> options;
-    options.indent = indent;
-    return exportTree(node, options);
-}
-
-std::string exportTree(const Node* node, const schema::ExportOptions<schema::MdS>& options)
-{
+    (void)indent;
     if (!node) {
         return "";
     }
@@ -151,12 +146,14 @@ std::string exportTree(const Node* node, const schema::ExportOptions<schema::MdS
         if (!child) {
             continue;
         }
-        std::string childName = child->name();
-        if (!childName.empty() && childName[0] == '_') {
-            continue;
+        if (auto_ignore) {
+            std::string childName = child->name();
+            if (!childName.empty() && childName[0] == '_') {
+                continue;
+            }
         }
 
-        exportNodeRecursive(child, oss, 0, options);
+        exportNodeRecursive(child, oss, 0, auto_ignore);
     }
 
     return oss.str();

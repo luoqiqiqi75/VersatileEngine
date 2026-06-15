@@ -11,7 +11,7 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
-#include "ve/core/schema.h"
+#include "ve/global.h"
 #include <string>
 
 namespace ve {
@@ -21,8 +21,7 @@ class Node;
 namespace impl::xml {
 
 // Node tree <-> XML string
-VE_API std::string exportTree(const Node* node, int indent = 2);
-VE_API std::string exportTree(const Node* node, const schema::ExportOptions<schema::XmlS>& options);
+VE_API std::string exportTree(const Node* node, int indent = 2, bool auto_ignore = true);
 VE_API bool        importTree(Node* node, const std::string& xml);
 VE_API bool        importTree(Node* node, const std::string& xml, int copy_flags);
 

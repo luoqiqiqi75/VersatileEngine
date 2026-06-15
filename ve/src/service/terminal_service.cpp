@@ -581,7 +581,7 @@ uint16_t TerminalReplServer::port() const
 
 std::string TerminalReplServer::nodeToJson(const Node* node, int indent)
 {
-    return impl::json::exportTree(node, indent);
+    return impl::json::exportTree(node, indent, true);
 }
 
 // ============================================================================

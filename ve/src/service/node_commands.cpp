@@ -54,7 +54,7 @@ static std::string normalizePath(std::string path)
 Var exportNodeTree(Node* target, int depth, const schema::ExportOptions<schema::JsonS>& options)
 {
     if (depth < 0) return schema::exportAs<schema::VarS>(target, schema::ExportOptions<schema::VarS>{options.auto_ignore});
-    return impl::json::parse(impl::json::exportTree(target, depth, options));
+    return impl::json::parse(impl::json::exportTree(target, depth, options.indent, options.auto_ignore));
 }
 
 void writeNodeMeta(Node* out, Node* root, Node* target)
