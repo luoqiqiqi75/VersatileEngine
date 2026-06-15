@@ -2,7 +2,8 @@
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
-#include "node_session.h"
+#include "ve/core/command.h"
+#include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
 
@@ -23,11 +24,9 @@
 namespace ve {
 namespace service {
 
-static const schema::ExportOptions<schema::JsonS> compactJson{0};
-
 static std::string toJson(const Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, compactJson);
+    return schema::exportAs<schema::JsonS>(&n, schema::JsonS::compact());
 }
 
 struct NodeTcpServer::Private
@@ -47,7 +46,7 @@ struct NodeTcpServer::Private
 
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
-        return std::make_unique<Session>(root, [this, sid](std::string msg) {
+        return std::make_unique<Session>(root, root, [this, sid](std::string msg) {
             server.post([this, sid, msg = std::move(msg)]() {
                 server.foreach_session([&](auto& session_ptr) {
                     if (static_cast<uint64_t>(session_ptr->hash_key()) == sid)
@@ -76,17 +75,32 @@ struct NodeTcpServer::Private
             if (!line.empty() && line.back() == '\r') line.pop_back();
             if (line.empty()) continue;
 
-            Node ctx;
-            if (!schema::importAs<schema::JsonS>(&ctx, line)) {
+            Pipeline pipe;
+            if (!schema::importAs<schema::JsonS>(pipe.contextNode(), line)) {
                 Node err;
-                err.set("code", int64_t(-2));
+                err.set("code", int64_t(ERR_INVALID));
                 err.set("message", std::string("invalid JSON"));
                 session_ptr->async_send(toJson(err) + "\n");
                 continue;
             }
 
-            if (dispatch(state->session.get(), &ctx))
-                session_ptr->async_send(toJson(ctx) + "\n");
+            std::string cmd_str = pipe.contextNode()->get("cmd").toString();
+            auto ref = resolveCmd(cmd_str);
+            if (!ref.factory) {
+                pipe.contextNode()->erase("params");
+                pipe.contextNode()->set("code", int64_t(cmd_str.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+                pipe.contextNode()->set("message", cmd_str.empty() ? std::string("cmd required") : "unknown: " + cmd_str);
+                session_ptr->async_send(toJson(*pipe.contextNode()) + "\n");
+                continue;
+            }
+
+            pipe.contextNode()->set("_session", Var::ptr(state->session.get()));
+            Command* c = pipe.add(command::create(*ref.factory, ref.key));
+            c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+            pipe.sync();
+
+            if (finalizeReply(pipe))
+                session_ptr->async_send(toJson(*pipe.contextNode()) + "\n");
         }
     }
 };

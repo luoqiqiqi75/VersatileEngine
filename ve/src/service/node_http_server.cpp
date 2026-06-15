@@ -113,10 +113,12 @@ bool NodeHttpServer::start()
 
         // export tree
         _p->server.bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request&, http::web_response& rep) {
-            convert::parse(HttpResultRep(root_n), rep);
+            convert::parse(HttpRep(http::status::ok, schema::exportAs<schema::JsonS>(root_n, schema::JsonS::compact())), rep);
         });
         _p->server.bind<http::verb::get>("/at/*", [=] (http::web_request& req, http::web_response& rep) {
-            if (const auto tar_n = tar_n_f(req, rep)) convert::parse(HttpResultRep(tar_n), rep);
+            if (const auto tar_n = tar_n_f(req, rep)) {
+                convert::parse(HttpRep(http::status::ok, schema::exportAs<schema::JsonS>(tar_n, schema::JsonS::compact())), rep);
+            }
         });
 
         // import tree
@@ -128,7 +130,7 @@ bool NodeHttpServer::start()
                 if (schema::importAs<schema::JsonS>(tar_n, req.body())) { // without deletion
                     convert::parse(HttpRep(), rep);
                 } else {
-                    convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "invalid json")), rep);
+                    convert::parse(HttpRep(http::status::bad_request, "invalid json"), rep);
                 }
             }
         });
@@ -141,7 +143,7 @@ bool NodeHttpServer::start()
                 if (schema::importAs<schema::JsonS>(tar_n, req.body(), Node::COPY_STRICT)) { // with deletion
                     convert::parse(HttpRep(), rep);
                 } else {
-                    convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "invalid json")), rep);
+                    convert::parse(HttpRep(http::status::bad_request, "invalid json"), rep);
                 }
             }
         });
@@ -151,7 +153,7 @@ bool NodeHttpServer::start()
                 if (tar_n->parent()->remove(tar_n)) {
                     convert::parse(HttpRep(), rep);
                 } else {
-                    convert::parse(HttpResultRep{Result::fail("failed")}, rep);
+                    convert::parse(HttpRep(http::status::forbidden, "remove failed"), rep);
                 }
             }
         });
@@ -167,8 +169,7 @@ bool NodeHttpServer::start()
                 convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "unknown command")), rep);
                 return;
             }
-
-
+            
             if (!cmd.input(req.body())) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "bad request")), rep);
                 return;
@@ -209,17 +210,16 @@ bool NodeHttpServer::start()
                 return;
             }
 
-            Command* cmd = nullptr;
             std::string cmd_key = pipe.contextNode()->get("cmd").toString();
-            static Factory& node_f = factory::at("standard/node");
-            static Factory& cmd_f = command::factory();
-            if (node_f.has(cmd_key)) {
-                cmd = pipe.add(command::create(node_f, cmd_key));
-            } else if (cmd_f.has(cmd_key)) {
-                cmd = pipe.add(command::create(cmd_f, cmd_key));
+            auto ref = resolveCmd(cmd_key);
+            if (!ref.factory) {
+                convert::parse(HttpResultRep(Result::fail(cmd_key.empty() ? ERR_INVALID : ERR_NOT_FOUND,
+                    cmd_key.empty() ? "cmd required" : "unknown: " + cmd_key)), rep);
+                return;
             }
-            if (!cmd || !cmd->valid()) {
-                convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "unknown: " + cmd_key)), rep);
+            Command* cmd = pipe.add(command::create(*ref.factory, ref.key));
+            if (!cmd->valid()) {
+                convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "invalid: " + cmd_key)), rep);
                 return;
             }
 

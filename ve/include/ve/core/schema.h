@@ -87,7 +87,7 @@ struct MdS // Markdown based; headings -> Node hierarchy, content -> _content ch
 // Specialize for each format tag to provide exportNode / importNode.
 // Each specialization carries its own nested ExportOptions with only the knobs
 // the format supports; pass it braced ({0}, {.indent = 0}) or spell it via the
-// schema::ExportOptions<Format> alias below.
+// Format::ExportOptions (e.g. JsonS::ExportOptions).
 
 template<typename Format>
 struct SchemaTraits;

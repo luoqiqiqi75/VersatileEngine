@@ -56,7 +56,7 @@ VE_TEST(node_serialize_json_roundtrip_default) {
     Node src("r");
     buildJsonTree(src);
 
-    schema::ExportOptions<schema::JsonS> ex;
+    schema::JsonS::ExportOptions ex;
     ex.indent = 2;
     std::string json = schema::exportAs<schema::JsonS>(&src, ex);
 
@@ -70,7 +70,7 @@ VE_TEST(node_serialize_json_merge_preserves_extra_child) {
     src.set(1);
     src.append("a")->set(2);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::JsonS::ExportOptions{});
 
     Node dst("r");
     dst.append("extra")->set(42);
@@ -87,7 +87,7 @@ VE_TEST(node_serialize_json_ignores_duplicate_named_children) {
     src.append("a")->set(2);
     src.append("b")->set(3);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::JsonS::ExportOptions{});
 
     Node dst("r");
     VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
@@ -124,7 +124,7 @@ VE_TEST(node_serialize_json_export_auto_ignore_roundtrip) {
     src.append("pub")->set(1);
     src.append("_hid")->set(2);
 
-    schema::ExportOptions<schema::JsonS> ex;
+    schema::JsonS::ExportOptions ex;
     ex.auto_ignore = true;
     std::string json = schema::exportAs<schema::JsonS>(&src, ex);
 
@@ -139,7 +139,7 @@ VE_TEST(node_serialize_json_export_no_ignore_includes_underscore_child) {
     src.append("pub")->set(1);
     src.append("_hid")->set(2);
 
-    schema::ExportOptions<schema::JsonS> ex;
+    schema::JsonS::ExportOptions ex;
     ex.auto_ignore = false;
     std::string json = schema::exportAs<schema::JsonS>(&src, ex);
 
@@ -158,7 +158,7 @@ VE_TEST(node_serialize_bin_roundtrip_default) {
     Node src("r");
     buildFullTree(src);
 
-    auto bytes = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
+    auto bytes = schema::exportAs<schema::BinS>(&src, schema::BinS::ExportOptions{});
 
     Node dst("r");
     VE_ASSERT(schema::importAs<schema::BinS>(&dst, bytes.data(), bytes.size(), Node::COPY_DEFAULT));
@@ -169,8 +169,8 @@ VE_TEST(node_serialize_json_bin_import_equivalent) {
     Node src("r");
     buildJsonTree(src);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{2, false});
-    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{false});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::JsonS::ExportOptions{2, false});
+    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::BinS::ExportOptions{false});
 
     Node fromJson("r");
     Node fromBin("r");
@@ -184,8 +184,8 @@ VE_TEST(node_serialize_json_bin_duplicate_named_children_differ) {
     Node src("r");
     buildFullTree(src);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{});
-    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::JsonS::ExportOptions{});
+    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::BinS::ExportOptions{});
 
     Node fromJson("r");
     Node fromBin("r");
@@ -202,8 +202,8 @@ VE_TEST(node_serialize_bin_auto_ignore_matches_json) {
     src.append("a")->set(1);
     src.append("_b")->set(2);
 
-    std::string json = schema::exportAs<schema::JsonS>(&src, schema::ExportOptions<schema::JsonS>{2, true});
-    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{true});
+    std::string json = schema::exportAs<schema::JsonS>(&src, schema::JsonS::ExportOptions{2, true});
+    auto        bin  = schema::exportAs<schema::BinS>(&src, schema::BinS::ExportOptions{true});
 
     Node j("r");
     Node b("r");
@@ -223,7 +223,7 @@ VE_TEST(node_serialize_copy_matches_bin_import_full_tree) {
     Node byCopy("r");
     byCopy.copy(&src, Node::COPY_STRICT | Node::COPY_UPDATE);
 
-    auto bytes = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
+    auto bytes = schema::exportAs<schema::BinS>(&src, schema::BinS::ExportOptions{});
     Node byBin("r");
     VE_ASSERT(schema::importAs<schema::BinS>(&byBin, bytes.data(), bytes.size(), Node::COPY_STRICT | Node::COPY_UPDATE));
 
@@ -256,7 +256,7 @@ VE_TEST(node_serialize_json_invalid_unclosed_preserves_dst) {
 VE_TEST(node_serialize_bin_truncated_merge_preserves_dst) {
     Node src("s");
     src.append("x")->set(5);
-    auto full = schema::exportAs<schema::BinS>(&src, schema::ExportOptions<schema::BinS>{});
+    auto full = schema::exportAs<schema::BinS>(&src, schema::BinS::ExportOptions{});
 
     Node dst("dst");
     dst.append("marker")->set(7);
@@ -339,7 +339,7 @@ VE_TEST(node_serialize_var_roundtrip_default) {
     Node src("r");
     buildJsonTree(src);
 
-    schema::ExportOptions<schema::VarS> ex;
+    schema::VarS::ExportOptions ex;
     auto var = schema::exportAs<schema::VarS>(&src, ex);
 
     Node dst("r");

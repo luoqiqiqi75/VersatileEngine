@@ -442,7 +442,7 @@ VE_TEST(node_schema_json_export_auto_ignore) {
     root.append("public")->set(1);
     root.append("_internal")->set(2);
 
-    schema::ExportOptions<schema::JsonS> options;
+    schema::JsonS::ExportOptions options;
     options.auto_ignore = true;
 
     std::string json = schema::exportAs<schema::JsonS>(&root, options);
@@ -455,7 +455,7 @@ VE_TEST(node_schema_bin_roundtrip_auto_ignore) {
     src.append("public")->set(1);
     src.append("_internal")->set(2);
 
-    schema::ExportOptions<schema::BinS> export_options;
+    schema::BinS::ExportOptions export_options;
     export_options.auto_ignore = true;
 
     auto bytes = schema::exportAs<schema::BinS>(&src, export_options);

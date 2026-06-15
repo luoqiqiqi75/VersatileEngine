@@ -2,7 +2,8 @@
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
-#include "node_session.h"
+#include "ve/core/command.h"
+#include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
 
@@ -20,11 +21,9 @@
 namespace ve {
 namespace service {
 
-static const schema::ExportOptions<schema::JsonS> compactJson{0};
-
 static std::string toJson(Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, compactJson);
+    return schema::exportAs<schema::JsonS>(&n, schema::JsonS::compact());
 }
 
 struct NodeUdpServer::Private
@@ -50,23 +49,38 @@ NodeUdpServer::~NodeUdpServer()
 bool NodeUdpServer::start()
 {
     registerNodeCommands();
-    _p->session = std::make_unique<Session>(_p->root);
+    _p->session = std::make_unique<Session>(_p->root, _p->root);
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         std::string msg(data);
         if (msg.empty()) return;
 
-        Node ctx;
-        if (!schema::importAs<schema::JsonS>(&ctx, msg)) {
+        Pipeline pipe;
+        if (!schema::importAs<schema::JsonS>(pipe.contextNode(), msg)) {
             Node err;
-            err.set("code", int64_t(-2));
+            err.set("code", int64_t(ERR_INVALID));
             err.set("message", std::string("invalid JSON"));
             session_ptr->async_send(toJson(err));
             return;
         }
 
-        if (dispatch(_p->session.get(), &ctx))
-            session_ptr->async_send(toJson(ctx));
+        std::string cmd_str = pipe.contextNode()->get("cmd").toString();
+        auto ref = resolveCmd(cmd_str);
+        if (!ref.factory) {
+            pipe.contextNode()->erase("params");
+            pipe.contextNode()->set("code", int64_t(cmd_str.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+            pipe.contextNode()->set("message", cmd_str.empty() ? std::string("cmd required") : "unknown: " + cmd_str);
+            session_ptr->async_send(toJson(*pipe.contextNode()));
+            return;
+        }
+
+        pipe.contextNode()->set("_session", Var::ptr(_p->session.get()));
+        Command* c = pipe.add(command::create(*ref.factory, ref.key));
+        c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+        pipe.sync();
+
+        if (finalizeReply(pipe))
+            session_ptr->async_send(toJson(*pipe.contextNode()));
     });
 
     ve::service::disableWindowsPortReuse(_p->server);

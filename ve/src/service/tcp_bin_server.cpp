@@ -2,7 +2,8 @@
 #include "ve/service/bin_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
-#include "node_session.h"
+#include "ve/core/command.h"
+#include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
 
@@ -56,7 +57,7 @@ struct BinTcpServer::Private
 
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
-        return std::make_unique<Session>(root, [this, sid](std::string msg) {
+        return std::make_unique<Session>(root, root, [this, sid](std::string msg) {
             Node event;
             schema::importAs<schema::JsonS>(&event, msg);
             sendFrame(sid, bin::FLAG_NOTIFY, toVar(event));
@@ -80,20 +81,36 @@ struct BinTcpServer::Private
         while (bin::tryPopFrame(buf, flag, msg)) {
             if ((flag & bin::FLAG_TYPE_MASK) != bin::FLAG_REQUEST) continue;
 
-            Node ctx;
-            if (!schema::importAs<schema::VarS>(&ctx, msg)) {
+            Pipeline pipe;
+            if (!schema::importAs<schema::VarS>(pipe.contextNode(), msg)) {
                 Node err;
-                err.set("code", int64_t(-2));
+                err.set("code", int64_t(ERR_INVALID));
                 err.set("message", std::string("invalid binary request"));
                 auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(err));
                 session_ptr->async_send(std::string(frame.begin(), frame.end()));
                 continue;
             }
 
-            if (dispatch(state->session.get(), &ctx)) {
-                int code = ctx.get("code").toInt(0);
+            std::string cmd_str = pipe.contextNode()->get("cmd").toString();
+            auto ref = resolveCmd(cmd_str);
+            if (!ref.factory) {
+                pipe.contextNode()->erase("params");
+                pipe.contextNode()->set("code", int64_t(cmd_str.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+                pipe.contextNode()->set("message", cmd_str.empty() ? std::string("cmd required") : "unknown: " + cmd_str);
+                auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(*pipe.contextNode()));
+                session_ptr->async_send(std::string(frame.begin(), frame.end()));
+                continue;
+            }
+
+            pipe.contextNode()->set("_session", Var::ptr(state->session.get()));
+            Command* c = pipe.add(command::create(*ref.factory, ref.key));
+            c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+            pipe.sync();
+
+            if (finalizeReply(pipe)) {
+                int code = pipe.contextNode()->get("code").toInt(0);
                 uint8_t repFlag = code < 0 ? bin::FLAG_ERROR : bin::FLAG_RESPONSE;
-                auto frame = bin::encodeFrame(repFlag, toVar(ctx));
+                auto frame = bin::encodeFrame(repFlag, toVar(*pipe.contextNode()));
                 session_ptr->async_send(std::string(frame.begin(), frame.end()));
             }
         }

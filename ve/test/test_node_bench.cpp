@@ -1170,7 +1170,7 @@ VE_TEST(node_bench_schema_json_roundtrip_10k) {
     Node src("src");
     buildWideNamedTree(src, 10000);
 
-    schema::ExportOptions<schema::JsonS> ex;
+    schema::JsonS::ExportOptions ex;
     ex.indent = 0;
 
     BENCH_BEGIN;
@@ -1187,7 +1187,7 @@ VE_TEST(node_bench_schema_bin_roundtrip_10k) {
     Node src("src");
     buildWideNamedTree(src, 10000);
 
-    schema::ExportOptions<schema::BinS> ex;
+    schema::BinS::ExportOptions ex;
 
     BENCH_BEGIN;
     Bytes       bytes = schema::exportAs<schema::BinS>(&src, ex);
@@ -1204,7 +1204,7 @@ VE_TEST(node_bench_schema_json_roundtrip_100k) {
     Node src("src");
     buildWideNamedTree(src, 100000);
 
-    schema::ExportOptions<schema::JsonS> ex;
+    schema::JsonS::ExportOptions ex;
     ex.indent = 0;
 
     BENCH_BEGIN;

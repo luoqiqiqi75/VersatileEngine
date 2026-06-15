@@ -1,17 +1,18 @@
-// node_commands.h — node-protocol command family + generic dispatch
+// node_commands.h — node-protocol command family + envelope helpers
 #pragma once
 
 #include "ve/core/object.h"
 
+#include <functional>
+
 namespace ve {
 
 class Node;
+class Factory;
+class Pipeline;
 
 namespace service {
 
-// ============================================================================
-// Service-layer error codes (not in Result::Code — these are protocol-level).
-// ============================================================================
 enum : int {
     ERR_INVALID     = -2,
     ERR_NOT_FOUND   = -3,
@@ -20,19 +21,25 @@ enum : int {
 
 struct Session : Object
 {
+    using SendFn = std::function<void(std::string)>;
+
     Node* root = nullptr;
     Node* current = nullptr;
 
-    explicit Session(Node* r_n, Node* c_n) : Object("_session"), root(r_n), current(c_n) {}
+    SendFn send;
+
+    explicit Session(Node* r_n, Node* c_n, SendFn s = {})
+        : Object("_session"), root(r_n), current(c_n), send(std::move(s)) {}
 };
 
 VE_API void registerNodeCommands();
 
-// Process request in ctx ({cmd, params?, id?, ...}), mutate ctx to become the
-// reply ({code, message?, data?, id?, ...}).  _-prefixed internal nodes
-// (_session) are auto-ignored on export.
-// Returns true if a reply should be sent; false = accepted (command owns response).
-VE_API bool dispatch(Session* session, Node* ctx);
+struct CmdRef { Factory* factory = nullptr; std::string key; };
+VE_API CmdRef resolveCmd(const std::string& cmd);
+
+// Mutate pipe.contextNode() into reply format (erase cmd/params, set code/message).
+// Returns true if reply should be sent; false = accepted.
+VE_API bool finalizeReply(Pipeline& pipe);
 
 } // namespace service
 } // namespace ve

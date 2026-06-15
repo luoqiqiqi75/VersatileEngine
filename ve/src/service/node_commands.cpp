@@ -1,14 +1,15 @@
 // node_commands.cpp — envelope v2: cmd/params → code/message/data
 //
-// One dispatch entry: resolve cmd in standard/node then global factory,
-// create+run through Command, mutate ctx into the reply.  Batch is an
-// ordinary registered command that recurses through the same dispatch.
+// Command implementations registered in factory::at("std").
+// resolveCmd() parses optional "prefix:key" from the envelope cmd field.
+// finalizeReply() mutates a Pipeline's contextNode into reply format.
 
 #include "node_commands.h"
 
 #include "ve/core/node.h"
 #include "ve/core/command.h"
 #include "ve/core/schema.h"
+#include "ve/core/pipeline.h"
 
 namespace ve {
 namespace service {
@@ -23,8 +24,6 @@ static std::string normalizePath(std::string path)
     while (!path.empty() && path.front() == VE_NODE_PATH_SEP) path.erase(path.begin());
     return path;
 }
-
-static bool dispatchImpl(Session* session, Node* ctx);
 
 // ============================================================================
 // Command implementations — Proc(ctx, params, data)
@@ -152,11 +151,24 @@ static Result batch(Node* ctx, Node* params, Node* data)
     Session* s = session(ctx);
     if (params->count() > 500)
         return Result::fail(ERR_INVALID, "batch exceeds limit");
+
     for (auto* item : params->children()) {
-        Node sub;
-        sub.copy(item);
-        dispatchImpl(s, &sub);
-        data->append()->copy(&sub);
+        Node* sub = data->append();
+        std::string cmd_str = item->get("cmd").toString();
+        auto ref = resolveCmd(cmd_str);
+        if (!ref.factory) {
+            sub->set("code", int64_t(ERR_NOT_FOUND));
+            sub->set("message", "unknown: " + cmd_str);
+            continue;
+        }
+        Pipeline pipe;
+        pipe.contextNode()->set("_session", Var::ptr(s));
+        Command* c = pipe.add(command::create(*ref.factory, ref.key));
+        c->setContextNodes(pipe.contextNode(), item->at("params"), sub);
+        pipe.sync();
+        sub->set("code", int64_t(pipe.result().code()));
+        if (pipe.result().isError() && !pipe.result().message().empty())
+            sub->set("message", pipe.result().message());
     }
     return Result::ok();
 }
@@ -164,12 +176,12 @@ static Result batch(Node* ctx, Node* params, Node* data)
 } // namespace cmd
 
 // ============================================================================
-// Registration + dispatch
+// Registration + helpers
 // ============================================================================
 
 void registerNodeCommands()
 {
-    auto& f = factory::at("standard/node");
+    auto& f = factory::at("std");
     if (f.has("node.get")) return;
     f.reg("node.get",      Var::callable(cmd::get),         "get node value");
     f.reg("node.set",      Var::callable(cmd::set),         "set node value");
@@ -183,53 +195,35 @@ void registerNodeCommands()
     f.reg("batch",         Var::callable(cmd::batch),       "run batch requests");
 }
 
-static void setError(Node* ctx, int code, const std::string& message)
+CmdRef resolveCmd(const std::string& cmd)
 {
-    ctx->erase("cmd");
-    ctx->erase("params");
-    ctx->set("code", static_cast<int64_t>(code));
-    ctx->set("message", message);
+    auto pos = cmd.find(':');
+    if (pos != std::string::npos) {
+        std::string prefix = cmd.substr(0, pos);
+        std::string key = cmd.substr(pos + 1);
+        Factory& f = factory::at(prefix);
+        return {f.has(key) ? &f : nullptr, key};
+    }
+    Factory& stdF = factory::at("std");
+    if (stdF.has(cmd)) return {&stdF, cmd};
+    Factory& cmdF = command::factory();
+    if (cmdF.has(cmd)) return {&cmdF, cmd};
+    return {nullptr, cmd};
 }
 
-static bool dispatchImpl(Session* session, Node* ctx)
+bool finalizeReply(Pipeline& pipe)
 {
-    std::string cmd = ctx->get("cmd").toString();
-    if (cmd.empty()) {
-        setError(ctx, ERR_INVALID, "cmd required");
-        return true;
-    }
-
-    Factory& nodeF = factory::at("standard/node");
-    Factory* f = nodeF.has(cmd) ? &nodeF : nullptr;
-    if (!f) {
-        Factory& cmdF = command::factory();
-        if (cmdF.has(cmd)) f = &cmdF;
-    }
-    if (!f) {
-        setError(ctx, ERR_NOT_FOUND, "unknown: " + cmd);
-        return true;
-    }
-
-    ctx->at("_session")->set(Var::ptr(session));
-    Command c = command::create(*f, cmd, ctx, ctx->at("params"), ctx->at("data"));
-    c.run();
-
-    if (c.result().isAccepted()) return false;
-
+    if (pipe.result().isAccepted()) return false;
+    Node* ctx = pipe.contextNode();
     ctx->erase("cmd");
     ctx->erase("params");
-    ctx->set("code", static_cast<int64_t>(c.result().code()));
-    if (c.result().isError()) {
+    ctx->set("code", static_cast<std::int64_t>(pipe.result().code()));
+    if (pipe.result().isError()) {
         ctx->erase("data");
-        if (!c.result().message().empty())
-            ctx->set("message", c.result().message());
+        if (!pipe.result().message().empty())
+            ctx->set("message", pipe.result().message());
     }
     return true;
-}
-
-bool dispatch(Session* session, Node* ctx)
-{
-    return dispatchImpl(session, ctx);
 }
 
 } // namespace service
