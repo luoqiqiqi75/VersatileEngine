@@ -106,24 +106,24 @@ Var decode(const std::string& yaml_str)
 
 namespace ve::schema {
 
-std::string SchemaTraits<YamlS>::exportNode(const Node* node, int indent)
+std::string YamlS::exportNode(const Node* node, int indent)
 {
     return exportNode(node, ExportOptions{indent});
 }
 
-std::string SchemaTraits<YamlS>::exportNode(const Node* node, const ExportOptions&)
+std::string YamlS::exportNode(const Node* node, const ExportOptions&)
 {
     YAML::Emitter emitter;
     emitter << ve::ros::yaml::varToYaml(schema::exportAs<schema::VarS>(node));
     return emitter.c_str();
 }
 
-bool SchemaTraits<YamlS>::importNode(Node* node, const std::string& data)
+bool YamlS::importNode(Node* node, const std::string& data)
 {
     return importNode(node, data, Node::COPY_DEFAULT);
 }
 
-bool SchemaTraits<YamlS>::importNode(Node* node,
+bool YamlS::importNode(Node* node,
                                      const std::string& data,
                                      int copy_flags)
 {

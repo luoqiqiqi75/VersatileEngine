@@ -1,11 +1,5 @@
 // ----------------------------------------------------------------------------
-// schema_qt.h — ve::schema QJsonS / QVariantS format tags + convenience helpers
-// ----------------------------------------------------------------------------
-// QJsonS:    Node <-> QJsonValue (native Qt JSON, no string round-trip)
-// QVariantS: Node <-> QVariant   (direct QML/QObject property bridge)
-//
-// Pattern follows ros/yaml_schema.h: format tag + SchemaTraits specialization,
-// internally delegates to VarS via var_qt.h conversion functions.
+// schema_qt.h — ve::schema QJsonS / QVariantS format structs + helpers
 // ----------------------------------------------------------------------------
 #pragma once
 
@@ -19,12 +13,7 @@
 
 namespace ve::schema {
 
-// --- QJsonS: QJsonValue-based Node serialization ---------------------------
-
-struct QJsonS {};
-
-template<>
-struct SchemaTraits<QJsonS>
+struct QJsonS
 {
     struct ExportOptions { bool auto_ignore = true; };
 
@@ -34,12 +23,7 @@ struct SchemaTraits<QJsonS>
     VE_API static bool importNode(Node* node, const QJsonValue& data, int copy_flags);
 };
 
-// --- QVariantS: QVariant-based Node serialization --------------------------
-
-struct QVariantS {};
-
-template<>
-struct SchemaTraits<QVariantS>
+struct QVariantS
 {
     struct ExportOptions { bool auto_ignore = true; };
 

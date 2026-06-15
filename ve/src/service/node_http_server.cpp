@@ -169,7 +169,7 @@ bool NodeHttpServer::start()
                 convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "unknown command")), rep);
                 return;
             }
-            
+
             if (!cmd.input(req.body())) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "bad request")), rep);
                 return;

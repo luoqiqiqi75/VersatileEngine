@@ -20,10 +20,7 @@ VE_API Var         decode(const std::string& yaml_str);
 
 namespace ve::schema {
 
-struct YamlS {};
-
-template<>
-struct SchemaTraits<YamlS>
+struct YamlS
 {
     struct ExportOptions { int indent = 2; };
 
