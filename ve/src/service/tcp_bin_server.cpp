@@ -1,9 +1,9 @@
-// tcp_bin_server.cpp — ve::service::BinTcpServer
+// tcp_bin_server.cpp — ve::service::BinTcpServer (multi-session, binary frames)
 #include "ve/service/bin_service.h"
 #include "ve/core/node.h"
+#include "ve/core/schema.h"
 #include "node_session.h"
 #include "node_commands.h"
-#include "ve/core/schema.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -23,28 +23,9 @@
 namespace ve {
 namespace service {
 
-static Bytes makeFrame(uint8_t flag, const Var& payload)
-{
-    return bin::encodeFrame(flag, payload);
-}
-
-static uint8_t flagFromReply(Node* reply)
-{
-    return reply->get("ok").toBool(false) ? bin::FLAG_RESPONSE : bin::FLAG_ERROR;
-}
-
 static Var toVar(const Node& node)
 {
     return schema::exportAs<schema::VarS>(&node);
-}
-
-static void fillError(Node* rep, const std::string& code, const std::string& error)
-{
-    rep->clear();
-    rep->set(Var());
-    rep->set("ok", false);
-    rep->set("code", code);
-    rep->set("error", error);
 }
 
 struct BinTcpServer::Private
@@ -61,27 +42,24 @@ struct BinTcpServer::Private
     };
     std::unordered_map<std::size_t, ConnState> connections;
 
-    void postToSession(uint64_t sid, uint8_t flag, Var payload)
+    void sendFrame(uint64_t sid, uint8_t flag, const Var& payload)
     {
-        auto frame = makeFrame(flag, payload);
+        auto frame = bin::encodeFrame(flag, payload);
         std::string data(frame.begin(), frame.end());
         server.post([this, sid, data = std::move(data)]() {
             server.foreach_session([&](auto& session_ptr) {
-                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid) {
+                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid)
                     session_ptr->async_send(data);
-                }
             });
         });
     }
 
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
-        return std::make_unique<Session>(root, [this, sid](const std::string& path, const Var& value) {
-            Node event("event");
-            event.set("event", "node.changed");
-            event.set("path", path);
-            event.at("value")->set(value);
-            postToSession(sid, bin::FLAG_NOTIFY, toVar(event));
+        return std::make_unique<Session>(root, [this, sid](std::string msg) {
+            Node event;
+            schema::importAs<schema::JsonS>(&event, msg);
+            sendFrame(sid, bin::FLAG_NOTIFY, toVar(event));
         });
     }
 
@@ -92,35 +70,32 @@ struct BinTcpServer::Private
         {
             std::lock_guard<std::mutex> lock(mtx);
             auto it = connections.find(connKey);
-            if (it != connections.end()) {
-                state = &it->second;
-            }
+            if (it != connections.end()) state = &it->second;
         }
-        if (!state) {
-            return;
-        }
+        if (!state) return;
 
         auto& buf = state->recvBuf;
         Var msg;
         uint8_t flag = 0;
         while (bin::tryPopFrame(buf, flag, msg)) {
-            if ((flag & bin::FLAG_TYPE_MASK) != bin::FLAG_REQUEST) {
-                continue;
-            }
+            if ((flag & bin::FLAG_TYPE_MASK) != bin::FLAG_REQUEST) continue;
 
-            Node req("req");
-            if (!schema::importAs<schema::VarS>(&req, msg)) {
-                Node reply("rep");
-                fillError(&reply, "invalid_request", "invalid binary request");
-                auto frame = makeFrame(flagFromReply(&reply), toVar(reply));
+            Node ctx;
+            if (!schema::importAs<schema::VarS>(&ctx, msg)) {
+                Node err;
+                err.set("code", int64_t(-2));
+                err.set("message", std::string("invalid binary request"));
+                auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(err));
                 session_ptr->async_send(std::string(frame.begin(), frame.end()));
                 continue;
             }
 
-            Node reply("rep");
-            dispatchNode(root, &req, &reply, state->session.get());
-            auto frame = makeFrame(flagFromReply(&reply), toVar(reply));
-            session_ptr->async_send(std::string(frame.begin(), frame.end()));
+            if (dispatch(state->session.get(), &ctx)) {
+                int code = ctx.get("code").toInt(0);
+                uint8_t repFlag = code < 0 ? bin::FLAG_ERROR : bin::FLAG_RESPONSE;
+                auto frame = bin::encodeFrame(repFlag, toVar(ctx));
+                session_ptr->async_send(std::string(frame.begin(), frame.end()));
+            }
         }
     }
 };
@@ -129,7 +104,7 @@ BinTcpServer::BinTcpServer(const Node* config_n)
     : _p(std::make_unique<Private>())
 {
     _p->root = ve::n(config_n->get("root").toString("/"));
-    _p->port = config_n->get("port").toInt(0); // default stop
+    _p->port = config_n->get("port").toInt(0);
 }
 
 BinTcpServer::~BinTcpServer()
@@ -169,7 +144,7 @@ bool BinTcpServer::start()
         auto key = session_ptr->hash_key();
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections.erase(key);   // Session dtor unsubscribes everything
+            _p->connections.erase(key);
         }
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });

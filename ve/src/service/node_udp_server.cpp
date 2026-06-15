@@ -1,7 +1,8 @@
-// node_udp_server.cpp — ve::service::NodeUdpServer
+// node_udp_server.cpp — ve::service::NodeUdpServer (single session, no watch)
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
+#include "node_session.h"
 #include "node_commands.h"
 #include "server_util.h"
 
@@ -26,27 +27,19 @@ static std::string toJson(Node& n)
     return schema::exportAs<schema::JsonS>(&n, compactJson);
 }
 
-static void fillError(Node* rep, const std::string& code, const std::string& error)
-{
-    rep->clear();
-    rep->set(Var());
-    rep->set("ok", false);
-    rep->set("code", code);
-    rep->set("error", error);
-}
-
 struct NodeUdpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12300;
-    
+
     asio2::udp_server server;
+    std::unique_ptr<Session> session;
 };
 
 NodeUdpServer::NodeUdpServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
     _p->root = ve::n(config_n->get("root").toString("/"));
-    _p->port = config_n->get("port").toInt(0); // default stop
+    _p->port = config_n->get("port").toInt(0);
 }
 
 NodeUdpServer::~NodeUdpServer()
@@ -57,24 +50,23 @@ NodeUdpServer::~NodeUdpServer()
 bool NodeUdpServer::start()
 {
     registerNodeCommands();
+    _p->session = std::make_unique<Session>(_p->root);
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         std::string msg(data);
-        if (msg.empty()) {
+        if (msg.empty()) return;
+
+        Node ctx;
+        if (!schema::importAs<schema::JsonS>(&ctx, msg)) {
+            Node err;
+            err.set("code", int64_t(-2));
+            err.set("message", std::string("invalid JSON"));
+            session_ptr->async_send(toJson(err));
             return;
         }
 
-        Node req("req");
-        if (!schema::importAs<schema::JsonS>(&req, msg)) {
-            Node reply("rep");
-            fillError(&reply, "invalid_request", "invalid JSON request");
-            session_ptr->async_send(toJson(reply));
-            return;
-        }
-
-        Node reply("rep");
-        dispatchNode(_p->root, &req, &reply);   // no session: sessionless transport
-        session_ptr->async_send(toJson(reply));
+        if (dispatch(_p->session.get(), &ctx))
+            session_ptr->async_send(toJson(ctx));
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
@@ -84,6 +76,7 @@ bool NodeUdpServer::start()
 void NodeUdpServer::stop()
 {
     _p->server.stop();
+    _p->session.reset();
 }
 
 bool NodeUdpServer::isRunning() const

@@ -1,10 +1,7 @@
-// node_commands.h — shared node-protocol command family + generic dispatch
+// node_commands.h — node-protocol command family + generic dispatch
 #pragma once
 
-#include "ve/core/var.h"
-#include "ve/core/schema.h"
-
-#include <string>
+#include "ve/core/object.h"
 
 namespace ve {
 
@@ -12,29 +9,30 @@ class Node;
 
 namespace service {
 
-class Session;
+// ============================================================================
+// Service-layer error codes (not in Result::Code — these are protocol-level).
+// ============================================================================
+enum : int {
+    ERR_INVALID     = -2,
+    ERR_NOT_FOUND   = -3,
+    ERR_UNSUPPORTED = -4,
+};
 
-// Register the shared node command family into factory "standard/node".
-//   node.get / node.set / node.list / node.put / node.remove / node.trigger
-//   command.list
-//   subscribe / unsubscribe   (session-scoped: read Session* from ctx/node/session)
-// Idempotent — call once (e.g. ServerModule::init).
+struct Session : Object
+{
+    Node* root = nullptr;
+    Node* current = nullptr;
+
+    explicit Session(Node* r_n, Node* c_n) : Object("_session"), root(r_n), current(c_n) {}
+};
+
 VE_API void registerNodeCommands();
 
-// Generic, command-based dispatch for the node protocol — the ONE dispatch for
-// every node transport (http /ve & /jsonrpc, ws, tcp, bin). Reads the request
-// Node (op/path/value/...), runs the matching standard/node command through a
-// pipeline, and writes the reply envelope into rep:
-//   success -> { ok:true,  [id], data:{...} }
-//   failure -> { ok:false, [id], code, error }
-// session: per-connection Session enabling subscribe/unsubscribe; null on
-// sessionless transports (http, udp), where those ops report "unsupported".
-VE_API void dispatchNode(Node* root, Node* req, Node* rep, Session* session = nullptr,
-                         int batchLimit = 500);
-
-// Shared render helpers, reused by transport-specific renderers (e.g. http /at).
-VE_API Var  exportNodeTree(Node* target, int depth, const schema::ExportOptions<schema::JsonS>& options);
-VE_API void writeNodeMeta(Node* out, Node* root, Node* target);
+// Process request in ctx ({cmd, params?, id?, ...}), mutate ctx to become the
+// reply ({code, message?, data?, id?, ...}).  _-prefixed internal nodes
+// (_session) are auto-ignored on export.
+// Returns true if a reply should be sent; false = accepted (command owns response).
+VE_API bool dispatch(Session* session, Node* ctx);
 
 } // namespace service
 } // namespace ve

@@ -33,10 +33,8 @@ public:
 void Pipeline::Private::execute(std::shared_ptr<Private> self)
 {
     if (running && result.isSuccess() && !commands.empty()) { // continue
-        Command exec_c = commands.front();
-        exec_c.setContextNodes(ctx_n, in_n, out_n);
+        const Command exec_c = commands.front();
         commands.pop_front();
-        if (!commands.empty()) std::swap(in_n, out_n);
         exec_c.call([self] (Command& c) {
             Result r = c.result();
             if (self->running && !r.isSuccess()) {
@@ -80,6 +78,7 @@ Command* Pipeline::add(Command command)
         veLogW << "<ve::pipeline> commands cannot change while running";
         return nullptr;
     }
+    command.setContextNodes(contextNode(), command.inputNode(), command.outputNode());
     _p->commands.push_back(command);
     return &_p->commands.back();
 }

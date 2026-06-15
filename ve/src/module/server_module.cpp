@@ -2,6 +2,7 @@
 // Created by luoqi on 2026/3/24.
 //
 
+#include "src/service/node_commands.h"
 #include "ve/core/module.h"
 #include "ve/core/log.h"
 #include "ve/core/command.h"
@@ -142,6 +143,8 @@ void ServerModule::init() {
     }
 
     _data_root = node()->get("file_io/data_root").toString("./data");
+
+    service::registerNodeCommands();
 }
 
 void ServerModule::bindStaticProxyTargets()

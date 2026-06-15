@@ -1,4 +1,4 @@
-// node_ws_service.cpp — ve::service::NodeWsServer
+// node_ws_service.cpp — ve::service::NodeWsServer (multi-session)
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
@@ -29,15 +29,6 @@ static std::string toJson(const Node& n)
     return schema::exportAs<schema::JsonS>(&n, compactJson);
 }
 
-static void fillError(Node* rep, const std::string& code, const std::string& error)
-{
-    rep->clear();
-    rep->set(Var());
-    rep->set("ok", false);
-    rep->set("code", code);
-    rep->set("error", error);
-}
-
 struct NodeWsServer::Private
 {
     Node*    root = nullptr;
@@ -47,26 +38,15 @@ struct NodeWsServer::Private
     std::mutex mtx;
     std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
 
-    void postToSession(uint64_t sid, std::string message)
-    {
-        server.post([this, sid, message = std::move(message)]() {
-            server.foreach_session([&](auto& session_ptr) {
-                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid) {
-                    session_ptr->async_send(message);
-                }
-            });
-        });
-    }
-
-    // Creates a Session whose pushes are framed and sent back to this connection.
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
-        return std::make_unique<Session>(root, [this, sid](const std::string& path, const Var& value) {
-            Node event("event");
-            event.set("event", "node.changed");
-            event.set("path", path);
-            event.at("value")->set(value);
-            postToSession(sid, toJson(event));
+        return std::make_unique<Session>(root, [this, sid](std::string msg) {
+            server.post([this, sid, msg = std::move(msg)]() {
+                server.foreach_session([&](auto& session_ptr) {
+                    if (static_cast<uint64_t>(session_ptr->hash_key()) == sid)
+                        session_ptr->async_send(msg);
+                });
+            });
         });
     }
 
@@ -81,7 +61,7 @@ struct NodeWsServer::Private
 NodeWsServer::NodeWsServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
     _p->root = ve::n(config_n->get("root").toString("/"));
-    _p->port = config_n->get("port").toInt(0); // default stop
+    _p->port = config_n->get("port").toInt(0);
 }
 
 NodeWsServer::~NodeWsServer()
@@ -104,26 +84,25 @@ bool NodeWsServer::start()
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
-        std::string msg(data);
 
-        Node req("req");
-        if (!schema::importAs<schema::JsonS>(&req, msg)) {
-            Node reply("rep");
-            fillError(&reply, "invalid_request", "invalid JSON request");
-            session_ptr->async_send(toJson(reply));
+        Node ctx;
+        if (!schema::importAs<schema::JsonS>(&ctx, std::string(data))) {
+            Node err;
+            err.set("code", int64_t(-2));
+            err.set("message", std::string("invalid JSON"));
+            session_ptr->async_send(toJson(err));
             return;
         }
 
-        Node reply("rep");
-        dispatchNode(_p->root, &req, &reply, _p->sessionFor(sid));
-        session_ptr->async_send(toJson(reply));
+        if (dispatch(_p->sessionFor(sid), &ctx))
+            session_ptr->async_send(toJson(ctx));
     });
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->sessions.erase(sid);   // Session dtor unsubscribes everything
+            _p->sessions.erase(sid);
         }
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });

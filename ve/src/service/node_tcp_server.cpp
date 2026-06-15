@@ -1,4 +1,4 @@
-// node_tcp_server.cpp — ve::service::NodeTcpServer
+// node_tcp_server.cpp — ve::service::NodeTcpServer (multi-session, line-delimited JSON)
 #include "ve/service/node_service.h"
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
@@ -30,15 +30,6 @@ static std::string toJson(const Node& n)
     return schema::exportAs<schema::JsonS>(&n, compactJson);
 }
 
-static void fillError(Node* rep, const std::string& code, const std::string& error)
-{
-    rep->clear();
-    rep->set(Var());
-    rep->set("ok", false);
-    rep->set("code", code);
-    rep->set("error", error);
-}
-
 struct NodeTcpServer::Private
 {
     Node*    root = nullptr;
@@ -54,25 +45,15 @@ struct NodeTcpServer::Private
     };
     std::unordered_map<std::size_t, ConnState> connections;
 
-    void postToSession(uint64_t sid, std::string message)
-    {
-        server.post([this, sid, message = std::move(message)]() {
-            server.foreach_session([&](auto& session_ptr) {
-                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid) {
-                    session_ptr->async_send(message);
-                }
-            });
-        });
-    }
-
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
-        return std::make_unique<Session>(root, [this, sid](const std::string& path, const Var& value) {
-            Node event("event");
-            event.set("event", "node.changed");
-            event.set("path", path);
-            event.at("value")->set(value);
-            postToSession(sid, toJson(event) + "\n");
+        return std::make_unique<Session>(root, [this, sid](std::string msg) {
+            server.post([this, sid, msg = std::move(msg)]() {
+                server.foreach_session([&](auto& session_ptr) {
+                    if (static_cast<uint64_t>(session_ptr->hash_key()) == sid)
+                        session_ptr->async_send(msg + "\n");
+                });
+            });
         });
     }
 
@@ -83,37 +64,29 @@ struct NodeTcpServer::Private
         {
             std::lock_guard<std::mutex> lock(mtx);
             auto it = connections.find(connKey);
-            if (it != connections.end()) {
-                state = &it->second;
-            }
+            if (it != connections.end()) state = &it->second;
         }
-        if (!state) {
-            return;
-        }
+        if (!state) return;
 
         auto& buf = state->recvBuf;
         std::string::size_type pos;
         while ((pos = buf.find('\n')) != std::string::npos) {
             std::string line = buf.substr(0, pos);
             buf.erase(0, pos + 1);
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-            if (line.empty()) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+
+            Node ctx;
+            if (!schema::importAs<schema::JsonS>(&ctx, line)) {
+                Node err;
+                err.set("code", int64_t(-2));
+                err.set("message", std::string("invalid JSON"));
+                session_ptr->async_send(toJson(err) + "\n");
                 continue;
             }
 
-            Node req("req");
-            if (!schema::importAs<schema::JsonS>(&req, line)) {
-                Node reply("rep");
-                fillError(&reply, "invalid_request", "invalid JSON request");
-                session_ptr->async_send(toJson(reply) + "\n");
-                continue;
-            }
-
-            Node reply("rep");
-            dispatchNode(root, &req, &reply, state->session.get());
-            session_ptr->async_send(toJson(reply) + "\n");
+            if (dispatch(state->session.get(), &ctx))
+                session_ptr->async_send(toJson(ctx) + "\n");
         }
     }
 };
@@ -121,7 +94,7 @@ struct NodeTcpServer::Private
 NodeTcpServer::NodeTcpServer(const Node* config_n) : _p(std::make_unique<Private>())
 {
     _p->root = ve::n(config_n->get("root").toString("/"));
-    _p->port = config_n->get("port").toInt(0); // default stop
+    _p->port = config_n->get("port").toInt(0);
 }
 
 NodeTcpServer::~NodeTcpServer()
@@ -147,9 +120,8 @@ bool NodeTcpServer::start()
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             auto it = _p->connections.find(key);
-            if (it != _p->connections.end()) {
+            if (it != _p->connections.end())
                 it->second.recvBuf.append(data);
-            }
         }
         _p->processLines(key, session_ptr);
     });
@@ -158,7 +130,7 @@ bool NodeTcpServer::start()
         auto key = session_ptr->hash_key();
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections.erase(key);   // Session dtor unsubscribes everything
+            _p->connections.erase(key);
         }
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
     });
