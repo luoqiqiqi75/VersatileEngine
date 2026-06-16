@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ve/core/command.h"
 #include "ve/core/var.h"
 
 namespace ve::ros {
@@ -15,7 +16,7 @@ struct ServiceCallRequest
 };
 
 VE_API Var::ListV listServices(const std::string& filter = "");
-VE_API Var::DictV serviceInfo(const std::string& service_name);
-VE_API Var::DictV callService(const ServiceCallRequest& request);
+VE_API Result serviceInfo(const std::string& service_name, Node* out);
+VE_API Result callService(const ServiceCallRequest& request, Node* out);
 
 } // namespace ve::ros

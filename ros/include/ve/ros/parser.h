@@ -26,7 +26,7 @@ VE_API bool parsePayload(const std::string& key,
                          Node* target,
                          Node* schema,
                          std::string& error);
-VE_API Var::ListV parserInfoList();
+VE_API void parserInfoList(Node* out);
 VE_API Strings parserKeys();
 
 } // namespace ve::ros

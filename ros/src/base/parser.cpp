@@ -295,24 +295,20 @@ bool parsePayload(const std::string& key,
     return fn(ParseRequest{payload, target, schema}, error);
 }
 
-Var::ListV parserInfoList()
+void parserInfoList(Node* out)
 {
     registerBuiltins();
-
-    Var::ListV list;
     std::lock_guard<std::mutex> lock(registry().mu);
     for (const auto& key : registry().order) {
         const auto& parser = registry().canonical.value(key);
-        Var::DictV item;
-        item["key"] = Var(parser.key);
-        item["summary"] = Var(parser.summary);
+        auto* child = out->at(key);
+        child->set("key", Var(parser.key));
+        child->set("summary", Var(parser.summary));
         Var::ListV aliases;
         for (const auto& alias : parser.aliases)
             aliases.push_back(Var(alias));
-        item["aliases"] = Var(std::move(aliases));
-        list.push_back(Var(std::move(item)));
+        schema::VarS::importNode(child->at("aliases"), Var(std::move(aliases)));
     }
-    return list;
 }
 
 Strings parserKeys()

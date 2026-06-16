@@ -225,7 +225,7 @@ public:
     static RetT exec(Var v, Params&&... params)
     {
         if (v.isNull() || !v.isCallable()) return RetT{};
-        return v.invoke(std::forward<Params>(params)...).as<RetT>();
+        return v.invoke(std::forward<Params>(params)...).template as<RetT>();
     }
 
     template<typename RetT = Var, typename... Params>

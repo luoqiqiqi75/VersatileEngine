@@ -1,5 +1,7 @@
 #include "ve/ros/yaml_schema.h"
 
+#include "ve/core/node.h"
+
 namespace ve::ros::yaml {
 
 YAML::Node varToYaml(const Var& v)

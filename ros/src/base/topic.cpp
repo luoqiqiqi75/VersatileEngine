@@ -11,65 +11,39 @@ Var::ListV listTopics(const std::string& filter)
     return {};
 }
 
-Var::DictV topicInfo(const std::string& topic_name)
+Result topicInfo(const std::string& topic_name, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->topicInfo(topic_name);
-
-    Var::DictV result;
-    result["ok"] = Var(false);
-    result["message"] = Var("no active ROS backend");
-    result["topic"] = Var(topic_name);
-    return result;
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->topicInfo(topic_name, out);
 }
 
-Var::DictV subscribeTopic(const TopicSubscriptionConfig& config)
+Result subscribeTopic(const TopicSubscriptionConfig& config, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->subscribeTopic(config);
-
-    Var::DictV result;
-    result["ok"] = Var(false);
-    result["message"] = Var("no active ROS backend");
-    result["name"] = Var(config.name);
-    result["topic"] = Var(config.topic);
-    return result;
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->subscribeTopic(config, out);
 }
 
-Var::DictV unsubscribeTopic(const std::string& name)
+Result unsubscribeTopic(const std::string& name, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->unsubscribeTopic(name);
-
-    Var::DictV result;
-    result["ok"] = Var(false);
-    result["message"] = Var("no active ROS backend");
-    result["name"] = Var(name);
-    return result;
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->unsubscribeTopic(name, out);
 }
 
-Var::DictV publishTopic(const TopicPublishRequest& request)
+Result publishTopic(const TopicPublishRequest& request, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->publishTopic(request);
-
-    Var::DictV result;
-    result["ok"] = Var(false);
-    result["message"] = Var("no active ROS backend");
-    result["topic"] = Var(request.topic);
-    return result;
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->publishTopic(request, out);
 }
 
-Var::DictV onceTopic(const TopicOnceRequest& request)
+Result onceTopic(const TopicOnceRequest& request, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->onceTopic(request);
-
-    Var::DictV result;
-    result["ok"] = Var(false);
-    result["message"] = Var("no active ROS backend");
-    result["topic"] = Var(request.topic);
-    return result;
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->onceTopic(request, out);
 }
 
 } // namespace ve::ros

@@ -1,5 +1,7 @@
 #include "ve/ros/backend.h"
 
+#include "ve/core/schema.h"
+
 #include <cctype>
 #include <cstdlib>
 #include <mutex>
@@ -62,52 +64,17 @@ public:
 
     Var::ListV listNodes(const std::string&) const override { return {}; }
     Var::ListV listTopics(const std::string&) const override { return {}; }
-    Var::DictV topicInfo(const std::string&) const override { return {}; }
-    Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
-    {
-        Var::DictV result;
-        result["ok"] = Var(false);
-        result["message"] = Var("Fast DDS placeholder backend does not implement topic subscribe");
-        result["name"] = Var(config.name);
-        result["topic"] = Var(config.topic);
-        return result;
-    }
-    Var::DictV unsubscribeTopic(const std::string& name) override
-    {
-        Var::DictV result;
-        result["ok"] = Var(false);
-        result["message"] = Var("Fast DDS placeholder backend does not implement topic unsubscribe");
-        result["name"] = Var(name);
-        return result;
-    }
-    Var::DictV publishTopic(const TopicPublishRequest& request) override
-    {
-        Var::DictV result;
-        result["ok"] = Var(false);
-        result["message"] = Var("Fast DDS placeholder backend does not implement topic publish");
-        result["topic"] = Var(request.topic);
-        return result;
-    }
-    Var::DictV onceTopic(const TopicOnceRequest& request) override
-    {
-        Var::DictV result;
-        result["ok"] = Var(false);
-        result["message"] = Var("Fast DDS placeholder backend does not implement topic once");
-        result["topic"] = Var(request.topic);
-        return result;
-    }
+    Result topicInfo(const std::string&, Node*) const override { return Result::fail("placeholder backend"); }
+    Result subscribeTopic(const TopicSubscriptionConfig&, Node*) override { return Result::fail("placeholder backend"); }
+    Result unsubscribeTopic(const std::string&, Node*) override { return Result::fail("placeholder backend"); }
+    Result publishTopic(const TopicPublishRequest&, Node*) override { return Result::fail("placeholder backend"); }
+    Result onceTopic(const TopicOnceRequest&, Node*) override { return Result::fail("placeholder backend"); }
     Var::ListV listServices(const std::string&) const override { return {}; }
-    Var::DictV serviceInfo(const std::string&) const override { return {}; }
-    Var::DictV callService(const ServiceCallRequest&) override
-    {
-        Var::DictV result;
-        result["ok"] = Var(false);
-        result["message"] = Var("Fast DDS placeholder backend does not implement service call");
-        return result;
-    }
-    Var::DictV listParams(const std::string&) const override { return {}; }
-    Var::DictV getParam(const std::string&, const std::string&) const override { return {}; }
-    Var::DictV setParam(const std::string&, const std::string&, const Var&) const override { return {}; }
+    Result serviceInfo(const std::string&, Node*) const override { return Result::fail("placeholder backend"); }
+    Result callService(const ServiceCallRequest&, Node*) override { return Result::fail("placeholder backend"); }
+    Result listParams(const std::string&, Node*) const override { return Result::fail("placeholder backend"); }
+    Result getParam(const std::string&, const std::string&, Node*) const override { return Result::fail("placeholder backend"); }
+    Result setParam(const std::string&, const std::string&, const Var&, Node*) const override { return Result::fail("placeholder backend"); }
 };
 
 void registerBuiltins()
@@ -124,19 +91,17 @@ void registerBuiltins()
 
 Backend::~Backend() = default;
 
-Var::DictV Backend::info() const
+void Backend::info(Node* out) const
 {
-    Var::DictV dict;
-    dict["key"] = Var(key());
-    dict["display_name"] = Var(displayName());
-    dict["transport"] = Var(transport());
-    dict["available"] = Var(isAvailable());
-    dict["enabled"] = Var(isEnabled());
-    dict["started"] = Var(isStarted());
-    dict["priority"] = Var(static_cast<int64_t>(priority()));
-    dict["summary"] = Var(summary());
-    dict["details"] = Var(details());
-    return dict;
+    out->set("key", Var(key()));
+    out->set("display_name", Var(displayName()));
+    out->set("transport", Var(transport()));
+    out->set("available", Var(isAvailable()));
+    out->set("enabled", Var(isEnabled()));
+    out->set("started", Var(isStarted()));
+    out->set("priority", Var(static_cast<int64_t>(priority())));
+    out->set("summary", Var(summary()));
+    schema::VarS::importNode(out->at("details"), Var(details()), Node::COPY_STRICT);
 }
 
 void registerBackend(BackendPtr backend_ptr)
@@ -184,18 +149,15 @@ BackendPtr defaultBackend()
     return best;
 }
 
-Var::ListV backendInfoList()
+void backendInfoList(Node* out)
 {
     registerBuiltins();
-
-    Var::ListV list;
     std::lock_guard<std::mutex> lock(registry().mu);
     for (const auto& key : registry().order) {
         auto current = registry().items.value(key, BackendPtr{});
         if (current)
-            list.push_back(Var(current->info()));
+            current->info(out->at(key));
     }
-    return list;
 }
 
 Strings backendKeys()
@@ -220,16 +182,14 @@ std::string env(const std::string& name, const std::string& def)
     return value ? std::string(value) : def;
 }
 
-Var::DictV envInfo()
+void envInfo(Node* out)
 {
-    Var::DictV dict;
-    dict["ROS_DOMAIN_ID"] = Var(env("ROS_DOMAIN_ID", "0"));
-    dict["RMW_IMPLEMENTATION"] = Var(env("RMW_IMPLEMENTATION"));
-    dict["FASTRTPS_DEFAULT_PROFILES_FILE"] = Var(env("FASTRTPS_DEFAULT_PROFILES_FILE"));
-    dict["CYCLONEDDS_URI"] = Var(env("CYCLONEDDS_URI"));
-    dict["ROS_AUTOMATIC_DISCOVERY_RANGE"] = Var(env("ROS_AUTOMATIC_DISCOVERY_RANGE"));
-    dict["VE_ROS_BACKEND"] = Var(env("VE_ROS_BACKEND"));
-    return dict;
+    out->set("ROS_DOMAIN_ID", Var(env("ROS_DOMAIN_ID", "0")));
+    out->set("RMW_IMPLEMENTATION", Var(env("RMW_IMPLEMENTATION")));
+    out->set("FASTRTPS_DEFAULT_PROFILES_FILE", Var(env("FASTRTPS_DEFAULT_PROFILES_FILE")));
+    out->set("CYCLONEDDS_URI", Var(env("CYCLONEDDS_URI")));
+    out->set("ROS_AUTOMATIC_DISCOVERY_RANGE", Var(env("ROS_AUTOMATIC_DISCOVERY_RANGE")));
+    out->set("VE_ROS_BACKEND", Var(env("VE_ROS_BACKEND")));
 }
 
 } // namespace ve::ros

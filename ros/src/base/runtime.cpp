@@ -22,31 +22,6 @@ RuntimeState& runtimeState()
     return state;
 }
 
-void writeRuntimeValue(Node* runtime_node, const std::string& key, const Var& value)
-{
-    if (runtime_node)
-        runtime_node->set(key, value);
-}
-
-void writeRuntimeTree(Node* runtime_node, const std::string& key, const Var& value)
-{
-    if (!runtime_node)
-        return;
-
-    auto* target = runtime_node->at(key);
-    target->clear();
-    target->set(Var());
-    schema::importAs<schema::VarS>(target, value);
-}
-
-Var::DictV makeResult(bool ok, std::string message)
-{
-    Var::DictV result;
-    result["ok"] = Var(ok);
-    result["message"] = Var(std::move(message));
-    return result;
-}
-
 } // namespace
 
 bool activateBackend(const std::string& requested_key,
@@ -116,34 +91,31 @@ bool refreshRuntime(Node* runtime_node, std::string& error)
         return false;
     }
 
-    writeRuntimeValue(runtime_node, "state", Var("ready"));
-    writeRuntimeValue(runtime_node, "backend_active", Var(current->key()));
-    writeRuntimeTree(runtime_node, "backends", Var(backendInfoList()));
-    writeRuntimeTree(runtime_node, "env", Var(envInfo()));
-    writeRuntimeTree(runtime_node, "nodes", Var(current->listNodes()));
-    writeRuntimeTree(runtime_node, "topics", Var(current->listTopics()));
-    writeRuntimeTree(runtime_node, "services", Var(current->listServices()));
-    writeRuntimeTree(runtime_node, "params", Var(Var::DictV{}));
-    writeRuntimeTree(runtime_node, "subscriptions", Var(Var::DictV{}));
-    writeRuntimeTree(runtime_node, "publications", Var(Var::DictV{}));
+    if (!runtime_node) return true;
+
+    runtime_node->set("state", Var("ready"));
+    runtime_node->set("backend_active", Var(current->key()));
+
+    backendInfoList(runtime_node->at("backends"));
+    envInfo(runtime_node->at("env"));
+    schema::VarS::importNode(runtime_node->at("nodes"), Var(current->listNodes()), Node::COPY_STRICT);
+    schema::VarS::importNode(runtime_node->at("topics"), Var(current->listTopics()), Node::COPY_STRICT);
+    schema::VarS::importNode(runtime_node->at("services"), Var(current->listServices()), Node::COPY_STRICT);
     return true;
 }
 
-Var::DictV runtimeInfo()
+Result runtimeInfo(Node* out)
 {
-    Var::DictV info = makeResult(false, "no active ROS backend");
-    if (auto current = activeBackend()) {
-        info["ok"] = Var(true);
-        info["message"] = Var("ros runtime ready");
-        info["backend_active"] = Var(current->key());
-        info["backend"] = Var(current->info());
-        info["backends"] = Var(backendInfoList());
-        info["env"] = Var(envInfo());
-        info["nodes"] = Var(current->listNodes());
-        info["topics"] = Var(current->listTopics());
-        info["services"] = Var(current->listServices());
-    }
-    return info;
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    out->set("backend_active", Var(current->key()));
+    current->info(out->at("backend"));
+    backendInfoList(out->at("backends"));
+    envInfo(out->at("env"));
+    schema::VarS::importNode(out->at("nodes"), Var(current->listNodes()), Node::COPY_STRICT);
+    schema::VarS::importNode(out->at("topics"), Var(current->listTopics()), Node::COPY_STRICT);
+    schema::VarS::importNode(out->at("services"), Var(current->listServices()), Node::COPY_STRICT);
+    return Result::ok();
 }
 
 Var::ListV listNodes(const std::string& filter)
@@ -153,25 +125,25 @@ Var::ListV listNodes(const std::string& filter)
     return {};
 }
 
-Var::DictV listParams(const std::string& node_name)
+Result listParams(const std::string& node_name, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->listParams(node_name);
-    return makeResult(false, "no active ROS backend");
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->listParams(node_name, out);
 }
 
-Var::DictV getParam(const std::string& node_name, const std::string& name)
+Result getParam(const std::string& node_name, const std::string& name, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->getParam(node_name, name);
-    return makeResult(false, "no active ROS backend");
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->getParam(node_name, name, out);
 }
 
-Var::DictV setParam(const std::string& node_name, const std::string& name, const Var& value)
+Result setParam(const std::string& node_name, const std::string& name, const Var& value, Node* out)
 {
-    if (auto current = activeBackend())
-        return current->setParam(node_name, name, value);
-    return makeResult(false, "no active ROS backend");
+    auto current = activeBackend();
+    if (!current) return Result::fail("no active ROS backend");
+    return current->setParam(node_name, name, value, out);
 }
 
 } // namespace ve::ros

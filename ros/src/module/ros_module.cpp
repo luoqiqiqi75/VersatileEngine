@@ -1,9 +1,4 @@
 // ros_module.cpp  - ve::RosModule (ve.ros)
-//
-// Official runtime entry point for ve/ros:
-//   - selects and starts a backend
-//   - exposes discovery + parameter commands
-//   - keeps runtime state under ve/ros/*
 
 #include "ve/core/command.h"
 #include "ve/core/log.h"
@@ -18,79 +13,6 @@
 namespace ve {
 
 namespace {
-
-void writeNodeTree(Node* root, const std::string& path, const Var& value)
-{
-    if (!root)
-        return;
-    auto* target = root->at(path);
-    target->clear();
-    target->set(Var());
-    schema::importAs<schema::VarS>(target, value);
-}
-
-void writeRosMirror(const std::string& path, const Var& value)
-{
-    auto* root = n("ve/ros");
-    writeNodeTree(root, path, value);
-}
-
-void writeNamedNodeList(const std::string& path, const Var::ListV& list)
-{
-    auto* root = n("ve/ros");
-    auto* target = root->at(path);
-    target->clear();
-    target->set(Var());
-
-    for (const auto& item : list) {
-        if (!item.isDict()) {
-            target->append("")->set(item);
-            continue;
-        }
-        const auto& dict = item.toDict();
-        auto it = dict.find("name");
-        const std::string key = (it != dict.end() && !it->second.toString().empty())
-            ? it->second.toString()
-            : "node";
-        Node temp(key);
-        schema::importAs<schema::VarS>(&temp, item, Node::COPY_STRICT | Node::COPY_UPDATE);
-        target->append(key)->copy(&temp, Node::COPY_STRICT | Node::COPY_UPDATE);
-    }
-}
-
-std::string normalizeNamedPath(std::string key, const std::string& def = "item")
-{
-    if (key.empty())
-        return def;
-    while (!key.empty() && key.front() == '/')
-        key.erase(key.begin());
-    while (!key.empty() && key.back() == '/')
-        key.pop_back();
-    return key.empty() ? def : key;
-}
-
-void writeNamedPathList(const std::string& path, const Var::ListV& list, const std::string& key_field)
-{
-    auto* root = n("ve/ros");
-    auto* target = root->at(path);
-    target->clear();
-    target->set(Var());
-
-    for (const auto& item : list) {
-        if (!item.isDict()) {
-            target->append("")->set(item);
-            continue;
-        }
-        const auto& dict = item.toDict();
-        auto it = dict.find(key_field);
-        const std::string key = normalizeNamedPath(
-            (it != dict.end() && !it->second.toString().empty()) ? it->second.toString() : "",
-            "item");
-        Node temp("temp");
-        schema::importAs<schema::VarS>(&temp, item, Node::COPY_STRICT | Node::COPY_UPDATE);
-        target->at(key)->copy(&temp, Node::COPY_STRICT | Node::COPY_UPDATE);
-    }
-}
 
 bool looksLikeInt(const std::string& text)
 {
@@ -113,13 +35,12 @@ bool looksLikePayloadFormat(const std::string& text)
 
 std::string inferTopicType(const std::string& topic)
 {
-    const auto info = ros::topicInfo(topic);
-    if (!info.value("ok").toBool(false))
-        return "";
-    const auto types = info.value("types");
-    if (!types.isList() || types.toList().empty())
-        return "";
-    return types.toList().front().toString();
+    Node temp("temp");
+    if (!ros::topicInfo(topic, &temp)) return "";
+    auto* types = temp.find("types");
+    if (!types) return "";
+    auto list = types->toStrings();
+    return list.empty() ? "" : list.front();
 }
 
 ros::QosProfile parseQos(Node* in)
@@ -136,6 +57,13 @@ ros::QosProfile parseQos(Node* in)
     return qos;
 }
 
+std::string stripLeadingSlashes(const std::string& name)
+{
+    std::size_t i = 0;
+    while (i < name.size() && name[i] == '/') ++i;
+    return i < name.size() ? name.substr(i) : "node";
+}
+
 } // namespace
 
 class RosModule : public Module
@@ -146,10 +74,10 @@ class RosModule : public Module
 public:
     explicit RosModule(const std::string& name) : Module(name)
     {
-        node()->at("config/domain_id")->set(Var(0));
-        node()->at("config/service_prefix")->set(Var("ve"));
-        node()->at("config/backend")->set(Var(""));
-        node()->at("config/note")->set(Var(
+        node()->set("config/domain_id", Var(0));
+        node()->set("config/service_prefix", Var("ve"));
+        node()->set("config/backend", Var(""));
+        node()->set("config/note", Var(
             "ve.ros exposes official ROS integration surfaces. "
             "Project-specific adapters should live outside ve/ros core."));
 
@@ -171,7 +99,7 @@ protected:
         if (!ros::activateBackend(requested_backend, n("ve/ros"), error)) {
             active_backend_.clear();
             syncRuntimeState("error");
-            n("ve/ros/last_error")->set(Var(error));
+            n("ve/ros")->set("last_error", Var(error));
             veLogW << "[ve.ros] backend failed: " << error;
             return;
         }
@@ -184,7 +112,6 @@ protected:
     void deinit() override
     {
         ros::deactivateBackend();
-
         syncRuntimeState("stopped");
     }
 
@@ -195,12 +122,14 @@ private:
             return;
         commands_registered_ = true;
 
-        command::reg("ros.info", [this]() -> Var {
-            return Var(buildInfo());
+        command::reg("ros.info", [this](Node*, Node* out) -> Result {
+            buildInfo(out);
+            return Result::ok();
         }, "Show ros summary.");
 
-        command::reg("ros.backend.list", []() -> Var {
-            return Var(ros::backendInfoList());
+        command::reg("ros.backend.list", [](Node*, Node* out) -> Result {
+            ros::backendInfoList(out);
+            return Result::ok();
         }, "List ros backends.");
 
         command::reg("ros.backend.info", [](Node* in, Node* out) -> Result {
@@ -214,21 +143,24 @@ private:
             auto current = ros::backend(key_name);
             if (!current)
                 return Result::fail("not found: " + key_name);
-            schema::VarS::importNode(out, Var(current->info()));
+            current->info(out);
             return Result::ok();
         }, "Show backend details.");
 
-        command::reg("ros.parser.list", []() -> Var {
-            return Var(ros::parserInfoList());
+        command::reg("ros.parser.list", [](Node*, Node* out) -> Result {
+            ros::parserInfoList(out);
+            return Result::ok();
         }, "List ros parsers.");
 
-        command::reg("ros.env", []() -> Var {
-            return Var(ros::envInfo());
+        command::reg("ros.env", [](Node*, Node* out) -> Result {
+            ros::envInfo(out);
+            return Result::ok();
         }, "Show ROS env vars.");
 
         command::reg("ros.node.list", [](Node* in, Node* out) -> Result {
-            const auto result = ros::listNodes(in->get("filter").toString());
-            writeNamedNodeList("nodes", result);
+            auto result = ros::listNodes(in->get("filter").toString());
+            auto* mirror = n("ve/ros/nodes");
+            schema::VarS::importNode(mirror, Var(result), Node::COPY_STRICT);
             Var::ListV names;
             for (const auto& item : result) {
                 if (item.isDict())
@@ -241,8 +173,9 @@ private:
         }, "List ROS nodes.");
 
         command::reg("ros.topic.list", [](Node* in, Node* out) -> Result {
-            const auto result = ros::listTopics(in->get("filter").toString());
-            writeNamedPathList("topics", result, "name");
+            auto result = ros::listTopics(in->get("filter").toString());
+            auto* mirror = n("ve/ros/topics");
+            schema::VarS::importNode(mirror, Var(result), Node::COPY_STRICT);
             Var::ListV names;
             for (const auto& item : result) {
                 if (item.isDict())
@@ -255,14 +188,9 @@ private:
         }, "List ROS topics.");
 
         command::reg("ros.topic.info", [](Node* in, Node* out) -> Result {
-            const auto topic_name = in->get("name").toString();
-            if (topic_name.empty())
-                return Result::fail("topic name required");
-            const auto result = ros::topicInfo(topic_name);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("topic info failed"));
-            schema::VarS::importNode(out, Var(result));
-            return Result::ok();
+            auto name = in->get("name").toString();
+            if (name.empty()) return Result::fail("topic name required");
+            return ros::topicInfo(name, out);
         }, "Show topic details.");
 
         command::reg("ros.topic.subscribe", [](Node* in, Node* out) -> Result {
@@ -275,24 +203,18 @@ private:
             config.qos = parseQos(in);
             if (config.name.empty() || config.topic.empty())
                 return Result::fail("name/topic required");
-
-            const auto result = ros::subscribeTopic(config);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("subscribe failed"));
-            writeRosMirror("subscriptions/" + config.name, Var(result));
-            schema::VarS::importNode(out, Var(result));
+            auto r = ros::subscribeTopic(config, out);
+            if (!r) return r;
+            n("ve/ros/subscriptions/" + config.name)->copy(out);
             return Result::ok();
         }, "Subscribe to a topic.");
 
         command::reg("ros.topic.unsubscribe", [](Node* in, Node* out) -> Result {
-            const auto name = in->get("name").toString();
-            if (name.empty())
-                return Result::fail("name required");
-            const auto result = ros::unsubscribeTopic(name);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("unsubscribe failed"));
+            auto name = in->get("name").toString();
+            if (name.empty()) return Result::fail("name required");
+            auto r = ros::unsubscribeTopic(name, out);
+            if (!r) return r;
             n("ve/ros")->erase("subscriptions/" + name);
-            schema::VarS::importNode(out, Var(result));
             return Result::ok();
         }, "Remove a topic subscription.");
 
@@ -305,12 +227,9 @@ private:
             request.qos = parseQos(in);
             if (request.topic.empty() || request.payload.empty())
                 return Result::fail("topic/payload required");
-
-            const auto result = ros::publishTopic(request);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("publish failed"));
-            writeRosMirror("publications/last", Var(result));
-            schema::VarS::importNode(out, Var(result));
+            auto r = ros::publishTopic(request, out);
+            if (!r) return r;
+            n("ve/ros/publications/last")->copy(out);
             return Result::ok();
         }, "Publish to a topic.");
 
@@ -346,17 +265,16 @@ private:
             if (request.type.empty())
                 return Result::fail("cannot infer topic type; specify type");
 
-            const auto result = ros::onceTopic(request);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("once failed"));
-            writeRosMirror("once/last", Var(result));
-            schema::VarS::importNode(out, Var(result));
+            auto r = ros::onceTopic(request, out);
+            if (!r) return r;
+            n("ve/ros/once/last")->copy(out);
             return Result::ok();
         }, "Wait for one message.");
 
         command::reg("ros.service.list", [](Node* in, Node* out) -> Result {
-            const auto result = ros::listServices(in->get("filter").toString());
-            writeNamedPathList("services", result, "name");
+            auto result = ros::listServices(in->get("filter").toString());
+            auto* mirror = n("ve/ros/services");
+            schema::VarS::importNode(mirror, Var(result), Node::COPY_STRICT);
             Var::ListV names;
             for (const auto& item : result) {
                 if (item.isDict())
@@ -369,14 +287,9 @@ private:
         }, "List ROS services.");
 
         command::reg("ros.service.info", [](Node* in, Node* out) -> Result {
-            const auto service_name = in->get("name").toString();
-            if (service_name.empty())
-                return Result::fail("service name required");
-            const auto result = ros::serviceInfo(service_name);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("service info failed"));
-            schema::VarS::importNode(out, Var(result));
-            return Result::ok();
+            auto name = in->get("name").toString();
+            if (name.empty()) return Result::fail("service name required");
+            return ros::serviceInfo(name, out);
         }, "Show service details.");
 
         command::reg("ros.service.call", [](Node* in, Node* out) -> Result {
@@ -389,64 +302,60 @@ private:
             request.timeout_response_ms = static_cast<int>(in->get("timeout_response_ms").toInt(10000));
             if (request.service.empty() || request.type.empty() || request.request.empty())
                 return Result::fail("service/type/request required");
-
-            const auto result = ros::callService(request);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("service call failed"));
-            writeRosMirror("service_calls/last", Var(result));
-            schema::VarS::importNode(out, Var(result));
+            auto r = ros::callService(request, out);
+            if (!r) return r;
+            n("ve/ros/service_calls/last")->copy(out);
             return Result::ok();
         }, "Call a ROS service.");
 
         command::reg("ros.param.list", [](Node* in, Node* out) -> Result {
-            const std::string node_filter = in->get("node").toString();
-            const auto result = ros::listParams(node_filter);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("param list failed"));
+            auto node_filter = in->get("node").toString();
+            Node temp("temp");
+            auto r = ros::listParams(node_filter, &temp);
+            if (!r) return r;
 
             auto* params_root = n("ve/ros/params");
 
             if (node_filter.empty()) {
-                const auto& nodes = result.value("nodes");
-                if (nodes.isList()) {
-                    for (const auto& nn : nodes.toList())
-                        params_root->at(normalizeNamedPath(nn.toString(), "node"));
+                auto* nodes = temp.find("nodes");
+                if (nodes) {
+                    auto list = nodes->toStrings();
+                    Var::ListV out_list;
+                    for (auto& s : list) {
+                        params_root->at(stripLeadingSlashes(s));
+                        out_list.push_back(Var(std::move(s)));
+                    }
+                    schema::VarS::importNode(out, Var(std::move(out_list)));
                 }
-                schema::VarS::importNode(out, nodes);
                 return Result::ok();
             }
 
-            const std::string nn = result.value("node").toString();
-            auto* node_n = params_root->at(normalizeNamedPath(nn, "node"));
+            auto nn = temp.get("node").toString();
+            auto key = stripLeadingSlashes(nn);
+            auto* node_n = params_root->at(key);
 
-            const auto& values = result.value("values");
-            if (values.isDict()) {
-                for (const auto& [pname, pval] : values.toDict())
-                    node_n->at(pname)->set(pval);
-            }
+            if (auto* values = temp.find("values"))
+                node_n->copy(values);
 
             Var::ListV names;
-            const auto& params = result.value("params");
-            if (params.isList()) {
-                for (const auto& pname : params.toList())
-                    names.push_back(Var(nn + "/" + pname.toString()));
+            if (auto* params = temp.find("params")) {
+                for (const auto& pname : params->toStrings())
+                    names.push_back(Var(nn + "/" + pname));
             }
             schema::VarS::importNode(out, Var(std::move(names)));
             return Result::ok();
         }, "List params. No node: list nodes. With node: params+values.");
 
         command::reg("ros.param.get", [](Node* in, Node* out) -> Result {
-            const auto node_name = in->get("node").toString();
-            const auto param_name = in->get("name").toString();
+            auto node_name = in->get("node").toString();
+            auto param_name = in->get("name").toString();
             if (node_name.empty() || param_name.empty())
                 return Result::fail("node/name required");
-
-            const auto result = ros::getParam(node_name, param_name);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("param get failed"));
-            const std::string nn = result.value("node").toString();
-            n("ve/ros/params")->at(normalizeNamedPath(nn, "node"))->at(param_name)->set(result.value("value"));
-            schema::VarS::importNode(out, Var(result));
+            auto r = ros::getParam(node_name, param_name, out);
+            if (!r) return r;
+            auto nn = out->get("node").toString();
+            if (nn.empty()) nn = node_name;
+            n("ve/ros/params/" + stripLeadingSlashes(nn) + "/" + param_name)->set(out->get("value"));
             return Result::ok();
         }, "Get one ROS parameter.");
 
@@ -458,13 +367,11 @@ private:
                 return Result::fail("node/name/value required");
             if (value.isString())
                 value = ros::yaml::decode(value.toString());
-
-            const auto result = ros::setParam(node_name, param_name, value);
-            if (!result.value("ok").toBool(false))
-                return Result::fail(result.value("message").toString("param set failed"));
-            const std::string nn = result.value("node").toString();
-            n("ve/ros/params")->at(normalizeNamedPath(nn, "node"))->at(param_name)->set(value);
-            schema::VarS::importNode(out, Var(result));
+            auto r = ros::setParam(node_name, param_name, value, out);
+            if (!r) return r;
+            auto nn = out->get("node").toString();
+            if (nn.empty()) nn = node_name;
+            n("ve/ros/params/" + stripLeadingSlashes(nn) + "/" + param_name)->set(value);
             return Result::ok();
         }, "Set one ROS parameter.");
 
@@ -472,32 +379,27 @@ private:
             std::string error;
             if (!ros::refreshRuntime(n("ve/ros"), error))
                 return Result::fail(error);
-            schema::VarS::importNode(out, Var(ros::runtimeInfo()));
-            return Result::ok();
+            return ros::runtimeInfo(out);
         }, "Refresh cached ROS lists.");
     }
 
-    Var::DictV buildInfo() const
+    void buildInfo(Node* out) const
     {
-        Var::DictV dict;
-        dict["state"] = Var(n("ve/ros/state")->getString());
-        dict["domain_id"] = Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0)));
-        dict["service_prefix"] = Var(node()->get("config/service_prefix").toString("ve"));
-        dict["backend_requested"] = Var(node()->get("config/backend").toString());
-        dict["backend_active"] = Var(active_backend_);
+        out->set("state", n("ve/ros")->get("state"));
+        out->set("domain_id", Var(static_cast<int64_t>(node()->get("config/domain_id").toInt(0))));
+        out->set("service_prefix", Var(node()->get("config/service_prefix").toString("ve")));
+        out->set("backend_requested", Var(node()->get("config/backend").toString()));
+        out->set("backend_active", Var(active_backend_));
         if (auto current = ros::backend(active_backend_))
-            dict["backend_active_info"] = Var(current->info());
-        else
-            dict["backend_active_info"] = Var();
-        dict["backends"] = Var(ros::backendInfoList());
-        dict["parsers"] = Var(ros::parserInfoList());
-        dict["env"] = Var(ros::envInfo());
-        dict["nodes"] = n("ve/ros/nodes")->get();
-        dict["topics"] = n("ve/ros/topics")->get();
-        dict["services"] = n("ve/ros/services")->get();
-        dict["params"] = n("ve/ros/params")->get();
-        dict["note"] = Var(node()->get("config/note").toString());
-        return dict;
+            current->info(out->at("backend_active_info"));
+        ros::backendInfoList(out->at("backends"));
+        ros::parserInfoList(out->at("parsers"));
+        ros::envInfo(out->at("env"));
+        out->at("nodes")->copy(n("ve/ros/nodes"));
+        out->at("topics")->copy(n("ve/ros/topics"));
+        out->at("services")->copy(n("ve/ros/services"));
+        out->at("params")->copy(n("ve/ros/params"));
+        out->set("note", Var(node()->get("config/note").toString()));
     }
 
     void syncRuntimeState(const std::string& state)
@@ -508,16 +410,10 @@ private:
         root->set("service_prefix", Var(node()->get("config/service_prefix").toString("ve")));
         root->set("backend_requested", Var(node()->get("config/backend").toString()));
         root->set("backend_active", Var(active_backend_));
-        writeNodeTree(root, "backends", Var(ros::backendInfoList()));
-        writeNodeTree(root, "parsers", Var(ros::parserInfoList()));
-        writeNodeTree(root, "env", Var(ros::envInfo()));
-        root->at("nodes");
-        root->at("topics");
-        root->at("services");
-        root->at("params");
-        root->at("subscriptions");
-        root->at("publications");
-        root->at("once");
+
+        ros::backendInfoList(root->at("backends"));
+        ros::parserInfoList(root->at("parsers"));
+        ros::envInfo(root->at("env"));
         root->set("note", Var(
             "ve/ros exposes discovery and parameter APIs through backend-neutral entry points."));
     }

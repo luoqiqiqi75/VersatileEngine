@@ -25,19 +25,19 @@ public:
 
     virtual Var::ListV listNodes(const std::string& filter = "") const = 0;
     virtual Var::ListV listTopics(const std::string& filter = "") const = 0;
-    virtual Var::DictV topicInfo(const std::string& topic) const = 0;
-    virtual Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) = 0;
-    virtual Var::DictV unsubscribeTopic(const std::string& name) = 0;
-    virtual Var::DictV publishTopic(const TopicPublishRequest& request) = 0;
-    virtual Var::DictV onceTopic(const TopicOnceRequest& request) = 0;
+    virtual Result topicInfo(const std::string& topic, Node* out) const = 0;
+    virtual Result subscribeTopic(const TopicSubscriptionConfig& config, Node* out) = 0;
+    virtual Result unsubscribeTopic(const std::string& name, Node* out) = 0;
+    virtual Result publishTopic(const TopicPublishRequest& request, Node* out) = 0;
+    virtual Result onceTopic(const TopicOnceRequest& request, Node* out) = 0;
     virtual Var::ListV listServices(const std::string& filter = "") const = 0;
-    virtual Var::DictV serviceInfo(const std::string& service) const = 0;
-    virtual Var::DictV callService(const ServiceCallRequest& request) = 0;
-    virtual Var::DictV listParams(const std::string& node_name = "") const = 0;
-    virtual Var::DictV getParam(const std::string& node_name, const std::string& name) const = 0;
-    virtual Var::DictV setParam(const std::string& node_name, const std::string& name, const Var& value) const = 0;
+    virtual Result serviceInfo(const std::string& service, Node* out) const = 0;
+    virtual Result callService(const ServiceCallRequest& request, Node* out) = 0;
+    virtual Result listParams(const std::string& node_name, Node* out) const = 0;
+    virtual Result getParam(const std::string& node_name, const std::string& name, Node* out) const = 0;
+    virtual Result setParam(const std::string& node_name, const std::string& name, const Var& value, Node* out) const = 0;
 
-    Var::DictV info() const;
+    void info(Node* out) const;
 };
 
 using BackendPtr = std::shared_ptr<Backend>;
@@ -46,11 +46,11 @@ VE_API void registerBackend(BackendPtr backend);
 VE_API bool hasBackend(const std::string& key);
 VE_API BackendPtr backend(const std::string& key);
 VE_API BackendPtr defaultBackend();
-VE_API Var::ListV backendInfoList();
+VE_API void backendInfoList(Node* out);
 VE_API Strings backendKeys();
 VE_API bool isBackendStarted(const std::string& key);
 
 VE_API std::string env(const std::string& name, const std::string& def = "");
-VE_API Var::DictV envInfo();
+VE_API void envInfo(Node* out);
 
 } // namespace ve::ros
