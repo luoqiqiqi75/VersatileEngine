@@ -28,7 +28,7 @@ static std::string normalizePath(std::string path)
 // ============================================================================
 // Command implementations — Proc(ctx, params, data)
 // ============================================================================
-namespace cmd {
+namespace op {
 
 static Session* session(Node* ctx) { return ctx->get("_session").as<Session*>(); }
 static Node*    root(Node* ctx)    { return session(ctx)->root; }
@@ -54,7 +54,7 @@ static Result set(Node* ctx, Node* params, Node* data)
     return Result::ok();
 }
 
-static Result copy(Node* ctx, Node* params, Node* data)
+static Result import_(Node* ctx, Node* params, Node* data)
 {
     Node* r = root(ctx);
     Node* tree = params->find("tree");
@@ -63,6 +63,27 @@ static Result copy(Node* ctx, Node* params, Node* data)
     Node* target = r->at(params->get("path").toString());
     target->copy(tree, flags);
     data->set("path", target->path(r));
+    return Result::ok();
+}
+
+static void copyDepth(Node* dst, Node* src, int depth)
+{
+    if (!src->get().isNull())
+        dst->set(src->get());
+    if (depth == 0) return;
+    int next = depth > 0 ? depth - 1 : -1;
+    for (auto* child : src->children())
+        copyDepth(dst->at(child->name()), child, next);
+}
+
+static Result export_(Node* ctx, Node* params, Node* data)
+{
+    Node* r = root(ctx);
+    std::string path = normalizePath(params->get("path").toString());
+    Node* target = path.empty() ? r : r->find(path);
+    if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
+    int depth = params->get("depth").toInt(-1);
+    copyDepth(data->at("tree"), target, depth);
     return Result::ok();
 }
 
@@ -146,7 +167,7 @@ static Result commandList(Node*, Node*, Node* data)
     return Result::ok();
 }
 
-} // namespace cmd
+} // namespace op
 
 // ============================================================================
 // Registration + helpers
@@ -155,16 +176,17 @@ static Result commandList(Node*, Node*, Node* data)
 void registerNodeCommands()
 {
     auto& f = factory::at("std");
-    if (f.has("node.get")) return;
-    f.reg("node.get",      Var::callable(cmd::get),         "get node value");
-    f.reg("node.set",      Var::callable(cmd::set),         "set node value");
-    f.reg("node.copy",     Var::callable(cmd::copy),        "copy tree to node");
-    f.reg("node.children", Var::callable(cmd::children),    "list children");
-    f.reg("node.erase",    Var::callable(cmd::erase),       "erase node");
-    f.reg("node.trigger",  Var::callable(cmd::trigger),     "trigger NODE_CHANGED");
-    f.reg("node.watch",    Var::callable(cmd::watch),       "watch node changes");
-    f.reg("node.unwatch",  Var::callable(cmd::unwatch),     "stop watching");
-    f.reg("command.list",  Var::callable(cmd::commandList), "list commands");
+    if (f.has("get")) return;
+    f.reg("get",      Var::callable(op::get),         "get node value");
+    f.reg("set",      Var::callable(op::set),         "set node value");
+    f.reg("export",   Var::callable(op::export_),     "export subtree");
+    f.reg("import",   Var::callable(op::import_),     "import tree");
+    f.reg("children", Var::callable(op::children),    "list children");
+    f.reg("erase",    Var::callable(op::erase),       "erase node");
+    f.reg("trigger",  Var::callable(op::trigger),     "trigger NODE_CHANGED");
+    f.reg("watch",    Var::callable(op::watch),       "watch node changes");
+    f.reg("unwatch",  Var::callable(op::unwatch),     "stop watching");
+    f.reg("commands", Var::callable(op::commandList), "list commands");
 }
 
 CmdRef resolveCmd(Node* ctx)

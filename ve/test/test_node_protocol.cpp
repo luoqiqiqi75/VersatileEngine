@@ -49,7 +49,7 @@ VE_TEST(node_dispatch_get_set_and_children) {
     // set
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "node.set");
+        pipe.contextNode()->set("op", "set");
         pipe.contextNode()->at("params")->set("path", "a/value");
         pipe.contextNode()->at("params")->at("value")->set(Var(42));
         runEnvelope(&session, pipe);
@@ -60,7 +60,7 @@ VE_TEST(node_dispatch_get_set_and_children) {
     // get
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "node.get");
+        pipe.contextNode()->set("op", "get");
         pipe.contextNode()->at("params")->set("path", "a/value");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -70,7 +70,7 @@ VE_TEST(node_dispatch_get_set_and_children) {
     // children
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "node.children");
+        pipe.contextNode()->set("op", "children");
         pipe.contextNode()->at("params")->set("path", "a");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -91,11 +91,11 @@ VE_TEST(node_dispatch_batch) {
     Node* batch = pipe.contextNode()->at("batch");
 
     Node* item1 = batch->append();
-    item1->set("op", "node.get");
+    item1->set("op", "get");
     item1->at("params")->set("path", "one");
 
     Node* item2 = batch->append();
-    item2->set("op", "node.get");
+    item2->set("op", "get");
     item2->at("params")->set("path", "two");
 
     runEnvelope(&session, pipe);
@@ -113,10 +113,67 @@ VE_TEST(node_dispatch_watch_unsupported_without_send) {
     service::Session session(&root, &root);
 
     Pipeline pipe;
-    pipe.contextNode()->set("op", "node.watch");
+    pipe.contextNode()->set("op", "watch");
     pipe.contextNode()->at("params")->set("path", "a");
     runEnvelope(&session, pipe);
     VE_ASSERT(pipe.contextNode()->get("code").toInt(0) < 0);
+}
+
+VE_TEST(node_dispatch_export_full) {
+    service::registerNodeCommands();
+    Node root("root");
+    root.set("a/x", 1);
+    root.set("a/y", 2);
+    root.set("a/deep/z", 3);
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "export");
+    pipe.contextNode()->at("params")->set("path", "a");
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* tree = pipe.contextNode()->find("data/tree");
+    VE_ASSERT(tree != nullptr);
+    VE_ASSERT_EQ(tree->get("x").toInt(), 1);
+    VE_ASSERT_EQ(tree->get("y").toInt(), 2);
+    VE_ASSERT_EQ(tree->get("deep/z").toInt(), 3);
+}
+
+VE_TEST(node_dispatch_export_depth) {
+    service::registerNodeCommands();
+    Node root("root");
+    root.set("a/x", 1);
+    root.set("a/deep/z", 3);
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "export");
+    pipe.contextNode()->at("params")->set("path", "a");
+    pipe.contextNode()->at("params")->set("depth", int64_t(1));
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* tree = pipe.contextNode()->find("data/tree");
+    VE_ASSERT(tree != nullptr);
+    VE_ASSERT_EQ(tree->get("x").toInt(), 1);
+    // depth=1: "deep" child exists but "deep/z" not exported
+    VE_ASSERT(tree->find("deep") != nullptr);
+    VE_ASSERT(tree->find("deep/z") == nullptr);
+}
+
+VE_TEST(node_dispatch_import) {
+    service::registerNodeCommands();
+    Node root("root");
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "import");
+    pipe.contextNode()->at("params")->set("path", "b");
+    pipe.contextNode()->at("params")->at("tree")->set("x", 10);
+    pipe.contextNode()->at("params")->at("tree")->set("y", 20);
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    VE_ASSERT_EQ(root.get("b/x").toInt(), 10);
+    VE_ASSERT_EQ(root.get("b/y").toInt(), 20);
 }
 
 VE_TEST(node_dispatch_watch_with_session_pushes) {
@@ -132,7 +189,7 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
     // watch
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "node.watch");
+        pipe.contextNode()->set("op", "watch");
         pipe.contextNode()->at("params")->set("path", "watch/me");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -152,7 +209,7 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
     lastPush.clear();
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "node.unwatch");
+        pipe.contextNode()->set("op", "unwatch");
         pipe.contextNode()->at("params")->set("path", "watch/me");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);

@@ -1,16 +1,15 @@
 import type {
+  ChildrenResponse,
   CommandListResponse,
   CommandRunResponse,
+  ExportResponse,
+  GetResponse,
   HealthResponse,
-  NodeListResponse,
-  NodeResponse,
-  NodeSetResponse,
+  PathResponse,
   TreeImportResponse,
-  TreeNode,
   VarValue,
   VeErrorReply,
   VeReply,
-  VeRequest,
 } from './types';
 
 export class VeHttpClient {
@@ -48,121 +47,96 @@ export class VeHttpClient {
   }
 
   private unwrap<T>(reply: VeReply<T>): T {
-    if (!reply.ok) {
+    if (reply.code < 0) {
       const err = reply as VeErrorReply;
-      throw new Error(`${err.code}: ${err.error}`);
+      throw new Error(`${err.code}: ${err.message ?? 'unknown error'}`);
     }
-    if ('accepted' in reply && reply.accepted) {
-      throw new Error(`Request accepted asynchronously (task_id=${reply.task_id})`);
-    }
-    return reply.data;
+    return (reply as { data: T }).data;
   }
 
-  async call<T = VarValue>(op: string, payload: Omit<VeRequest, 'op'> = {}): Promise<VeReply<T>> {
+  // Low-level: send message to /ve
+  async send<T = VarValue>(message: Record<string, unknown>): Promise<VeReply<T>> {
     return this.requestJson<VeReply<T>>('/ve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op, ...payload }),
+      body: JSON.stringify(message),
     });
+  }
+
+  // Std operation: {op, params}
+  async call<T = VarValue>(op: string, params: Record<string, unknown> = {}): Promise<VeReply<T>> {
+    return this.send<T>({ op, params });
   }
 
   async health(): Promise<HealthResponse> {
     return this.requestJson('/health');
   }
 
-  // ===== Tree operations (default behavior) =====
-  async get(path = '', depth = -1): Promise<VarValue> {
-    const reply = await this.call<NodeResponse>('node.get', { path, depth });
-    const data = this.unwrap(reply);
-    return (data.tree ?? data.value) as VarValue;
+  // ===== Value operations =====
+
+  async get(path: string): Promise<VarValue> {
+    const data = this.unwrap(await this.call<GetResponse>('get', { path }));
+    return data.value;
   }
 
-  async set(path: string, tree: VarValue): Promise<TreeImportResponse> {
-    return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
+  async set(path: string, value: VarValue): Promise<PathResponse> {
+    return this.unwrap(await this.call<PathResponse>('set', { path, value }));
   }
 
-  // ===== Single value operations =====
-  async val(path: string): Promise<VarValue>;
-  async val(path: string, value: VarValue): Promise<NodeSetResponse>;
-  async val(path: string, value?: VarValue): Promise<VarValue | NodeSetResponse> {
-    if (value === undefined) {
-      return this.unwrap(await this.call<NodeResponse>('node.get', { path })).value;
-    } else {
-      return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
-    }
+  // ===== Tree operations =====
+
+  async export(path = '', depth = -1): Promise<VarValue> {
+    const data = this.unwrap(await this.call<ExportResponse>('export', { path, depth }));
+    return data.tree;
+  }
+
+  async import(path: string, tree: VarValue, flags?: number): Promise<PathResponse> {
+    const params: Record<string, unknown> = { path, tree };
+    if (flags !== undefined) params.flags = flags;
+    return this.unwrap(await this.call<PathResponse>('import', params));
   }
 
   // ===== Structure operations =====
-  async list(path = ''): Promise<NodeListResponse> {
-    return this.unwrap(await this.call<NodeListResponse>('node.list', { path }));
+
+  async children(path = ''): Promise<ChildrenResponse> {
+    return this.unwrap(await this.call<ChildrenResponse>('children', { path }));
   }
 
-  async rm(path: string): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
+  async erase(path: string): Promise<PathResponse> {
+    return this.unwrap(await this.call<PathResponse>('erase', { path }));
   }
 
-  async trigger(path: string): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
+  async trigger(path: string): Promise<PathResponse> {
+    return this.unwrap(await this.call<PathResponse>('trigger', { path }));
   }
 
-  // ===== Commands =====
-  async run(
-    name: string,
-    args: VarValue = [],
-    wait = true,
-  ): Promise<CommandRunResponse> {
-    return this.call<VarValue>('command.run', { name, args, wait });
+  // ===== User commands (cmd field) =====
+
+  async run(name: string, args: Record<string, unknown> = {}): Promise<CommandRunResponse> {
+    return this.send<VarValue>({ cmd: name, params: args });
   }
 
-  async cmds(): Promise<CommandListResponse> {
-    return this.unwrap(await this.call<CommandListResponse>('command.list'));
+  async commands(): Promise<CommandListResponse> {
+    return this.unwrap(await this.call<CommandListResponse>('commands'));
   }
 
-  // ===== Batch operations =====
-  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
-    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
-    return this.unwrap(reply).items;
+  // ===== Batch =====
+
+  async batch(items: Record<string, unknown>[]): Promise<VarValue> {
+    return this.unwrap(await this.send<VarValue>({ batch: items }));
   }
 
-  // ===== Legacy REST endpoints =====
-  async getChildren(path = ''): Promise<string[]> {
-    const data = await this.list(path);
-    return data.children.map((child) => child.name);
+  // ===== Legacy REST endpoints (unchanged, use /at/* directly) =====
+
+  async exportRest(path = ''): Promise<string> {
+    return this.requestText(this.atUrl(path));
   }
 
-  async exportTree(path = '', depth = -1): Promise<string> {
-    if (depth < 0) {
-      return this.requestText(this.atUrl(path));
-    }
-    const tree = await this.get(path, depth);
-    return JSON.stringify(tree);
-  }
-
-  async importTree(path: string, json: string): Promise<TreeImportResponse> {
+  async importRest(path: string, json: string): Promise<TreeImportResponse> {
     return this.requestJson<TreeImportResponse>(this.atUrl(path), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: json,
     });
   }
-
-  // ===== Backward compatibility aliases =====
-  getNode = async (path = '', options: { meta?: boolean; depth?: number } = {}): Promise<NodeResponse> => {
-    return this.unwrap(
-      await this.call<NodeResponse>('node.get', {
-        path,
-        meta: options.meta,
-        depth: options.depth,
-      }),
-    );
-  };
-
-  getTree = this.get;
-  setNode = this.val;
-  putNode = this.set;
-  listNodes = this.list;
-  removeNode = this.rm;
-  triggerNode = this.trigger;
-  runCommand = this.run;
-  listCommands = this.cmds;
 }

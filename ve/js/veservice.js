@@ -20,8 +20,10 @@ var VEService = function(wsUrl) {
     };
 
     this._normalizePath = function(path) {
-        return String(path || "").replace(/^\/+/, "");
+        return String(path || "").replace(/\./g, "/").replace(/^\/+/, "");
     };
+
+    // ===== Connection management =====
 
     this.connect = function() {
         var self = this;
@@ -110,28 +112,13 @@ var VEService = function(wsUrl) {
         }, this._reconnectDelay);
     };
 
-    this._resubscribe = function() {
-        var self = this;
-        this.subscriptions.forEach(function(callbacks, path) {
-            if (callbacks.size > 0 && self.transport && self.isConnected) {
-                try {
-                    self.transport.send(JSON.stringify({ op: "subscribe", path: path }));
-                } catch (error) {
-                    console.error("[veService] resubscribe failed for '" + path + "':", error);
-                }
-            }
-        });
-    };
+    // ===== Message handling =====
 
     this._handleMessage = function(raw) {
         try {
             var message = JSON.parse(raw);
             if (message.event === "node.changed" && message.path !== undefined) {
                 this._notifySubscribers(message.path, message.value);
-                this._notifyMessage(message);
-                return;
-            }
-            if (message.event === "task.result") {
                 this._notifyMessage(message);
                 return;
             }
@@ -162,16 +149,6 @@ var VEService = function(wsUrl) {
         }
     };
 
-    this._unwrapReply = function(reply) {
-        if (!reply.ok) {
-            throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
-        }
-        if (reply.accepted) {
-            return reply;
-        }
-        return reply.data;
-    };
-
     this._notifyMessage = function(message) {
         this._messageHandlers.forEach(function(handler) {
             try {
@@ -195,20 +172,18 @@ var VEService = function(wsUrl) {
     this.onMessage = function(handler) {
         this._messageHandlers.add(handler);
         var self = this;
-        return function() {
-            self._messageHandlers.delete(handler);
-        };
+        return function() { self._messageHandlers.delete(handler); };
     };
 
     this.onConnectionChange = function(handler) {
         this._connectionHandlers.add(handler);
         var self = this;
-        return function() {
-            self._connectionHandlers.delete(handler);
-        };
+        return function() { self._connectionHandlers.delete(handler); };
     };
 
-    this.call = function(op, payload) {
+    // ===== Low-level transport =====
+
+    this.send = function(message) {
         if (!this.transport || !this.isConnected) {
             return Promise.reject(new Error("WebSocket not connected"));
         }
@@ -216,6 +191,7 @@ var VEService = function(wsUrl) {
         var self = this;
         return new Promise(function(resolve, reject) {
             var id = self._generateRequestId();
+            message.id = id;
 
             var timer = setTimeout(function() {
                 if (self.pendingRequests.has(id)) {
@@ -230,10 +206,7 @@ var VEService = function(wsUrl) {
             });
 
             try {
-                var body = payload || {};
-                body.op = op;
-                body.id = id;
-                self.transport.send(JSON.stringify(body));
+                self.transport.send(JSON.stringify(message));
             } catch (error) {
                 self.pendingRequests.delete(id);
                 clearTimeout(timer);
@@ -242,75 +215,88 @@ var VEService = function(wsUrl) {
         });
     };
 
-    // ===== Tree operations (default behavior) =====
-    this.get = function(path, depth) {
-        if (depth === undefined) { depth = -1; }
-        return this.call("node.get", { path: this._normalizePath(path), depth: depth }).then(function(reply) {
-            if (!reply.ok) {
-                throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
-            }
-            return reply.data.tree || reply.data.value;
-        });
-    };
-
-    this.set = function(path, tree) {
-        return this.call("node.put", { path: this._normalizePath(path), tree: tree }).then(this._unwrapReply);
-    };
-
-    // ===== Single value operations =====
-    this.val = function(path, value) {
-        path = this._normalizePath(path);
-        if (arguments.length === 1) {
-            return this.call("node.get", { path: path }).then(function(reply) {
-                if (!reply.ok) {
-                    throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
-                }
-                return reply.data.value;
-            });
-        } else {
-            return this.call("node.set", { path: path, value: value }).then(this._unwrapReply);
+    this._unwrapReply = function(reply) {
+        if (reply.code < 0) {
+            throw new Error(reply.message || "error " + reply.code);
         }
+        return reply.data;
     };
 
-    // ===== Structure operations =====
-    this.list = function(path) {
-        return this.call("node.list", { path: this._normalizePath(path) }).then(this._unwrapReply);
+    // ===== Std operations (op field) =====
+
+    this.get = function(path) {
+        return this.send({ op: "get", params: { path: this._normalizePath(path) } })
+            .then(this._unwrapReply)
+            .then(function(data) { return data ? data.value : undefined; });
     };
 
-    this.rm = function(path) {
-        return this.call("node.remove", { path: this._normalizePath(path) }).then(this._unwrapReply);
+    this.set = function(path, value) {
+        return this.send({ op: "set", params: { path: this._normalizePath(path), value: value } })
+            .then(this._unwrapReply);
+    };
+
+    this.export = function(path, depth) {
+        if (depth === undefined) { depth = -1; }
+        return this.send({ op: "export", params: { path: this._normalizePath(path), depth: depth } })
+            .then(this._unwrapReply)
+            .then(function(data) { return data ? data.tree : undefined; });
+    };
+
+    this.import = function(path, tree, flags) {
+        var params = { path: this._normalizePath(path), tree: tree };
+        if (flags !== undefined) { params.flags = flags; }
+        return this.send({ op: "import", params: params })
+            .then(this._unwrapReply);
+    };
+
+    this.children = function(path) {
+        return this.send({ op: "children", params: { path: this._normalizePath(path) } })
+            .then(this._unwrapReply)
+            .then(function(data) { return data ? data.children : []; });
+    };
+
+    this.erase = function(path) {
+        return this.send({ op: "erase", params: { path: this._normalizePath(path) } })
+            .then(this._unwrapReply);
     };
 
     this.trigger = function(path) {
-        return this.call("node.trigger", { path: this._normalizePath(path) }).then(this._unwrapReply);
+        return this.send({ op: "trigger", params: { path: this._normalizePath(path) } })
+            .then(this._unwrapReply);
     };
 
-    // ===== Subscription (tree mode by default) =====
+    this.commands = function() {
+        return this.send({ op: "commands", params: {} })
+            .then(this._unwrapReply)
+            .then(function(data) { return data ? data.commands : []; });
+    };
+
+    // ===== Subscriptions =====
+
+    this._resubscribe = function() {
+        var self = this;
+        this.subscriptions.forEach(function(callbacks, path) {
+            if (callbacks.size > 0) {
+                self.send({ op: "watch", params: { path: path } }).catch(function() {});
+            }
+        });
+    };
+
     this.watch = function(path, callback, options) {
         if (typeof callback !== "function") {
             callback = function() {};
         }
         options = options || {};
-        var immediate = options.immediate !== undefined ? options.immediate : false;
-        var tree = options.tree !== undefined ? options.tree : true;
-        var bubble = options.bubble !== undefined ? options.bubble : false;
+        var immediate = options.immediate || false;
 
         path = this._normalizePath(path);
 
         if (!this.subscriptions.has(path)) {
             this.subscriptions.set(path, new Set());
-
             if (this.transport && this.isConnected) {
-                try {
-                    this.transport.send(JSON.stringify({
-                        op: "subscribe",
-                        path: path,
-                        tree: tree,
-                        bubble: bubble
-                    }));
-                } catch (error) {
-                    console.error("[veService] subscribe failed for '" + path + "':", error);
-                }
+                this.send({ op: "watch", params: { path: path } }).catch(function(err) {
+                    console.error("[veService] watch failed for '" + path + "':", err);
+                });
             }
         }
 
@@ -326,12 +312,11 @@ var VEService = function(wsUrl) {
         }
 
         var self = this;
-        return function() {
-            self.unwatch(path, callback);
-        };
+        return function() { self.unwatch(path, callback); };
     };
 
     this.unwatch = function(path, callback) {
+        path = this._normalizePath(path);
         if (!this.subscriptions.has(path)) { return; }
 
         var callbacks = this.subscriptions.get(path);
@@ -341,47 +326,28 @@ var VEService = function(wsUrl) {
             if (callbacks.size === 0) {
                 this.subscriptions.delete(path);
                 if (this.transport && this.isConnected) {
-                    try {
-                        this.transport.send(JSON.stringify({ op: "unsubscribe", path: path }));
-                    } catch (error) {
-                        console.error("[veService] unsubscribe failed for '" + path + "':", error);
-                    }
+                    this.send({ op: "unwatch", params: { path: path } }).catch(function() {});
                 }
             }
         } else {
             this.subscriptions.delete(path);
             if (this.transport && this.isConnected) {
-                try {
-                    this.transport.send(JSON.stringify({ op: "unsubscribe", path: path }));
-                } catch (error) {
-                    console.error("[veService] unsubscribe failed for '" + path + "':", error);
-                }
+                this.send({ op: "unwatch", params: { path: path } }).catch(function() {});
             }
         }
     };
 
-    // ===== Commands =====
-    this.run = function(name, args, wait) {
-        if (wait === undefined) { wait = true; }
-        return this.call("command.run", {
-            name: name,
-            args: args == null ? [] : args,
-            wait: wait
-        });
+    // ===== User commands (cmd field) =====
+
+    this.run = function(name, args) {
+        return this.send({ cmd: name, params: args == null ? {} : args });
     };
 
-    this.cmds = function() {
-        return this.call("command.list", {}).then(this._unwrapReply);
-    };
+    // ===== Batch =====
 
-    // ===== Batch operations =====
     this.batch = function(items) {
-        return this.call("batch", { items: items }).then(function(reply) {
-            if (!reply.ok) {
-                throw new Error((reply.code || "error") + ": " + (reply.error || "unknown error"));
-            }
-            return reply.data.items;
-        });
+        return this.send({ batch: items })
+            .then(this._unwrapReply);
     };
 };
 
