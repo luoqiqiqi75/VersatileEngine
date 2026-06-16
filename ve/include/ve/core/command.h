@@ -179,6 +179,18 @@ inline auto reg(const std::string& key, F&& fn)
 {
     return reg(factory(), key, std::forward<F>(fn));
 }
+template<typename F>
+inline auto reg(Factory& f, const std::string& key, F&& fn, const std::string& help)
+{
+    Proc p;
+    convert::parse(std::forward<F>(fn), p);
+    return f.reg(key, Var::callable(std::move(p)), help);
+}
+template<typename F>
+inline auto reg(const std::string& key, F&& fn, const std::string& help)
+{
+    return reg(factory(), key, std::forward<F>(fn), help);
+}
 
 inline Command create(const Factory& factory, const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
 { return Command(factory.node(key, sep), ctx, in, out); }
