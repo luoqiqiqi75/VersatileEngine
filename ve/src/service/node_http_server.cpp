@@ -170,7 +170,7 @@ bool NodeHttpServer::start()
                 return;
             }
 
-            if (!cmd.input(req.body())) {
+            if (!cmd.input<schema::JsonS>(req.body())) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "bad request")), rep);
                 return;
             }
