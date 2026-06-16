@@ -548,11 +548,13 @@ public:
         info.subscription = subscription;
         subscriptions_.insertOne(config.name, std::move(info));
 
-        out->set("name", Var(config.name));
-        out->set("topic", Var(config.topic));
-        out->set("type", Var(topic_type));
-        out->set("target_node", Var(target_path));
-        out->set("payload_format", Var(payload_format));
+        if (out) {
+            out->set("name", Var(config.name));
+            out->set("topic", Var(config.topic));
+            out->set("type", Var(topic_type));
+            out->set("target_node", Var(target_path));
+            out->set("payload_format", Var(payload_format));
+        }
         return Result::ok();
 #endif
     }
@@ -566,7 +568,8 @@ public:
         if (!subscriptions_.has(name))
             return Result::fail("subscription not found");
         subscriptions_.erase(name);
-        out->set("name", Var(name));
+        if (out)
+            out->set("name", Var(name));
         return Result::ok();
 #endif
     }

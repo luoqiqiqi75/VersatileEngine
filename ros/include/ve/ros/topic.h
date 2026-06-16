@@ -39,10 +39,10 @@ struct TopicOnceRequest {
 };
 
 VE_API Var::ListV listTopics(const std::string& filter = "");
-VE_API Result topicInfo(const std::string& topic_name, Node* out);
-VE_API Result subscribeTopic(const TopicSubscriptionConfig& config, Node* out);
-VE_API Result unsubscribeTopic(const std::string& name, Node* out);
-VE_API Result publishTopic(const TopicPublishRequest& request, Node* out);
-VE_API Result onceTopic(const TopicOnceRequest& request, Node* out);
+VE_API Result topicInfo(const std::string& topic_name, Node* out = nullptr);
+VE_API Result subscribeTopic(const TopicSubscriptionConfig& config, Node* out = nullptr);
+VE_API Result unsubscribeTopic(const std::string& name, Node* out = nullptr);
+VE_API Result publishTopic(const TopicPublishRequest& request, Node* out = nullptr);
+VE_API Result onceTopic(const TopicOnceRequest& request, Node* out = nullptr);
 
 } // namespace ve::ros
