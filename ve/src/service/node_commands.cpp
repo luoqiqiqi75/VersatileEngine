@@ -66,16 +66,6 @@ static Result import_(Node* ctx, Node* params, Node* data)
     return Result::ok();
 }
 
-static void copyDepth(Node* dst, Node* src, int depth)
-{
-    if (!src->get().isNull())
-        dst->set(src->get());
-    if (depth == 0) return;
-    int next = depth > 0 ? depth - 1 : -1;
-    for (auto* child : src->children())
-        copyDepth(dst->at(child->name()), child, next);
-}
-
 static Result export_(Node* ctx, Node* params, Node* data)
 {
     Node* r = root(ctx);
@@ -83,7 +73,7 @@ static Result export_(Node* ctx, Node* params, Node* data)
     Node* target = path.empty() ? r : r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
     int depth = params->get("depth").toInt(-1);
-    copyDepth(data->at("tree"), target, depth);
+    data->at("tree")->copy(target, Node::COPY_DEFAULT, depth);
     return Result::ok();
 }
 
@@ -114,37 +104,47 @@ static Result erase(Node* ctx, Node* params, Node* data)
     return Result::ok();
 }
 
-static Result trigger(Node* ctx, Node* params, Node* data)
+static Result trigger(Node* ctx, Node* params, Node*)
 {
     Node* r = root(ctx);
     std::string path = params->get("path").toString();
     Node* target = r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
     target->trigger<Node::NODE_CHANGED>();
-    data->set("path", target->path(r));
     return Result::ok();
 }
 
-static Result watch(Node* ctx, Node* params, Node* data)
+static Result subscribe(Node* ctx, Node* params, Node* data)
 {
     Session* s = session(ctx);
-    if (!s->send) return Result::fail(ERR_UNSUPPORTED, "watch not supported");
+    if (!s->send) return Result::fail(ERR_UNSUPPORTED, "subscribe not supported");
     Node* r = s->root;
     std::string path = normalizePath(params->get("path").toString());
     Node* target = path.empty() ? r : r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
-    target->onChanged(s, [s, r, target]() {
+    int depth = params->get("depth").toInt(-1);
+
+    auto emit = [s, r, target, depth]() {
         Node event;
         event.set("event", "node.changed");
         event.set("path", target->path(r));
-        event.at("value")->set(target->get());
+        event.at("data")->copy(target, Node::COPY_DEFAULT, depth);
         s->send(toJson(event));
-    });
-    data->set("path", target->path(r));
+    };
+
+    if (params->get("once").toBool(false)) {
+        target->once<Node::NODE_CHANGED>(s, emit);
+    } else {
+        target->onChanged(s, emit);
+    }
+
+    if (params->get("immediate").toBool(false))
+        data->copy(target, Node::COPY_DEFAULT, depth);
+
     return Result::ok();
 }
 
-static Result unwatch(Node* ctx, Node* params, Node* data)
+static Result unsubscribe(Node* ctx, Node* params, Node*)
 {
     Session* s = session(ctx);
     Node* r = s->root;
@@ -152,7 +152,6 @@ static Result unwatch(Node* ctx, Node* params, Node* data)
     Node* target = path.empty() ? r : r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
     target->disconnect(s);
-    data->set("path", target->path(r));
     return Result::ok();
 }
 
@@ -183,9 +182,9 @@ void registerNodeCommands()
     f.reg("import",   Var::callable(op::import_),     "import tree");
     f.reg("children", Var::callable(op::children),    "list children");
     f.reg("erase",    Var::callable(op::erase),       "erase node");
-    f.reg("trigger",  Var::callable(op::trigger),     "trigger NODE_CHANGED");
-    f.reg("watch",    Var::callable(op::watch),       "watch node changes");
-    f.reg("unwatch",  Var::callable(op::unwatch),     "stop watching");
+    f.reg("trigger",    Var::callable(op::trigger),     "trigger NODE_CHANGED");
+    f.reg("subscribe",   Var::callable(op::subscribe),   "subscribe node changes");
+    f.reg("unsubscribe", Var::callable(op::unsubscribe), "unsubscribe");
     f.reg("commands", Var::callable(op::commandList), "list commands");
 }
 

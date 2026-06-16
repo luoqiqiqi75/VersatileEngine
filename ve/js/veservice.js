@@ -118,7 +118,7 @@ var VEService = function(wsUrl) {
         try {
             var message = JSON.parse(raw);
             if (message.event === "node.changed" && message.path !== undefined) {
-                this._notifySubscribers(message.path, message.value);
+                this._notifySubscribers(message.path, message.data);
                 this._notifyMessage(message);
                 return;
             }
@@ -138,8 +138,8 @@ var VEService = function(wsUrl) {
 
     this._notifySubscribers = function(path, data) {
         if (this.subscriptions.has(path)) {
-            var callbacks = this.subscriptions.get(path);
-            callbacks.forEach(function(callback) {
+            var entry = this.subscriptions.get(path);
+            entry.callbacks.forEach(function(callback) {
                 try {
                     callback(data, path);
                 } catch (error) {
@@ -275,64 +275,64 @@ var VEService = function(wsUrl) {
 
     this._resubscribe = function() {
         var self = this;
-        this.subscriptions.forEach(function(callbacks, path) {
-            if (callbacks.size > 0) {
-                self.send({ op: "watch", params: { path: path } }).catch(function() {});
+        this.subscriptions.forEach(function(entry) {
+            if (entry.callbacks.size > 0) {
+                self.send({ op: "subscribe", params: entry.params }).catch(function() {});
             }
         });
     };
 
-    this.watch = function(path, callback, options) {
+    this.subscribe = function(path, callback, options) {
         if (typeof callback !== "function") {
             callback = function() {};
         }
         options = options || {};
-        var immediate = options.immediate || false;
 
         path = this._normalizePath(path);
+        var subParams = { path: path };
+        if (options.depth !== undefined) subParams.depth = options.depth;
+        if (options.once) subParams.once = true;
+        if (options.immediate) subParams.immediate = true;
 
         if (!this.subscriptions.has(path)) {
-            this.subscriptions.set(path, new Set());
+            this.subscriptions.set(path, { callbacks: new Set(), params: subParams });
             if (this.transport && this.isConnected) {
-                this.send({ op: "watch", params: { path: path } }).catch(function(err) {
-                    console.error("[veService] watch failed for '" + path + "':", err);
+                var self2 = this;
+                this.send({ op: "subscribe", params: subParams }).then(function(reply) {
+                    if (reply.code >= 0 && reply.data != null) {
+                        self2._notifySubscribers(path, reply.data);
+                    }
+                }).catch(function(err) {
+                    console.error("[veService] subscribe failed for '" + path + "':", err);
                 });
             }
         }
 
-        var callbacks = this.subscriptions.get(path);
-        if (!callbacks.has(callback)) {
-            callbacks.add(callback);
-        }
-
-        if (immediate) {
-            this.get(path).then(function(data) {
-                try { callback(data, path); } catch (e) { /* ignore */ }
-            }).catch(function() {});
-        }
+        var entry = this.subscriptions.get(path);
+        entry.callbacks.add(callback);
 
         var self = this;
-        return function() { self.unwatch(path, callback); };
+        return function() { self.unsubscribe(path, callback); };
     };
 
-    this.unwatch = function(path, callback) {
+    this.unsubscribe = function(path, callback) {
         path = this._normalizePath(path);
         if (!this.subscriptions.has(path)) { return; }
 
-        var callbacks = this.subscriptions.get(path);
+        var entry = this.subscriptions.get(path);
 
         if (callback) {
-            callbacks.delete(callback);
-            if (callbacks.size === 0) {
+            entry.callbacks.delete(callback);
+            if (entry.callbacks.size === 0) {
                 this.subscriptions.delete(path);
                 if (this.transport && this.isConnected) {
-                    this.send({ op: "unwatch", params: { path: path } }).catch(function() {});
+                    this.send({ op: "unsubscribe", params: { path: path } }).catch(function() {});
                 }
             }
         } else {
             this.subscriptions.delete(path);
             if (this.transport && this.isConnected) {
-                this.send({ op: "unwatch", params: { path: path } }).catch(function() {});
+                this.send({ op: "unsubscribe", params: { path: path } }).catch(function() {});
             }
         }
     };

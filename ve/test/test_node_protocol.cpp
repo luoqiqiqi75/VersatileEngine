@@ -107,13 +107,13 @@ VE_TEST(node_dispatch_batch) {
     VE_ASSERT_EQ(data->child(1)->get("value").toInt(), 2);
 }
 
-VE_TEST(node_dispatch_watch_unsupported_without_send) {
+VE_TEST(node_dispatch_subscribe_unsupported_without_send) {
     service::registerNodeCommands();
     Node root("root");
     service::Session session(&root, &root);
 
     Pipeline pipe;
-    pipe.contextNode()->set("op", "watch");
+    pipe.contextNode()->set("op", "subscribe");
     pipe.contextNode()->at("params")->set("path", "a");
     runEnvelope(&session, pipe);
     VE_ASSERT(pipe.contextNode()->get("code").toInt(0) < 0);
@@ -186,10 +186,10 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
         lastPush = std::move(msg);
     });
 
-    // watch
+    // subscribe
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "watch");
+        pipe.contextNode()->set("op", "subscribe");
         pipe.contextNode()->at("params")->set("path", "watch/me");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
@@ -199,17 +199,17 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
     root.find("watch/me")->set(7);
     VE_ASSERT(!lastPush.empty());
 
-    // verify event JSON contains the value
+    // verify event JSON contains the data
     Node event;
     schema::importAs<schema::JsonS>(&event, lastPush);
     VE_ASSERT_EQ(event.get("event").toString(), std::string("node.changed"));
-    VE_ASSERT_EQ(event.get("value").toInt(), 7);
+    VE_ASSERT_EQ(event.find("data")->getInt(), 7);
 
-    // unwatch
+    // unsubscribe
     lastPush.clear();
     {
         Pipeline pipe;
-        pipe.contextNode()->set("op", "unwatch");
+        pipe.contextNode()->set("op", "unsubscribe");
         pipe.contextNode()->at("params")->set("path", "watch/me");
         runEnvelope(&session, pipe);
         VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);

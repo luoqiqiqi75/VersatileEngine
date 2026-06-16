@@ -432,28 +432,30 @@ void forEachKeyed(const Node::Nodes& children, Fn fn)
 
 } // namespace
 
-void Node::copy(const Node* other, int copy_flags)
+void Node::copy(const Node* other, int copy_flags, int depth)
 {
     if (!other || other == this) return;
 
-    // 1. remove children whose key does not exist in other
-    if (flags::get(copy_flags, COPY_REMOVE))
-        forEachKeyed(children(), [&](Node* d, const std::string& name, int overlap, int index) {
-            if (!(name.empty() ? other->child(index) : other->child(name, overlap))) remove(d);
-        });
+    if (depth != 0) {
+        // 1. remove children whose key does not exist in other
+        if (flags::get(copy_flags, COPY_REMOVE))
+            forEachKeyed(children(), [&](Node* d, const std::string& name, int overlap, int index) {
+                if (!(name.empty() ? other->child(index) : other->child(name, overlap))) remove(d);
+            });
 
-    // 2. each child of other lands on the node at its key — named n#k → the k-th
-    //    child named n, anonymous #i → the i-th child whatever its name — and is
-    //    copied recursively; an unresolved key is appended first (COPY_INSERT)
-    forEachKeyed(other->children(), [&](Node* s, const std::string& name, int overlap, int index) {
-        auto* d = name.empty() ? child(index) : child(name, overlap);
-        if (!d) {
-            if (!flags::get(copy_flags, COPY_INSERT)) return;
-            d = append(name);
-            if (!d) return;
-        }
-        d->copy(s, copy_flags);
-    });
+        // 2. each child of other lands on the node at its key — named n#k → the k-th
+        //    child named n, anonymous #i → the i-th child whatever its name — and is
+        //    copied recursively; an unresolved key is appended first (COPY_INSERT)
+        forEachKeyed(other->children(), [&, next = depth > 0 ? depth - 1 : -1] (Node* s, const std::string& name, int overlap, int index) {
+            auto* d = name.empty() ? child(index) : child(name, overlap);
+            if (!d) {
+                if (!flags::get(copy_flags, COPY_INSERT)) return;
+                d = append(name);
+                if (!d) return;
+            }
+            d->copy(s, copy_flags, next);
+        });
+    }
 
     // 3. own value — COPY_REPLACE overwrites anything, otherwise only fill null
     if (flags::get(copy_flags, COPY_REPLACE) || get().isNull()) {

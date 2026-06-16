@@ -123,7 +123,7 @@ public:
     //      NODE_CHANGED).
     // For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
     // (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
-    void  copy(const Node* other, int copy_flags = COPY_DEFAULT);
+    void  copy(const Node* other, int copy_flags = COPY_DEFAULT, int depth = -1);
 
     // -- key (key = name | name#N | #N) ---
     //  parseKey: "name" → (name,-1)  "name#N" → (name,N)  "#N" → ("",N)

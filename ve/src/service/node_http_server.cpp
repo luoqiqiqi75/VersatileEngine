@@ -106,7 +106,7 @@ bool NodeHttpServer::start()
         auto tar_n_f = [root_n = _p->root] (http::web_request& req, http::web_response& rep) {
             auto sv = req.path();
             sv.remove_prefix(4); // /at/
-            Node* tar_n = root_n->atPath(sv, VE_NODE_PATH_SEP, HTTP_KEY_SEP);
+            Node* tar_n = const_cast<const Node*>(root_n)->atPath(sv, VE_NODE_PATH_SEP, HTTP_KEY_SEP);
             if (!tar_n) convert::parse(HttpRep{http::status::not_found, "node not found"}, rep);
             return tar_n;
         };

@@ -511,7 +511,7 @@ export class VeBinTcpClient {
     if (!this.notifyHandlers.has(path)) {
       this.notifyHandlers.set(path, new Set());
       if (this._connected) {
-        await this.call('watch', { path }).catch(() => {});
+        await this.call('subscribe', { path }).catch(() => {});
       }
     }
 
@@ -524,7 +524,7 @@ export class VeBinTcpClient {
       if (handlers.size === 0) {
         this.notifyHandlers.delete(path);
         if (this._connected) {
-          this.call('unwatch', { path }).catch(() => {});
+          this.call('unsubscribe', { path }).catch(() => {});
         }
       }
     };
@@ -610,11 +610,11 @@ export class VeBinTcpClient {
       if (frameType === FLAG_NOTIFY) {
         if (msg.event === 'node.changed') {
           const path = String(msg.path ?? '');
-          const value = msg.value as VarValue;
+          const data = msg.data as VarValue;
           const handlers = this.notifyHandlers.get(path);
           if (handlers) {
             for (const h of handlers) {
-              try { h(path, value); } catch { /* ignore callback errors */ }
+              try { h(path, data); } catch { /* ignore callback errors */ }
             }
           }
         }
@@ -647,7 +647,7 @@ export class VeBinTcpClient {
         await this.connect();
         // Re-subscribe all
         for (const path of this.notifyHandlers.keys()) {
-          this.call('watch', { path }).catch(() => {});
+          this.call('subscribe', { path }).catch(() => {});
         }
       } catch {
         this.currentReconnectDelay = Math.min(

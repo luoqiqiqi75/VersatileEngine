@@ -147,28 +147,23 @@ export class VeWsClient {
 
   // ===== Subscription =====
 
-  watch(
+  subscribe(
     path: string,
     handler: WsNotifyHandler = () => {},
-    options: { immediate?: boolean } = {},
+    options: { depth?: number; once?: boolean; immediate?: boolean } = {},
   ): () => void {
-    const { immediate = false } = options;
+    const params: Record<string, unknown> = { path };
+    if (options.depth !== undefined) params.depth = options.depth;
+    if (options.once) params.once = true;
+    if (options.immediate) params.immediate = true;
 
     if (!this.subscriptions.has(path)) {
       this.subscriptions.set(path, new Set());
       if (this.connected) {
-        this.call('watch', { path }).catch(() => {});
+        this.call('subscribe', params).catch(() => {});
       }
     }
     this.subscriptions.get(path)!.add(handler);
-
-    if (immediate) {
-      this.get(path)
-        .then((value) => {
-          try { handler(path, value); } catch { /* ignore */ }
-        })
-        .catch(() => {});
-    }
 
     return () => {
       const handlers = this.subscriptions.get(path);
@@ -177,16 +172,16 @@ export class VeWsClient {
       if (handlers.size === 0) {
         this.subscriptions.delete(path);
         if (this.connected) {
-          this.call('unwatch', { path }).catch(() => {});
+          this.call('unsubscribe', { path }).catch(() => {});
         }
       }
     };
   }
 
-  unwatch(path: string): void {
+  unsubscribe(path: string): void {
     this.subscriptions.delete(path);
     if (this.connected) {
-      this.call('unwatch', { path }).catch(() => {});
+      this.call('unsubscribe', { path }).catch(() => {});
     }
   }
 
@@ -218,10 +213,6 @@ export class VeWsClient {
     return () => this.messageHandlers.delete(handler);
   }
 
-  // ===== Backward compatibility =====
-  subscribe = this.watch;
-  unsubscribe = this.unwatch;
-
   private unwrap<T>(reply: VeReply<T>): T {
     if (reply.code < 0) {
       const err = reply as VeErrorReply;
@@ -242,7 +233,7 @@ export class VeWsClient {
       this.currentInterval = this.reconnectInterval;
       this.notifyState(true);
       for (const path of this.subscriptions.keys()) {
-        this.call('watch', { path }).catch(() => {});
+        this.call('subscribe', { path }).catch(() => {});
       }
     };
 
@@ -279,7 +270,7 @@ export class VeWsClient {
         const handlers = this.subscriptions.get(evt.path);
         if (handlers) {
           for (const handler of handlers) {
-            try { handler(evt.path, evt.value); } catch { /* ignore */ }
+            try { handler(evt.path, evt.data); } catch { /* ignore */ }
           }
         }
       }

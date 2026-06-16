@@ -74,7 +74,7 @@ export type CommandRunResponse = VeReply<VarValue>;
 export interface NodeChangedEvent {
   event: 'node.changed';
   path: string;
-  value: VarValue;
+  data: VarValue;
 }
 
 export type WsMessage = NodeChangedEvent | VeReply<VarValue>;
