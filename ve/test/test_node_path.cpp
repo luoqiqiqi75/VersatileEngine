@@ -383,7 +383,7 @@ VE_TEST(node_schema_json_import_merge_preserves_identity) {
     int changed = 0;
     keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++changed; });
 
-    VE_ASSERT(schema::importAs<schema::JsonS>(&root, "{\"keep\":2,\"add\":3}", Node::COPY_DEFAULT));
+    VE_ASSERT(schema::toNode<schema::JsonS>(&root, "{\"keep\":2,\"add\":3}", Node::COPY_DEFAULT));
     VE_ASSERT_EQ(root.child("keep"), keep);
     VE_ASSERT_EQ(keep->getInt(), 2);
     VE_ASSERT_EQ(root.child("add")->getInt(), 3);
@@ -395,7 +395,7 @@ VE_TEST(node_schema_json_import_auto_remove) {
     root.append("keep")->set(1);
     root.append("extra")->set(2);
 
-    VE_ASSERT(schema::importAs<schema::JsonS>(&root, "{\"keep\":5}", Node::COPY_STRICT));
+    VE_ASSERT(schema::toNode<schema::JsonS>(&root, "{\"keep\":5}", Node::COPY_STRICT));
     VE_ASSERT_EQ(root.count(), 1);
     VE_ASSERT(root.child("extra") == nullptr);
     VE_ASSERT_EQ(root.child("keep")->getInt(), 5);
@@ -412,7 +412,7 @@ VE_TEST(node_schema_json_import_auto_update_suppresses_equal_signal) {
     root.connect<Node::NODE_CHANGED>(&root, [&](const Var&, const Var&) { ++root_changed; });
     keep->connect<Node::NODE_CHANGED>(keep, [&](const Var&, const Var&) { ++keep_changed; });
 
-    VE_ASSERT(schema::importAs<schema::JsonS>(&root, "{\"_value\":9,\"keep\":1}", Node::COPY_DEFAULT | Node::COPY_UPDATE));
+    VE_ASSERT(schema::toNode<schema::JsonS>(&root, "{\"_value\":9,\"keep\":1}", Node::COPY_DEFAULT | Node::COPY_UPDATE));
     VE_ASSERT_EQ(root.getInt(), 9);
     VE_ASSERT_EQ(keep->getInt(), 1);
     VE_ASSERT_EQ(root_changed, 0);
@@ -430,7 +430,7 @@ VE_TEST(node_schema_json_import_signal_order_children_before_current) {
         events.push_back("added:" + key);
     });
 
-    VE_ASSERT(schema::importAs<schema::JsonS>(&root, "{\"child\":2,\"_value\":1}", Node::COPY_DEFAULT));
+    VE_ASSERT(schema::toNode<schema::JsonS>(&root, "{\"child\":2,\"_value\":1}", Node::COPY_DEFAULT));
 
     VE_ASSERT_EQ(events.sizeAsInt(), 2);
     VE_ASSERT_EQ(events[0], "added:child");
@@ -445,7 +445,7 @@ VE_TEST(node_schema_json_export_auto_ignore) {
     schema::JsonS::ExportOptions options;
     options.auto_ignore = true;
 
-    std::string json = schema::exportAs<schema::JsonS>(&root, options);
+    std::string json = schema::fromNode<schema::JsonS>(&root, options);
     VE_ASSERT(json.find("\"public\"") != std::string::npos);
     VE_ASSERT(json.find("\"_internal\"") == std::string::npos);
 }
@@ -458,10 +458,10 @@ VE_TEST(node_schema_bin_roundtrip_auto_ignore) {
     schema::BinS::ExportOptions export_options;
     export_options.auto_ignore = true;
 
-    auto bytes = schema::exportAs<schema::BinS>(&src, export_options);
+    auto bytes = schema::fromNode<schema::BinS>(&src, export_options);
 
     Node dst("dst");
-    VE_ASSERT(schema::importAs<schema::BinS>(&dst, bytes.data(), bytes.size(), Node::COPY_STRICT));
+    VE_ASSERT(schema::toNode<schema::BinS>(&dst, bytes.data(), bytes.size(), Node::COPY_STRICT));
     VE_ASSERT(dst.child("public") != nullptr);
     VE_ASSERT(dst.child("_internal") == nullptr);
 }

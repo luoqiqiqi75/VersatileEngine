@@ -23,7 +23,7 @@ namespace service {
 
 static std::string toJson(Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, schema::JsonS::compact());
+    return schema::fromNode<schema::JsonS>(&n, schema::JsonS::compact());
 }
 
 struct NodeUdpServer::Private
@@ -56,7 +56,7 @@ bool NodeUdpServer::start()
         if (msg.empty()) return;
 
         Pipeline pipe;
-        if (!schema::importAs<schema::JsonS>(pipe.contextNode(), msg)) {
+        if (!schema::toNode<schema::JsonS>(pipe.contextNode(), msg)) {
             Node err;
             err.set("code", int64_t(ERR_INVALID));
             err.set("message", std::string("invalid JSON"));

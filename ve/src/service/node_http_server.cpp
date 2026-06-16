@@ -51,7 +51,7 @@ static bool parse(const service::HttpResultRep& r, http::web_response& rep)
     proto_n.set("message", r.first.message());
     proto_n.at("data")->copy(r.second);
     http::status status = r.first.isAccepted() ? http::status::accepted : http::status::ok; // always ok
-    return parse(service::HttpRep { status, schema::exportAs<schema::JsonS>(&proto_n, schema::JsonS::compact()) }, rep);
+    return parse(service::HttpRep { status, schema::fromNode<schema::JsonS>(&proto_n, schema::JsonS::compact()) }, rep);
 }
 
 }
@@ -113,11 +113,11 @@ bool NodeHttpServer::start()
 
         // export tree
         _p->server.bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request&, http::web_response& rep) {
-            convert::parse(HttpRep(http::status::ok, schema::exportAs<schema::JsonS>(root_n, schema::JsonS::compact())), rep);
+            convert::parse(HttpRep(http::status::ok, schema::fromNode<schema::JsonS>(root_n, schema::JsonS::compact())), rep);
         });
         _p->server.bind<http::verb::get>("/at/*", [=] (http::web_request& req, http::web_response& rep) {
             if (const auto tar_n = tar_n_f(req, rep)) {
-                convert::parse(HttpRep(http::status::ok, schema::exportAs<schema::JsonS>(tar_n, schema::JsonS::compact())), rep);
+                convert::parse(HttpRep(http::status::ok, schema::fromNode<schema::JsonS>(tar_n, schema::JsonS::compact())), rep);
             }
         });
 
@@ -127,7 +127,7 @@ bool NodeHttpServer::start()
         // });
         _p->server.bind<http::verb::put>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
             if (const auto tar_n = tar_n_f(req, rep)) {
-                if (schema::importAs<schema::JsonS>(tar_n, req.body())) { // without deletion
+                if (schema::toNode<schema::JsonS>(tar_n, req.body())) { // without deletion
                     convert::parse(HttpRep(), rep);
                 } else {
                     convert::parse(HttpRep(http::status::bad_request, "invalid json"), rep);
@@ -140,7 +140,7 @@ bool NodeHttpServer::start()
         // });
         _p->server.bind<http::verb::post>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
             if (auto const tar_n = tar_n_f(req, rep)) {
-                if (schema::importAs<schema::JsonS>(tar_n, req.body(), Node::COPY_STRICT)) { // with deletion
+                if (schema::toNode<schema::JsonS>(tar_n, req.body(), Node::COPY_STRICT)) { // with deletion
                     convert::parse(HttpRep(), rep);
                 } else {
                     convert::parse(HttpRep(http::status::bad_request, "invalid json"), rep);
@@ -189,7 +189,7 @@ bool NodeHttpServer::start()
     { // standard protocol with envelope
         _p->server.bind<http::verb::post>("/ve", [this] (http::web_request& req, http::web_response& rep) {
             Pipeline pipe;
-            if (!schema::importAs<schema::JsonS>(pipe.contextNode(), std::string(req.body()))) {
+            if (!schema::toNode<schema::JsonS>(pipe.contextNode(), std::string(req.body()))) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "invalid JSON")), rep);
                 return;
             }

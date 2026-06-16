@@ -646,13 +646,13 @@ static void registerTerminalBuiltins()
                     return;
                 }
 
-                bool ok = schema::importSchemaFormat(format, t, content);
+                bool ok = schema::schemaToNode(format, t, content);
                 if (ok) s.print(file.empty() ? "imported\n" : "imported from " + file + "\n");
                 else s.print("import failed (invalid " + format + ")\n");
                 return;
             }
 
-            std::string result = schema::exportSchemaFormat(format, t);
+            std::string result = schema::schemaFromNode(format, t);
             if (result.empty()) {
                 s.print("unknown format: " + format + "\n");
                 return;

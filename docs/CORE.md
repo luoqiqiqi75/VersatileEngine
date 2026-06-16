@@ -152,10 +152,10 @@ The schema layer is the format-facing import and export surface for node trees.
 
 Use:
 
-- `schema::exportAs<schema::JsonS>(node)`
-- `schema::exportAs<schema::JsonS>(node, schema::ExportOptions<schema::JsonS>{...})`
-- `schema::importAs<schema::JsonS>(node, text)`
-- `schema::importAs<schema::JsonS>(node, text, copy_flags)`
+- `schema::fromNode<schema::JsonS>(node)`
+- `schema::fromNode<schema::JsonS>(node, schema::JsonS::ExportOptions{...})`
+- `schema::toNode<schema::JsonS>(node, text)`
+- `schema::toNode<schema::JsonS>(node, text, copy_flags)`
 
 Important behavior:
 

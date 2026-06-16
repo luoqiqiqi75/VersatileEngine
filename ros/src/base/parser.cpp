@@ -127,7 +127,7 @@ bool applySchemaJson(const std::string& json_text, Node* target, Node* schema_no
 
     int copy_flags = Node::COPY_UPDATE | Node::COPY_REPLACE
                    | (schema_node == nullptr ? Node::COPY_INSERT : 0);
-    return schema::importAs<schema::JsonS>(target, json_text, copy_flags);
+    return schema::toNode<schema::JsonS>(target, json_text, copy_flags);
 }
 
 void insertParserLocked(const ParserDescriptor& parser)
@@ -307,7 +307,7 @@ void parserInfoList(Node* out)
         Var::ListV aliases;
         for (const auto& alias : parser.aliases)
             aliases.push_back(Var(alias));
-        schema::VarS::importNode(child->at("aliases"), Var(std::move(aliases)));
+        schema::VarS::toNode(child->at("aliases"), Var(std::move(aliases)));
     }
 }
 

@@ -268,12 +268,12 @@ VE_TEST(md_schema_traits) {
         "Content\n";
 
     Node root("root");
-    VE_ASSERT(schema::importAs<schema::MdS>(&root, md));
+    VE_ASSERT(schema::toNode<schema::MdS>(&root, md));
 
     Node* t = root.child("Test");
     VE_ASSERT(t != nullptr);
 
-    std::string exported = schema::exportAs<schema::MdS>(&root);
+    std::string exported = schema::fromNode<schema::MdS>(&root);
     VE_ASSERT(exported.find("# Test") != std::string::npos);
     VE_ASSERT(exported.find("Content") != std::string::npos);
 }

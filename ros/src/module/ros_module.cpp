@@ -160,7 +160,7 @@ private:
         command::reg("ros.node.list", [](Node* in, Node* out) -> Result {
             auto result = ros::listNodes(in->get("filter").toString());
             auto* mirror = n("ve/ros/nodes");
-            schema::VarS::importNode(mirror, Var(result), Node::COPY_STRICT);
+            schema::VarS::toNode(mirror, Var(result), Node::COPY_STRICT);
             Var::ListV names;
             for (const auto& item : result) {
                 if (item.isDict())
@@ -168,14 +168,14 @@ private:
                 else
                     names.push_back(item);
             }
-            schema::VarS::importNode(out, Var(std::move(names)));
+            schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
         }, "List ROS nodes.");
 
         command::reg("ros.topic.list", [](Node* in, Node* out) -> Result {
             auto result = ros::listTopics(in->get("filter").toString());
             auto* mirror = n("ve/ros/topics");
-            schema::VarS::importNode(mirror, Var(result), Node::COPY_STRICT);
+            schema::VarS::toNode(mirror, Var(result), Node::COPY_STRICT);
             Var::ListV names;
             for (const auto& item : result) {
                 if (item.isDict())
@@ -183,7 +183,7 @@ private:
                 else
                     names.push_back(item);
             }
-            schema::VarS::importNode(out, Var(std::move(names)));
+            schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
         }, "List ROS topics.");
 
@@ -274,7 +274,7 @@ private:
         command::reg("ros.service.list", [](Node* in, Node* out) -> Result {
             auto result = ros::listServices(in->get("filter").toString());
             auto* mirror = n("ve/ros/services");
-            schema::VarS::importNode(mirror, Var(result), Node::COPY_STRICT);
+            schema::VarS::toNode(mirror, Var(result), Node::COPY_STRICT);
             Var::ListV names;
             for (const auto& item : result) {
                 if (item.isDict())
@@ -282,7 +282,7 @@ private:
                 else
                     names.push_back(item);
             }
-            schema::VarS::importNode(out, Var(std::move(names)));
+            schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
         }, "List ROS services.");
 
@@ -325,7 +325,7 @@ private:
                         params_root->at(stripLeadingSlashes(s));
                         out_list.push_back(Var(std::move(s)));
                     }
-                    schema::VarS::importNode(out, Var(std::move(out_list)));
+                    schema::VarS::toNode(out, Var(std::move(out_list)));
                 }
                 return Result::ok();
             }
@@ -342,7 +342,7 @@ private:
                 for (const auto& pname : params->toStrings())
                     names.push_back(Var(nn + "/" + pname));
             }
-            schema::VarS::importNode(out, Var(std::move(names)));
+            schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
         }, "List params. No node: list nodes. With node: params+values.");
 

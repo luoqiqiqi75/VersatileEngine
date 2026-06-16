@@ -70,7 +70,7 @@ Var yamlToVar(const YAML::Node& yn)
 
 YAML::Node nodeToYaml(Node* n)
 {
-    const std::string encoded = schema::exportAs<schema::YamlS>(n);
+    const std::string encoded = schema::fromNode<schema::YamlS>(n);
     return YAML::Load(encoded);
 }
 
@@ -80,7 +80,7 @@ void yamlToNode(const YAML::Node& yn, Node* n)
         return;
     YAML::Emitter emitter;
     emitter << yn;
-    schema::importAs<schema::YamlS>(n, std::string(emitter.c_str()));
+    schema::toNode<schema::YamlS>(n, std::string(emitter.c_str()));
 }
 
 std::string encode(const Var& v)
@@ -92,7 +92,7 @@ std::string encode(const Var& v)
 
 std::string encode(Node* n)
 {
-    return schema::exportAs<schema::YamlS>(n);
+    return schema::fromNode<schema::YamlS>(n);
 }
 
 Var decode(const std::string& yaml_str)
@@ -108,24 +108,24 @@ Var decode(const std::string& yaml_str)
 
 namespace ve::schema {
 
-std::string YamlS::exportNode(const Node* node, int indent)
+std::string YamlS::fromNode(const Node* node, int indent)
 {
-    return exportNode(node, ExportOptions{indent});
+    return fromNode(node, ExportOptions{indent});
 }
 
-std::string YamlS::exportNode(const Node* node, const ExportOptions&)
+std::string YamlS::fromNode(const Node* node, const ExportOptions&)
 {
     YAML::Emitter emitter;
-    emitter << ve::ros::yaml::varToYaml(schema::exportAs<schema::VarS>(node));
+    emitter << ve::ros::yaml::varToYaml(schema::fromNode<schema::VarS>(node));
     return emitter.c_str();
 }
 
-bool YamlS::importNode(Node* node, const std::string& data)
+bool YamlS::toNode(Node* node, const std::string& data)
 {
-    return importNode(node, data, Node::COPY_DEFAULT);
+    return toNode(node, data, Node::COPY_DEFAULT);
 }
 
-bool YamlS::importNode(Node* node,
+bool YamlS::toNode(Node* node,
                                      const std::string& data,
                                      int copy_flags)
 {
@@ -134,7 +134,7 @@ bool YamlS::importNode(Node* node,
 
     try {
         const Var decoded = ve::ros::yaml::yamlToVar(YAML::Load(data));
-        return schema::importAs<schema::VarS>(node, decoded, copy_flags);
+        return schema::toNode<schema::VarS>(node, decoded, copy_flags);
     } catch (...) {
         return false;
     }
@@ -145,10 +145,10 @@ namespace {
 const bool yaml_schema_registered = []() {
     registerSchemaFormat("yaml", {
         [](const Node* node) -> std::string {
-            return exportAs<YamlS>(node);
+            return fromNode<YamlS>(node);
         },
         [](Node* node, const std::string& data) -> bool {
-            return importAs<YamlS>(node, data);
+            return toNode<YamlS>(node, data);
         }
     });
     return true;

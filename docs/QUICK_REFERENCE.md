@@ -94,7 +94,7 @@ target->clear();                           // drop all children, keep node itsel
 
 ### Node as transient aggregator → schema serialization
 
-When building a structured blob to serialize (YAML / JSON / Bin / Markdown), prefer **a temporary unowned `Node`** as the aggregator and serialize it via the schema layer. The schema system is Node-centric — every format implements `SchemaTraits<F>::exportNode(const Node*)`.
+When building a structured blob to serialize (YAML / JSON / Bin / Markdown), prefer **a temporary unowned `Node`** as the aggregator and serialize it via the schema layer. The schema system is Node-centric — every format implements `Format::fromNode(const Node*)`.
 
 ```cpp
 Node payload("payload");
@@ -103,8 +103,8 @@ payload.set("mode", std::string{"position"});
 payload.at("limits")->set("max", 10.0);
 
 // Pick a format tag — JsonS / BinS / XmlS / VarS / MdS / YamlS (yaml lives in ve::ros)
-std::string yaml = schema::exportAs<schema::YamlS>(&payload);
-std::string json = schema::exportAs<schema::JsonS>(&payload);
+std::string yaml = schema::fromNode<schema::YamlS>(&payload);
+std::string json = schema::fromNode<schema::JsonS>(&payload);
 
 // Convenience wrappers also exist where they read more naturally:
 std::string yaml2 = ve::ros::yaml::encode(&payload);  // same path, shorter name

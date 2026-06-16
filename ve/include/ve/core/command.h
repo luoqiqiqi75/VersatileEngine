@@ -73,14 +73,14 @@ inline Proc wrapProc(F f, std::index_sequence<I...>)
         "Node* args must be Result(Node* ctx), Result(Node* in, Node* out) or Result(Node*, Node*, Node*)");
     return [f = std::move(f)] (Node*, Node* in, Node* out) -> Result {
         [[maybe_unused]] Var args;
-        if constexpr (sizeof...(I) > 0) args = schema::exportAs<schema::VarS>(in);
+        if constexpr (sizeof...(I) > 0) args = schema::fromNode<schema::VarS>(in);
         if constexpr (std::is_void_v<Ret>) {
             f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...);
             return Result::ok();
         } else if constexpr (std::is_same_v<Ret, Result>) {
             return f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...);
         } else {
-            schema::importAs<schema::VarS>(out, Var(f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...)));
+            schema::toNode<schema::VarS>(out, Var(f(args[I].template as<std::decay_t<typename T::template ArgAt<I>>>()...)));
             return Result::ok();
         }
     };
@@ -153,9 +153,9 @@ public:
 
 public:
     template<typename SchemaS = schema::VarS, typename... Args>
-    bool input(Args&&... args) { return schema::importAs<SchemaS>(inputNode(), std::forward<Args>(args)...); }
+    bool input(Args&&... args) { return schema::toNode<SchemaS>(inputNode(), std::forward<Args>(args)...); }
     template<typename SchemaS = schema::VarS, typename... Args>
-    bool input(const std::string& path, Args&&... args) { return schema::importAs<SchemaS>(inputNode()->at(path), std::forward<Args>(args)...); }
+    bool input(const std::string& path, Args&&... args) { return schema::toNode<SchemaS>(inputNode()->at(path), std::forward<Args>(args)...); }
 
 private:
     VE_DECLARE_SHARED_PRIVATE

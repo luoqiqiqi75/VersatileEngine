@@ -24,10 +24,10 @@ struct YamlS
 {
     struct ExportOptions { int indent = 2; };
 
-    VE_API static std::string exportNode(const Node* node, int indent = 2);
-    VE_API static std::string exportNode(const Node* node, const ExportOptions& options);
-    VE_API static bool importNode(Node* node, const std::string& data);
-    VE_API static bool importNode(Node* node, const std::string& data, int copy_flags);
+    VE_API static std::string fromNode(const Node* node, int indent = 2);
+    VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
+    VE_API static bool toNode(Node* node, const std::string& data);
+    VE_API static bool toNode(Node* node, const std::string& data, int copy_flags);
 };
 
 } // namespace ve::schema

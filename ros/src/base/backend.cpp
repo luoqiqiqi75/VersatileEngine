@@ -101,7 +101,7 @@ void Backend::info(Node* out) const
     out->set("started", Var(isStarted()));
     out->set("priority", Var(static_cast<int64_t>(priority())));
     out->set("summary", Var(summary()));
-    schema::VarS::importNode(out->at("details"), Var(details()), Node::COPY_STRICT);
+    schema::VarS::toNode(out->at("details"), Var(details()), Node::COPY_STRICT);
 }
 
 void registerBackend(BackendPtr backend_ptr)

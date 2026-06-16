@@ -201,7 +201,7 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
 
     // verify event JSON contains the data
     Node event;
-    schema::importAs<schema::JsonS>(&event, lastPush);
+    schema::toNode<schema::JsonS>(&event, lastPush);
     VE_ASSERT_EQ(event.get("event").toString(), std::string("node.changed"));
     VE_ASSERT_EQ(event.find("data")->getInt(), 7);
 

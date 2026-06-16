@@ -16,7 +16,7 @@ namespace service {
 
 static std::string toJson(const Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, schema::JsonS::compact());
+    return schema::fromNode<schema::JsonS>(&n, schema::JsonS::compact());
 }
 
 static std::string normalizePath(std::string path)

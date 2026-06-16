@@ -10,7 +10,7 @@ const bool qt_schema_formats_registered = []() {
     // "qjson" — QJsonS via QJsonDocument string serialization (for runtime string-based registry)
     registerSchemaFormat("qjson", {
         [](const Node* node) -> std::string {
-            const QJsonValue jv = exportAs<QJsonS>(node);
+            const QJsonValue jv = fromNode<QJsonS>(node);
             QJsonDocument doc;
             if (jv.isObject()) {
                 doc = QJsonDocument(jv.toObject());
@@ -29,7 +29,7 @@ const bool qt_schema_formats_registered = []() {
             } else if (doc.isArray()) {
                 jv = doc.array();
             }
-            return importAs<QJsonS>(node, jv);
+            return toNode<QJsonS>(node, jv);
         }
     });
 
@@ -37,10 +37,10 @@ const bool qt_schema_formats_registered = []() {
     registerSchemaFormat("qvariant", {
         [](const Node* node) -> std::string {
             // Export as JSON string (QVariant has no canonical string form)
-            return exportAs<JsonS>(node);
+            return fromNode<JsonS>(node);
         },
         [](Node* node, const std::string& data) -> bool {
-            return importAs<JsonS>(node, data);
+            return toNode<JsonS>(node, data);
         }
     });
 

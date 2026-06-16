@@ -98,9 +98,9 @@ bool refreshRuntime(Node* runtime_node, std::string& error)
 
     backendInfoList(runtime_node->at("backends"));
     envInfo(runtime_node->at("env"));
-    schema::VarS::importNode(runtime_node->at("nodes"), Var(current->listNodes()), Node::COPY_STRICT);
-    schema::VarS::importNode(runtime_node->at("topics"), Var(current->listTopics()), Node::COPY_STRICT);
-    schema::VarS::importNode(runtime_node->at("services"), Var(current->listServices()), Node::COPY_STRICT);
+    schema::VarS::toNode(runtime_node->at("nodes"), Var(current->listNodes()), Node::COPY_STRICT);
+    schema::VarS::toNode(runtime_node->at("topics"), Var(current->listTopics()), Node::COPY_STRICT);
+    schema::VarS::toNode(runtime_node->at("services"), Var(current->listServices()), Node::COPY_STRICT);
     return true;
 }
 
@@ -112,9 +112,9 @@ Result runtimeInfo(Node* out)
     current->info(out->at("backend"));
     backendInfoList(out->at("backends"));
     envInfo(out->at("env"));
-    schema::VarS::importNode(out->at("nodes"), Var(current->listNodes()), Node::COPY_STRICT);
-    schema::VarS::importNode(out->at("topics"), Var(current->listTopics()), Node::COPY_STRICT);
-    schema::VarS::importNode(out->at("services"), Var(current->listServices()), Node::COPY_STRICT);
+    schema::VarS::toNode(out->at("nodes"), Var(current->listNodes()), Node::COPY_STRICT);
+    schema::VarS::toNode(out->at("topics"), Var(current->listTopics()), Node::COPY_STRICT);
+    schema::VarS::toNode(out->at("services"), Var(current->listServices()), Node::COPY_STRICT);
     return Result::ok();
 }
 

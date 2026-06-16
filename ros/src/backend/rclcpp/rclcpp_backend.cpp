@@ -278,7 +278,7 @@ Result decodedMessageResult(const rclcpp::SerializedMessage& message,
     Var decoded;
     std::string error;
     if (bridge && bridge->deserializeToVar(message, decoded, error)) {
-        schema::VarS::importNode(out->at("value"), decoded);
+        schema::VarS::toNode(out->at("value"), decoded);
         if (payload_format == "yaml")
             out->set("yaml", Var(ve::ros::yaml::encode(decoded)));
         return Result::ok();
@@ -465,7 +465,7 @@ public:
         Var::ListV type_list;
         for (const auto& type : it->second)
             type_list.push_back(Var(type));
-        schema::VarS::importNode(out->at("types"), Var(std::move(type_list)));
+        schema::VarS::toNode(out->at("types"), Var(std::move(type_list)));
 
         Var::ListV publishers;
         for (const auto& endpoint : node_->get_publishers_info_by_topic(topic)) {
@@ -475,7 +475,7 @@ public:
             item["topic_type"] = Var(endpoint.topic_type());
             publishers.push_back(Var(std::move(item)));
         }
-        schema::VarS::importNode(out->at("publishers"), Var(std::move(publishers)));
+        schema::VarS::toNode(out->at("publishers"), Var(std::move(publishers)));
 
         Var::ListV subscriptions;
         for (const auto& endpoint : node_->get_subscriptions_info_by_topic(topic)) {
@@ -485,7 +485,7 @@ public:
             item["topic_type"] = Var(endpoint.topic_type());
             subscriptions.push_back(Var(std::move(item)));
         }
-        schema::VarS::importNode(out->at("subscriptions"), Var(std::move(subscriptions)));
+        schema::VarS::toNode(out->at("subscriptions"), Var(std::move(subscriptions)));
 
         out->set("publisher_count", Var(static_cast<int64_t>(node_->count_publishers(topic))));
         out->set("subscriber_count", Var(static_cast<int64_t>(node_->count_subscribers(topic))));
@@ -730,7 +730,7 @@ public:
         Var::ListV type_list;
         for (const auto& type : it->second)
             type_list.push_back(Var(type));
-        schema::VarS::importNode(out->at("types"), Var(std::move(type_list)));
+        schema::VarS::toNode(out->at("types"), Var(std::move(type_list)));
 
 #ifdef VE_ROS_HAS_GENERIC_PUBSUB
         out->set("server_count", Var(static_cast<int64_t>(node_->count_services(service))));
@@ -795,7 +795,7 @@ public:
         out->set("service", Var(service));
         out->set("type", Var(type));
         out->set("payload_format", Var(fmt));
-        schema::VarS::importNode(out->at("response"), response_var);
+        schema::VarS::toNode(out->at("response"), response_var);
         if (fmt == "yaml")
             out->set("yaml", Var(ve::ros::yaml::encode(response_var)));
         return Result::ok();
@@ -830,7 +830,7 @@ public:
             }
 
             out->set("node", Var(nn));
-            schema::VarS::importNode(out->at("params"), Var(std::move(param_names)));
+            schema::VarS::toNode(out->at("params"), Var(std::move(param_names)));
 
             if (!names_to_get.empty()) {
                 auto get_future = client->get_parameters(names_to_get);
@@ -850,7 +850,7 @@ public:
                 continue;
             nodes_list.push_back(Var(fqNodeName(name, ns)));
         }
-        schema::VarS::importNode(out->at("nodes"), Var(std::move(nodes_list)));
+        schema::VarS::toNode(out->at("nodes"), Var(std::move(nodes_list)));
         return Result::ok();
     }
 

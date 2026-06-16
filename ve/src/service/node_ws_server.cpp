@@ -25,7 +25,7 @@ namespace service {
 
 static std::string toJson(const Node& n)
 {
-    return schema::exportAs<schema::JsonS>(&n, schema::JsonS::compact());
+    return schema::fromNode<schema::JsonS>(&n, schema::JsonS::compact());
 }
 
 struct NodeWsServer::Private
@@ -85,7 +85,7 @@ bool NodeWsServer::start()
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
 
         Pipeline pipe;
-        if (!schema::importAs<schema::JsonS>(pipe.contextNode(), std::string(data))) {
+        if (!schema::toNode<schema::JsonS>(pipe.contextNode(), std::string(data))) {
             Node err;
             err.set("code", int64_t(ERR_INVALID));
             err.set("message", std::string("invalid JSON"));

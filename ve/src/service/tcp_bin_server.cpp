@@ -26,7 +26,7 @@ namespace service {
 
 static Var toVar(const Node& node)
 {
-    return schema::exportAs<schema::VarS>(&node);
+    return schema::fromNode<schema::VarS>(&node);
 }
 
 struct BinTcpServer::Private
@@ -59,7 +59,7 @@ struct BinTcpServer::Private
     {
         return std::make_unique<Session>(root, root, [this, sid](std::string msg) {
             Node event;
-            schema::importAs<schema::JsonS>(&event, msg);
+            schema::toNode<schema::JsonS>(&event, msg);
             sendFrame(sid, bin::FLAG_NOTIFY, toVar(event));
         });
     }
@@ -82,7 +82,7 @@ struct BinTcpServer::Private
             if ((flag & bin::FLAG_TYPE_MASK) != bin::FLAG_REQUEST) continue;
 
             Pipeline pipe;
-            if (!schema::importAs<schema::VarS>(pipe.contextNode(), msg)) {
+            if (!schema::toNode<schema::VarS>(pipe.contextNode(), msg)) {
                 Node err;
                 err.set("code", int64_t(ERR_INVALID));
                 err.set("message", std::string("invalid binary request"));
