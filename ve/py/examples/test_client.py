@@ -71,7 +71,7 @@ def test_subscribe_tcp():
     wr.settimeout(3)
 
     # Subscribe
-    sub.sendall(b'{"op":"subscribe","path":"test/watch","id":1}\n')
+    sub.sendall(b'{"op":"subscribe","params":{"path":"test/watch","depth":0},"id":1}\n')
     time.sleep(0.1)
     sub.recv(4096)  # consume subscribe response
 
@@ -79,7 +79,7 @@ def test_subscribe_tcp():
     events = []
     decoder = json.JSONDecoder()
     for v in [100, 200, 300]:
-        wr.sendall(json.dumps({"op": "node.set", "path": "test/watch", "value": v, "id": v}).encode() + b"\n")
+        wr.sendall(json.dumps({"op": "set", "params": {"path": "test/watch", "value": v}, "id": v}).encode() + b"\n")
         time.sleep(0.1)
         wr.recv(4096)  # consume set response
 
@@ -92,14 +92,14 @@ def test_subscribe_tcp():
                     raw = raw[idx:].strip()
                     if msg.get("event") == "node.changed":
                         events.append(msg)
-                        print(f"  [event] path={msg.get('path')} value={msg.get('value')}")
+                        print(f"  [event] path={msg.get('path')} data={msg.get('data')}")
                 except json.JSONDecodeError:
                     break
         except socket.timeout:
             pass
 
     # Unsubscribe
-    sub.sendall(b'{"op":"unsubscribe","path":"test/watch","id":99}\n')
+    sub.sendall(b'{"op":"unsubscribe","params":{"path":"test/watch"},"id":99}\n')
 
     sub.close()
     wr.close()

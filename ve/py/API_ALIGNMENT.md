@@ -7,25 +7,25 @@ Python客户端API现已完全对齐JS的`veservice.js` WebSocket接口。
 | 方法 | JS (veservice.js) | Python (VeClient) | 底层协议 | 说明 |
 |------|-------------------|-------------------|----------|------|
 | **树操作** |
-| `get(path, depth=-1)` | ✓ | ✓ | `node.get` | 获取树或值（默认depth=-1返回完整树） |
-| `set(path, tree)` | ✓ | ✓ | `node.put` | 设置树结构 |
+| `get(path, depth=-1)` | ✓ | ✓ | `export` | 获取树或值（默认depth=-1返回完整树） |
+| `set(path, tree)` | ✓ | ✓ | `import` | 设置树结构（merge） |
 | **单值操作** |
-| `val(path)` | ✓ | ✓ | `node.get` | 读取单个节点值 |
-| `val(path, value)` | ✓ | ✓ | `node.set` | 设置单个节点值 |
+| `val(path)` | ✓ | ✓ | `get` | 读取单个节点值 |
+| `val(path, value)` | ✓ | ✓ | `set` | 设置单个节点值 |
 | **结构操作** |
-| `list(path)` | ✓ | ✓ | `node.list` | 列出子节点 |
-| `rm(path)` | ✓ | ✓ | `node.remove` | 删除节点 |
-| `trigger(path)` | ✓ | ✓ | `node.trigger` | 触发NODE_CHANGED信号 |
+| `list(path)` | ✓ | ✓ | `children` | 列出子节点 |
+| `rm(path)` | ✓ | ✓ | `erase` | 删除节点 |
+| `trigger(path)` | ✓ | ✓ | `trigger` | 触发NODE_CHANGED信号 |
 | **订阅** |
-| `watch(path, callback, options)` | ✓ | `subscribe(path, callback)` | `subscribe` | 订阅节点变化（Python简化版） |
-| `unwatch(path, callback)` | ✓ | `unsubscribe(path)` | `unsubscribe` | 取消订阅 |
+| `subscribe(path, callback, options)` | ✓ | `subscribe(path, callback, depth/once/immediate)` | `subscribe` | 订阅节点变化 |
+| `unsubscribe(path, callback)` | ✓ | `unsubscribe(path)` | `unsubscribe` | 取消订阅 |
 | **命令** |
-| `run(name, args, wait)` | ✓ | `command(name, args)` | `command.run` | 执行命令 |
-| `cmds()` | ✓ | ✓ | `command.list` | 列出可用命令 |
+| `run(name, args)` | ✓ | `command(name, args)` | `cmd` 字段 | 执行命令 |
+| `cmds()` | ✓ | `commands()` | `commands` | 列出可用命令 |
 | **批量操作** |
-| `batch(items)` | ✓ | ✓ | `batch` | 批量执行操作 |
+| `batch(items)` | ✓ | ✓ | `batch` 顶层字段 | 批量执行操作 |
 | **辅助方法** |
-| `tree(path)` | - | ✓ | `node.get` depth=-1 | Python便捷方法（等同于get） |
+| `tree(path)` | - | ✓ | `export` depth=-1 | Python便捷方法（等同于get） |
 | `ping()` | - | ✓ | - | 测试连接 |
 | `close()` | - | ✓ | - | 关闭连接 |
 
@@ -51,19 +51,19 @@ await veService.rm("/test");                           // 删除节点
 await veService.trigger("/config");                    // 触发信号
 
 // 订阅
-const unwatch = veService.watch("/test", (data, path) => {
+const unsub = veService.subscribe("/test", (data, path) => {
     console.log(`${path} changed:`, data);
-}, {immediate: true, tree: true, bubble: false});
-unwatch();  // 取消订阅
+}, {immediate: true, depth: -1});
+unsub();  // 取消订阅
 
 // 命令
-const result = await veService.run("search", ["config"], true);
-const commands = await veService.cmds();
+const result = await veService.run("search", ["config"]);
+const commands = await veService.commands();
 
 // 批量操作
 const results = await veService.batch([
-    {op: "node.get", path: "config"},
-    {op: "node.set", path: "test", value: 42}
+    {op: "get", params: {path: "config"}},
+    {op: "set", params: {path: "test", value: 42}}
 ]);
 ```
 
@@ -87,8 +87,8 @@ client.rm("/test")                                     # 删除节点
 client.trigger("/config")                              # 触发信号
 
 # 订阅（仅TCP JSON和MsgPack支持）
-unsub = client.subscribe("/test", lambda path, value: 
-    print(f"{path} changed: {value}"))
+unsub = client.subscribe("/test", lambda path, data: 
+    print(f"{path} changed: {data}"))
 unsub()  # 取消订阅
 
 # 命令
@@ -97,8 +97,8 @@ commands = client.cmds()
 
 # 批量操作
 results = client.batch([
-    {"op": "node.get", "path": "config"},
-    {"op": "node.set", "path": "test", "value": 42}
+    {"op": "get", "params": {"path": "config"}},
+    {"op": "set", "params": {"path": "test", "value": 42}}
 ])
 
 # 关闭连接
@@ -123,7 +123,7 @@ async with AsyncVeClient("http://localhost:12000") as client:
     commands = await client.cmds()
     
     results = await client.batch([
-        {"op": "node.get", "path": "config"}
+        {"op": "get", "params": {"path": "config"}}
     ])
 ```
 
@@ -132,26 +132,26 @@ async with AsyncVeClient("http://localhost:12000") as client:
 ### 1. get/set/val 语义
 
 **JS:**
-- `get(path, depth)` - 获取树（默认depth=-1）
-- `set(path, tree)` - 设置树结构（node.put）
-- `val(path)` / `val(path, value)` - 读写单值（node.get/node.set）
+- `get(path, depth)` - 获取树（默认depth=-1，底层 `export`）
+- `set(path, tree)` - 设置树结构（底层 `import`）
+- `val(path)` / `val(path, value)` - 读写单值（底层 `get`/`set`）
 
 **Python:** 完全一致
 
 ### 2. 订阅选项
 
-**JS:** `watch(path, callback, options)` 支持：
-- `immediate` - 立即触发一次回调
-- `tree` - 订阅树变化（默认true）
-- `bubble` - 冒泡订阅（默认false）
+**JS:** `subscribe(path, callback, options)` 支持：
+- `depth` - 推送深度（-1 全树 / 0 仅值 / N 层，默认 -1）
+- `once` - 单次推送后自动退订（默认 false）
+- `immediate` - 订阅回复中带当前状态（默认 false）
 
-**Python:** `subscribe(path, callback)` 简化版，不支持options（可后续扩展）
+**Python:** `subscribe(path, callback, depth=-1, once=False, immediate=False)` 完全一致
 
 ### 3. 命令参数格式
 
-**JS:** `run(name, args, wait)` - args可以是数组或对象，wait控制是否等待
+**JS:** `run(name, args)` - args 为对象（params），不再有 wait
 
-**Python:** `command(name, args)` - args是字典，wait在args中指定
+**Python:** `command(name, args)` - args 为字典，直接作为 params
 
 ### 4. 传输协议支持
 
@@ -184,6 +184,6 @@ client.set("/config", {"port": 8080})  # 设置树结构
 
 ✓ 所有JS veservice.js的核心方法都已在Python中实现  
 ✓ 方法签名和语义完全对齐  
-✓ 底层协议操作一致（node.get/put/set/remove/trigger等）  
+✓ 底层协议操作一致（Envelope v2.1：get/set/export/import/children/erase/trigger 等）  
 ✓ 支持同步和异步两种API风格  
 ✓ 支持多种传输协议（TCP JSON、MsgPack、HTTP、JSON-RPC）

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Union
 VarValue = Union[None, bool, int, float, str, bytes, List[Any], Dict[str, Any]]
 
 class NodeResponse:
-    """Response from node.get operation."""
+    """Response from a `get` operation."""
     def __init__(self, data: Dict[str, Any]):
         self.path = data.get("path", "")
         self.value = data.get("value")

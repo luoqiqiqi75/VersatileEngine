@@ -1,4 +1,9 @@
-"""Transport implementations for VeClient."""
+"""Transport implementations for VeClient.
+
+Envelope v2.1: requests use top-level `op` / `cmd` / `batch` with arguments
+nested under `params`; replies are `{id, code, data?, message?}` where
+`code >= 0` is success and `code < 0` is failure.
+"""
 
 import json
 import socket
@@ -21,37 +26,42 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Callback type for subscribe notifications
 # ---------------------------------------------------------------------------
-NotifyCallback = Callable[[str, Any], None]  # (path, value)
+NotifyCallback = Callable[[str, Any], None]  # (path, data)
+
+CODE_NOT_FOUND = -3
 
 
 def _normalize_path(path: str) -> str:
     return (path or "").lstrip("/")
 
 
-def _command_payload(args: Optional[Dict], default_wait: bool = True) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"wait": default_wait}
+def _command_params(args: Optional[Dict]) -> Dict[str, Any]:
+    """Build the v2.1 `params` object for a user command.
+
+    Accepts a dict of named params, or a positional list/scalar wrapped under
+    `args`. Legacy envelope keys (`wait`, `id`) are dropped.
+    """
     if args is None:
-        payload["args"] = []
-        return payload
+        return {}
     if isinstance(args, dict):
-        if "wait" in args:
-            payload["wait"] = bool(args["wait"])
-        if "id" in args:
-            payload["id"] = args["id"]
-        if "args" in args:
-            payload["args"] = args["args"]
-            return payload
-        if "argv" in args:
-            payload["args"] = args["argv"]
-            return payload
-        payload["args"] = {k: v for k, v in args.items() if k not in ("wait", "id")}
-        return payload
-    payload["args"] = args
-    return payload
+        return {k: v for k, v in args.items() if k not in ("wait", "id")}
+    return {"args": args}
+
+
+def _ok(reply: Dict[str, Any]) -> bool:
+    return reply.get("code", -1) >= 0
 
 
 def _reply_error(reply: Dict[str, Any]) -> RuntimeError:
-    return RuntimeError(f"{reply.get('code', 'error')}: {reply.get('error', 'unknown error')}")
+    return RuntimeError(f"{reply.get('code', 'error')}: {reply.get('message', 'unknown error')}")
+
+
+class RpcError(RuntimeError):
+    """JSON-RPC error carrying the numeric VE code."""
+
+    def __init__(self, code: Any, message: str):
+        super().__init__(f"JSON-RPC error {code}: {message}")
+        self.code = code
 
 
 _UNSET = object()
@@ -62,17 +72,17 @@ class Transport(ABC):
 
     @abstractmethod
     def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
+        """Export node subtree or value (default depth=-1 returns full tree)."""
         pass
 
     @abstractmethod
     def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
+        """Import a subtree at path (merge)."""
         pass
 
     @abstractmethod
     def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         pass
 
     @abstractmethod
@@ -93,11 +103,12 @@ class Transport(ABC):
 
     @abstractmethod
     def rm(self, path: str) -> bool:
-        """Remove node at path (node.remove)."""
+        """Remove node at path (erase)."""
         pass
 
     def subscribe(self, path: str, callback: NotifyCallback,
-                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
+                  depth: int = -1, once: bool = False,
+                  immediate: bool = False) -> Callable[[], None]:
         raise NotImplementedError("subscribe not supported on this transport")
 
     def unsubscribe(self, path: str) -> None:
@@ -113,7 +124,7 @@ class Transport(ABC):
 
 
 class HttpRestTransport(Transport):
-    """HTTP transport: POST /ve + convenience GET/PUT /at/*"""
+    """HTTP transport: POST /ve + convenience GET /at/*"""
 
     def __init__(self, base_url: str, timeout: int = 30):
         if requests is None:
@@ -128,23 +139,27 @@ class HttpRestTransport(Transport):
         resp.raise_for_status()
         return resp
 
-    def _call(self, op: str, **payload) -> Dict[str, Any]:
-        resp = self._request("POST", "/ve",
-                             json={"op": op, **payload},
+    def _send(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        resp = self._request("POST", "/ve", json=message,
                              headers={"Content-Type": "application/json"})
+        if resp.status_code == 202:  # Result::accept
+            return {"code": 0, "data": {"accepted": True}}
         return resp.json()
 
+    def _op(self, op: str, **params) -> Dict[str, Any]:
+        return self._send({"op": op, "params": params})
+
     def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
+        """Export node subtree or value (default depth=-1 returns full tree)."""
         try:
-            reply = self._call("node.get", path=_normalize_path(path), depth=depth)
-            if not reply.get("ok"):
-                if reply.get("code") == "not_found":
+            reply = self._op("export", path=_normalize_path(path), depth=depth)
+            if not _ok(reply):
+                if reply.get("code") == CODE_NOT_FOUND:
                     return None
                 raise _reply_error(reply)
             data = reply.get("data", {})
             if isinstance(data, dict):
-                return data.get("tree") or data.get("value")
+                return data.get("tree") if data.get("tree") is not None else data.get("value")
             return data
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
@@ -152,17 +167,17 @@ class HttpRestTransport(Transport):
             raise
 
     def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
-        reply = self._call("node.put", path=_normalize_path(path), tree=tree)
-        return bool(reply.get("ok"))
+        """Import a subtree at path (merge)."""
+        reply = self._op("import", path=_normalize_path(path), tree=tree)
+        return _ok(reply)
 
     def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         if value is _UNSET:
             try:
-                reply = self._call("node.get", path=_normalize_path(path))
-                if not reply.get("ok"):
-                    if reply.get("code") == "not_found":
+                reply = self._op("get", path=_normalize_path(path))
+                if not _ok(reply):
+                    if reply.get("code") == CODE_NOT_FOUND:
                         return None
                     raise _reply_error(reply)
                 data = reply.get("data", {})
@@ -172,23 +187,23 @@ class HttpRestTransport(Transport):
                     return None
                 raise
         else:
-            reply = self._call("node.set", path=_normalize_path(path), value=value)
-            return bool(reply.get("ok"))
+            reply = self._op("set", path=_normalize_path(path), value=value)
+            return _ok(reply)
 
     def trigger(self, path: str) -> bool:
         try:
-            reply = self._call("node.trigger", path=_normalize_path(path))
-            return bool(reply.get("ok"))
+            reply = self._op("trigger", path=_normalize_path(path))
+            return _ok(reply)
         except Exception:
             return False
 
     def rm(self, path: str) -> bool:
-        reply = self._call("node.remove", path=_normalize_path(path))
-        return bool(reply.get("ok"))
+        reply = self._op("erase", path=_normalize_path(path))
+        return _ok(reply)
 
     def list(self, path: str) -> List[Dict]:
-        reply = self._call("node.list", path=_normalize_path(path))
-        if not reply.get("ok"):
+        reply = self._op("children", path=_normalize_path(path))
+        if not _ok(reply):
             return []
         data = reply.get("data", {})
         if isinstance(data, dict):
@@ -201,26 +216,26 @@ class HttpRestTransport(Transport):
         return resp.json()
 
     def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        reply = self._call("command.run", name=name, **_command_payload(args))
-        if not reply.get("ok"):
+        reply = self._send({"cmd": name, "params": _command_params(args)})
+        if not _ok(reply):
             raise _reply_error(reply)
-        if reply.get("accepted"):
-            return {"accepted": True, "task_id": reply.get("task_id")}
         return reply.get("data")
 
-    def cmds(self) -> List[str]:
-        reply = self._call("command.list")
-        if not reply.get("ok"):
+    def cmds(self) -> List[Dict]:
+        reply = self._op("commands")
+        if not _ok(reply):
             return []
         data = reply.get("data", {})
+        if isinstance(data, dict):
+            return data.get("commands", [])
         return data if isinstance(data, list) else []
 
     def batch(self, items: List[Dict]) -> List[Any]:
-        reply = self._call("batch", items=items)
-        if not reply.get("ok"):
+        reply = self._send({"batch": items})
+        if not _ok(reply):
             raise _reply_error(reply)
-        data = reply.get("data", {})
-        return data.get("items", []) if isinstance(data, dict) else []
+        data = reply.get("data", [])
+        return data if isinstance(data, list) else []
 
     def ping(self) -> bool:
         try:
@@ -236,7 +251,11 @@ class HttpRestTransport(Transport):
 
 
 class JsonRpcTransport(Transport):
-    """JSON-RPC 2.0 transport: POST /jsonrpc"""
+    """JSON-RPC 2.0 transport: POST /jsonrpc.
+
+    The JSON-RPC `method` is the v2.1 op name (or a command name); the result
+    is the op's `data` payload.
+    """
 
     def __init__(self, base_url: str, timeout: int = 30):
         if requests is None:
@@ -262,74 +281,83 @@ class JsonRpcTransport(Transport):
 
         if "error" in result:
             err = result["error"]
-            raise RuntimeError(f"JSON-RPC error {err.get('code')}: {err.get('message')}")
+            raise RpcError(err.get("code"), err.get("message"))
 
         return result.get("result")
 
     def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
+        """Export node subtree or value (default depth=-1 returns full tree)."""
         try:
-            data = self._call("node.get", {"path": _normalize_path(path), "depth": depth})
-        except RuntimeError as exc:
-            if "not_found" in str(exc):
+            data = self._call("export", {"path": _normalize_path(path), "depth": depth})
+        except RpcError as exc:
+            if exc.code == CODE_NOT_FOUND:
                 return None
             raise
         if isinstance(data, dict):
-            return data.get("tree") or data.get("value")
+            return data.get("tree") if data.get("tree") is not None else data.get("value")
         return data
 
     def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
-        data = self._call("node.put", {"path": _normalize_path(path), "tree": tree})
-        return isinstance(data, dict) and "path" in data
+        """Import a subtree at path (merge)."""
+        try:
+            self._call("import", {"path": _normalize_path(path), "tree": tree})
+            return True
+        except RpcError:
+            return False
 
     def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         if value is _UNSET:
             try:
-                data = self._call("node.get", {"path": _normalize_path(path)})
-            except RuntimeError as exc:
-                if "not_found" in str(exc):
+                data = self._call("get", {"path": _normalize_path(path)})
+            except RpcError as exc:
+                if exc.code == CODE_NOT_FOUND:
                     return None
                 raise
             return data.get("value") if isinstance(data, dict) else data
         else:
-            data = self._call("node.set", {"path": _normalize_path(path), "value": value})
-            return isinstance(data, dict) and "path" in data
+            try:
+                self._call("set", {"path": _normalize_path(path), "value": value})
+                return True
+            except RpcError:
+                return False
 
     def trigger(self, path: str) -> bool:
-        data = self._call("node.trigger", {"path": _normalize_path(path)})
-        return isinstance(data, dict) and "path" in data
+        try:
+            self._call("trigger", {"path": _normalize_path(path)})
+            return True
+        except RpcError:
+            return False
 
     def rm(self, path: str) -> bool:
-        data = self._call("node.remove", {"path": _normalize_path(path)})
-        return isinstance(data, dict) and "path" in data
+        try:
+            self._call("erase", {"path": _normalize_path(path)})
+            return True
+        except RpcError:
+            return False
 
     def list(self, path: str) -> List[Dict]:
-        data = self._call("node.list", {"path": _normalize_path(path)})
+        data = self._call("children", {"path": _normalize_path(path)})
         return data.get("children", []) if isinstance(data, dict) else []
 
     def tree(self, path: str) -> Dict:
-        data = self._call("node.get", {"path": _normalize_path(path), "depth": -1})
+        data = self._call("export", {"path": _normalize_path(path), "depth": -1})
         if isinstance(data, dict):
             return data.get("tree", data.get("value", {}))
         return data
 
     def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        data = self._call("command.run", {"name": name, **_command_payload(args)})
-        return data
+        return self._call(name, _command_params(args))
 
-    def cmds(self) -> List[str]:
-        data = self._call("command.list", {})
+    def cmds(self) -> List[Dict]:
+        data = self._call("commands", {})
+        if isinstance(data, dict):
+            return data.get("commands", [])
         return data if isinstance(data, list) else []
-
-    def batch(self, items: List[Dict]) -> List[Any]:
-        data = self._call("batch", {"items": items})
-        return data.get("items", []) if isinstance(data, dict) else []
 
     def ping(self) -> bool:
         try:
-            self._call("node.get", {"path": "/"})
+            self._call("get", {"path": "/"})
             return True
         except Exception:
             return False
@@ -341,7 +369,7 @@ class JsonRpcTransport(Transport):
 
 
 class TcpJsonTransport(Transport):
-    """TCP JSON transport: pretty-printed JSON over persistent TCP.
+    """TCP JSON transport: newline-delimited JSON envelope over persistent TCP.
 
     Supports subscribe/unsubscribe with real-time event push.
     Uses json.JSONDecoder.raw_decode to handle pretty-printed (multi-line) JSON.
@@ -400,12 +428,12 @@ class TcpJsonTransport(Transport):
             # Event push from subscription
             if msg_event == "node.changed":
                 path = msg.get("path", "")
-                value = msg.get("value")
+                data = msg.get("data")
                 with self._sub_lock:
                     callbacks = list(self._subscriptions.get(path, set()))
                 for cb in callbacks:
                     try:
-                        cb(path, value)
+                        cb(path, data)
                     except Exception:
                         pass
                 continue
@@ -416,67 +444,71 @@ class TcpJsonTransport(Transport):
                 result_holder[0] = msg
                 event.set()
 
-    def _send(self, cmd: dict) -> dict:
+    def _send(self, message: dict) -> dict:
         with self._lock:
             self._id += 1
-            cmd["id"] = self._id
+            message["id"] = self._id
+            mid = self._id
             event = threading.Event()
             result_holder = [None]
-            self._pending[self._id] = (event, result_holder)
+            self._pending[mid] = (event, result_holder)
 
         try:
-            self.sock.sendall((json.dumps(cmd, separators=(',', ':')) + "\n").encode('utf-8'))
+            self.sock.sendall((json.dumps(message, separators=(',', ':')) + "\n").encode('utf-8'))
             if not event.wait(timeout=self.timeout):
                 raise TimeoutError("Request timeout")
             return result_holder[0]
         finally:
-            self._pending.pop(cmd.get("id"), None)
+            self._pending.pop(message.get("id"), None)
+
+    def _op(self, op: str, **params) -> dict:
+        return self._send({"op": op, "params": params})
 
     def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
-        resp = self._send({"op": "node.get", "path": _normalize_path(path), "depth": depth})
-        if not resp.get("ok"):
+        """Export node subtree or value (default depth=-1 returns full tree)."""
+        resp = self._op("export", path=_normalize_path(path), depth=depth)
+        if not _ok(resp):
             return None
         data = resp.get("data", {})
         if isinstance(data, dict):
-            return data.get("tree") or data.get("value")
+            return data.get("tree") if data.get("tree") is not None else data.get("value")
         return data
 
     def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
-        resp = self._send({"op": "node.put", "path": _normalize_path(path), "tree": tree})
-        return bool(resp.get("ok"))
+        """Import a subtree at path (merge)."""
+        resp = self._op("import", path=_normalize_path(path), tree=tree)
+        return _ok(resp)
 
     def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         if value is _UNSET:
-            resp = self._send({"op": "node.get", "path": _normalize_path(path)})
-            if not resp.get("ok"):
+            resp = self._op("get", path=_normalize_path(path))
+            if not _ok(resp):
                 return None
             data = resp.get("data", {})
             return data.get("value") if isinstance(data, dict) else data
         else:
-            resp = self._send({"op": "node.set", "path": _normalize_path(path), "value": value})
-            return bool(resp.get("ok"))
+            resp = self._op("set", path=_normalize_path(path), value=value)
+            return _ok(resp)
 
     def trigger(self, path: str) -> bool:
-        resp = self._send({"op": "node.trigger", "path": _normalize_path(path)})
-        return bool(resp.get("ok"))
+        resp = self._op("trigger", path=_normalize_path(path))
+        return _ok(resp)
 
     def rm(self, path: str) -> bool:
-        resp = self._send({"op": "node.remove", "path": _normalize_path(path)})
-        return bool(resp.get("ok"))
+        resp = self._op("erase", path=_normalize_path(path))
+        return _ok(resp)
 
     def list(self, path: str) -> List[Dict]:
-        resp = self._send({"op": "node.list", "path": _normalize_path(path)})
-        if not resp.get("ok"):
+        resp = self._op("children", path=_normalize_path(path))
+        if not _ok(resp):
             return []
         data = resp.get("data", {})
         return data.get("children", []) if isinstance(data, dict) else []
 
     def tree(self, path: str) -> Dict:
-        resp = self._send({"op": "node.get", "path": _normalize_path(path), "depth": -1})
-        if not resp.get("ok"):
+        resp = self._op("export", path=_normalize_path(path), depth=-1)
+        if not _ok(resp):
             return {}
         data = resp.get("data", {})
         if isinstance(data, dict):
@@ -484,30 +516,30 @@ class TcpJsonTransport(Transport):
         return data
 
     def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        body = {"op": "command.run", "name": name, **_command_payload(args)}
-        resp = self._send(body)
-        if not resp.get("ok"):
+        resp = self._send({"cmd": name, "params": _command_params(args)})
+        if not _ok(resp):
             raise _reply_error(resp)
-        if resp.get("accepted"):
-            return {"accepted": True, "task_id": resp.get("task_id")}
         return resp.get("data")
 
-    def cmds(self) -> List[str]:
-        resp = self._send({"op": "command.list"})
-        if not resp.get("ok"):
+    def cmds(self) -> List[Dict]:
+        resp = self._op("commands")
+        if not _ok(resp):
             return []
         data = resp.get("data", {})
+        if isinstance(data, dict):
+            return data.get("commands", [])
         return data if isinstance(data, list) else []
 
     def batch(self, items: List[Dict]) -> List[Any]:
-        resp = self._send({"op": "batch", "items": items})
-        if not resp.get("ok"):
+        resp = self._send({"batch": items})
+        if not _ok(resp):
             raise _reply_error(resp)
-        data = resp.get("data", {})
-        return data.get("items", []) if isinstance(data, dict) else []
+        data = resp.get("data", [])
+        return data if isinstance(data, list) else []
 
     def subscribe(self, path: str, callback: NotifyCallback,
-                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
+                  depth: int = -1, once: bool = False,
+                  immediate: bool = False) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function."""
         path = _normalize_path(path)
         with self._sub_lock:
@@ -517,12 +549,17 @@ class TcpJsonTransport(Transport):
             self._subscriptions[path].add(callback)
 
         if is_new:
-            req: dict = {"op": "subscribe", "path": path}
-            if tree:
-                req["tree"] = True
-            if bubble:
-                req["bubble"] = True
-            self._send(req)
+            params: dict = {"path": path, "depth": depth}
+            if once:
+                params["once"] = True
+            if immediate:
+                params["immediate"] = True
+            resp = self._send({"op": "subscribe", "params": params})
+            if immediate and _ok(resp) and resp.get("data") is not None:
+                try:
+                    callback(path, resp.get("data"))
+                except Exception:
+                    pass
 
         def unsub():
             with self._sub_lock:
@@ -532,7 +569,7 @@ class TcpJsonTransport(Transport):
                     if not cbs:
                         del self._subscriptions[path]
                         try:
-                            self._send({"op": "unsubscribe", "path": path})
+                            self._send({"op": "unsubscribe", "params": {"path": path}})
                         except Exception:
                             pass
         return unsub
@@ -542,13 +579,13 @@ class TcpJsonTransport(Transport):
         with self._sub_lock:
             self._subscriptions.pop(path, None)
         try:
-            self._send({"op": "unsubscribe", "path": path})
+            self._send({"op": "unsubscribe", "params": {"path": path}})
         except Exception:
             pass
 
     def ping(self) -> bool:
         try:
-            self.get("/")
+            self.val("/")
             return True
         except Exception:
             return False
@@ -579,7 +616,7 @@ _FLAG_MASK     = 0xC0
 class MsgPackTransport(Transport):
     """MessagePack binary transport: frame-based protocol over TCP.
 
-    Frame: [flag:1][length:4 LE][payload: msgpack dict]
+    Frame: [flag:1][length:4 LE][payload: msgpack envelope dict]
     Supports subscribe/unsubscribe with NOTIFY frame push.
     """
 
@@ -635,16 +672,16 @@ class MsgPackTransport(Transport):
 
             frame_type = flag & _FLAG_MASK
 
-            # NOTIFY frame — subscription push / async result
+            # NOTIFY frame — subscription push
             if frame_type == _FLAG_NOTIFY:
                 if msg.get("event") == "node.changed":
                     path = msg.get("path", "")
-                    value = msg.get("value")
+                    data = msg.get("data")
                     with self._sub_lock:
                         callbacks = list(self._subscriptions.get(path, set()))
                     for cb in callbacks:
                         try:
-                            cb(path, value)
+                            cb(path, data)
                         except Exception:
                             pass
                 continue
@@ -656,23 +693,17 @@ class MsgPackTransport(Transport):
                 result_holder[0] = (flag, msg)
                 event.set()
 
-    def _send_frame(self, op: str, path: str, data=None) -> tuple:
+    def _send_message(self, message: dict) -> tuple:
         with self._lock:
             self._id += 1
-            payload_dict = {"op": op, "id": self._id}
-            if path:
-                payload_dict["path"] = path
-            if isinstance(data, dict):
-                payload_dict.update(data)
-            elif data is not None:
-                payload_dict["value"] = data
-
-            payload = msgpack.packb(payload_dict)
+            message["id"] = self._id
+            mid = self._id
+            payload = msgpack.packb(message)
             header = struct.pack("<BI", _FLAG_REQUEST, len(payload))
 
             event = threading.Event()
             result_holder = [None]
-            self._pending[self._id] = (event, result_holder)
+            self._pending[mid] = (event, result_holder)
 
         try:
             self.sock.sendall(header + payload)
@@ -680,46 +711,53 @@ class MsgPackTransport(Transport):
                 raise TimeoutError("Request timeout")
             return result_holder[0]
         finally:
-            self._pending.pop(payload_dict["id"], None)
+            self._pending.pop(mid, None)
+
+    def _op(self, op: str, **params) -> tuple:
+        return self._send_message({"op": op, "params": params})
+
+    @staticmethod
+    def _failed(flag: int, resp: dict) -> bool:
+        return (flag & _FLAG_MASK) == _FLAG_ERROR or not _ok(resp)
 
     def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
-        flag, resp = self._send_frame("node.get", _normalize_path(path), {"depth": depth})
-        if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+        """Export node subtree or value (default depth=-1 returns full tree)."""
+        flag, resp = self._op("export", path=_normalize_path(path), depth=depth)
+        if self._failed(flag, resp):
             return None
         data = resp.get("data", {})
         if isinstance(data, dict):
-            return data.get("tree") or data.get("value")
+            return data.get("tree") if data.get("tree") is not None else data.get("value")
         return data
 
     def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
-        flag, resp = self._send_frame("node.put", _normalize_path(path), {"tree": tree})
-        return (flag & _FLAG_MASK) != _FLAG_ERROR and bool(resp.get("ok"))
+        """Import a subtree at path (merge)."""
+        flag, resp = self._op("import", path=_normalize_path(path), tree=tree)
+        return not self._failed(flag, resp)
 
     def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         if value is _UNSET:
-            flag, resp = self._send_frame("node.get", _normalize_path(path))
-            if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+            flag, resp = self._op("get", path=_normalize_path(path))
+            if self._failed(flag, resp):
                 return None
             data = resp.get("data", {})
             return data.get("value") if isinstance(data, dict) else data
         else:
-            flag, resp = self._send_frame("node.set", _normalize_path(path), {"value": value})
-            return (flag & _FLAG_MASK) != _FLAG_ERROR and bool(resp.get("ok"))
+            flag, resp = self._op("set", path=_normalize_path(path), value=value)
+            return not self._failed(flag, resp)
 
     def trigger(self, path: str) -> bool:
-        flag, resp = self._send_frame("node.trigger", _normalize_path(path))
-        return (flag & _FLAG_MASK) != _FLAG_ERROR and bool(resp.get("ok"))
+        flag, resp = self._op("trigger", path=_normalize_path(path))
+        return not self._failed(flag, resp)
 
     def rm(self, path: str) -> bool:
-        flag, resp = self._send_frame("node.remove", _normalize_path(path))
-        return (flag & _FLAG_MASK) != _FLAG_ERROR and bool(resp.get("ok"))
+        flag, resp = self._op("erase", path=_normalize_path(path))
+        return not self._failed(flag, resp)
 
     def list(self, path: str) -> List[Dict]:
-        flag, resp = self._send_frame("node.list", _normalize_path(path))
-        if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+        flag, resp = self._op("children", path=_normalize_path(path))
+        if self._failed(flag, resp):
             return []
         data = resp.get("data", {})
         if isinstance(data, dict):
@@ -728,8 +766,8 @@ class MsgPackTransport(Transport):
         return []
 
     def tree(self, path: str) -> Dict:
-        flag, resp = self._send_frame("node.get", _normalize_path(path), {"depth": -1})
-        if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+        flag, resp = self._op("export", path=_normalize_path(path), depth=-1)
+        if self._failed(flag, resp):
             return {}
         data = resp.get("data", {})
         if isinstance(data, dict):
@@ -737,29 +775,30 @@ class MsgPackTransport(Transport):
         return data
 
     def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        flag, resp = self._send_frame("command.run", "", {"name": name, **_command_payload(args)})
-        if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+        flag, resp = self._send_message({"cmd": name, "params": _command_params(args)})
+        if self._failed(flag, resp):
             raise _reply_error(resp)
-        if resp.get("accepted"):
-            return {"accepted": True, "task_id": resp.get("task_id")}
         return resp.get("data")
 
-    def cmds(self) -> List[str]:
-        flag, resp = self._send_frame("command.list", "")
-        if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+    def cmds(self) -> List[Dict]:
+        flag, resp = self._op("commands")
+        if self._failed(flag, resp):
             return []
         data = resp.get("data", {})
+        if isinstance(data, dict):
+            return data.get("commands", [])
         return data if isinstance(data, list) else []
 
     def batch(self, items: List[Dict]) -> List[Any]:
-        flag, resp = self._send_frame("batch", "", {"items": items})
-        if (flag & _FLAG_MASK) == _FLAG_ERROR or not resp.get("ok"):
+        flag, resp = self._send_message({"batch": items})
+        if self._failed(flag, resp):
             raise _reply_error(resp)
-        data = resp.get("data", {})
-        return data.get("items", []) if isinstance(data, dict) else []
+        data = resp.get("data", [])
+        return data if isinstance(data, list) else []
 
     def subscribe(self, path: str, callback: NotifyCallback,
-                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
+                  depth: int = -1, once: bool = False,
+                  immediate: bool = False) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function."""
         path = _normalize_path(path)
         with self._sub_lock:
@@ -769,12 +808,17 @@ class MsgPackTransport(Transport):
             self._subscriptions[path].add(callback)
 
         if is_new:
-            data = {}
-            if tree:
-                data["tree"] = True
-            if bubble:
-                data["bubble"] = True
-            self._send_frame("subscribe", path, data if data else None)
+            params: dict = {"path": path, "depth": depth}
+            if once:
+                params["once"] = True
+            if immediate:
+                params["immediate"] = True
+            flag, resp = self._send_message({"op": "subscribe", "params": params})
+            if immediate and not self._failed(flag, resp) and resp.get("data") is not None:
+                try:
+                    callback(path, resp.get("data"))
+                except Exception:
+                    pass
 
         def unsub():
             with self._sub_lock:
@@ -784,7 +828,7 @@ class MsgPackTransport(Transport):
                     if not cbs:
                         del self._subscriptions[path]
                         try:
-                            self._send_frame("unsubscribe", path)
+                            self._send_message({"op": "unsubscribe", "params": {"path": path}})
                         except Exception:
                             pass
         return unsub
@@ -794,13 +838,13 @@ class MsgPackTransport(Transport):
         with self._sub_lock:
             self._subscriptions.pop(path, None)
         try:
-            self._send_frame("unsubscribe", path)
+            self._send_message({"op": "unsubscribe", "params": {"path": path}})
         except Exception:
             pass
 
     def ping(self) -> bool:
         try:
-            self.get("/")
+            self.val("/")
             return True
         except Exception:
             return False

@@ -1,56 +1,20 @@
-"""Async transport implementations for VeClient."""
+"""Async transport implementations for VeClient.
 
-import json
-import asyncio
-import struct
+Envelope v2.1 — same wire format as the sync transports (see transports.py).
+"""
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Callable
+
+from .transports import (
+    NotifyCallback, CODE_NOT_FOUND, RpcError, _UNSET,
+    _normalize_path, _command_params, _ok, _reply_error,
+)
 
 try:
     import httpx
 except ImportError:
     httpx = None
-
-try:
-    import msgpack
-except ImportError:
-    msgpack = None
-
-
-NotifyCallback = Callable[[str, Any], None]
-
-
-def _normalize_path(path: str) -> str:
-    return (path or "").lstrip("/")
-
-
-def _command_payload(args: Optional[Dict], default_wait: bool = True) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"wait": default_wait}
-    if args is None:
-        payload["args"] = []
-        return payload
-    if isinstance(args, dict):
-        if "wait" in args:
-            payload["wait"] = bool(args["wait"])
-        if "id" in args:
-            payload["id"] = args["id"]
-        if "args" in args:
-            payload["args"] = args["args"]
-            return payload
-        if "argv" in args:
-            payload["args"] = args["argv"]
-            return payload
-        payload["args"] = {k: v for k, v in args.items() if k not in ("wait", "id")}
-        return payload
-    payload["args"] = args
-    return payload
-
-
-def _reply_error(reply: Dict[str, Any]) -> RuntimeError:
-    return RuntimeError(f"{reply.get('code', 'error')}: {reply.get('error', 'unknown error')}")
-
-
-_UNSET = object()
 
 
 class AsyncTransport(ABC):
@@ -58,17 +22,17 @@ class AsyncTransport(ABC):
 
     @abstractmethod
     async def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
+        """Export node subtree or value (default depth=-1 returns full tree)."""
         pass
 
     @abstractmethod
     async def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
+        """Import a subtree at path (merge)."""
         pass
 
     @abstractmethod
     async def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         pass
 
     @abstractmethod
@@ -89,7 +53,7 @@ class AsyncTransport(ABC):
 
     @abstractmethod
     async def rm(self, path: str) -> bool:
-        """Remove node at path (node.remove)."""
+        """Remove node at path (erase)."""
         pass
 
     async def trigger(self, path: str) -> bool:
@@ -111,23 +75,27 @@ class AsyncHttpRestTransport(AsyncTransport):
         resp.raise_for_status()
         return resp
 
-    async def _call(self, op: str, **payload) -> Dict[str, Any]:
-        resp = await self._request("POST", "/ve",
-                                    json={"op": op, **payload},
+    async def _send(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        resp = await self._request("POST", "/ve", json=message,
                                     headers={"Content-Type": "application/json"})
+        if resp.status_code == 202:  # Result::accept
+            return {"code": 0, "data": {"accepted": True}}
         return resp.json()
 
+    async def _op(self, op: str, **params) -> Dict[str, Any]:
+        return await self._send({"op": op, "params": params})
+
     async def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
+        """Export node subtree or value (default depth=-1 returns full tree)."""
         try:
-            reply = await self._call("node.get", path=_normalize_path(path), depth=depth)
-            if not reply.get("ok"):
-                if reply.get("code") == "not_found":
+            reply = await self._op("export", path=_normalize_path(path), depth=depth)
+            if not _ok(reply):
+                if reply.get("code") == CODE_NOT_FOUND:
                     return None
                 raise _reply_error(reply)
             data = reply.get("data", {})
             if isinstance(data, dict):
-                return data.get("tree") or data.get("value")
+                return data.get("tree") if data.get("tree") is not None else data.get("value")
             return data
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
@@ -135,17 +103,17 @@ class AsyncHttpRestTransport(AsyncTransport):
             raise
 
     async def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
-        reply = await self._call("node.put", path=_normalize_path(path), tree=tree)
-        return bool(reply.get("ok"))
+        """Import a subtree at path (merge)."""
+        reply = await self._op("import", path=_normalize_path(path), tree=tree)
+        return _ok(reply)
 
     async def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         if value is _UNSET:
             try:
-                reply = await self._call("node.get", path=_normalize_path(path))
-                if not reply.get("ok"):
-                    if reply.get("code") == "not_found":
+                reply = await self._op("get", path=_normalize_path(path))
+                if not _ok(reply):
+                    if reply.get("code") == CODE_NOT_FOUND:
                         return None
                     raise _reply_error(reply)
                 data = reply.get("data", {})
@@ -155,23 +123,23 @@ class AsyncHttpRestTransport(AsyncTransport):
                     return None
                 raise
         else:
-            reply = await self._call("node.set", path=_normalize_path(path), value=value)
-            return bool(reply.get("ok"))
+            reply = await self._op("set", path=_normalize_path(path), value=value)
+            return _ok(reply)
 
     async def trigger(self, path: str) -> bool:
         try:
-            reply = await self._call("node.trigger", path=_normalize_path(path))
-            return bool(reply.get("ok"))
+            reply = await self._op("trigger", path=_normalize_path(path))
+            return _ok(reply)
         except Exception:
             return False
 
     async def rm(self, path: str) -> bool:
-        reply = await self._call("node.remove", path=_normalize_path(path))
-        return bool(reply.get("ok"))
+        reply = await self._op("erase", path=_normalize_path(path))
+        return _ok(reply)
 
     async def list(self, path: str) -> List[Dict]:
-        reply = await self._call("node.list", path=_normalize_path(path))
-        if not reply.get("ok"):
+        reply = await self._op("children", path=_normalize_path(path))
+        if not _ok(reply):
             return []
         data = reply.get("data", {})
         if isinstance(data, dict):
@@ -184,26 +152,26 @@ class AsyncHttpRestTransport(AsyncTransport):
         return resp.json()
 
     async def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        reply = await self._call("command.run", name=name, **_command_payload(args))
-        if not reply.get("ok"):
+        reply = await self._send({"cmd": name, "params": _command_params(args)})
+        if not _ok(reply):
             raise _reply_error(reply)
-        if reply.get("accepted"):
-            return {"accepted": True, "task_id": reply.get("task_id")}
         return reply.get("data")
 
-    async def cmds(self) -> List[str]:
-        reply = await self._call("command.list")
-        if not reply.get("ok"):
+    async def cmds(self) -> List[Dict]:
+        reply = await self._op("commands")
+        if not _ok(reply):
             return []
         data = reply.get("data", {})
+        if isinstance(data, dict):
+            return data.get("commands", [])
         return data if isinstance(data, list) else []
 
     async def batch(self, items: List[Dict]) -> List[Any]:
-        reply = await self._call("batch", items=items)
-        if not reply.get("ok"):
+        reply = await self._send({"batch": items})
+        if not _ok(reply):
             raise _reply_error(reply)
-        data = reply.get("data", {})
-        return data.get("items", []) if isinstance(data, dict) else []
+        data = reply.get("data", [])
+        return data if isinstance(data, list) else []
 
     async def ping(self) -> bool:
         try:
@@ -217,7 +185,11 @@ class AsyncHttpRestTransport(AsyncTransport):
 
 
 class AsyncJsonRpcTransport(AsyncTransport):
-    """Async JSON-RPC 2.0 transport using httpx."""
+    """Async JSON-RPC 2.0 transport using httpx.
+
+    The JSON-RPC `method` is the v2.1 op name (or a command name); the result
+    is the op's `data` payload.
+    """
 
     def __init__(self, base_url: str, timeout: int = 30):
         if httpx is None:
@@ -243,74 +215,83 @@ class AsyncJsonRpcTransport(AsyncTransport):
 
         if "error" in result:
             err = result["error"]
-            raise RuntimeError(f"JSON-RPC error {err.get('code')}: {err.get('message')}")
+            raise RpcError(err.get("code"), err.get("message"))
 
         return result.get("result")
 
     async def get(self, path: str, depth: int = -1) -> Any:
-        """Get node tree or value (default depth=-1 returns full tree)."""
+        """Export node subtree or value (default depth=-1 returns full tree)."""
         try:
-            data = await self._call("node.get", {"path": _normalize_path(path), "depth": depth})
-        except RuntimeError as exc:
-            if "not_found" in str(exc):
+            data = await self._call("export", {"path": _normalize_path(path), "depth": depth})
+        except RpcError as exc:
+            if exc.code == CODE_NOT_FOUND:
                 return None
             raise
         if isinstance(data, dict):
-            return data.get("tree") or data.get("value")
+            return data.get("tree") if data.get("tree") is not None else data.get("value")
         return data
 
     async def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
-        data = await self._call("node.put", {"path": _normalize_path(path), "tree": tree})
-        return isinstance(data, dict) and "path" in data
+        """Import a subtree at path (merge)."""
+        try:
+            await self._call("import", {"path": _normalize_path(path), "tree": tree})
+            return True
+        except RpcError:
+            return False
 
     async def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set)."""
+        """Get or set a single node value."""
         if value is _UNSET:
             try:
-                data = await self._call("node.get", {"path": _normalize_path(path)})
-            except RuntimeError as exc:
-                if "not_found" in str(exc):
+                data = await self._call("get", {"path": _normalize_path(path)})
+            except RpcError as exc:
+                if exc.code == CODE_NOT_FOUND:
                     return None
                 raise
             return data.get("value") if isinstance(data, dict) else data
         else:
-            data = await self._call("node.set", {"path": _normalize_path(path), "value": value})
-            return isinstance(data, dict) and "path" in data
+            try:
+                await self._call("set", {"path": _normalize_path(path), "value": value})
+                return True
+            except RpcError:
+                return False
 
     async def trigger(self, path: str) -> bool:
-        data = await self._call("node.trigger", {"path": _normalize_path(path)})
-        return isinstance(data, dict) and "path" in data
+        try:
+            await self._call("trigger", {"path": _normalize_path(path)})
+            return True
+        except RpcError:
+            return False
 
     async def rm(self, path: str) -> bool:
-        data = await self._call("node.remove", {"path": _normalize_path(path)})
-        return isinstance(data, dict) and "path" in data
+        try:
+            await self._call("erase", {"path": _normalize_path(path)})
+            return True
+        except RpcError:
+            return False
 
     async def list(self, path: str) -> List[Dict]:
-        data = await self._call("node.list", {"path": _normalize_path(path)})
+        data = await self._call("children", {"path": _normalize_path(path)})
         return data.get("children", []) if isinstance(data, dict) else []
 
     async def tree(self, path: str) -> Dict:
-        data = await self._call("node.get", {"path": _normalize_path(path), "depth": -1})
+        data = await self._call("export", {"path": _normalize_path(path), "depth": -1})
         if isinstance(data, dict):
             return data.get("tree", data.get("value", {}))
         return data
 
     async def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        data = await self._call("command.run", {"name": name, **_command_payload(args)})
-        return data
+        return await self._call(name, _command_params(args))
 
-    async def cmds(self) -> List[str]:
-        data = await self._call("command.list", {})
+    async def cmds(self) -> List[Dict]:
+        data = await self._call("commands", {})
+        if isinstance(data, dict):
+            return data.get("commands", [])
         return data if isinstance(data, list) else []
-
-    async def batch(self, items: List[Dict]) -> List[Any]:
-        data = await self._call("batch", {"items": items})
-        return data.get("items", []) if isinstance(data, dict) else []
 
     async def ping(self) -> bool:
         try:
-            await self._call("node.get", {"path": "/"})
+            await self._call("get", {"path": "/"})
             return True
         except Exception:
             return False

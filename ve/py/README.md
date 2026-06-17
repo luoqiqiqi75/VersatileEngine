@@ -111,14 +111,17 @@ client.close()
 
 ## HTTP / `/ve`
 
-HTTP transport internally maps these calls to the VE native protocol:
+HTTP transport internally maps these calls to the VE native protocol (Envelope v2.1):
 
-- `get()` -> `node.get`
-- `set()` -> `node.set`
-- `trigger()` -> `node.trigger`
-- `list()` -> `node.list`
+- `get()` -> `export`
+- `val()` -> `get` / `set`
+- `set()` -> `import`
+- `trigger()` -> `trigger`
+- `list()` -> `children`
+- `rm()` -> `erase`
 - `tree()` -> `GET /at/<path>`
-- `command()` -> `command.run`
+- `command()` -> `cmd` field
+- `cmds()` -> `commands`
 
 ## Subscribe
 

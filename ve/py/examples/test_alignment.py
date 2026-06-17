@@ -22,7 +22,7 @@ def test_api_alignment():
     tree = client.get("/test")
     print("   get('/test'):", tree)
 
-    # Test set() - tree structure operations (like JS set, uses node.put)
+    # Test set() - tree structure operations (like JS set, uses import)
     print("\n3. set() - tree structure operations:")
     print("   set('/config', {'port': 8080, 'host': 'localhost'})")
     client.set("/config", {"port": 8080, "host": "localhost"})
@@ -35,10 +35,10 @@ def test_api_alignment():
 
     print("\n✓ API alignment test completed!")
     print("\nPython API now matches JS veservice.js:")
-    print("  - get(path, depth=-1) → tree || value (node.get)")
-    print("  - set(path, tree) → tree structure (node.put)")
-    print("  - val(path) → single value read (node.get)")
-    print("  - val(path, value) → single value write (node.set)")
+    print("  - get(path, depth=-1) → tree || value (export)")
+    print("  - set(path, tree) → tree structure (import)")
+    print("  - val(path) → single value read (get)")
+    print("  - val(path, value) → single value write (set)")
 
 if __name__ == "__main__":
     test_api_alignment()

@@ -86,11 +86,11 @@ class AsyncVeClient:
         return await self._transport.get(path, depth)
 
     async def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
+        """Import a subtree at path (merge)."""
         return await self._transport.set(path, tree)
 
     async def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set).
+        """Get or set a single node value.
 
         val(path) -> returns current value
         val(path, value) -> sets value, returns success status
@@ -117,8 +117,8 @@ class AsyncVeClient:
         """Run a command."""
         return await self._transport.command(name, args)
 
-    async def cmds(self) -> List[str]:
-        """List available commands."""
+    async def cmds(self) -> List[Dict]:
+        """List available commands (name + help)."""
         return await self._transport.cmds()
 
     async def batch(self, items: List[Dict]) -> List[Any]:

@@ -100,11 +100,11 @@ class VeClient:
         return self._transport.get(path, depth)
 
     def set(self, path: str, tree: Any) -> bool:
-        """Set node tree structure (node.put)."""
+        """Import a subtree at path (merge)."""
         return self._transport.set(path, tree)
 
     def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set single node value (node.get/node.set).
+        """Get or set a single node value.
 
         val(path) -> returns current value
         val(path, value) -> sets value, returns success status
@@ -131,8 +131,8 @@ class VeClient:
         """Run a command."""
         return self._transport.command(name, args)
 
-    def cmds(self) -> List[str]:
-        """List available commands."""
+    def cmds(self) -> List[Dict]:
+        """List available commands (name + help)."""
         return self._transport.cmds()
 
     def batch(self, items: List[Dict]) -> List[Any]:
@@ -140,16 +140,19 @@ class VeClient:
         return self._transport.batch(items)
 
     def subscribe(self, path: str, callback: NotifyCallback,
-                  tree: bool = True, bubble: bool = False) -> Callable[[], None]:
+                  depth: int = -1, once: bool = False,
+                  immediate: bool = False) -> Callable[[], None]:
         """Subscribe to node changes. Returns an unsubscribe function.
 
-        callback(path: str, value: Any) is called on each NODE_CHANGED event.
-        Set tree=True to receive the full subtree value instead of just the
-        node's own value.
+        callback(path: str, data: Any) is called on each NODE_CHANGED event.
+        depth controls push payload: -1 full subtree, 0 value only, N levels.
+        once auto-unsubscribes after the first push; immediate returns the
+        current state in the subscribe reply.
 
         Supported on TCP JSON and MsgPack transports.
         """
-        return self._transport.subscribe(path, callback, tree=tree, bubble=bubble)
+        return self._transport.subscribe(path, callback, depth=depth,
+                                          once=once, immediate=immediate)
 
     def unsubscribe(self, path: str) -> None:
         """Remove all subscriptions for a path."""
