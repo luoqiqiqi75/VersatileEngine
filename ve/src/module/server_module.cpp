@@ -175,7 +175,14 @@ void ServerModule::bindStaticProxyTargets()
 }
 
 void ServerModule::ready() {
-    if (node()->get("terminal/repl/enable").toBool(true)) openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
+    // Human REPL: banner, title, color (if enabled, can be disabled for token saving)
+    if (node()->get("terminal/repl/enable").toBool(true)) {
+        auto repl_config_n = node()->at("terminal/repl/config");
+        repl_config_n->set("banner", true);
+        repl_config_n->set("title", true);
+        repl_config_n->set("prompt_color", true);
+        openServer(_terminal_repl_s, node()->at("terminal/repl"), 10000, "TerminalReplServer");
+    }
 
     // AI REPL: no banner, no title, no color (save tokens), but keep cd/current (AI can handle state)
     if (node()->get("terminal/ai/enable").toBool(true)) {

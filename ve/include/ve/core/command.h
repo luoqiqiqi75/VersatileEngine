@@ -91,7 +91,7 @@ inline Proc wrapProc(F f, std::index_sequence<I...>)
 // Any callable -> Proc, dispatched on its real signature via FnTraits.
 //   Result(Node*, Node*, Node*)   already a Proc, assigned as-is
 //   Result(Node* in, Node* out)   Proc without ctx
-//   Result(Node* ctx)             Proc input output use ctx
+//   Result(Node* in)              Proc with in only (ctx/out ignored)
 //   Result()                      Proc with nothing
 //   anything else                 args unpacked from in (VarS list, arg I =
 //                                 args[I].as<ArgT>()); a non-Result return is
@@ -113,7 +113,7 @@ inline bool parse(F f, Proc& p)
     } else if constexpr (is_ret_result && is_args_n2) {
         p = [f = std::move(f)] (Node*, Node* in_n, Node* out_n) -> Result { return f(in_n, out_n); }; // Result(Node* in_n, Node* out_n)
     } else if constexpr (is_ret_result && is_args_n1) {
-        p = [f = std::move(f)] (Node* ctx_n, Node*, Node*) -> Result { return f(ctx_n); }; // Result(Node* ctx_n)
+        p = [f = std::move(f)] (Node*, Node* in_n, Node*) -> Result { return f(in_n); }; // Result(Node* in_n)
     } else if constexpr (is_ret_result && T::ArgCnt == 0) {
         p = [f = std::move(f)] (Node*, Node*, Node*) -> Result { return f(); }; // Result()
     } else {

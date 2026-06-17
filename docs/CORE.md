@@ -136,13 +136,19 @@ Useful operations:
 - `copy(other, auto_insert, auto_remove)` for subtree sync
 - `clear(auto_delete)` for structural reset
 
-### `ve::Command`, `ve::Step`, `ve::Pipeline`
+### `ve::Command`, `ve::Pipeline`
 
 The command system is the runtime execution layer.
 
-- `Step` is a unit of work
-- `Pipeline` is an execution instance
-- `Command` is a named recipe for one or more steps
+- `Command` is a named callable registered in a `Factory`, created via `command::create(key)` and executed via `cmd.run()`. Its `Proc` signature is `Result(Node* ctx, Node* in, Node* out)`.
+- `Pipeline` chains one or more `Command` instances into an execution graph with shared context, input, and output nodes. Used by the envelope protocol (`/ve`, WebSocket, BinTCP) for batch and multi-step dispatch.
+
+Registration uses `command::reg(key, callable, help)`, where callable can be any of:
+- `Result(Node* ctx, Node* in, Node* out)` — full three-parameter form
+- `Result(Node* in, Node* out)` — input/output only (ctx ignored)
+- `Result(Node* in)` — input only
+- `Result()` — no parameters
+- Any generic callable — arguments are unpacked from `in` via the schema layer
 
 The terminal, binary IPC service, and other runtime tools should rely on this layer instead of duplicating business logic.
 
