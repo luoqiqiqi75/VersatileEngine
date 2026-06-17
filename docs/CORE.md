@@ -33,6 +33,7 @@ Primary categories:
 - list (Vector<Var>)
 - dictionary (Dict<Var>)
 - pointer
+- callable (std::function<Var(const Var&)>)
 - custom (std::any)
 
 Use `Var` at boundaries.
@@ -73,8 +74,8 @@ v.fromList({1, 2, 3});        // Convert to LIST
 v.fromDict({{"a", 1}});       // Convert to DICT
 
 // Generic conversion (uses Convert<T>)
-int value = v.as<int>();      // Throws on failure
-auto opt = v.tryAs<int>();    // Returns std::optional<int>
+int value = v.as<int>();      // returns T{} on type mismatch (does not throw)
+int safe  = v.to<int>(-1);    // returns the given default on mismatch
 ```
 
 **Type checking**:
@@ -92,6 +93,20 @@ if (auto* p = v.customPtr<MyData>()) {
     // Use p->x
 }
 ```
+
+**Callable**:
+
+`Var` can hold a function (`CALLABLE`, stored as `std::function<Var(const Var&)>`).
+`Var::callable` adapts any compatible callable; `invoke` calls it.
+
+```cpp
+Var fn = Var::callable([](int a, int b) { return a + b; });  // args unpacked from input
+Var sum = fn.invoke(2, 3);   // -> Var(5); multiple args are packed as a List
+if (fn.isCallable()) { ... }
+```
+
+Callables back the command registry and internal name-based dispatch — store a
+`Var::callable` handler on a `Node` and resolve it via `find(key)`.
 
 ### `ve::Object`
 

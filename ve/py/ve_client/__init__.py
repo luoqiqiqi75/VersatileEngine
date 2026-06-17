@@ -38,4 +38,4 @@ except ImportError:
     # httpx not installed, async client not available
     __all__ = ["VeClient", "VarValue", "NodeResponse", "NotifyCallback"]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

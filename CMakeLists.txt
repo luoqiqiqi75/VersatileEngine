@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.15)
 set(VE_NAME VersatileEngine)
 set(VE_NAMESPACE ve)
 
-project(${VE_NAME} VERSION 2.0.0 LANGUAGES CXX)
+project(${VE_NAME} VERSION 2.1.0 LANGUAGES CXX)
 
 message(STATUS "")
 message(STATUS "${VE_NAME} CMake Begin  ========================")

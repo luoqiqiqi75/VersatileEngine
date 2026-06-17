@@ -27,8 +27,8 @@ v.fromList({1, 2, 3});        // Convert to LIST
 v.fromDict({{"a", 1}});       // Convert to DICT
 
 // Generic conversion
-int value = v.as<int>();      // Throws on failure
-auto opt = v.tryAs<int>();    // Returns std::optional<int>
+int value = v.as<int>();      // returns T{} on type mismatch (does not throw)
+int safe  = v.to<int>(-1);    // returns the given default on mismatch
 ```
 
 ## Node Operations
@@ -126,7 +126,7 @@ save var /config                     # Var format (JSON-stringified)
 # HTTP
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '{"op":"command.run","name":"save","args":["json","/config","-f","config.json"],"wait":true}'
+  -d '{"cmd":"save","id":1,"params":{"format":"json","path":"/config","file":"config.json"}}'
 
 # WebSocket (JavaScript)
 veService.command("save", {
@@ -146,7 +146,7 @@ load json /config -i '{"key":"value"}'     # Inline data
 # HTTP
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '{"op":"command.run","name":"load","args":["json","/config","-f","config.json"],"wait":true}'
+  -d '{"cmd":"load","id":1,"params":{"format":"json","path":"/config","file":"config.json"}}'
 
 # WebSocket (JavaScript)
 veService.command("load", {
@@ -176,7 +176,7 @@ search "Feature" /docs/plan --key
 
 # Get specific section
 curl -X POST http://localhost:12000/ve \
-  -d '{"op":"node.get","path":"docs/plan/Section/Subsection","depth":1}'
+  -d '{"op":"export","id":1,"params":{"path":"docs/plan/Section/Subsection","depth":1}}'
 ```
 
 **Mapping**:
@@ -250,7 +250,7 @@ Register commands via `command::reg(key, callable, help)`. The callable is adapt
 
 ```cpp
 // Full three-parameter form (ctx, in, out)
-command::reg("node.get", [](Node* ctx, Node* in, Node* out) -> Result {
+command::reg("demo.read", [](Node* ctx, Node* in, Node* out) -> Result {
     Node* target = root(ctx)->find(in->get("path").toString());
     if (!target) return Result::fail("not found");
     out->at("value")->set(target->get());
@@ -278,7 +278,7 @@ command::reg("math.add", [](int a, int b) { return a + b; }, "add two numbers");
 
 ```cpp
 // Create and run a single command
-Command cmd = command::create("node.get");
+Command cmd = command::create("demo.read");
 cmd.input<schema::JsonS>(R"({"path":"robot/state"})");  // populate in node
 cmd.run();
 Result r = cmd.result();          // check outcome
@@ -286,7 +286,7 @@ Node* out = cmd.outputNode();     // read output
 
 // Pipeline — chain multiple commands with shared context
 Pipeline pipe;
-Command* c1 = pipe.add(command::create("node.get"));
+Command* c1 = pipe.add(command::create("demo.read"));
 c1->setContextNodes(pipe.contextNode(), paramsNode, outputNode);
 pipe.sync();
 ```

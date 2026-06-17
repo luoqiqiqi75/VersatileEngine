@@ -125,83 +125,96 @@ curl -X POST "http://localhost:12000/cmd/save?context=ve/server&async=1" \
 
 `/ve` is the VE native protocol endpoint.
 
+Envelope v2.1: requests use the top-level keys `op` (std operation), `cmd` (user
+command), or `batch` (array), with all operation arguments nested under `params`.
+`id` stays at the top level and is echoed back.
+
 Request:
 
 ```json
 {
-  "op": "node.get",
+  "op": "export",
   "id": 1,
-  "path": "ve/server/node/http",
-  "depth": 1,
-  "meta": true
+  "params": { "path": "ve/server/node/http", "depth": 1 }
 }
 ```
 
 Response:
 
 ```json
-{"ok":true,"id":1,"data":{...}}
-{"ok":true,"id":1,"accepted":true,"task_id":"abcd1234"}
-{"ok":false,"id":1,"code":"not_found","error":"node not found: foo/bar"}
+{"id":1,"code":0,"data":{...}}                            // success (code >= 0)
+{"id":1,"code":0}                                         // async accepted (Result::accept) -> HTTP 202
+{"id":1,"code":-3,"message":"node not found: foo/bar"}    // failure (code < 0)
 ```
 
-Common operations:
+`code >= 0` is success, `code < 0` is failure (`-2` invalid, `-3` not found,
+`-4` unsupported); `message` is present only on failure.
 
-| Op | Key fields | Description |
+Common operations (all arguments go in `params`):
+
+| Op | Key params | Description |
 |----|------------|-------------|
-| `node.get` | `path`, `depth?`, `meta?` | Read one node; optional `tree` and `meta` in response |
-| `node.list` | `path`, `meta?` | List direct children |
-| `node.set` | `path`, `value` | Set raw node value |
-| `node.put` | `path`, `tree` | Import/overwrite subtree |
-| `node.remove` | `path` | Remove node |
-| `node.trigger` | `path` | Fire `NODE_CHANGED` without changing value |
-| `command.list` | none | List registered commands |
-| `command.run` | `name`, `args`, `wait?` | Run a command |
-| `batch` | `items` | Execute multiple envelope requests |
-| `subscribe` | `path`, `bubble?` | Stateful transports only |
+| `get` | `path` | Read one node value |
+| `set` | `path`, `value` | Set raw node value |
+| `export` | `path`, `depth?` | Export subtree (`depth`: `-1` full, `0` value only, `N` levels) |
+| `import` | `path`, `tree`, `flags?` | Import subtree (`flags` `9` merge / `11` replace) |
+| `children` | `path` | List direct children |
+| `erase` | `path` | Remove node |
+| `trigger` | `path` | Fire `NODE_CHANGED` without changing value |
+| `commands` | none | List registered commands |
+| `subscribe` | `path`, `depth?`, `once?`, `immediate?` | Stateful transports only |
 | `unsubscribe` | `path` | Stateful transports only |
+
+User commands use the `cmd` field instead of an `op`; batch uses the top-level
+`batch` array (each item is its own `op`/`cmd` request).
 
 Examples:
 
 ```bash
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '{"op":"node.get","path":"ve/server/node/http/runtime/port","meta":true}'
+  -d '{"op":"get","id":1,"params":{"path":"ve/server/node/http/runtime/port"}}'
 
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '{"op":"node.set","path":"test/value","value":42}'
+  -d '{"op":"set","id":2,"params":{"path":"test/value","value":42}}'
 
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '{"op":"command.list"}'
+  -d '{"op":"commands","id":3,"params":{}}'
 
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '{"op":"command.run","name":"save","args":["json","/config","-f","config.json"],"wait":true}'
+  -d '{"cmd":"save","id":4,"params":{"format":"json","path":"/config","file":"config.json"}}'
+
+curl -X POST http://localhost:12000/ve \
+  -H "Content-Type: application/json" \
+  -d '{"batch":[{"op":"get","params":{"path":"one"}},{"op":"get","params":{"path":"two"}}],"id":5}'
 ```
 
 ### `POST /jsonrpc`
 
 JSON-RPC remains for standard clients that do not want to speak the VE native envelope directly. Internally it maps onto the same dispatcher as `/ve`.
 
-Supported methods:
+Supported methods (same names as the `/ve` ops):
 
-- `node.get`
-- `node.list`
-- `node.set`
-- `node.put`
-- `node.remove`
-- `node.trigger`
-- `command.list`
-- `command.run`
+- `get`
+- `set`
+- `export`
+- `import`
+- `children`
+- `erase`
+- `trigger`
+- `commands`
+
+User commands are called by their registered name as the JSON-RPC `method`.
 
 Example:
 
 ```bash
 curl -X POST http://localhost:12000/jsonrpc \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"node.get","params":{"path":"ve/server"},"id":1}'
+  -d '{"jsonrpc":"2.0","method":"get","params":{"path":"ve/server"},"id":1}'
 ```
 
 ---
@@ -213,37 +226,38 @@ Port `12100`. WebSocket transport for the same VE envelope.
 Requests:
 
 ```json
-{"op":"node.get","path":"ve/server","id":1,"depth":-1}
-{"op":"command.run","name":"save","args":["json","/config"],"wait":false,"id":2}
-{"op":"subscribe","path":"ve/server/node/http/runtime/port","tree":true,"id":3}
+{"op":"export","id":1,"params":{"path":"ve/server","depth":-1}}
+{"cmd":"save","id":2,"params":{"format":"json","path":"/config"}}
+{"op":"subscribe","id":3,"params":{"path":"ve/server/node/http/runtime/port","depth":0}}
 ```
 
-**Subscribe parameters (all default to `false`):**
-- `bubble`: monitor all descendant changes; push fires for each changed leaf with that leaf's path and scalar value
-- `tree`: when the subscribed node fires `NODE_CHANGED`, push the entire subtree as a Var dict instead of the node's scalar value
+**Subscribe parameters:**
+- `depth` (default `-1`): push depth on change — `-1` full subtree (Var dict), `0` value only, `N` recurse N levels
+- `once` (default `false`): push once, then auto-unsubscribe
+- `immediate` (default `false`): return the current state in the subscribe reply's `data` (same shape as `export`), instead of waiting for the first change
 
-Without either flag, only the exact subscribed node is monitored and the push carries its scalar value (`node.get()`).
+Subscriptions are exact-path: a descendant change does not fire a parent's
+subscription. To notify on a subtree, `trigger` the parent after updating children.
 
 Immediate replies:
 
 ```json
-{"ok":true,"id":1,"data":{"path":"ve/server","value":null,"tree":{...}}}
-{"ok":true,"id":2,"accepted":true,"task_id":"abcd1234"}
-{"ok":false,"id":9,"code":"not_found","error":"node not found: bad/path"}
+{"id":1,"code":0,"data":{...}}                            // export result
+{"id":2,"code":0}                                         // async accepted (Result::accept), no further reply
+{"id":3,"code":0}                                         // subscribe confirmed (data present only if immediate=true)
+{"id":9,"code":-3,"message":"node not found: bad/path"}   // failure
 ```
 
-Push events:
+Push events (no `id`; `data` carries value or subtree depending on `depth`):
 
 ```json
-{"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}
-{"event":"node.changed","path":"ve/server","value":{"node":{"http":{"runtime":{"port":12000}}}}}
-{"event":"task.result","id":2,"task_id":"abcd1234","ok":true,"data":"Saved to config.json"}
+{"event":"node.changed","path":"ve/server/node/http/runtime/port","data":12000}
+{"event":"node.changed","path":"ve/server","data":{"node":{"http":{"runtime":{"port":12000}}}}}
 ```
 
 **Push event behavior:**
-- Default (`bubble=false, tree=false`): `{"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}` (scalar value)
-- `tree=true`: `{"event":"node.changed","path":"ve/server","value":{"node":{"http":{"runtime":{"port":12000}}}}}` (entire subtree as Var dict)
-- `bubble=true`: fires for each descendant change with that descendant's path and scalar value
+- `depth=0`: `{"event":"node.changed","path":"ve/server/node/http/runtime/port","data":12000}` (scalar value)
+- `depth=-1` (default): `{"event":"node.changed","path":"ve/server","data":{"node":{"http":{"runtime":{"port":12000}}}}}` (subtree as Var dict)
 
 ---
 
@@ -254,13 +268,13 @@ Port `12200`. Same JSON envelope as WebSocket, but newline-delimited over TCP.
 Example session:
 
 ```text
-{"op":"node.get","path":"ve/server","id":1}
-{"ok":true,"id":1,"data":{"path":"ve/server","value":null}}
+{"op":"get","id":1,"params":{"path":"ve/server"}}
+{"id":1,"code":0,"data":{"value":null}}
 
-{"op":"subscribe","path":"ve/server/node/http/runtime/port","id":2}
-{"ok":true,"id":2,"data":{"path":"ve/server/node/http/runtime/port","subscribed":true}}
+{"op":"subscribe","id":2,"params":{"path":"ve/server/node/http/runtime/port","depth":0}}
+{"id":2,"code":0}
 
-{"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}
+{"event":"node.changed","path":"ve/server/node/http/runtime/port","data":12000}
 ```
 
 ---
@@ -271,12 +285,12 @@ Port `12300`. Stateless JSON envelope, one datagram per request.
 
 - No subscribe support
 - No async result push
-- `command.run(wait=false)` can still return `accepted + task_id`
+- async commands (`Result::accept`) cannot push results back over UDP
 
 Example:
 
 ```bash
-echo '{"op":"node.get","path":"ve/server","id":1}' | nc -u localhost 12300
+echo '{"op":"get","id":1,"params":{"path":"ve/server"}}' | nc -u localhost 12300
 ```
 
 ---
@@ -303,9 +317,9 @@ Payload is a MessagePack-encoded VE envelope dict.
 Examples:
 
 ```text
-REQUEST: {"op":"node.get","path":"ve/server","id":1}
-RESPONSE: {"ok":true,"id":1,"data":{"path":"ve/server","value":null}}
-NOTIFY: {"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}
+REQUEST: {"op":"get","id":1,"params":{"path":"ve/server"}}
+RESPONSE: {"id":1,"code":0,"data":{"value":null}}
+NOTIFY: {"event":"node.changed","path":"ve/server/node/http/runtime/port","data":12000}
 ```
 
 ---
@@ -406,7 +420,7 @@ curl -X POST http://localhost:12000/at/ve/server/static/config/mounts/%230/proxy
   -d '"http://10.0.0.5:9090/v2"'
 
 # WebSocket
-{"op":"node.set","path":"ve/server/static/config/mounts/#0/proxy/#0/target","value":"http://10.0.0.5:9090/v2"}
+{"op":"set","id":1,"params":{"path":"ve/server/static/config/mounts/#0/proxy/#0/target","value":"http://10.0.0.5:9090/v2"}}
 ```
 
 Setting target to an empty string disables the proxy rule (requests fall through to static file serving).
@@ -424,10 +438,13 @@ Setting target to an empty string disables the proxy rule (requests fall through
 
 NodeWsServer, NodeTcpServer, and BinTcpServer support subscriptions through `SubscribeService`.
 
-Modes:
+Matching is exact-path — only the subscribed node's own `NODE_CHANGED` fires a
+push; descendant changes do not bubble to a parent subscription. To notify on a
+subtree, `trigger` the parent node after updating its children.
 
-- Direct: only the exact node
-- Bubble: descendant changes too (`bubble=true`)
+Push shape is controlled per-subscription by `depth` (`-1` full subtree, `0`
+value only, `N` levels). `once` auto-unsubscribes after the first push;
+`immediate` returns the current state in the subscribe reply.
 
 Lifecycle:
 
@@ -589,11 +606,11 @@ search "Feature" /docs/http-plan --key
 
 # 3. Get specific section
 curl -X POST http://localhost:12000/ve \
-  -d '{"op":"node.get","path":"docs/http-plan/.../Feature 1","depth":1}'
+  -d '{"op":"export","id":1,"params":{"path":"docs/http-plan/.../Feature 1","depth":1}}'
 
 # 4. List document structure
 curl -X POST http://localhost:12000/ve \
-  -d '{"op":"node.list","path":"docs/http-plan/VE HTTP Service Enhancement Plan"}'
+  -d '{"op":"children","id":2,"params":{"path":"docs/http-plan/VE HTTP Service Enhancement Plan"}}'
 ```
 
 **Benefits for AI**:

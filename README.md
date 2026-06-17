@@ -37,10 +37,10 @@ Detailed design lineage is in [docs/HISTORY.md](docs/HISTORY.md).
 
 ```
 +-----------------------------------------------------------------+
-|  Programs and Adapters                           qt/ ros/ rtt/   |
+|  Programs and Adapters                           qt/ ros/ rtt/  |
 |  Qt and QML | DDS and ROS | RTT and xcore | JS and tools        |
 +-----------------------------------------------------------------+
-|  Service Layer                                   ve/service/     |
+|  Service Layer                                   ve/service/    |
 |  Terminal REPL | HTTP API | WebSocket push | TCP Binary IPC     |
 +-----------------------------------------------------------------+
 |  Core Layer                              ve/ (pure C++17)       |
@@ -179,10 +179,10 @@ target_link_libraries(myapp PRIVATE VersatileEngine::ve)
 
 // Access nodes by slash path (auto-created)
 auto* power = ve::n("/robot/state/power");
-power->set(ve::Var(1));
+power->set(1);                       // implicit Var construction — no ve::Var(...) needed
 
-// Read value
-int val = ve::n("/robot/state/power")->get<int>();
+// Read value (get("path") returns a Var; getInt/getDouble/getString read typed)
+int val = ve::n("/robot/state/power")->getInt();
 
 // Listen for value changes
 power->connect(ve::Node::NODE_CHANGED, myObj, [](const ve::Var& args) {
@@ -198,7 +198,7 @@ state->connect(ve::Node::NODE_ACTIVATED, myObj, [](const ve::Var& args) {
 
 // Slash-path accessor (shorthand)
 auto* speed = ve::n("robot/config/speed");
-speed->set(ve::Var(1.5));
+speed->set(1.5);
 ```
 
 ### Module Registration
@@ -212,7 +212,7 @@ public:
     using Module::Module;
 
     void init() override {
-        ve::n("/robot/state/power")->set(ve::Var(0));
+        ve::n("/robot/state/power")->set(0);
     }
 
     void ready() override {
@@ -353,14 +353,14 @@ Benchmarks run on Intel i7-12700K, Windows 11, MSVC 2022 Release build. See `ve/
 |------|-----|------|
 | `NONE` | (empty) | 0 |
 | `BOOL` | `bool` | inline |
-| `INT` | `int` | inline |
-| `INT64` | `int64_t` | inline |
+| `INT` | `int64_t` (accepts `int`/`int64_t`) | inline |
 | `DOUBLE` | `double` | inline |
 | `STRING` | `std::string` | heap ptr |
 | `BIN` | `std::vector<uint8_t>` | heap ptr |
 | `LIST` | `std::vector<Var>` | heap ptr |
 | `DICT` | `Dict<Var>` | heap ptr |
 | `POINTER` | `void*` | inline |
+| `CALLABLE` | `std::function<Var(const Var&)>` | heap ptr |
 | `CUSTOM` | `CustomData*` | heap ptr |
 
 ### Service Endpoints
