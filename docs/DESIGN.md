@@ -72,7 +72,7 @@ Main types:
 - `ve::Var`: compact runtime value container
 - `ve::Object`: signal-capable base object
 - `ve::Node`: ordered reactive tree node
-- `ve::Command`, `ve::Step`, `ve::Pipeline`: command and execution model
+- `ve::Command`, `ve::Pipeline`: command registration, dispatch, and execution pipeline
 - `ve::Module`: runtime module lifecycle
 - `ve::Entry`: process setup, module loading, and shutdown
 - `ve::Loop`: event-loop and cross-thread dispatch support

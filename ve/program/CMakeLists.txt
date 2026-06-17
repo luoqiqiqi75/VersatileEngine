@@ -18,6 +18,10 @@ add_custom_command(
     COMMENT "Copy default ve.json next to ve binary"
 )
 
+if(VE_INSTALL)
+    install(TARGETS ${VE_PROGRAM_TARGET} RUNTIME DESTINATION bin)
+endif()
+
 # --- Module DLLs ---
 if(VE_BUILD_MCP)
     add_subdirectory(mcp)

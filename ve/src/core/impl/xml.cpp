@@ -7,7 +7,6 @@
 // ----------------------------------------------------------------------------
 #include "ve/core/impl/xml.h"
 #include "ve/core/node.h"
-#include "ve/core/schema.h"
 #include "ve/core/log.h"
 #include <pugixml.hpp>
 #include <sstream>
@@ -17,7 +16,7 @@ namespace ve {
 namespace impl::xml {
 
 // Helper: recursive ve::Node -> pugixml node (reverse of xmlNodeToNode)
-static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node)
+static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node, bool auto_ignore)
 {
     if (!ve_node) return;
 
@@ -31,7 +30,9 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node)
     for (const auto* child : ve_node->children()) {
         if (!child) continue;
         std::string child_name = child->name();
-        
+
+        if (auto_ignore && !child_name.empty() && child_name[0] == '_') continue;
+
         // Handle attributes
         if (!child_name.empty() && child_name[0] == '@') {
             std::string attr_name = child_name.substr(1);
@@ -42,7 +43,7 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node)
         } else {
             // Handle normal children
             if (child_name.empty()) child_name = "item";
-            
+
             // Strip #N suffix for XML tag name
             size_t hash_pos = child_name.find('#');
             if (hash_pos != std::string::npos) {
@@ -51,30 +52,22 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node)
             }
 
             auto xml_child = xml_node.append_child(child_name.c_str());
-            nodeToXmlNode(child, xml_child);
+            nodeToXmlNode(child, xml_child, auto_ignore);
         }
     }
 }
 
-std::string exportTree(const Node* node, int indent)
-{
-    if (!node) return "";
-    schema::ExportOptions opts;
-    opts.indent = indent;
-    return exportTree(node, opts);
-}
-
-std::string exportTree(const Node* node, const schema::ExportOptions& options)
+std::string exportTree(const Node* node, int indent, bool auto_ignore)
 {
     if (!node) return "";
 
     pugi::xml_document doc;
     auto root = doc.append_child(node->name().empty() ? "root" : node->name().c_str());
 
-    nodeToXmlNode(node, root);
+    nodeToXmlNode(node, root, auto_ignore);
 
     std::ostringstream oss;
-    doc.save(oss, options.indent > 0 ? "  " : "", pugi::format_default);
+    doc.save(oss, indent > 0 ? "  " : "", pugi::format_default);
     return oss.str();
 }
 
@@ -307,11 +300,10 @@ static std::string fixHtmlToXml(const std::string& html) {
 
 bool importTree(Node* node, const std::string& xml)
 {
-    schema::ImportOptions opts;
-    return importTree(node, xml, opts);
+    return importTree(node, xml, Node::COPY_DEFAULT);
 }
 
-bool importTree(Node* node, const std::string& xml, const schema::ImportOptions& options)
+bool importTree(Node* node, const std::string& xml, int copy_flags)
 {
     if (!node || xml.empty()) return false;
 
@@ -345,7 +337,7 @@ bool importTree(Node* node, const std::string& xml, const schema::ImportOptions&
         }
     }
 
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+    node->copy(&parsed, copy_flags);
     return true;
 }
 

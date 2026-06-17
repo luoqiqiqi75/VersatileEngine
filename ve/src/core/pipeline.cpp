@@ -1,240 +1,134 @@
-// pipeline.cpp — ve::Pipeline: state machine + Step chain execution
+// pipeline.cpp - transient command/proc execution graph
 
 #include "ve/core/pipeline.h"
-#include "ve/core/node.h"
-#include "ve/core/factory.h"
-#include "ve/core/schema.h"
+
+#include <atomic>
+#include <thread>
+
+#include "ve/core/log.h"
 
 namespace ve {
 
 struct Pipeline::Private
 {
-    Vector<Step>    steps;
-    List<Step>      queue;
-    State           state = IDLE;
-    int             stepIndex = -1;
-    Node*           context = nullptr;
-    bool            ownsContext = false;
-    Result          lastResult = Result::ok();
-    ResultHandler   handler;
+    Node* ctx_n = nullptr;
+    Node* in_n = nullptr;
+    Node* out_n = nullptr;
+
+    Node* pipe_n = nullptr;
+
+    std::atomic_bool running = false;
+
+    List<Command> commands;
+
+    Result result;
+
+public:
+    Private() { ctx_n = new Node; }
+    ~Private() { delete ctx_n; }
+
+    void execute(std::shared_ptr<Private> self);
 };
 
-Pipeline::Pipeline(const std::string& name, Node* ctx)
-    : Object(name)
+void Pipeline::Private::execute(std::shared_ptr<Private> self)
 {
-    if (ctx) {
-        _p->context = ctx;
-        _p->ownsContext = false;
-    } else {
-        _p->context = new Node("_ctx");
-        _p->ownsContext = true;
+    if (running && result.isSuccess() && !commands.empty()) { // continue
+        const Command exec_c = commands.front();
+        commands.pop_front();
+        exec_c.call([self] (Command& c) {
+            Result r = c.result();
+            if (self->running && !r.isSuccess()) {
+                self->result = std::move(r); // save result if still running
+                self->running = false;
+            }
+            self->execute(self);
+        });
+    } else { // stop
+        pipe_n->trigger<FINISHED>();
+        running = false;
+        pipe_n->disconnectAll(); // must reconnect if restart
+        commands.clear();
     }
 }
 
-Pipeline::~Pipeline()
+Pipeline::Pipeline(const Node* ctx) : _p(std::make_shared<Private>())
 {
-    if (_p->ownsContext && _p->context) delete _p->context;
+    _p->ctx_n->copy(ctx);
+
+    _p->ctx_n->remove("_pipe");
+    _p->pipe_n = _p->ctx_n->at("_pipe");
+
+    _p->in_n = _p->pipe_n->at("i");
+    _p->out_n = _p->pipe_n->at("o");
 }
 
-// --- build ---
+Pipeline::~Pipeline() = default;
 
-Pipeline& Pipeline::add(const Step& step)
+Node* Pipeline::contextNode() const { return _p->ctx_n; }
+Node* Pipeline::inputNode() const { return _p->in_n; }
+Node* Pipeline::outputNode() const { return _p->out_n; }
+
+Object* Pipeline::object() const { return _p->pipe_n; }
+
+const Result& Pipeline::result() const { return _p->result; }
+
+Command* Pipeline::add(Command command)
 {
-    _p->steps.push_back(step);
-    return *this;
+    if (_p->running) {
+        veLogW << "<ve::pipeline> commands cannot change while running";
+        return nullptr;
+    }
+    command.setContextNodes(contextNode(), command.inputNode(), command.outputNode());
+    _p->commands.push_back(command);
+    return &_p->commands.back();
 }
 
-int Pipeline::stepCount() const { return static_cast<int>(_p->steps.size()); }
-
-// --- execution state machine ---
-
-Result Pipeline::start()
+Command* Pipeline::addProc(Proc proc, Loop* loop)
 {
-    _p->state = RUNNING;
-    _p->stepIndex = 0;
-    _p->lastResult = Result::ok();
-
-    _p->queue.clear();
-    for (const auto& s : _p->steps) {
-        _p->queue.push_back(s);
+    if (_p->running) {
+        veLogW << "<ve::pipeline> commands cannot change while running";
+        return nullptr;
     }
-
-    if (_p->queue.empty()) {
-        complete(DONE, CMD_DONE, Result::ok());
-        return _p->lastResult;
-    }
-
-    runNext();
-
-    if (_p->state == ERRORED) {
-        return _p->lastResult;
-    }
-    if (_p->state == RUNNING || _p->state == PAUSED) {
-        return Result::accept();
-    }
-    return _p->lastResult;
+    Node* fac_n = _p->pipe_n->at("proc")->append();
+    fac_n->set(Var::callable(std::move(proc)));
+    if (loop) fac_n->set("loop", Var::ptr(loop));
+    return add(Command(fac_n));
 }
 
-void Pipeline::pause()
+void Pipeline::onStarted(Object* observer, Callback cb, Loop* loop) { on<STARTED>(observer, std::move(cb), loop); }
+void Pipeline::onFinished(Object* observer, Callback cb, Loop* loop) { on<FINISHED>(observer, std::move(cb), loop); }
+
+void Pipeline::cancel() const
 {
-    if (_p->state == RUNNING) {
-        _p->state = PAUSED;
-    }
+    _p->result.setCode(CANCELED);
+    _p->running = false;
 }
 
-void Pipeline::resume()
+void Pipeline::async() const
 {
-    if (_p->state != PAUSED) {
+    if (_p->running) {
+        veLogE << "<ve::pipeline> already running";
         return;
     }
-    _p->state = RUNNING;
-    runNext();
+    _p->running = true;
+    _p->result = Result::ok();
+    _p->pipe_n->trigger<STARTED>();
+    _p->execute(_p);
 }
 
-void Pipeline::stop()
+void Pipeline::sync(Loop* cur_l) const
 {
-    if (_p->state == IDLE) {
-        return;
-    }
-    _p->queue.clear();
-    _p->state = IDLE;
-    _p->stepIndex = -1;
-}
-
-void Pipeline::finish(const Result& result)
-{
-    handleResult(result);
-}
-
-Pipeline::State Pipeline::state() const { return _p->state; }
-
-// --- progress ---
-
-int Pipeline::currentStep() const { return _p->stepIndex; }
-Node* Pipeline::context() const { return _p->context; }
-const Result& Pipeline::lastResult() const { return _p->lastResult; }
-
-// --- result handler ---
-
-void Pipeline::setResultHandler(const ResultHandler& handler)
-{
-    _p->handler = handler;
-}
-
-// --- clone ---
-
-Pipeline* Pipeline::clone() const
-{
-    auto* copy = new Pipeline(name());
-    for (const auto& s : _p->steps) {
-        copy->_p->steps.push_back(s);
-    }
-    return copy;
-}
-
-// --- internal ---
-
-void Pipeline::runNext()
-{
-    while (_p->state == RUNNING && !_p->queue.empty()) {
-        Step step = std::move(_p->queue.front());
-        _p->queue.pop_front();
-
-        const Var stepIn(Var(static_cast<void*>(_p->context)));
-
-        if (step.second) {
-            auto alive = Alive::create();
-            auto self = this;
-            auto ctx = _p->context;
-            auto stepFn = step;
-            step.second.post([self, alive, stepFn, ctx]() {
-                if (alive.dead()) {
-                    return;
-                }
-                if (!stepFn.first.isCallable()) {
-                    self->handleResult(Result::fail(Var("step has no callable")));
-                    return;
-                }
-                Var ret = stepFn.first.invoke(Var(static_cast<void*>(ctx)));
-                self->handleResult(resultFromStepReturn(ret));
-            });
-            return;
-        }
-
-        if (!step.first.isCallable()) {
-            complete(ERRORED, CMD_ERROR, Result::fail(Var("step has no callable")));
-            return;
-        }
-
-        Var ret = step.first.invoke(stepIn);
-        Result r = resultFromStepReturn(ret);
-        if (r.isAccepted()) {
-            return;
-        }
-        if (r.isError()) {
-            complete(ERRORED, CMD_ERROR, r);
-            return;
-        }
-        _p->lastResult = r;
-        ++_p->stepIndex;
-    }
-
-    if (_p->state == RUNNING && _p->queue.empty()) {
-        complete(DONE, CMD_DONE, _p->lastResult);
+    if (!cur_l) cur_l = loop::current();   // the loop driving this thread, if any
+    async();
+    while (_p->running) {
+        if (cur_l) cur_l->processEvents(); // keep pumping so loop-bound steps can hop back
+        std::this_thread::yield();
     }
 }
 
-void Pipeline::handleResult(const Result& result)
-{
-    if (_p->state != RUNNING && _p->state != PAUSED) {
-        return;
-    }
+namespace pipeline {
 
-    if (result.isError()) {
-        complete(ERRORED, CMD_ERROR, result);
-        return;
-    }
 
-    _p->lastResult = result;
-    ++_p->stepIndex;
-
-    if (_p->queue.empty()) {
-        complete(DONE, CMD_DONE, result);
-        return;
-    }
-
-    if (_p->state == PAUSED) {
-        return;
-    }
-    _p->state = RUNNING;
-    runNext();
-}
-
-void Pipeline::complete(State finalState, SignalT signal, const Result& result)
-{
-    Result out = result;
-    if (_p->context && finalState == DONE && signal == CMD_DONE) {
-        if (auto* rn = _p->context->find("_result", false)) {
-            out.setContent(schema::exportAs<schema::VarS>(rn));
-        }
-    }
-
-    _p->state = finalState;
-    _p->lastResult = std::move(out);
-    _p->queue.clear();
-
-    if (signal == CMD_DONE) {
-        trigger<CMD_DONE>(Var::custom(_p->lastResult));
-    }
-    else if (signal == CMD_ERROR) {
-        trigger<CMD_ERROR>(Var::custom(_p->lastResult));
-    }
-
-    if (_p->handler) {
-        auto h = std::move(_p->handler);
-        Result res = _p->lastResult;
-        h(res);
-    }
-}
+} // namespace pipeline
 
 } // namespace ve

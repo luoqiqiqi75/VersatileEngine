@@ -1,81 +1,131 @@
 // ----------------------------------------------------------------------------
-// test_loop.cpp — ve::Loop / EventLoop / LoopRef
+// test_loop.cpp - ve::Loop virtual base + pointer dispatch
 // ----------------------------------------------------------------------------
 
 #include "ve_test.h"
 #include "ve/core/loop.h"
 #include "ve/core/object.h"
+
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 using namespace ve;
 
-// --- basic lifecycle ---
+namespace {
 
-VE_TEST(loop_create_destroy) {
-    EventLoop loop("test");
-    VE_ASSERT_EQ(loop.name(), "test");
+static bool waitUntil(const std::function<bool()>& fn, int timeout_ms = 1000)
+{
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (clock::now() < deadline) {
+        if (fn()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return fn();
+}
+
+class TestLoop : public Loop
+{
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::deque<Task> tasks_;
+    std::thread worker_;
+    bool running_ = false;
+    bool quit_ = false;
+
+public:
+    void post(Task task) override
+    {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            tasks_.push_back(std::move(task));
+        }
+        cv_.notify_one();
+    }
+
+    explicit TestLoop(const std::string& name = "test")
+        : Loop(name)
+    {}
+
+    ~TestLoop() override { stop(); }
+
+    bool start() override
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (running_) return false;
+        quit_ = false;
+        running_ = true;
+        worker_ = std::thread([this] {
+            for (;;) {
+                Task task;
+                {
+                    std::unique_lock<std::mutex> lk(mtx_);
+                    cv_.wait(lk, [&] { return quit_ || !tasks_.empty(); });
+                    if (quit_ && tasks_.empty()) break;
+                    task = std::move(tasks_.front());
+                    tasks_.pop_front();
+                }
+                if (task) task();
+            }
+        });
+        return true;
+    }
+
+    bool stop() override
+    {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            if (!running_) return false;
+            quit_ = true;
+            running_ = false;
+        }
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();
+        return true;
+    }
+
+    bool isRunning() const override { return running_; }
+};
+
+} // namespace
+
+VE_TEST(loop_default_inline_post) {
+    Loop loop("inline");
+    std::atomic<int> val{0};
+    loop.post([&] { val.store(1); });
+    VE_ASSERT_EQ(val.load(), 1);
     VE_ASSERT(!loop.isRunning());
 }
 
-VE_TEST(loop_start_stop) {
-    EventLoop loop("test", 1);
+VE_TEST(loop_custom_start_stop) {
+    TestLoop loop;
+    VE_ASSERT(!loop.isRunning());
     VE_ASSERT(loop.start());
     VE_ASSERT(loop.isRunning());
+    VE_ASSERT(!loop.start());
     VE_ASSERT(loop.stop());
     VE_ASSERT(!loop.isRunning());
+    VE_ASSERT(!loop.stop());
 }
 
-VE_TEST(loop_double_start) {
-    EventLoop loop("test", 1);
-    VE_ASSERT(loop.start());
-    VE_ASSERT(!loop.start());  // already running
+VE_TEST(loop_custom_post_single) {
+    TestLoop loop;
+    loop.start();
+
+    std::atomic<int> val{0};
+    loop.post([&] { val.store(42); });
+
+    VE_ASSERT(waitUntil([&] { return val.load() == 42; }));
     loop.stop();
 }
 
-VE_TEST(loop_double_stop) {
-    EventLoop loop("test", 1);
-    loop.start();
-    VE_ASSERT(loop.stop());
-    VE_ASSERT(!loop.stop());   // already stopped
-}
-
-// --- post ---
-
-VE_TEST(loop_post_single) {
-    EventLoop loop("test", 1);
-    loop.start();
-
-    std::atomic<int> count{0};
-    loop.post([&] { count.store(42); });
-
-    // wait for task to complete
-    for (int i = 0; i < 100 && count.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(count.load(), 42);
-    loop.stop();
-}
-
-VE_TEST(loop_post_multiple) {
-    EventLoop loop("test", 2);
-    loop.start();
-
-    std::atomic<int> count{0};
-    for (int i = 0; i < 100; ++i)
-        loop.post([&] { count.fetch_add(1); });
-
-    // wait for tasks
-    for (int i = 0; i < 200 && count.load() < 100; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(count.load(), 100);
-    loop.stop();
-}
-
-VE_TEST(loop_post_from_threads) {
-    EventLoop loop("test", 2);
+VE_TEST(loop_custom_post_from_threads) {
+    TestLoop loop;
     loop.start();
 
     std::atomic<int> count{0};
@@ -88,200 +138,69 @@ VE_TEST(loop_post_from_threads) {
     }
     for (auto& th : threads) th.join();
 
-    // wait for all tasks
-    for (int i = 0; i < 500 && count.load() < 1000; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(count.load(), 1000);
+    VE_ASSERT(waitUntil([&] { return count.load() == 1000; }, 1500));
     loop.stop();
 }
 
-// --- LoopRef ---
-
-VE_TEST(loop_ref_from_loop) {
-    EventLoop loop("test", 1);
-    loop.start();
-
-    LoopRef ref = loop;
-    VE_ASSERT(!!ref);
+VE_TEST(loop_asio_direct_construct) {
+    AsioLoop loop("direct.asio");
+    VE_ASSERT(loop.start());
 
     std::atomic<int> val{0};
-    ref.post([&] { val.store(99); });
+    loop.post([&] { val.store(12); });
 
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(val.load(), 99);
+    VE_ASSERT(waitUntil([&] { return val.load() == 12; }));
     loop.stop();
 }
 
-VE_TEST(loop_ref_empty) {
-    LoopRef ref;
-    VE_ASSERT(!ref);
-    ref.post([] {});  // should not crash
-}
-
-VE_TEST(loop_ref_dead_loop) {
-    LoopRef ref;
-    {
-        EventLoop loop("temp", 1);
-        loop.start();
-        ref = loop;
-        VE_ASSERT(!!ref);
-    }  // loop destroyed here
-    // ref still "looks" valid (first non-empty) but loop is dead
-    ref.post([] {});  // should not crash — alive check prevents call
-}
-
-// --- global loop ---
-
-VE_TEST(loop_global_main) {
-    auto& m = loop::main();
-    VE_ASSERT(m.isRunning());
-    VE_ASSERT_EQ(m.name(), "ve.loop.main");
+VE_TEST(loop_global_main_pointer) {
+    Loop* m = loop::main();
+    VE_ASSERT(m != nullptr);
+    VE_ASSERT(m->isRunning());
 
     std::atomic<int> val{0};
-    m.post([&] { val.store(1); });
+    m->post([&] { val.store(1); });
 
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(val.load(), 1);
+    VE_ASSERT(waitUntil([&] { return val.load() == 1; }));
 }
 
-VE_TEST(loop_global_pool) {
-    auto& p = loop::pool();
-    VE_ASSERT(p.isRunning());
-    VE_ASSERT_EQ(p.name(), "ve.loop.pool");
+VE_TEST(loop_global_pool_pointer) {
+    Loop* p = loop::pool();
+    VE_ASSERT(p != nullptr);
+    VE_ASSERT(p->isRunning());
 }
 
-VE_TEST(loop_convenience_post) {
-    std::atomic<int> val{0};
-    loop::post([&] { val.store(77); });
+VE_TEST(loop_set_main_borrowed_pointer) {
+    TestLoop custom("custom.main");
+    custom.start();
 
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(val.load(), 77);
-}
-
-// --- restart ---
-
-VE_TEST(loop_restart) {
-    EventLoop loop("test", 1);
-    loop.start();
+    Loop* original = loop::main();
+    loop::setMain(&custom);
+    VE_ASSERT(loop::main() == &custom);
 
     std::atomic<int> val{0};
-    loop.post([&] { val.store(1); });
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    VE_ASSERT_EQ(val.load(), 1);
+    loop::main()->post([&] { val.store(77); });
 
-    loop.stop();
+    VE_ASSERT(waitUntil([&] { return val.load() == 77; }));
 
-    // restart
-    loop.start();
-    loop.post([&] { val.store(2); });
-    for (int i = 0; i < 100 && val.load() == 1; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    VE_ASSERT_EQ(val.load(), 2);
-
-    loop.stop();
+    loop::setMain(nullptr);
+    VE_ASSERT(loop::main() == original);
+    custom.stop();
 }
-
-// --- AliveToken: owner destroyed → task discarded ---
-
-VE_TEST(loop_alive_token_basic) {
-    auto token = Alive::create();
-    EventLoop loop("test", 1);
-    loop.start();
-
-    std::atomic<int> val{0};
-    loop.post(token, [&] { val.store(1); });
-
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    VE_ASSERT_EQ(val.load(), 1);
-    loop.stop();
-}
-
-VE_TEST(loop_alive_token_dead) {
-    auto token = Alive::create();
-    EventLoop loop("test", 1);
-    loop.start();
-
-    std::atomic<int> val{0};
-    token.kill();  // "dead" before task executes
-    loop.post(token, [&] { val.store(99); });
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    VE_ASSERT_EQ(val.load(), 0);  // task was discarded
-    loop.stop();
-}
-
-VE_TEST(loop_post_token_alive) {
-    auto token = Alive::create();
-    std::atomic<int> val{0};
-
-    loop::post(token, [&] { val.store(42); });
-
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    VE_ASSERT_EQ(val.load(), 42);
-}
-
-VE_TEST(loop_post_token_dead) {
-    auto token = Alive::create();
-    EventLoop loop("test", 1);
-    std::atomic<int> val{0};
-
-    loop::post(LoopRef::from(loop), token, [&] { val.store(99); });
-    token.kill();  // "dead" before task executes
-
-    loop.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    VE_ASSERT_EQ(val.load(), 0);  // task discarded
-    loop.stop();
-}
-
-VE_TEST(loop_post_token_context) {
-    auto token = Alive::create();
-    int dummy;
-    void* ctx = &dummy;
-    std::atomic<void*> captured_ctx{nullptr};
-
-    loop::post(token, ctx, [&] {
-        captured_ctx.store(loop::context());
-    });
-
-    for (int i = 0; i < 100 && !captured_ctx.load(); ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-    VE_ASSERT_EQ(captured_ctx.load(), ctx);
-}
-
-VE_TEST(loop_context_null_outside) {
-    VE_ASSERT(loop::context() == nullptr);
-}
-
-// --- signal dispatch with loop: observer destroyed → no crash ---
 
 VE_TEST(loop_signal_observer_destroyed) {
-    EventLoop loop("test", 1);
+    TestLoop loop;
     loop.start();
 
     Object sender("sender");
     auto* observer = new Object("observer");
 
     std::atomic<int> val{0};
-    sender.connect<1>(observer, [&]() { val.store(1); }, LoopRef::from(loop));
+    sender.connect<1>(observer, [&]() { val.store(1); }, &loop);
 
     sender.trigger<1>();
-    for (int i = 0; i < 100 && val.load() == 0; ++i)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    VE_ASSERT_EQ(val.load(), 1);
+    VE_ASSERT(waitUntil([&] { return val.load() == 1; }));
 
-    // destroy observer → task silently discarded
     delete observer;
     val.store(0);
     sender.trigger<1>();
@@ -291,21 +210,67 @@ VE_TEST(loop_signal_observer_destroyed) {
     loop.stop();
 }
 
+VE_TEST(object_sender_direct) {
+    Object sender("sender");
+    Object observer("observer");
+
+    Object* seen = nullptr;
+    sender.connect<1>(&observer, [&]() { seen = Object::sender(); });
+
+    sender.trigger<1>();
+    VE_ASSERT_EQ(seen, &sender);
+    VE_ASSERT(Object::sender() == nullptr);
+}
+
+VE_TEST(object_sender_queued) {
+    TestLoop loop;
+    loop.start();
+
+    Object sender("sender");
+    Object observer("observer");
+
+    std::atomic<Object*> seen{nullptr};
+    sender.connect<1>(&observer, [&]() { seen.store(Object::sender()); }, &loop);
+
+    sender.trigger<1>();
+    VE_ASSERT(waitUntil([&] { return seen.load() == &sender; }));
+    VE_ASSERT(Object::sender() == nullptr);
+
+    loop.stop();
+}
+
+VE_TEST(loop_signal_observer_destroyed_inflight) {
+    TestLoop loop;
+
+    Object sender("sender");
+    auto* observer = new Object("observer");
+
+    std::atomic<int> val{0};
+    sender.connect<1>(observer, [&]() { val.store(1); }, &loop);
+
+    sender.trigger<1>();
+    delete observer;
+
+    loop.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    VE_ASSERT_EQ(val.load(), 0);
+    loop.stop();
+}
+
 VE_TEST(loop_signal_sender_destroyed) {
-    EventLoop loop("test", 1);
+    TestLoop loop;
 
     auto* sender = new Object("sender");
     Object observer("observer");
 
     std::atomic<int> val{0};
-    sender->connect<1>(&observer, [&]() { val.store(1); }, LoopRef::from(loop));
+    sender->connect<1>(&observer, [&]() { val.store(1); }, &loop);
 
-    // queue task while loop is stopped, then destroy sender before starting
     sender->trigger<1>();
     delete sender;
 
     loop.start();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    VE_ASSERT_EQ(val.load(), 0);  // task discarded: sender_alive is false
+    VE_ASSERT_EQ(val.load(), 0);
     loop.stop();
 }

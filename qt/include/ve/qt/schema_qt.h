@@ -1,11 +1,5 @@
 // ----------------------------------------------------------------------------
-// schema_qt.h — ve::schema QJsonS / QVariantS format tags + convenience helpers
-// ----------------------------------------------------------------------------
-// QJsonS:    Node <-> QJsonValue (native Qt JSON, no string round-trip)
-// QVariantS: Node <-> QVariant   (direct QML/QObject property bridge)
-//
-// Pattern follows ros/yaml_schema.h: format tag + SchemaTraits specialization,
-// internally delegates to VarS via var_qt.h conversion functions.
+// schema_qt.h — ve::schema QJsonS / QVariantS format structs + helpers
 // ----------------------------------------------------------------------------
 #pragma once
 
@@ -19,30 +13,24 @@
 
 namespace ve::schema {
 
-// --- QJsonS: QJsonValue-based Node serialization ---------------------------
-
-struct QJsonS {};
-
-template<>
-struct SchemaTraits<QJsonS>
+struct QJsonS
 {
-    VE_API static QJsonValue exportNode(const Node* node);
-    VE_API static QJsonValue exportNode(const Node* node, const ExportOptions& options);
-    VE_API static bool importNode(Node* node, const QJsonValue& data);
-    VE_API static bool importNode(Node* node, const QJsonValue& data, const ImportOptions& options);
+    struct ExportOptions { bool auto_ignore = true; };
+
+    VE_API static QJsonValue fromNode(const Node* node);
+    VE_API static QJsonValue fromNode(const Node* node, const ExportOptions& options);
+    VE_API static bool toNode(Node* node, const QJsonValue& data);
+    VE_API static bool toNode(Node* node, const QJsonValue& data, int copy_flags);
 };
 
-// --- QVariantS: QVariant-based Node serialization --------------------------
-
-struct QVariantS {};
-
-template<>
-struct SchemaTraits<QVariantS>
+struct QVariantS
 {
-    VE_API static QVariant exportNode(const Node* node);
-    VE_API static QVariant exportNode(const Node* node, const ExportOptions& options);
-    VE_API static bool importNode(Node* node, const QVariant& data);
-    VE_API static bool importNode(Node* node, const QVariant& data, const ImportOptions& options);
+    struct ExportOptions { bool auto_ignore = true; };
+
+    VE_API static QVariant fromNode(const Node* node);
+    VE_API static QVariant fromNode(const Node* node, const ExportOptions& options);
+    VE_API static bool toNode(Node* node, const QVariant& data);
+    VE_API static bool toNode(Node* node, const QVariant& data, int copy_flags);
 };
 
 } // namespace ve::schema
@@ -53,7 +41,7 @@ namespace ve::qt {
 
 inline QJsonDocument nodeToQJsonDoc(const ve::Node* node, int indent = 2)
 {
-    const QJsonValue jv = ve::schema::exportAs<ve::schema::QJsonS>(node);
+    const QJsonValue jv = ve::schema::fromNode<ve::schema::QJsonS>(node);
     if (jv.isObject()) {
         return QJsonDocument(jv.toObject());
     }
@@ -74,7 +62,7 @@ inline bool importQJsonInto(ve::Node* node, const QJsonDocument& doc)
     } else if (doc.isArray()) {
         jv = doc.array();
     }
-    return ve::schema::importAs<ve::schema::QJsonS>(node, jv);
+    return ve::schema::toNode<ve::schema::QJsonS>(node, jv);
 }
 
 } // namespace ve::qt

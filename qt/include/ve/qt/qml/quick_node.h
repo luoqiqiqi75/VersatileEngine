@@ -86,8 +86,8 @@ public slots:
 
     void trigger(const QString& path) const;
 
-    QVariant exportAsVar(const QString& path) const;
-    void importFromVar(const QString& path, const QVariant& var) const;
+    QVariant toVar(const QString& path) const;
+    void fromVar(const QString& path, const QVariant& var) const;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

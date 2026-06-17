@@ -94,7 +94,7 @@ target->clear();                           // drop all children, keep node itsel
 
 ### Node as transient aggregator → schema serialization
 
-When building a structured blob to serialize (YAML / JSON / Bin / Markdown), prefer **a temporary unowned `Node`** as the aggregator and serialize it via the schema layer. The schema system is Node-centric — every format implements `SchemaTraits<F>::exportNode(const Node*)`.
+When building a structured blob to serialize (YAML / JSON / Bin / Markdown), prefer **a temporary unowned `Node`** as the aggregator and serialize it via the schema layer. The schema system is Node-centric — every format implements `Format::fromNode(const Node*)`.
 
 ```cpp
 Node payload("payload");
@@ -103,8 +103,8 @@ payload.set("mode", std::string{"position"});
 payload.at("limits")->set("max", 10.0);
 
 // Pick a format tag — JsonS / BinS / XmlS / VarS / MdS / YamlS (yaml lives in ve::ros)
-std::string yaml = schema::exportAs<schema::YamlS>(&payload);
-std::string json = schema::exportAs<schema::JsonS>(&payload);
+std::string yaml = schema::fromNode<schema::YamlS>(&payload);
+std::string json = schema::fromNode<schema::JsonS>(&payload);
 
 // Convenience wrappers also exist where they read more naturally:
 std::string yaml2 = ve::ros::yaml::encode(&payload);  // same path, shorter name
@@ -242,57 +242,66 @@ Default log directory: `./log/` (falls back to platform-specific if creation fai
 }
 ```
 
-## Command Implementation
+## Command System
 
-### Use `command` for name-based dispatch
+### Registration
 
-Whenever code dispatches by a string key — protocol `op`, RPC `method`, REPL verb, plugin action — register each handler through `ve::command::reg(key, fn, help)` and dispatch via `ve::command::call(key, ctx)`. The command registry is hash-backed, carries help text and parameter declarations, and integrates with `Pipeline` for async/multi-step handlers.
-
-```cpp
-// Registration (e.g. in module init())
-command::reg("node.get", &handleNodeGet, "node.get <path> — read a node");
-command::reg("node.set", &handleNodeSet, "node.set <path> <value> — write a node");
-command::reg("node.list", &handleNodeList, "node.list <path> — list children");
-
-// Dispatch (single line, replaces the entire if-chain)
-Result r = command::call(op, ctx);
-```
-
-This collapses N-way string comparison into a single hash lookup, makes the supported set introspectable (`command::keys()`, `command::help(key)`), and lets new handlers register from any module without touching the dispatcher.
-
-For local dispatch that doesn't need to be exposed globally, the same idea applies one level down: store handlers as `Var::callable` on a dedicated dispatcher `Node`, then `dispatcher->find(op)->get().invoke(...)`. Reserve plain `switch` for fixed type enums (e.g. `Var::Type`), where the value space is closed.
-
-### Implementing a single command
-
-When implementing new commands via `command::reg()`:
+Register commands via `command::reg(key, callable, help)`. The callable is adapted to `Proc = std::function<Result(Node* ctx, Node* in, Node* out)>` automatically:
 
 ```cpp
-command::reg("mycommand", [](const Var& args) -> Result {
-    // Args is always a List
-    if (!args.isList()) {
-        return Result(Result::FAIL, Var("Args must be a list"));
-    }
-    
-    // Parse flags
-    std::vector<std::string> tokens;
-    for (auto& item : args.toList()) {
-        tokens.push_back(item.toString());
-    }
-    auto f = detail::parseFlags(tokens, 0);
-    
-    // Get positional args
-    std::string format = f.pos(0);
-    std::string path = f.pos(1);
-    
-    // Get flags
-    std::string file = f.get("file", 'f');
-    bool compact = f.has("compact");
-    
-    // Do work...
-    
-    return Result(Result::SUCCESS, Var("Done"));
-}, "mycommand <format> [path] [-f file]");
+// Full three-parameter form (ctx, in, out)
+command::reg("node.get", [](Node* ctx, Node* in, Node* out) -> Result {
+    Node* target = root(ctx)->find(in->get("path").toString());
+    if (!target) return Result::fail("not found");
+    out->at("value")->set(target->get());
+    return Result::ok();
+}, "read a node value");
+
+// Two-parameter form (in, out) — ctx ignored
+command::reg("ros.topic.list", [](Node* in, Node* out) -> Result {
+    auto filter = in->get("filter").toString();
+    schema::VarS::toNode(out->at("topics"), Var(ve::ros::listTopics(filter)));
+    return Result::ok();
+}, "list ROS topics");
+
+// Single-parameter form (in only)
+command::reg("robot.stop", [](Node* in) -> Result {
+    auto group = in->get("group").toString();
+    return stopGroup(group);
+}, "stop robot group");
+
+// Generic callable — args unpacked from in via schema layer
+command::reg("math.add", [](int a, int b) { return a + b; }, "add two numbers");
 ```
+
+### Dispatch
+
+```cpp
+// Create and run a single command
+Command cmd = command::create("node.get");
+cmd.input<schema::JsonS>(R"({"path":"robot/state"})");  // populate in node
+cmd.run();
+Result r = cmd.result();          // check outcome
+Node* out = cmd.outputNode();     // read output
+
+// Pipeline — chain multiple commands with shared context
+Pipeline pipe;
+Command* c1 = pipe.add(command::create("node.get"));
+c1->setContextNodes(pipe.contextNode(), paramsNode, outputNode);
+pipe.sync();
+```
+
+### Introspection
+
+```cpp
+auto keys = command::factory().keys();        // all registered command names
+auto help = command::factory().help("save");  // help text for a command
+```
+
+### HTTP endpoints
+
+- **`POST /cmd/<name>`** — single command, body → `in` node (JSON), response = result + output
+- **`POST /ve`** — envelope protocol with `op`/`cmd`/`batch` dispatch through `Pipeline`
 
 ## Service Ports
 

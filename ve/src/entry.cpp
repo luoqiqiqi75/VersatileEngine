@@ -11,6 +11,7 @@
 #include <iostream>
 #include <queue>
 #include <filesystem>
+#include <thread>
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -40,15 +41,6 @@ struct EntryState {
     entry::Options    options;
     Vector<ModuleSlot> modules;
 
-    // Default main-loop blocking (used when no custom runner is set)
-    std::mutex              quit_mtx;
-    std::condition_variable quit_cv;
-    bool                    quit_requested = false;
-    int                     exit_code = 0;
-
-    // Custom main-loop runner (set by ve.qt etc. via loop::setMainRunner)
-    loop::RunFunc  custom_run;
-    loop::QuitFunc custom_quit;
 };
 
 EntryState& G()
@@ -141,6 +133,76 @@ int keyDepth(const std::string& key)
 
 namespace entry {
 
+// --- Options ---------------------------------------------------------------
+
+bool Options::parse(int arg_count, char** arg_values)
+{
+    argc = arg_count;
+    argv = arg_values;
+
+    if (argc > 0 && argv[0]) {
+        namespace fs = std::filesystem;
+        app_name = fs::path(argv[0]).stem().string();
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
+            config_file = argv[++i];
+        } else if (arg == "--verbose" || arg == "-v") {
+            verbose = true;
+        } else if (arg == "--terminal" || arg == "--local-terminal" || arg == "-t") {
+            terminal = true;
+        } else if (arg == "--remote" || arg == "--remote-terminal" || arg == "-r") {
+            remote_terminal = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                const char* next = argv[i + 1];
+                if (!looksLikeConfigOrPluginArg(next)) {
+                    if (!parseHostPort(next, remote_host, remote_port)) {
+                        std::cerr << "Invalid remote endpoint: " << next << '\n';
+                        return false;
+                    }
+                    ++i;
+                }
+            }
+        } else if (arg.rfind("--remote=", 0) == 0) {
+            remote_terminal = true;
+            if (!parseHostPort(arg.substr(9), remote_host, remote_port)) {
+                std::cerr << "Invalid remote endpoint: " << arg.substr(9) << '\n';
+                return false;
+            }
+        } else if (arg.rfind("--remote-terminal=", 0) == 0) {
+            remote_terminal = true;
+            if (!parseHostPort(arg.substr(18), remote_host, remote_port)) {
+                std::cerr << "Invalid remote endpoint: " << arg.substr(18) << '\n';
+                return false;
+            }
+        } else if (arg.rfind("--set=", 0) == 0) {
+            std::string kv = arg.substr(6);
+            auto eq = kv.find('=');
+            if (eq != std::string::npos) {
+                sets.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
+            }
+        } else if (arg[0] != '-') {
+            if (endsWith(arg, ".dll") || endsWith(arg, ".so") || endsWith(arg, ".dylib")) {
+                plugins.push_back(arg);
+            } else if (config_file.empty()) {
+                config_file = arg;
+            }
+        }
+    }
+
+    if (terminal && remote_terminal) {
+        std::cerr << "Local terminal (-t/--terminal) and remote terminal (-r/--remote) are mutually exclusive.\n";
+        return false;
+    }
+
+    if (config_file.empty()) {
+        config_file = "ve.json";
+    }
+    return true;
+}
+
 // --- setup -----------------------------------------------------------------
 
 void setup(const std::string& config_file)
@@ -173,7 +235,7 @@ static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbos
             if (!content.empty()) {
                 Node* child = parent->find(stem);
                 if (!child) child = parent->append(stem);
-                if (!schema::importAs<schema::JsonS>(child, content)) {
+                if (!schema::toNode<schema::JsonS>(child, content)) {
                     veLogE << "[ve::entry] Failed to parse config: " << path;
                 } else if (verbose) {
                     veLogI << "[ve::entry] Config loaded: " << path;
@@ -188,6 +250,10 @@ void setup(const Options& options)
     auto& g = G();
     g.options = options;
 
+    if (!options.app_name.empty()) {
+        log::setAppName(options.app_name);
+    }
+
     Node* root = node::root();
 
     if (!options.config_file.empty()) {
@@ -199,7 +265,7 @@ void setup(const Options& options)
         } else {
             std::string content = readFile(options.config_file);
             if (!content.empty()) {
-                if (!schema::importAs<schema::JsonS>(root, content)) {
+                if (!schema::toNode<schema::JsonS>(root, content)) {
                     veLogE << "[ve::entry] Failed to parse config: " << options.config_file;
                 } else if (g.options.verbose) {
                     veLogI << "[ve::entry] Config loaded: " << options.config_file;
@@ -208,6 +274,15 @@ void setup(const Options& options)
                 veLogW << "[ve::entry] Config file empty or not found: " << options.config_file;
             }
         }
+    }
+
+    // CLI overrides apply after the config file, so they win.
+    for (const auto& kv : options.sets) {
+        n("ve/entry/" + kv.first)->set(Var(kv.second));
+    }
+    for (const auto& p : options.plugins) {
+        Node* pn = n("ve/entry")->at("plugins")->append("");
+        pn->at("path")->set(Var(p));
     }
 
     if (n("ve/entry")->get("verbose").toBool(options.verbose)) g.options.verbose = true;
@@ -230,8 +305,8 @@ void setup(Node* config_node)
 
     Node* root = node::root();
     if (config_node && config_node != root) {
-        std::string exported = schema::exportAs<schema::JsonS>(config_node);
-        schema::importAs<schema::JsonS>(root, exported);
+        std::string exported = schema::fromNode<schema::JsonS>(config_node);
+        schema::toNode<schema::JsonS>(root, exported);
     }
 
     g.options.verbose = n("ve/entry")->get("verbose").toBool(false);
@@ -310,7 +385,7 @@ static void buildModuleGraph(Vector<ModuleSlot>& slots)
         auto* nd = factory.node(key, VE_FACTORY_KEY_SEP);
         int priority = 100;
         if (nd) {
-            if (auto* pn = nd->find("priority", false))
+            if (auto* pn = nd->find("priority"))
                 priority = pn->getInt(100);
         }
         bool enabled = true;
@@ -521,14 +596,14 @@ void init()
 
 int run()
 {
-    auto& g = G();
-    g.state = RUNNING;
-    return loop::run();
+    G().state = RUNNING;
+    Loop* main_loop = loop::main();
+    return main_loop ? main_loop->exec() : 0;
 }
 
 void requestQuit(int exit_code)
 {
-    loop::quit(exit_code);
+    if (Loop* main_loop = loop::main()) main_loop->quit(exit_code);
 }
 
 // --- deinit ----------------------------------------------------------------
@@ -555,9 +630,6 @@ void deinit()
     g.modules.clear();
 
     g.state = SHUTDOWN;
-    g.quit_requested = false;
-    g.custom_run = nullptr;
-    g.custom_quit = nullptr;
 
     if (verbose) {
         veLogI << "[ve::entry] deinit complete";
@@ -577,100 +649,9 @@ int exec(const std::string& config_file)
 
 int exec(int argc, char** argv)
 {
-    // Extract app name from argv[0]
-    if (argc > 0 && argv[0]) {
-        namespace fs = std::filesystem;
-        fs::path exe_path(argv[0]);
-        std::string app_name = exe_path.stem().string();
-        if (!app_name.empty()) {
-            log::setAppName(app_name);
-        }
-    }
-
     Options opts;
-    opts.argc = argc;
-    opts.argv = argv;
-
-    Vector<std::string> plugin_args;
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
-            opts.config_file = argv[++i];
-        } else if (arg == "--verbose" || arg == "-v") {
-            opts.verbose = true;
-        } else if (arg == "--terminal" || arg == "--local-terminal" || arg == "-t") {
-            opts.terminal = true;
-        } else if (arg == "--remote" || arg == "--remote-terminal" || arg == "-r") {
-            opts.remote_terminal = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
-                const char* next = argv[i + 1];
-                if (!looksLikeConfigOrPluginArg(next)) {
-                    std::string host = opts.remote_host;
-                    int port = opts.remote_port;
-                    if (!parseHostPort(next, host, port)) {
-                        std::cerr << "Invalid remote endpoint: " << next << '\n';
-                        return 2;
-                    }
-                    opts.remote_host = std::move(host);
-                    opts.remote_port = port;
-                    ++i;
-                }
-            }
-        } else if (arg.rfind("--remote=", 0) == 0) {
-            opts.remote_terminal = true;
-            std::string host = opts.remote_host;
-            int port = opts.remote_port;
-            if (!parseHostPort(arg.substr(9), host, port)) {
-                std::cerr << "Invalid remote endpoint: " << arg.substr(9) << '\n';
-                return 2;
-            }
-            opts.remote_host = std::move(host);
-            opts.remote_port = port;
-        } else if (arg.rfind("--remote-terminal=", 0) == 0) {
-            opts.remote_terminal = true;
-            std::string host = opts.remote_host;
-            int port = opts.remote_port;
-            if (!parseHostPort(arg.substr(18), host, port)) {
-                std::cerr << "Invalid remote endpoint: " << arg.substr(18) << '\n';
-                return 2;
-            }
-            opts.remote_host = std::move(host);
-            opts.remote_port = port;
-        } else if (arg.rfind("--set=", 0) == 0) {
-            std::string kv = arg.substr(6);
-            auto eq = kv.find('=');
-            if (eq != std::string::npos) {
-                std::string path = kv.substr(0, eq);
-                std::string val  = kv.substr(eq + 1);
-                n("ve/entry/" + path)->set(Var(val));
-            }
-        } else if (arg[0] != '-') {
-            if (endsWith(arg, ".dll") || endsWith(arg, ".so") || endsWith(arg, ".dylib")) {
-                plugin_args.push_back(arg);
-            } else if (opts.config_file.empty()) {
-                opts.config_file = arg;
-            }
-        }
-    }
-
-    if (opts.terminal && opts.remote_terminal) {
-        std::cerr << "Local terminal (-t/--terminal) and remote terminal (-r/--remote) are mutually exclusive.\n";
-        return 2;
-    }
-
-    if (opts.config_file.empty()) {
-        opts.config_file = "ve.json";
-    }
-
+    if (!opts.parse(argc, argv)) return 2;
     setup(opts);
-
-    for (auto& p : plugin_args) {
-        Node* plugins_node = n("ve/entry")->at("plugins");
-        auto* pn = plugins_node->append("");
-        pn->at("path")->set(Var(p));
-    }
-
     init();
     int code = run();
     deinit();
@@ -792,52 +773,6 @@ const Vector<Info>& loaded()
 }
 
 } // namespace plugin
-
-// ============================================================================
-// loop:: main runner
-// ============================================================================
-
-namespace loop {
-
-int run()
-{
-    auto& g = G();
-    if (g.custom_run) {
-        return g.custom_run();
-    }
-    // Default: block on condition_variable
-    {
-        std::unique_lock<std::mutex> lock(g.quit_mtx);
-        g.quit_cv.wait(lock, [&] { return g.quit_requested; });
-    }
-    return g.exit_code;
-}
-
-void quit(int exit_code)
-{
-    auto& g = G();
-    if (g.custom_quit) {
-        g.exit_code = exit_code;
-        g.custom_quit(exit_code);
-        return;
-    }
-    // Default: notify condition_variable
-    {
-        std::lock_guard<std::mutex> lock(g.quit_mtx);
-        g.exit_code = exit_code;
-        g.quit_requested = true;
-    }
-    g.quit_cv.notify_all();
-}
-
-void setMainRunner(RunFunc run_fn, QuitFunc quit_fn)
-{
-    auto& g = G();
-    g.custom_run = std::move(run_fn);
-    g.custom_quit = std::move(quit_fn);
-}
-
-} // namespace loop
 
 } // namespace ve
 

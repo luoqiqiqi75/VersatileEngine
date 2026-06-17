@@ -165,7 +165,7 @@ void QuickNode::fromProperties(QObject* obj)
             map.insert(qt::utf8ToQString(nm), v);
         }
     }
-    schema::importAs<schema::QVariantS>(_p->bridge.node(), QVariant(map));
+    schema::toNode<schema::QVariantS>(_p->bridge.node(), QVariant(map));
 }
 
 void QuickNode::toProperties(QObject* obj) const
@@ -267,7 +267,7 @@ void QuickRootNode::trigger(const QString& path) const
     }
 }
 
-QVariant QuickRootNode::exportAsVar(const QString& path) const
+QVariant QuickRootNode::toVar(const QString& path) const
 {
     if (!_p->n) {
         return {};
@@ -276,16 +276,16 @@ QVariant QuickRootNode::exportAsVar(const QString& path) const
     if (!child) {
         return {};
     }
-    return schema::exportAs<schema::QVariantS>(child);
+    return schema::fromNode<schema::QVariantS>(child);
 }
 
-void QuickRootNode::importFromVar(const QString& path, const QVariant& var) const
+void QuickRootNode::fromVar(const QString& path, const QVariant& var) const
 {
     if (!_p->n) {
         return;
     }
     Node* child = _p->n->at(qt::qStringToUtf8(path));
-    schema::importAs<schema::QVariantS>(child, var);
+    schema::toNode<schema::QVariantS>(child, var);
 }
 
 } // namespace ve

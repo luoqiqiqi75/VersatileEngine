@@ -136,13 +136,19 @@ Useful operations:
 - `copy(other, auto_insert, auto_remove)` for subtree sync
 - `clear(auto_delete)` for structural reset
 
-### `ve::Command`, `ve::Step`, `ve::Pipeline`
+### `ve::Command`, `ve::Pipeline`
 
 The command system is the runtime execution layer.
 
-- `Step` is a unit of work
-- `Pipeline` is an execution instance
-- `Command` is a named recipe for one or more steps
+- `Command` is a named callable registered in a `Factory`, created via `command::create(key)` and executed via `cmd.run()`. Its `Proc` signature is `Result(Node* ctx, Node* in, Node* out)`.
+- `Pipeline` chains one or more `Command` instances into an execution graph with shared context, input, and output nodes. Used by the envelope protocol (`/ve`, WebSocket, BinTCP) for batch and multi-step dispatch.
+
+Registration uses `command::reg(key, callable, help)`, where callable can be any of:
+- `Result(Node* ctx, Node* in, Node* out)` — full three-parameter form
+- `Result(Node* in, Node* out)` — input/output only (ctx ignored)
+- `Result(Node* in)` — input only
+- `Result()` — no parameters
+- Any generic callable — arguments are unpacked from `in` via the schema layer
 
 The terminal, binary IPC service, and other runtime tools should rely on this layer instead of duplicating business logic.
 
@@ -152,17 +158,21 @@ The schema layer is the format-facing import and export surface for node trees.
 
 Use:
 
-- `schema::exportAs<schema::Json>(node)`
-- `schema::exportAs<schema::Json>(node, schema::ExportOptions{...})`
-- `schema::importAs<schema::Json>(node, text)`
-- `schema::importAs<schema::Json>(node, text, schema::ImportOptions{...})`
+- `schema::fromNode<schema::JsonS>(node)`
+- `schema::fromNode<schema::JsonS>(node, schema::JsonS::ExportOptions{...})`
+- `schema::toNode<schema::JsonS>(node, text)`
+- `schema::toNode<schema::JsonS>(node, text, copy_flags)`
 
 Important behavior:
 
-- no-options import keeps the direct fast path
-- options-based import performs merge-style synchronization
-- `ExportOptions::auto_ignore` hides `_`-prefixed internal children
-- `ImportOptions` controls `auto_insert`, `auto_remove`, and `auto_replace`
+- no-flags import keeps the direct fast path
+- flags-based import performs merge-style synchronization through `Node::copy()`
+- export options are per format (nested in each `SchemaTraits` specialization);
+  `auto_ignore` (JsonS/BinS/VarS) hides `_`-prefixed internal children and
+  defaults to true — pass `auto_ignore = false` to export the full tree
+- `copy_flags` are `Node::CopyFlag` bits: `COPY_INSERT`, `COPY_REMOVE`,
+  `COPY_UPDATE`, `COPY_REPLACE`, plus the presets `COPY_DEFAULT`
+  (insert + replace) and `COPY_STRICT` (default + remove)
 
 ### `ve::Module`
 
@@ -229,11 +239,12 @@ Use `copy()` when one tree should drive another.
 
 ```cpp
 ve::Node snapshot;
-snapshot.copy(ve::n("robot"), true, true);
+snapshot.copy(ve::n("robot"), ve::Node::COPY_STRICT);
 ```
 
-Use `auto_remove = true` when the destination should mirror the source.
-Use `auto_remove = false` when the destination may carry local extra state.
+Use `COPY_STRICT` when the destination should mirror the source.
+Use `COPY_DEFAULT` when the destination may carry local extra state.
+Drop `COPY_REPLACE` to only fill in destination values that are still null.
 
 ## Service Defaults
 

@@ -1,10 +1,10 @@
-// tcp_bin_server.cpp — ve::service::BinTcpServer
+// tcp_bin_server.cpp — ve::service::BinTcpServer (multi-session, binary frames)
 #include "ve/service/bin_service.h"
 #include "ve/core/node.h"
-#include "subscribe_service.h"
-#include "node_protocol.h"
-#include "node_task_service.h"
 #include "ve/core/schema.h"
+#include "ve/core/command.h"
+#include "ve/core/pipeline.h"
+#include "node_commands.h"
 #include "server_util.h"
 
 #ifdef _MSC_VER
@@ -19,31 +19,14 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "ve/core/factory.h"
+
 namespace ve {
 namespace service {
 
-static Bytes makeFrame(uint8_t flag, const Var& payload)
-{
-    return bin::encodeFrame(flag, payload);
-}
-
-static uint8_t flagFromReply(Node* reply)
-{
-    return reply->get("ok").toBool(false) ? bin::FLAG_RESPONSE : bin::FLAG_ERROR;
-}
-
 static Var toVar(const Node& node)
 {
-    return schema::exportAs<schema::VarS>(&node);
-}
-
-static void fillError(Node* rep, const std::string& code, const std::string& error)
-{
-    rep->clear();
-    rep->set(Var());
-    rep->set("ok", false);
-    rep->set("code", code);
-    rep->set("error", error);
+    return schema::fromNode<schema::VarS>(&node);
 }
 
 struct BinTcpServer::Private
@@ -56,21 +39,28 @@ struct BinTcpServer::Private
 
     struct ConnState {
         Bytes recvBuf;
+        std::unique_ptr<Session> session;
     };
     std::unordered_map<std::size_t, ConnState> connections;
-    std::unique_ptr<SubscribeService> subscribeSvc;
-    std::unique_ptr<NodeTaskService> taskSvc;
 
-    void postToSession(uint64_t sid, uint8_t flag, Var payload)
+    void sendFrame(uint64_t sid, uint8_t flag, const Var& payload)
     {
-        auto frame = makeFrame(flag, payload);
+        auto frame = bin::encodeFrame(flag, payload);
         std::string data(frame.begin(), frame.end());
         server.post([this, sid, data = std::move(data)]() {
             server.foreach_session([&](auto& session_ptr) {
-                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid) {
+                if (static_cast<uint64_t>(session_ptr->hash_key()) == sid)
                     session_ptr->async_send(data);
-                }
             });
+        });
+    }
+
+    std::unique_ptr<Session> makeSession(uint64_t sid)
+    {
+        return std::make_unique<Session>(root, root, [this, sid](std::string msg) {
+            Node event;
+            schema::toNode<schema::JsonS>(&event, msg);
+            sendFrame(sid, bin::FLAG_NOTIFY, toVar(event));
         });
     }
 
@@ -81,49 +71,76 @@ struct BinTcpServer::Private
         {
             std::lock_guard<std::mutex> lock(mtx);
             auto it = connections.find(connKey);
-            if (it != connections.end()) {
-                state = &it->second;
-            }
+            if (it != connections.end()) state = &it->second;
         }
-        if (!state) {
-            return;
-        }
+        if (!state) return;
 
         auto& buf = state->recvBuf;
         Var msg;
         uint8_t flag = 0;
         while (bin::tryPopFrame(buf, flag, msg)) {
-            if ((flag & bin::FLAG_TYPE_MASK) != bin::FLAG_REQUEST) {
-                continue;
-            }
+            if ((flag & bin::FLAG_TYPE_MASK) != bin::FLAG_REQUEST) continue;
 
-            Node req("req");
-            if (!schema::importAs<schema::VarS>(&req, msg)) {
-                Node reply("rep");
-                fillError(&reply, "invalid_request", "invalid binary request");
-                auto frame = makeFrame(flagFromReply(&reply), toVar(reply));
+            Pipeline pipe;
+            if (!schema::toNode<schema::VarS>(pipe.contextNode(), msg)) {
+                Node err;
+                err.set("code", int64_t(ERR_INVALID));
+                err.set("message", std::string("invalid binary request"));
+                auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(err));
                 session_ptr->async_send(std::string(frame.begin(), frame.end()));
                 continue;
             }
 
-            Node reply("rep");
-            dispatchNodeProtocol(root, &req, &reply,
-                                 subscribeSvc.get(), taskSvc.get(), 500,
-                                 true, static_cast<uint64_t>(connKey), true,
-                                 [this, sid = static_cast<uint64_t>(connKey)](const Node& event) {
-                                     postToSession(sid, bin::FLAG_NOTIFY, toVar(event));
-                                 });
-            auto frame = makeFrame(flagFromReply(&reply), toVar(reply));
-            session_ptr->async_send(std::string(frame.begin(), frame.end()));
+            pipe.contextNode()->set("_session", Var::ptr(state->session.get()));
+
+            Node* batch_n = pipe.contextNode()->find("batch");
+            if (batch_n) {
+                Node* out = pipe.contextNode()->at("data");
+                bool valid = true;
+                for (auto* item : batch_n->children()) {
+                    auto ref = resolveCmd(item);
+                    if (!ref.factory) {
+                        pipe.contextNode()->erase("batch");
+                        pipe.contextNode()->set("code", int64_t(ERR_NOT_FOUND));
+                        pipe.contextNode()->set("message", "unknown: " + ref.key);
+                        auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(*pipe.contextNode()));
+                        session_ptr->async_send(std::string(frame.begin(), frame.end()));
+                        valid = false;
+                        break;
+                    }
+                    Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                    c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
+                }
+                if (!valid) continue;
+            } else {
+                auto ref = resolveCmd(pipe.contextNode());
+                if (!ref.factory) {
+                    pipe.contextNode()->set("code", int64_t(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+                    pipe.contextNode()->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
+                    auto frame = bin::encodeFrame(bin::FLAG_ERROR, toVar(*pipe.contextNode()));
+                    session_ptr->async_send(std::string(frame.begin(), frame.end()));
+                    continue;
+                }
+                Command* c = pipe.add(command::create(*ref.factory, ref.key));
+                c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
+            }
+
+            pipe.sync();
+            if (finalizeReply(pipe)) {
+                int code = pipe.contextNode()->get("code").toInt(0);
+                uint8_t repFlag = code < 0 ? bin::FLAG_ERROR : bin::FLAG_RESPONSE;
+                auto frame = bin::encodeFrame(repFlag, toVar(*pipe.contextNode()));
+                session_ptr->async_send(std::string(frame.begin(), frame.end()));
+            }
         }
     }
 };
 
-BinTcpServer::BinTcpServer(Node* root, uint16_t port)
+BinTcpServer::BinTcpServer(const Node* config_n)
     : _p(std::make_unique<Private>())
 {
-    _p->root = root;
-    _p->port = port;
+    _p->root = ve::n(config_n->get("root").toString("/"));
+    _p->port = config_n->get("port").toInt(0);
 }
 
 BinTcpServer::~BinTcpServer()
@@ -133,22 +150,13 @@ BinTcpServer::~BinTcpServer()
 
 bool BinTcpServer::start()
 {
-    _p->subscribeSvc = std::make_unique<SubscribeService>(_p->root);
-    _p->subscribeSvc->setPushCallback([this](uint64_t sessionId, const std::string& path, const Var& value) {
-        Node event("event");
-        event.set("event", "node.changed");
-        event.set("path", path);
-        event.at("value")->set(value);
-        _p->postToSession(sessionId, bin::FLAG_NOTIFY, toVar(event));
-    });
-    _p->subscribeSvc->start();
-    _p->taskSvc = std::make_unique<NodeTaskService>(_p->root);
+    registerNodeCommands();
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections[key] = {};
+            _p->connections[key].session = _p->makeSession(static_cast<uint64_t>(key));
         }
         _p->connCount.fetch_add(1, std::memory_order_relaxed);
     });
@@ -170,9 +178,6 @@ bool BinTcpServer::start()
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
-        if (_p->subscribeSvc) {
-            _p->subscribeSvc->removeSession(static_cast<uint64_t>(key));
-        }
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             _p->connections.erase(key);
@@ -187,11 +192,6 @@ bool BinTcpServer::start()
 void BinTcpServer::stop()
 {
     _p->server.stop();
-    if (_p->subscribeSvc) {
-        _p->subscribeSvc->stop();
-        _p->subscribeSvc.reset();
-    }
-    _p->taskSvc.reset();
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

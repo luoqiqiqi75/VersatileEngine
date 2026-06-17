@@ -20,22 +20,22 @@ Factory::~Factory() = default;
 
 Strings Factory::keys() const { return _p->keys; }
 
-void Factory::reg(const std::string& key, Node* functor_n, Var callable,
-                  const std::string& help, LoopRef lr)
+Node* Factory::reg(const std::string& key, Node* functor_n, Var callable, const std::string& help, Loop* lr)
 {
-    if (!functor_n) return;
+    if (!functor_n) return nullptr;
 
     // Track the caller-form key for enumeration.
     if (auto it = std::find(_p->keys.begin(), _p->keys.end(), key); it == _p->keys.end()) {
         _p->keys.push_back(key);
     } else {
         veLogE << "<ve/factory>" << _n->name() << ": duplicate registration for key: " << key;
-        return;
+        return functor_n;
     }
 
     functor_n->set(std::move(callable));
     if (!help.empty()) functor_n->at("help")->set(help);
-    if (lr) functor_n->at("loop")->set(std::move(lr));
+    if (lr) functor_n->at("loop")->set(Var(static_cast<void*>(lr)));
+    return functor_n;
 }
 
 // ============================================================================

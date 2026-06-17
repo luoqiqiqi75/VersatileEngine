@@ -17,7 +17,6 @@ namespace ve {
 //
 // children : Vector<Node*>            flat array, true insertion order
 //            Hash<SmallVector<int>>   name → [indices into vector]
-// shadow   : Node*                    prototype-chain fallback
 //
 // name  = real child name (no # no /)
 // key   = name | name#N | #N
@@ -97,13 +96,34 @@ public:
     bool  remove(const std::string& name);
 
     void  clear(bool auto_delete = true);
-    // Sync this node from another node using key/path semantics.
-    // - Named-sibling insertion order is not part of copy semantics; same-name overlap
-    //   order and anonymous occurrence (#N) are matched when reusing children.
-    // - For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
-    //   (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
-    // - Default value sync uses set() (always emits NODE_CHANGED); auto_update=true uses update().
-    void  copy(const Node* other, bool auto_insert = true, bool auto_remove = false, bool auto_update = false);
+
+    // --- copy flags ---
+    enum CopyFlag : int {
+        COPY_INSERT  = 0x01,  // append children for keys missing here
+        COPY_REMOVE  = 0x02,  // remove children whose key does not exist in other
+        COPY_UPDATE  = 0x04,  // write value via update() (suppress unchanged signal) instead of set()
+        COPY_REPLACE = 0x08,  // overwrite non-null values; without it only null values are written
+
+        COPY_DEFAULT = COPY_INSERT | COPY_REPLACE,
+        COPY_STRICT  = COPY_DEFAULT | COPY_REMOVE,  // dest becomes an exact copy of other
+    };
+
+    // Sync this node from another node using key semantics (name#overlap | #index).
+    // Key resolution: named n#k → the k-th child named n; anonymous #i → the
+    // i-th child, whatever its name.
+    // Steps:
+    //   1. COPY_REMOVE: children here whose key does not exist in other are
+    //      removed (keys judged on the pre-remove layout).
+    //   2. one pass over other's children: each lands on the node here at its
+    //      key and is copied recursively; an unresolved key is appended first
+    //      (COPY_INSERT) or skipped. Lookups are live, so children appended
+    //      during the pass can resolve later #i keys.
+    //   3. own value: written only when COPY_REPLACE is set or the current
+    //      value is null; COPY_UPDATE ? update() : set() (set always emits
+    //      NODE_CHANGED).
+    // For Dict attributes in Var (XML/JSON attrs), CRUD only emits NODE_CHANGED
+    // (no NODE_ADDED/NODE_REMOVED to avoid polluting parent signals).
+    void  copy(const Node* other, int copy_flags = COPY_DEFAULT, int depth = -1);
 
     // -- key (key = name | name#N | #N) ---
     //  parseKey: "name" → (name,-1)  "name#N" → (name,N)  "#N" → ("",N)
@@ -116,18 +136,15 @@ public:
 
     std::string keyOf(const Node* child, int guess = -1) const;
 
-    const Node* shadow() const;
-    void  setShadow(Node* shadow);
-
     // Single-level key access: "name" | "name#N" | "#N"
-    Node* atKey(int index, bool use_shadow) const;
-    Node* atKey(const std::string& name, int overlap, bool use_shadow) const;
-    Node* atKey(std::string_view key, bool use_shadow,
+    Node* atKey(int index) const;
+    Node* atKey(const std::string& name, int overlap) const;
+    Node* atKey(std::string_view key,
                 char key_sep = VE_NODE_KEY_SEP) const;
 
-    Node* atKey(int index, bool use_shadow);
-    Node* atKey(const std::string& name, int overlap, bool use_shadow);
-    Node* atKey(std::string_view key, bool use_shadow,
+    Node* atKey(int index);
+    Node* atKey(const std::string& name, int overlap);
+    Node* atKey(std::string_view key,
                 char key_sep = VE_NODE_KEY_SEP);        // ensure exists, creates if not found
 
 
@@ -140,10 +157,10 @@ public:
                        char key_sep  = VE_NODE_KEY_SEP);
 
     // Multi-level path access: "a/b/c"
-    Node*       atPath(std::string_view path, bool use_shadow,
+    Node*       atPath(std::string_view path,
                        char path_sep = VE_NODE_PATH_SEP,
                        char key_sep  = VE_NODE_KEY_SEP) const;  // find only
-    Node*       atPath(std::string_view path, bool use_shadow,
+    Node*       atPath(std::string_view path,
                        char path_sep = VE_NODE_PATH_SEP,
                        char key_sep  = VE_NODE_KEY_SEP);        // ensure exists
 
@@ -151,7 +168,7 @@ public:
 
     // --- container interface ---
     Node* operator[](int index) const { return child(index); }
-    Node* operator[](const std::string& key) const { return atKey(key, false); }
+    Node* operator[](const std::string& key) const { return atKey(key); }
 
     class ChildIterator {
         Node* const* _p = nullptr;
@@ -184,7 +201,7 @@ public:
     ReverseChildIterator rbegin() const;
     ReverseChildIterator rend()   const;
 
-    // --- flags (reuses Object::_flags, higher bits) ---
+    // --- flags (reuses Entity::_flags, higher bits) ---
     enum NodeFlag : int {
         WATCHING = 0x02,  // participate in signal bubbling (receive NODE_ACTIVATED from descendants)
     };
@@ -226,11 +243,11 @@ public:
     Node* next() const { return sibling(1); }
 
     // path usage
-    Node* find(std::string_view path, bool use_shadow = true) const { return atPath(path, use_shadow); }
+    Node* find(std::string_view path) const { return atPath(path); }
 
-    Node* at(int index, bool use_shadow = true) { return atKey(index, use_shadow); }
-    Node* at(const std::string& name, int overlap, bool use_shadow = true) { return atKey(name, overlap, use_shadow); }
-    Node* at(const std::string& path, bool use_shadow = true) { return atPath(path, use_shadow); }
+    Node* at(int index) { return atKey(index); }
+    Node* at(const std::string& name, int overlap) { return atKey(name, overlap); }
+    Node* at(const std::string& path) { return atPath(path); }
 
     // subpath usage
     Var get(int index) const { if (auto n = child(index)) return n->value(); return Var {}; }
@@ -354,13 +371,13 @@ VE_API Node* n(const std::string& path, bool auto_create = true);
 // NodeRef — base wrapper for "this object is bound to a Node*"
 // ============================================================================
 //
-// Reusable mixin for Factory / Module / Command / Args and similar. Stores
+// Reusable mixin for Factory / Module and similar node-bound objects. Stores
 // a single Node* with derived-class access (protected). Provides node()
 // accessor and operator bool() to check validity.
 //
-// Path ctor uses ensure-exists semantics (atPath with create=true). Callers
-// wanting find-only should construct from an existing Node* (e.g. via
-// const_cast<const Node*>(root)->atPath(..., false, ...)).
+// Path ctor uses ensure-exists semantics (non-const atPath). Callers wanting
+// find-only should construct from an existing Node* (e.g. via
+// const_cast<const Node*>(root)->atPath(...)).
 
 struct VE_API NodeRef
 {
@@ -373,7 +390,7 @@ public:
     explicit NodeRef(const std::string& path,
                      char path_sep = VE_NODE_PATH_SEP,
                      char key_sep  = VE_NODE_KEY_SEP)
-        : _n(node::root()->atPath(path, true, path_sep, key_sep))
+        : _n(node::root()->atPath(path, path_sep, key_sep))
     {}
 
     Node* node() const { return _n; }
@@ -386,13 +403,13 @@ public:
                char path_sep = VE_NODE_PATH_SEP,
                char key_sep  = VE_NODE_KEY_SEP) const
     {
-        return _n ? const_cast<const Node*>(_n)->atPath(key, false, path_sep, key_sep) : nullptr;
+        return _n ? const_cast<const Node*>(_n)->atPath(key, path_sep, key_sep) : nullptr;
     }
     Node* node(const std::string& key,
                char path_sep = VE_NODE_PATH_SEP,
                char key_sep  = VE_NODE_KEY_SEP)
     {
-        return _n ? _n->atPath(key, true, path_sep, key_sep) : nullptr;
+        return _n ? _n->atPath(key, path_sep, key_sep) : nullptr;
     }
 };
 

@@ -1,14 +1,14 @@
 import type {
+  ChildrenResponse,
   CommandListResponse,
+  CommandRunResponse,
+  ExportResponse,
+  GetResponse,
   NodeChangedEvent,
-  NodeListResponse,
-  NodeResponse,
-  NodeSetResponse,
-  TreeImportResponse,
+  PathResponse,
   VarValue,
   VeErrorReply,
   VeReply,
-  VeRequest,
   WsMessage,
 } from './types';
 
@@ -77,7 +77,8 @@ export class VeWsClient {
     this.ws = null;
   }
 
-  async call<T = VarValue>(op: string, payload: Omit<VeRequest, 'op'> = {}): Promise<VeReply<T>> {
+  // Low-level: send message, add id, return promise for reply
+  send<T = VarValue>(message: Record<string, unknown>): Promise<VeReply<T>> {
     return new Promise((resolve, reject) => {
       if (!this.ws || !this.connected) {
         reject(new Error('Not connected'));
@@ -85,6 +86,8 @@ export class VeWsClient {
       }
 
       const id = ++this.nextId;
+      message.id = id;
+
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Request timeout (${this.timeout}ms)`));
@@ -95,118 +98,114 @@ export class VeWsClient {
         reject,
         timer,
       });
-      this.ws.send(JSON.stringify({ op, id, ...payload }));
+      this.ws.send(JSON.stringify(message));
     });
   }
 
-  // ===== Tree operations (default behavior) =====
-  async get(path = '', depth = -1): Promise<VarValue> {
-    const reply = await this.call<NodeResponse>('node.get', { path, depth });
-    const data = this.unwrap(reply);
-    return (data.tree ?? data.value) as VarValue;
+  // Std operation: {op, id, params}
+  call<T = VarValue>(op: string, params: Record<string, unknown> = {}): Promise<VeReply<T>> {
+    return this.send<T>({ op, params });
   }
 
-  async set(path: string, tree: VarValue): Promise<TreeImportResponse> {
-    return this.unwrap(await this.call<TreeImportResponse>('node.put', { path, tree }));
+  // ===== Value operations =====
+
+  async get(path: string): Promise<VarValue> {
+    const data = this.unwrap(await this.call<GetResponse>('get', { path }));
+    return data.value;
   }
 
-  // ===== Single value operations =====
-  async val(path: string): Promise<VarValue>;
-  async val(path: string, value: VarValue): Promise<NodeSetResponse>;
-  async val(path: string, value?: VarValue): Promise<VarValue | NodeSetResponse> {
-    if (value === undefined) {
-      return this.unwrap(await this.call<NodeResponse>('node.get', { path })).value;
-    } else {
-      return this.unwrap(await this.call<NodeSetResponse>('node.set', { path, value }));
-    }
+  async set(path: string, value: VarValue): Promise<PathResponse> {
+    return this.unwrap(await this.call<PathResponse>('set', { path, value }));
+  }
+
+  // ===== Tree operations =====
+
+  async export(path = '', depth = -1): Promise<VarValue> {
+    const data = this.unwrap(await this.call<ExportResponse>('export', { path, depth }));
+    return data.tree;
+  }
+
+  async import(path: string, tree: VarValue, flags?: number): Promise<PathResponse> {
+    const params: Record<string, unknown> = { path, tree };
+    if (flags !== undefined) params.flags = flags;
+    return this.unwrap(await this.call<PathResponse>('import', params));
   }
 
   // ===== Structure operations =====
-  async list(path = ''): Promise<NodeListResponse> {
-    return this.unwrap(await this.call<NodeListResponse>('node.list', { path }));
+
+  async children(path = ''): Promise<ChildrenResponse> {
+    return this.unwrap(await this.call<ChildrenResponse>('children', { path }));
   }
 
-  async rm(path: string): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.remove', { path }));
+  async erase(path: string): Promise<PathResponse> {
+    return this.unwrap(await this.call<PathResponse>('erase', { path }));
   }
 
-  async trigger(path: string): Promise<NodeSetResponse> {
-    return this.unwrap(await this.call<NodeSetResponse>('node.trigger', { path }));
+  async trigger(path: string): Promise<PathResponse> {
+    return this.unwrap(await this.call<PathResponse>('trigger', { path }));
   }
 
-  // ===== Subscription (tree mode by default) =====
-  watch(
+  // ===== Subscription =====
+
+  subscribe(
     path: string,
     handler: WsNotifyHandler = () => {},
-    options: { immediate?: boolean; tree?: boolean; bubble?: boolean } = {},
+    options: { depth?: number; once?: boolean; immediate?: boolean } = {},
   ): () => void {
-    const { immediate = false, tree = true, bubble = false } = options;
+    const params: Record<string, unknown> = { path };
+    if (options.depth !== undefined) params.depth = options.depth;
+    if (options.once) params.once = true;
+    if (options.immediate) params.immediate = true;
 
     if (!this.subscriptions.has(path)) {
       this.subscriptions.set(path, new Set());
       if (this.connected) {
-        this.sendWithoutReply({ op: 'subscribe', path, tree, bubble });
+        this.call('subscribe', params).catch(() => {});
       }
     }
     this.subscriptions.get(path)!.add(handler);
 
-    if (immediate) {
-      this.get(path)
-        .then((value) => {
-          try {
-            handler(path, value);
-          } catch {
-            // ignore callback errors
-          }
-        })
-        .catch(() => {});
-    }
-
     return () => {
       const handlers = this.subscriptions.get(path);
-      if (!handlers) {
-        return;
-      }
+      if (!handlers) return;
       handlers.delete(handler);
       if (handlers.size === 0) {
         this.subscriptions.delete(path);
         if (this.connected) {
-          this.sendWithoutReply({ op: 'unsubscribe', path });
+          this.call('unsubscribe', { path }).catch(() => {});
         }
       }
     };
   }
 
-  unwatch(path: string): void {
+  unsubscribe(path: string): void {
     this.subscriptions.delete(path);
     if (this.connected) {
-      this.sendWithoutReply({ op: 'unsubscribe', path });
+      this.call('unsubscribe', { path }).catch(() => {});
     }
   }
 
-  // ===== Commands =====
-  async run(name: string, args: VarValue = [], wait = true): Promise<VeReply<VarValue>> {
-    return this.call<VarValue>('command.run', { name, args, wait });
+  // ===== User commands (cmd field) =====
+
+  async run(name: string, args: Record<string, unknown> = {}): Promise<CommandRunResponse> {
+    return this.send<VarValue>({ cmd: name, params: args });
   }
 
-  async cmds(): Promise<CommandListResponse> {
-    return this.unwrap(await this.call<CommandListResponse>('command.list'));
+  async commands(): Promise<CommandListResponse> {
+    return this.unwrap(await this.call<CommandListResponse>('commands'));
   }
 
-  // ===== Batch operations =====
-  async batch(items: Omit<VeRequest, 'id'>[]): Promise<VeReply<VarValue>[]> {
-    const reply = await this.call<{ items: VeReply<VarValue>[] }>('batch', { items });
-    return this.unwrap(reply).items;
+  // ===== Batch =====
+
+  async batch(items: Record<string, unknown>[]): Promise<VarValue> {
+    return this.unwrap(await this.send<VarValue>({ batch: items }));
   }
 
   // ===== Connection management =====
+
   onConnectionChange(handler: WsStateHandler): () => void {
     this.stateHandlers.add(handler);
     return () => this.stateHandlers.delete(handler);
-  }
-
-  onStateChange(handler: WsStateHandler): () => void {
-    return this.onConnectionChange(handler);
   }
 
   onMessage(handler: WsMessageHandler): () => void {
@@ -214,30 +213,12 @@ export class VeWsClient {
     return () => this.messageHandlers.delete(handler);
   }
 
-  // ===== Backward compatibility aliases =====
-  getTree = this.get;
-  remove = this.rm;
-  subscribe = this.watch;
-  unsubscribe = this.unwatch;
-  command = this.run;
-  listCommands = this.cmds;
-
   private unwrap<T>(reply: VeReply<T>): T {
-    if (!reply.ok) {
+    if (reply.code < 0) {
       const err = reply as VeErrorReply;
-      throw new Error(`${err.code}: ${err.error}`);
+      throw new Error(`${err.code}: ${err.message ?? 'unknown error'}`);
     }
-    if ('accepted' in reply && reply.accepted) {
-      throw new Error(`Request accepted asynchronously (task_id=${reply.task_id})`);
-    }
-    return reply.data;
-  }
-
-  private sendWithoutReply(payload: Record<string, unknown>): void {
-    if (!this.ws || !this.connected) {
-      return;
-    }
-    this.ws.send(JSON.stringify(payload));
+    return (reply as { data: T }).data;
   }
 
   private createConnection(): void {
@@ -252,7 +233,7 @@ export class VeWsClient {
       this.currentInterval = this.reconnectInterval;
       this.notifyState(true);
       for (const path of this.subscriptions.keys()) {
-        this.sendWithoutReply({ op: 'subscribe', path, tree: true });
+        this.call('subscribe', { path }).catch(() => {});
       }
     };
 
@@ -289,11 +270,7 @@ export class VeWsClient {
         const handlers = this.subscriptions.get(evt.path);
         if (handlers) {
           for (const handler of handlers) {
-            try {
-              handler(evt.path, evt.value);
-            } catch {
-              // ignore callback errors
-            }
+            try { handler(evt.path, evt.data); } catch { /* ignore */ }
           }
         }
       }
@@ -314,9 +291,7 @@ export class VeWsClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) {
-      return;
-    }
+    if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.currentInterval = Math.min(this.currentInterval * 2, this.maxReconnectInterval);
@@ -326,21 +301,13 @@ export class VeWsClient {
 
   private notifyState(connected: boolean): void {
     for (const handler of this.stateHandlers) {
-      try {
-        handler(connected);
-      } catch {
-        // ignore callback errors
-      }
+      try { handler(connected); } catch { /* ignore */ }
     }
   }
 
   private notifyMessage(message: WsMessage): void {
     for (const handler of this.messageHandlers) {
-      try {
-        handler(message);
-      } catch {
-        // ignore callback errors
-      }
+      try { handler(message); } catch { /* ignore */ }
     }
   }
 }

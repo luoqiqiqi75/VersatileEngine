@@ -121,3 +121,15 @@ endif()
 message(STATUS "  + public headers: include/ve/ros/*.h")
 message(STATUS "  + source tree: src/base, src/backend/*, src/module, src/service")
 message(STATUS "")
+
+if(VE_INSTALL)
+    install(TARGETS ${VE_ROS_LIBRARY}
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+    )
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+    )
+endif()

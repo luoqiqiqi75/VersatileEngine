@@ -1,7 +1,7 @@
-// parse_util.h — shared parsing utilities for command system and terminal
+// parse_util.h — shared parsing utilities for terminal and service adapters
 //
 // Single implementation of flag parsing, value parsing, and string type detection.
-// Used by command.cpp (command::parseArgs) and terminal_util.h (builtin commands).
+// Used by terminal_util.h and service-side command adapters.
 #pragma once
 
 #include "ve/core/var.h"
@@ -40,6 +40,25 @@ inline Var parseValue(const std::string& raw)
     if (isInt(raw))    return Var(static_cast<std::int64_t>(std::stoll(raw)));
     if (isDouble(raw)) return Var(std::stod(raw));
     return Var(raw);
+}
+
+inline Var parseValueAs(const std::string& raw, Var::Type type)
+{
+    try {
+        switch (type) {
+            case Var::NONE:   return parseValue(raw);
+            case Var::BOOL:
+                if (raw == "true" || raw == "1" || raw == "yes" || raw == "on") return Var(true);
+                if (raw == "false" || raw == "0" || raw == "no" || raw == "off") return Var(false);
+                return Var(!raw.empty());
+            case Var::INT:    return Var(static_cast<std::int64_t>(std::stoll(raw)));
+            case Var::DOUBLE: return Var(std::stod(raw));
+            case Var::STRING: return Var(raw);
+            default:          return parseValue(raw);
+        }
+    } catch (...) {
+        return parseValue(raw);
+    }
 }
 
 struct Flags {

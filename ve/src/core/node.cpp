@@ -12,7 +12,6 @@ namespace ve {
 struct Node::Private
 {
     Node* parent  = nullptr;
-    Node* shadow  = nullptr;
 
     struct Children {
         Hash<SmallVector<int>> indices;   // name → [global indices in nodes]
@@ -43,50 +42,6 @@ struct Node::Private
         children = nullptr;
     }
 };
-
-namespace {
-
-struct CopyMatchState
-{
-    Hash<SmallVector<Node*>> named_children;
-    Node::Nodes              anonymous_children;
-    Hash<int>                named_cursor;
-    int                      anonymous_cursor = 0;
-    std::unordered_set<Node*> matched;
-};
-
-static void _bucket_children(const Node::Nodes& children, CopyMatchState& state)
-{
-    for (auto* child : children) {
-        if (!child) continue;
-        if (child->name().empty()) state.anonymous_children.push_back(child);
-        else                       state.named_children[child->name()].push_back(child);
-    }
-}
-
-static Node* _take_copy_match(const Node* src_child, CopyMatchState& state)
-{
-    if (!src_child) return nullptr;
-
-    if (src_child->name().empty()) {
-        while (state.anonymous_cursor < state.anonymous_children.sizeAsInt()) {
-            auto* match = state.anonymous_children[state.anonymous_cursor++];
-            if (state.matched.insert(match).second) return match;
-        }
-        return nullptr;
-    }
-
-    int& cursor = state.named_cursor[src_child->name()];
-    if (auto* bucket = state.named_children.ptr(src_child->name())) {
-        while (cursor < bucket->sizeAsInt()) {
-            auto* match = (*bucket)[cursor++];
-            if (state.matched.insert(match).second) return match;
-        }
-    }
-    return nullptr;
-}
-
-} // namespace
 
 // ============================================================================
 // Node — construction / static
@@ -459,63 +414,57 @@ void Node::clear(bool auto_delete)
     }
 }
 
-void Node::copy(const Node* other, bool auto_insert, bool auto_remove, bool auto_update)
+namespace {
+
+// Walk children, calling fn(child, name, overlap, index) with each child's key parts
+// (key = name#overlap for named children, #index for anonymous ones).
+template <typename Fn>
+void forEachKeyed(const Node::Nodes& children, Fn fn)
+{
+    Hash<int> seen;
+    for (int i = 0; i < children.sizeAsInt(); ++i) {
+        auto* c = children[i];
+        if (!c) continue;
+        const int overlap = c->name().empty() ? 0 : seen[c->name()]++;
+        fn(c, c->name(), overlap, i);
+    }
+}
+
+} // namespace
+
+void Node::copy(const Node* other, int copy_flags, int depth)
 {
     if (!other || other == this) return;
 
-    auto src_children = other->children();
-    auto dst_children = children();
+    if (depth != 0) {
+        // 1. remove children whose key does not exist in other
+        if (flags::get(copy_flags, COPY_REMOVE))
+            forEachKeyed(children(), [&](Node* d, const std::string& name, int overlap, int index) {
+                if (!(name.empty() ? other->child(index) : other->child(name, overlap))) remove(d);
+            });
 
-    if (auto_remove && !dst_children.empty()) {
-        CopyMatchState remove_state;
-        _bucket_children(dst_children, remove_state);
-        for (const auto* src_child : src_children)
-            (void)_take_copy_match(src_child, remove_state);
-
-        for (int i = dst_children.sizeAsInt() - 1; i >= 0; --i) {
-            auto* dst_child = dst_children[i];
-            if (remove_state.matched.count(dst_child) == 0)
-                remove(dst_child);
-        }
-    }
-
-    dst_children = children();
-    CopyMatchState copy_state;
-    _bucket_children(dst_children, copy_state);
-
-    Vector<const Node*> pending_sources;
-    if (auto_insert) pending_sources.reserve(src_children.size());
-
-    auto flush_pending_before = [&](Node* anchor) {
-        if (pending_sources.empty()) return;
-        for (const auto* pending_src : pending_sources) {
-            auto* inserted = new Node(pending_src->name());
-            int insert_index = anchor ? indexOf(anchor) : count();
-            if (insert_index < 0) insert_index = count();
-            if (!insert(inserted, insert_index)) {
-                delete inserted;
-                continue;
+        // 2. each child of other lands on the node at its key — named n#k → the k-th
+        //    child named n, anonymous #i → the i-th child whatever its name — and is
+        //    copied recursively; an unresolved key is appended first (COPY_INSERT)
+        forEachKeyed(other->children(), [&, next = depth > 0 ? depth - 1 : -1] (Node* s, const std::string& name, int overlap, int index) {
+            auto* d = name.empty() ? child(index) : child(name, overlap);
+            if (!d) {
+                if (!flags::get(copy_flags, COPY_INSERT)) return;
+                d = append(name);
+                if (!d) return;
             }
-            inserted->copy(pending_src, auto_insert, auto_remove, auto_update);
-        }
-        pending_sources.clear();
-    };
-
-    for (const auto* src_child : src_children) {
-        auto* match = _take_copy_match(src_child, copy_state);
-        if (!match) {
-            if (auto_insert) pending_sources.push_back(src_child);
-            continue;
-        }
-
-        flush_pending_before(match);
-        match->copy(src_child, auto_insert, auto_remove, auto_update);
+            d->copy(s, copy_flags, next);
+        });
     }
 
-    flush_pending_before(nullptr);
-
-    if (auto_update) update(other->get());
-    else             set(other->get());
+    // 3. own value — COPY_REPLACE overwrites anything, otherwise only fill null
+    if (flags::get(copy_flags, COPY_REPLACE) || get().isNull()) {
+        if (flags::get(copy_flags, COPY_UPDATE)) {
+            update(other->get());
+        } else {
+            set(other->get());
+        }
+    }
 }
 
 // ============================================================================
@@ -633,41 +582,30 @@ Node::ReverseChildIterator Node::rend() const
 // Node — path
 // ============================================================================
 
-const Node* Node::shadow() const { return _p->shadow; }
-void  Node::setShadow(Node* s) { LockT lk(mutex()); _p->shadow = s; }
-
 // ============================================================================
 // Node — atKey (single-level key access)
 // ============================================================================
 
-Node* Node::atKey(int index, bool use_shadow) const
+Node* Node::atKey(int index) const
 {
-    if (Node* cn = child(index)) return cn;
-    if (use_shadow) {
-        if (auto* sn = shadow()) return sn->atKey(index, true);
-    }
-    return nullptr;
+    return child(index);
 }
 
-Node *Node::atKey(const std::string &name, int overlap, bool use_shadow) const
+Node *Node::atKey(const std::string &name, int overlap) const
 {
-    if (Node* cn = child(name, overlap)) return cn;
-    if (use_shadow) {
-        if (auto* sn = shadow()) return sn->atKey(name, overlap, true);
-    }
-    return nullptr;
+    return child(name, overlap);
 }
 
-Node* Node::atKey(std::string_view key, bool use_shadow, char key_sep) const
+Node* Node::atKey(std::string_view key, char key_sep) const
 {
     std::string_view nm; int idx;
     if (!parseKey(key, nm, idx, key_sep)) return nullptr;
-    return nm.empty() && idx >= 0 ? atKey(idx, use_shadow) : atKey(std::string(nm), idx < 0 ? 0 : idx, use_shadow);
+    return nm.empty() && idx >= 0 ? atKey(idx) : atKey(std::string(nm), idx < 0 ? 0 : idx);
 }
 
-Node* Node::atKey(int index, bool use_shadow)
+Node* Node::atKey(int index)
 {
-    if (Node* cn = const_cast<const Node*>(this)->atKey(index, use_shadow)) return cn;
+    if (Node* cn = const_cast<const Node*>(this)->atKey(index)) return cn;
 
     if (index < 0) return nullptr;
     if (!append(index - count())) {
@@ -679,9 +617,9 @@ Node* Node::atKey(int index, bool use_shadow)
     return cn;
 }
 
-Node* Node::atKey(const std::string& name, int overlap, bool use_shadow)
+Node* Node::atKey(const std::string& name, int overlap)
 {
-    if (Node* cn = const_cast<const Node*>(this)->atKey(name, overlap, use_shadow)) return cn;
+    if (Node* cn = const_cast<const Node*>(this)->atKey(name, overlap)) return cn;
 
     if (overlap < 0) return nullptr;
     if (!append(name, overlap - count(name))) {
@@ -693,11 +631,11 @@ Node* Node::atKey(const std::string& name, int overlap, bool use_shadow)
     return cn;
 }
 
-Node* Node::atKey(std::string_view key, bool use_shadow, char key_sep)
+Node* Node::atKey(std::string_view key, char key_sep)
 {
     std::string_view nm; int idx;
     if (!parseKey(key, nm, idx, key_sep)) return nullptr;
-    return (nm.empty() && idx >= 0) ? at(idx, use_shadow) : at(std::string(nm), idx, use_shadow);
+    return (nm.empty() && idx >= 0) ? at(idx) : at(std::string(nm), idx);
 }
 
 // ============================================================================
@@ -723,7 +661,7 @@ bool Node::isName(std::string_view name, char path_sep, char key_sep)
         && name.find(key_sep)  == std::string_view::npos;
 }
 
-Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char key_sep) const
+Node* Node::atPath(std::string_view path, char path_sep, char key_sep) const
 {
     if (path.empty()) return const_cast<Node*>(this);
     const Node* cur = this;
@@ -739,12 +677,12 @@ Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char k
         path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        cur = cur->atKey(seg, use_shadow, key_sep);
+        cur = cur->atKey(seg, key_sep);
     }
     return const_cast<Node*>(cur);
 }
 
-Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char key_sep)
+Node* Node::atPath(std::string_view path, char path_sep, char key_sep)
 {
     if (path.empty()) return this;
     Node* cur = this;
@@ -760,14 +698,14 @@ Node* Node::atPath(std::string_view path, bool use_shadow, char path_sep, char k
         path = (slash == std::string_view::npos) ? std::string_view{} : path.substr(slash + 1);
         if (seg.empty()) continue;
 
-        cur = cur->atKey(seg, use_shadow, key_sep);
+        cur = cur->atKey(seg, key_sep);
     }
     return cur;
 }
 
 bool Node::erase(const std::string& path, bool auto_delete)
 {
-    auto* t = find(path, false);
+    auto* t = find(path);
     if (!t || !t->_p->parent) return false;
     if (auto_delete) return t->_p->parent->remove(t);
     return t->_p->parent->take(t) != nullptr;
@@ -874,7 +812,6 @@ std::string Node::dump(int depth) const
 
     std::string out = indent + key;
     if (!_p->value.isNull()) out += " = " + _p->value.toString();
-    if (_p->shadow) out += "  -> " + _p->shadow->name();
     out += "\n";
 
     if (_p->children)

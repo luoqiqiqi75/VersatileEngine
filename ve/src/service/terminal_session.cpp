@@ -1,7 +1,7 @@
-// terminal_session.cpp — TerminalSession: pure REPL logic
+// terminal_session.cpp - TerminalSession: pure REPL logic
 //
 // All terminal commands are session-local, using cur/root directly.
-// User-registered global commands (command::call) are fallback.
+// Registered commands are executed through Command/Pipeline as fallback.
 
 #include "terminal_session.h"
 #include "ve/core/command.h"
@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
+#include <mutex>
 
 namespace ve {
 namespace service {
@@ -101,9 +102,9 @@ static std::vector<std::string> completeNodePath(Node* root, Node* cur, const st
         if (absolute) {
             std::string rel = parentPath;
             if (!rel.empty() && rel[0] == '/') rel.erase(rel.begin());
-            base = rel.empty() ? root : root->find(rel, false);
+            base = rel.empty() ? root : root->find(rel);
         } else {
-            base = cur->find(parentPath, false);
+            base = cur->find(parentPath);
         }
     }
     if (!base) return {};
@@ -117,9 +118,10 @@ static std::vector<std::string> completeNodePath(Node* root, Node* cur, const st
     return matches;
 }
 
-// Resolve the longest matching command from the front of tokens.
-// Returns {key, wordCount}. key is empty if nothing matched.
-static std::pair<std::string, size_t> resolveCommand(const std::vector<std::string>& args)
+// Resolve the longest matching command from the front of tokens in one factory.
+// Returns {factory-node, wordCount}. node is null if nothing matched.
+static std::pair<Node*, size_t> resolveFactoryCommand(const Factory& factory,
+                                                      const std::vector<std::string>& args)
 {
     for (size_t i = args.size(); i >= 1; --i) {
         std::string candidate;
@@ -127,10 +129,565 @@ static std::pair<std::string, size_t> resolveCommand(const std::vector<std::stri
             if (j > 0) candidate += ".";
             candidate += args[j];
         }
-        if (command::has(candidate))
-            return {candidate, i};
+        if (Node* n = factory.node(candidate, VE_FACTORY_KEY_SEP)) {
+            return {n, i};
+        }
     }
-    return {{}, 0};
+    return {nullptr, 0};
+}
+
+static void prepareCommandInput(Node* in,
+                                Node* root,
+                                Node* current,
+                                const std::vector<std::string>& args,
+                                size_t start)
+{
+    if (!in) return;
+    in->clear();
+    Node* argv = in->at("argv");
+    for (const auto& arg : args) {
+        argv->append()->set(arg);
+    }
+    in->set("argc", static_cast<int64_t>(args.size()));
+    in->set("command_words", static_cast<int64_t>(start));
+    if (root) {
+        in->at("root")->set(Var::ptr(root));
+    }
+    if (current) {
+        in->at("current")->set(Var::ptr(current));
+    }
+}
+
+static void updateCurrentFromOut(Node*& current, Node* out)
+{
+    if (!out) return;
+    if (auto* cn = out->find("current")) {
+        if (auto* p = cn->get().toPointer()) {
+            current = static_cast<Node*>(p);
+        }
+    }
+}
+
+static std::string renderCommandOutput(Node* out, const Result& r)
+{
+    if (r.isError()) {
+        return r.message().empty() ? std::string("command failed\n") : r.message() + "\n";
+    }
+    if (out) {
+        if (auto* text = out->find("text")) {
+            return text->getString();
+        }
+        if (!out->get().isNull()) {
+            return out->get().toString();
+        }
+    }
+    return {};
+}
+
+static std::string availableSchemaFormatsText()
+{
+    std::vector<std::string> formats = schema::schemaFormatNames();
+    if (std::find(formats.begin(), formats.end(), "var") == formats.end()) {
+        formats.push_back("var");
+    }
+
+    std::string out = "available formats:";
+    for (size_t i = 0; i < formats.size(); ++i) {
+        out += (i == 0 ? " " : ", ");
+        out += formats[i];
+    }
+    return out;
+}
+
+struct BuiltinContext
+{
+    Node* root = nullptr;
+    Node* cur = nullptr;
+    std::string output;
+
+    std::string currentPath() const { return cur && root ? cur->path(root) : std::string{}; }
+
+    Node* resolve(const std::string& path) const {
+        if (!cur || !root) return nullptr;
+        if (path.empty() || path == ".") return cur;
+        if (path == "..") return cur->parent() ? cur->parent() : cur;
+        bool absolute = path[0] == '/';
+        Node* base = absolute ? root : cur;
+        std::string relPath = absolute ? path.substr(1) : path;
+        if (relPath.empty()) return base;
+        return base->find(relPath);
+    }
+
+    Node* target(const std::vector<std::string>& args, int argIdx = 1) const {
+        if ((int)args.size() > argIdx && !args[argIdx].empty() && args[argIdx][0] != '-') {
+            auto* n = resolve(args[argIdx]);
+            if (n) return n;
+        }
+        return cur;
+    }
+
+    void print(const std::string& text) { output += text; }
+};
+
+static Node* pointerInput(Node* in, const std::string& key, Node* fallback = nullptr)
+{
+    if (in) {
+        if (auto* n = in->find(key)) {
+            if (auto* p = n->get().toPointer()) {
+                return static_cast<Node*>(p);
+            }
+        }
+    }
+    return fallback;
+}
+
+static std::vector<std::string> argvInput(Node* in)
+{
+    std::vector<std::string> args;
+    if (!in) return args;
+    if (auto* argv = in->find("argv")) {
+        for (auto* arg : *argv) {
+            args.push_back(arg->getString());
+        }
+    }
+    return args;
+}
+
+static void writeBuiltinOut(BuiltinContext& s, Node* out)
+{
+    if (!out) return;
+    if (!s.output.empty()) {
+        out->at("text")->set(s.output);
+    }
+    if (s.cur) {
+        out->at("current")->set(Var::ptr(s.cur));
+        if (s.root) {
+            out->at("path")->set(s.cur->path(s.root));
+        }
+    }
+}
+
+template<typename F>
+static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::string& help = {})
+{
+    Proc proc = [key, fn = std::forward<F>(fn)](Node*, Node* in, Node* out) -> Result {
+            BuiltinContext s;
+            s.root = pointerInput(in, "root", node::root());
+            s.cur = pointerInput(in, "current", s.root);
+            auto args = argvInput(in);
+            if (args.empty()) {
+                args.push_back(key);
+            }
+            try {
+                fn(s, args);
+            } catch (const std::exception& e) {
+                return Result::fail(e.what());
+            } catch (...) {
+                return Result::fail("builtin command failed");
+            }
+            writeBuiltinOut(s, out);
+            return Result::ok();
+    };
+
+    f.reg(key, proc, help);
+}
+
+static void registerTerminalBuiltins()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        auto& builtins = factory::at("builtin");
+        using S = BuiltinContext;
+        using Args = const std::vector<std::string>&;
+
+        regBuiltin(builtins, "cd", [](S& s, Args args) {
+            if (args.size() < 2) { s.print("usage: cd <path>\n"); return; }
+            if (args[1] == ".") return;
+            if (args[1] == "..") {
+                if (s.cur->parent()) s.cur = s.cur->parent();
+                else s.print("already at root\n");
+            } else {
+                auto* n = s.cur->find(args[1]);
+                if (n) s.cur = n; else s.print("not found: " + args[1] + "\n");
+            }
+        }, "cd <path>");
+
+        regBuiltin(builtins, "pwd", [](S& s, Args) {
+            s.print("/" + s.currentPath() + "\n");
+        }, "pwd");
+
+        regBuiltin(builtins, "root", [](S& s, Args) { s.cur = s.root; }, "root");
+
+        regBuiltin(builtins, "up", [](S& s, Args args) {
+            int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
+            auto* p = s.cur->parent(n - 1);
+            if (p) s.cur = p; else s.print("cannot go up " + std::to_string(n) + " levels\n");
+        }, "up [N]");
+
+        regBuiltin(builtins, "first", [](S& s, Args) {
+            auto* f = s.cur->first();
+            if (f) { s.cur = f; s.print("-> " + nodeSummary(f) + "\n"); }
+            else s.print("(no children)\n");
+        }, "first");
+        regBuiltin(builtins, "last", [](S& s, Args) {
+            auto* l = s.cur->last();
+            if (l) { s.cur = l; s.print("-> " + nodeSummary(l) + "\n"); }
+            else s.print("(no children)\n");
+        }, "last");
+        regBuiltin(builtins, "prev", [](S& s, Args) {
+            auto* p = s.cur->prev();
+            if (p) { s.cur = p; s.print("-> " + nodeSummary(p) + "\n"); }
+            else s.print("(no prev sibling)\n");
+        }, "prev");
+        regBuiltin(builtins, "next", [](S& s, Args) {
+            auto* n = s.cur->next();
+            if (n) { s.cur = n; s.print("-> " + nodeSummary(n) + "\n"); }
+            else s.print("(no next sibling)\n");
+        }, "next");
+        regBuiltin(builtins, "sibling", [](S& s, Args args) {
+            if (args.size() < 2) { s.print("usage: sibling <offset>\n"); return; }
+            int off = std::stoi(args[1]);
+            auto* sib = s.cur->sibling(off);
+            if (sib) { s.cur = sib; s.print("-> " + nodeSummary(sib) + "\n"); }
+            else s.print("no sibling at offset " + std::to_string(off) + "\n");
+        }, "sibling <offset>");
+
+        regBuiltin(builtins, "ls", [](S& s, Args args) {
+            auto f = parseFlags(args);
+            const int lp = f.posCount();
+            Node* t = nullptr;
+            if (lp == 0) {
+                t = s.cur;
+            } else if (lp == 1) {
+                t = s.resolve(f.pos(0));
+                if (!t) { s.print("not found: " + f.pos(0) + "\n"); return; }
+            } else {
+                s.print("usage: ls [path] [-t] [-l] [-n]\n");
+                return;
+            }
+            if (f.has("tree", 't')) { s.print(t->dump()); return; }
+            if (f.has("names", 'n')) {
+                auto names = t->childNames();
+                int anonCnt = 0;
+                for (auto* c : *t) if (c->name().empty()) ++anonCnt;
+                std::string out;
+                if (anonCnt > 0) out += "  (anon) x" + std::to_string(anonCnt) + "\n";
+                for (auto& nm : names) out += "  " + nm + "\n";
+                s.print(out); return;
+            }
+            if (f.has("long", 'l')) {
+                auto nm = t->name().empty() ? "(anon)" : t->name();
+                std::string out;
+                out += "  name:      " + nm + "\n";
+                out += "  path:      /" + t->path(s.root) + "\n";
+                out += "  parent:    " + std::string(t->parent() ? nodeSummary(t->parent()) : "(none)") + "\n";
+                out += "  children:  " + std::to_string(t->count()) + "\n";
+                out += "  empty:     " + std::string(t->empty() ? "yes" : "no") + "\n";
+                if (!t->get().isNull()) {
+                    const auto& v = t->get();
+                    out += "  value:     " + varPreview(v) + "\n";
+                    out += "  type:      " + std::string(varTypeName(v.type())) + "\n";
+                } else { out += "  value:     (none)\n"; }
+                out += "  watching:  " + std::string(t->isWatching() ? "yes" : "no") + "\n";
+                out += "  silent:    " + std::string(t->isSilent() ? "yes" : "no") + "\n";
+                s.print(out); return;
+            }
+            int total = t->count();
+            if (total == 0) { s.print("  (empty)\n"); return; }
+            std::string out;
+            for (int i = 0; i < total; ++i) {
+                auto* c = t->child(i);
+                auto nm = c->name().empty() ? "(anon)" : c->name();
+                out += "  [" + std::to_string(i) + "] " + nm;
+                auto k = t->keyOf(c);
+                if (k != nm && k != "(anon)") out += "  (key: " + k + ")";
+                if (!c->get().isNull()) out += "  = " + varPreview(c->get());
+                out += "\n";
+            }
+            out += "  (" + std::to_string(total) + " total)\n";
+            s.print(out);
+        }, "ls [path] [-t] [-l] [-n]");
+
+        auto getImpl = [](S& s, Args args) {
+            auto f = parseFlags(args);
+            const int pc = f.posCount();
+            Node* t = nullptr;
+            if (pc == 0) {
+                t = s.cur;
+            } else if (pc == 1) {
+                t = s.resolve(f.pos(0));
+                if (!t) { s.print("not found: " + f.pos(0) + "\n"); return; }
+            } else {
+                s.print("usage: get [path] [-t]\n");
+                return;
+            }
+            if (f.has("type", 't')) {
+                s.print(t->get().isNull() ? "(none)\n" : std::string(varTypeName(t->get().type())) + "\n");
+                return;
+            }
+            if (t->get().isNull()) { s.print("(none)\n"); return; }
+            const auto& v = t->get();
+            s.print(varPreview(v, 256) + "  (" + varTypeName(v.type()) + ")\n");
+        };
+        regBuiltin(builtins, "get", getImpl, "get [path] [-t]");
+        regBuiltin(builtins, "g", getImpl, "get [path] [-t]");
+
+        auto setImpl = [](S& s, Args args) {
+            auto f = parseFlags(args);
+            const int pc = f.posCount();
+
+            if (f.has("null")) {
+                Node* t = nullptr;
+                if (pc == 0) {
+                    t = s.cur;
+                } else if (pc == 1) {
+                    t = s.resolve(f.pos(0));
+                    if (!t) { s.print("not found: " + f.pos(0) + "\n"); return; }
+                } else {
+                    s.print("usage: set [path] --null\n");
+                    return;
+                }
+                t->set(Var());
+                s.print("value cleared\n");
+                return;
+            }
+
+            if (f.has("trigger", 't')) {
+                Node* t = nullptr;
+                if (pc == 0) {
+                    t = s.cur;
+                } else if (pc == 1) {
+                    t = s.resolve(f.pos(0));
+                    if (!t) { s.print("not found: " + f.pos(0) + "\n"); return; }
+                } else {
+                    s.print("usage: set [path] --trigger\n");
+                    return;
+                }
+                t->trigger<Node::NODE_CHANGED>();
+                if (t->isWatching()) t->activate(Node::NODE_CHANGED, t);
+                s.print("triggered: " + nodeSummary(t) + "\n");
+                return;
+            }
+
+            Node* t = nullptr;
+            std::string valueRaw;
+
+            if (pc == 0) {
+                t = s.cur;
+                valueRaw = "";
+            } else if (pc == 1) {
+                t = s.cur;
+                valueRaw = f.pos(0);
+            } else if (pc == 2) {
+                t = s.resolve(f.pos(0));
+                if (!t) { s.print("not found: " + f.pos(0) + "\n"); return; }
+                valueRaw = f.pos(1);
+            } else {
+                s.print("usage: set [path] [value] [--null] [--trigger/-t]\n");
+                return;
+            }
+
+            Var v = parseVar(valueRaw);
+            t->set(std::move(v));
+            s.print("set: " + varPreview(t->get()) + "  (" + varTypeName(t->get().type()) + ")\n");
+        };
+        regBuiltin(builtins, "set", setImpl, "set [path] [value]");
+        regBuiltin(builtins, "s", setImpl, "set [path] [value]");
+
+        regBuiltin(builtins, "mk", [](S& s, Args args) {
+            auto f = parseFlags(args);
+            auto name = f.get("name", 'n');
+            if (!name.empty() || f.has("anon", 'a')) {
+                auto* t = s.target(args);
+                auto ovStr = f.get("overlap", 'o', "0");
+                int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
+                auto atStr = f.get("at");
+                bool hasAt = f.has("at") && isInt(atStr);
+                if (f.has("anon", 'a')) {
+                    auto* n = t->append(overlap);
+                    if (n) s.print("appended " + std::to_string(1 + overlap) + " anon -> index: " + std::to_string(t->indexOf(n)) + "\n");
+                    else s.print("failed\n");
+                    return;
+                }
+                if (hasAt) {
+                    int idx = std::stoi(atStr);
+                    auto* c = new Node(name);
+                    if (t->insert(c, idx)) s.print("inserted '" + name + "' at [" + std::to_string(idx) + "]\n");
+                    else { delete c; s.print("insert failed\n"); }
+                    return;
+                }
+                auto* n = t->append(name, overlap);
+                if (n) s.print("appended " + std::to_string(1 + overlap) + " '" + name + "' -> last: " + t->keyOf(n) + "\n");
+                else s.print("failed\n");
+                return;
+            }
+            auto path = f.pos(0);
+            if (path.empty()) { s.print("usage: mk <path> | mk -n <name> [-o N] [-a] [--at IDX]\n"); return; }
+            bool absolute = path[0] == '/';
+            Node* base = absolute ? s.root : s.cur;
+            std::string relPath = absolute ? path.substr(1) : path;
+            auto* n = base->at(relPath);
+            if (n) s.print("created: /" + n->path(s.root) + "\n");
+            else s.print("failed\n");
+        }, "mk <path> | mk -n <name>");
+
+        regBuiltin(builtins, "rm", [](S& s, Args args) {
+            auto f = parseFlags(args);
+            auto* t = s.target(args);
+            if (f.has("clear", 'c')) {
+                int n = t->count();
+                t->clear();
+                s.print("cleared " + std::to_string(n) + " children\n");
+                return;
+            }
+            if (f.has("index", 'i')) {
+                auto idxStr = f.get("index", 'i');
+                if (!isInt(idxStr)) { s.print("usage: rm -i <index>\n"); return; }
+                int idx = std::stoi(idxStr);
+                if (t->remove(idx)) s.print("removed [" + std::to_string(idx) + "]\n");
+                else s.print("no child at index " + std::to_string(idx) + "\n");
+                return;
+            }
+            if (f.has("name", 'n')) {
+                auto nm = f.get("name", 'n');
+                if (nm.empty()) { s.print("usage: rm -n <name> [-o N]\n"); return; }
+                auto ovStr = f.get("overlap", 'o', "0");
+                int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
+                if (t->remove(nm, overlap)) s.print("removed '" + nm + "'\n");
+                else s.print("no child '" + nm + "' overlap " + std::to_string(overlap) + "\n");
+                return;
+            }
+            if (f.has("all")) {
+                auto nm = f.get("all");
+                if (nm.empty()) { s.print("usage: rm --all <name>\n"); return; }
+                int n = t->remove(nm);
+                s.print("removed " + std::to_string(n) + " children named '" + nm + "'\n");
+                return;
+            }
+            auto childPath = f.pos(0);
+            if (!childPath.empty()) {
+                bool absolute = childPath[0] == '/';
+                Node* base = absolute ? s.root : s.cur;
+                std::string relPath = absolute ? childPath.substr(1) : childPath;
+                if (base->erase(relPath)) s.print("removed\n");
+                else s.print("failed (not found or is root)\n");
+                return;
+            }
+            s.print("usage: rm [path] <target> | rm -i IDX | rm -n NAME [-o N] | rm --all NAME | rm -c\n");
+        }, "rm [path]");
+
+        regBuiltin(builtins, "mv", [](S& s, Args args) {
+            auto f = parseFlags(args);
+            auto srcPath = f.pos(0);
+            if (srcPath.empty()) { s.print("usage: mv <src> [dest] [--at INDEX]\n"); return; }
+            auto* src = s.resolve(srcPath);
+            if (!src) { s.print("not found: " + srcPath + "\n"); return; }
+            auto destPath = f.pos(1);
+            auto* dest = destPath.empty() ? s.cur : s.resolve(destPath);
+            if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
+            if (src == dest) { s.print("cannot move node into itself\n"); return; }
+            auto atStr = f.get("at");
+            if (f.has("at") && isInt(atStr)) {
+                int idx = std::stoi(atStr);
+                if (dest->insert(src, idx)) s.print("moved to [" + std::to_string(idx) + "] " + src->path(s.root) + "\n");
+                else s.print("insert failed\n");
+                return;
+            }
+            dest->insert(src);
+            s.print("moved to " + src->path(s.root) + "\n");
+        }, "mv <src> [dest]");
+
+        regBuiltin(builtins, "cp", [](S& s, Args args) {
+            auto f = parseFlags(args);
+            auto srcPath = f.pos(0);
+            if (srcPath.empty()) { s.print("usage: cp <src> [dest] [-r] [-u] [-I] [-R]\n"); return; }
+            auto* src = s.resolve(srcPath);
+            if (!src) { s.print("not found: " + srcPath + "\n"); return; }
+            auto destPath = f.pos(1);
+            auto* dest = destPath.empty() ? s.cur : s.resolve(destPath);
+            if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
+            if (src == dest) { s.print("cannot copy node onto itself\n"); return; }
+            if (src->isAncestorOf(dest) || dest->isAncestorOf(src)) {
+                s.print("cannot copy between overlapping subtrees\n"); return;
+            }
+            bool ai = !f.has("no-insert", 'I'), ar = f.has("remove", 'r'), au = f.has("update", 'u'), arp = !f.has("no-replace", 'R');
+            int copy_flags = (ai ? Node::COPY_INSERT : 0) | (ar ? Node::COPY_REMOVE : 0)
+                           | (au ? Node::COPY_UPDATE : 0) | (arp ? Node::COPY_REPLACE : 0);
+            dest->copy(src, copy_flags);
+            s.print("copied /" + src->path(s.root) + " -> /" + dest->path(s.root)
+                + "  (insert:" + std::string(ai?"on":"off") + ", remove:" + std::string(ar?"on":"off")
+                + ", update:" + std::string(au?"on":"off") + ", replace:" + std::string(arp?"on":"off") + ")\n");
+        }, "cp <src> [dest]");
+
+        regBuiltin(builtins, "schema", [](S& s, Args args) {
+            auto f = parseFlags(args);
+            auto format = f.pos(0);
+            if (format.empty()) {
+                s.print(availableSchemaFormatsText() + "\n"); return;
+            }
+            auto pathStr = f.pos(1);
+            auto* t = pathStr.empty() ? s.cur : s.resolve(pathStr);
+            if (!t) { s.print("not found: " + pathStr + "\n"); return; }
+
+            bool isImport = f.has("import", 'i');
+            auto file = f.get("file", 'f');
+            auto importContent = f.get("import", 'i');
+
+            if (isImport) {
+                std::string content;
+                if (!file.empty()) {
+                    std::ifstream ifs(file, format == "bin" ? std::ios::binary : std::ios::in);
+                    if (!ifs.is_open()) { s.print("cannot read: " + file + "\n"); return; }
+                    content.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+                } else if (!importContent.empty()) {
+                    content = importContent;
+                } else {
+                    s.print("usage: schema " + format + " -i <content> | -i -f <file>\n");
+                    return;
+                }
+
+                bool ok = schema::schemaToNode(format, t, content);
+                if (ok) s.print(file.empty() ? "imported\n" : "imported from " + file + "\n");
+                else s.print("import failed (invalid " + format + ")\n");
+                return;
+            }
+
+            std::string result = schema::schemaFromNode(format, t);
+            if (result.empty()) {
+                s.print("unknown format: " + format + "\n");
+                return;
+            }
+
+            if (format == "bin") {
+                if (!file.empty()) {
+                    auto bytes = impl::bin::exportTree(t);
+                    std::ofstream ofs(file, std::ios::binary);
+                    if (!ofs.is_open()) { s.print("cannot write: " + file + "\n"); return; }
+                    ofs.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                    s.print("saved to " + file + " (" + std::to_string(bytes.size()) + " bytes)\n");
+                    return;
+                }
+                std::ostringstream oss;
+                for (size_t i = 0; i < result.size(); i += 2) {
+                    if (i > 0 && (i/2) % 16 == 0) oss << "\n";
+                    else if (i > 0) oss << " ";
+                    oss << result.substr(i, 2);
+                }
+                oss << "\n(" << std::dec << (result.size()/2) << " bytes)\n";
+                s.print(oss.str());
+                return;
+            }
+
+            if (!file.empty()) {
+                std::ofstream ofs(file);
+                if (!ofs.is_open()) { s.print("cannot write: " + file + "\n"); return; }
+                ofs << result;
+                s.print("saved to " + file + "\n");
+            } else {
+                s.print(result);
+            }
+        }, "schema <fmt> [path] [-f file] [-i data]  (export; -i/-f import = load/save)");
+    });
 }
 
 
@@ -183,55 +740,7 @@ void TerminalSession::Private::initCommands()
     using S = Private;
     using Args = const std::vector<std::string>&;
 
-    // --- Navigation ---
-
-    cmds["cd"] = [](S& s, Args args) {
-        if (args.size() < 2) { s.print("usage: cd <path>\n"); return; }
-        if (args[1] == ".") return;
-        if (args[1] == "..") {
-            if (s.cur->parent()) s.cur = s.cur->parent();
-            else s.print("already at root\n");
-        } else {
-            auto* n = s.cur->find(args[1]);
-            if (n) s.cur = n; else s.print("not found: " + args[1] + "\n");
-        }
-    };
-    cmds["pwd"] = [](S& s, Args) { s.print("/" + s.currentPath() + "\n"); };
-    cmds["root"] = [](S& s, Args) { s.cur = s.root; };
-    cmds["up"] = [](S& s, Args args) {
-        int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
-        auto* p = s.cur->parent(n - 1);
-        if (p) s.cur = p; else s.print("cannot go up " + std::to_string(n) + " levels\n");
-    };
-    cmds["first"] = [](S& s, Args) {
-        auto* f = s.cur->first();
-        if (f) { s.cur = f; s.print("-> " + nodeSummary(f) + "\n"); }
-        else s.print("(no children)\n");
-    };
-    cmds["last"] = [](S& s, Args) {
-        auto* l = s.cur->last();
-        if (l) { s.cur = l; s.print("-> " + nodeSummary(l) + "\n"); }
-        else s.print("(no children)\n");
-    };
-    cmds["prev"] = [](S& s, Args) {
-        auto* p = s.cur->prev();
-        if (p) { s.cur = p; s.print("-> " + nodeSummary(p) + "\n"); }
-        else s.print("(no prev sibling)\n");
-    };
-    cmds["next"] = [](S& s, Args) {
-        auto* n = s.cur->next();
-        if (n) { s.cur = n; s.print("-> " + nodeSummary(n) + "\n"); }
-        else s.print("(no next sibling)\n");
-    };
-    cmds["sibling"] = [](S& s, Args args) {
-        if (args.size() < 2) { s.print("usage: sibling <offset>\n"); return; }
-        int off = std::stoi(args[1]);
-        auto* sib = s.cur->sibling(off);
-        if (sib) { s.cur = sib; s.print("-> " + nodeSummary(sib) + "\n"); }
-        else s.print("no sibling at offset " + std::to_string(off) + "\n");
-    };
-
-    // --- Orphan pool ---
+    registerTerminalBuiltins();
 
     cmds["take"] = [](S& s, Args args) {
         if (args.size() < 2) { s.print("usage: take <index|path>\n"); return; }
@@ -239,7 +748,7 @@ void TerminalSession::Private::initCommands()
         if (isInt(args[1])) {
             taken = s.cur->take(std::stoi(args[1]));
         } else {
-            auto* c = s.cur->find(args[1], false);
+            auto* c = s.cur->find(args[1]);
             if (c && c->parent() == s.cur) taken = s.cur->take(c);
             else if (c) s.print("not a direct child\n");
             else s.print("not found: " + args[1] + "\n");
@@ -251,6 +760,7 @@ void TerminalSession::Private::initCommands()
             s.print("no child at index " + args[1] + "\n");
         }
     };
+
     cmds["orphans"] = [](S& s, Args) {
         if (s.orphans.empty()) { s.print("(empty)\n"); return; }
         std::string out;
@@ -259,6 +769,7 @@ void TerminalSession::Private::initCommands()
                    " (" + std::to_string(s.orphans[i]->count()) + " children)\n";
         s.print(out);
     };
+
     cmds["adopt"] = [](S& s, Args args) {
         if (args.size() < 2) { s.print("usage: adopt <orphan_index>\n"); return; }
         int idx = std::stoi(args[1]);
@@ -269,446 +780,66 @@ void TerminalSession::Private::initCommands()
         s.print("adopted: " + n->path(s.root) + "\n");
     };
 
-    // --- Node operations ---
-
-    cmds["ls"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        const int lp = f.posCount();
-        Node* t = nullptr;
-        if (lp == 0) {
-            t = s.cur;
-        } else if (lp == 1) {
-            t = s.resolve(f.pos(0));
-            if (!t) {
-                s.print("not found: " + f.pos(0) + "\n");
-                return;
-            }
-        } else {
-            s.print("usage: ls [path] [-t] [-l] [-n]\n");
-            return;
-        }
-        if (f.has("tree", 't')) { s.print(t->dump()); return; }
-        if (f.has("names", 'n')) {
-            auto names = t->childNames();
-            int anonCnt = 0;
-            for (auto* c : *t) if (c->name().empty()) ++anonCnt;
-            std::string out;
-            if (anonCnt > 0) out += "  (anon) x" + std::to_string(anonCnt) + "\n";
-            for (auto& nm : names) out += "  " + nm + "\n";
-            s.print(out); return;
-        }
-        if (f.has("long", 'l')) {
-            auto nm = t->name().empty() ? "(anon)" : t->name();
-            std::string out;
-            out += "  name:      " + nm + "\n";
-            out += "  path:      /" + t->path(s.root) + "\n";
-            out += "  parent:    " + std::string(t->parent() ? nodeSummary(t->parent()) : "(none)") + "\n";
-            out += "  children:  " + std::to_string(t->count()) + "\n";
-            out += "  empty:     " + std::string(t->empty() ? "yes" : "no") + "\n";
-            out += "  shadow:    " + std::string(t->shadow() ? nodeSummary(t->shadow()) : "(none)") + "\n";
-            if (!t->get().isNull()) {
-                const auto& v = t->get();
-                out += "  value:     " + varPreview(v) + "\n";
-                out += "  type:      " + std::string(varTypeName(v.type())) + "\n";
-            } else { out += "  value:     (none)\n"; }
-            out += "  watching:  " + std::string(t->isWatching() ? "yes" : "no") + "\n";
-            out += "  silent:    " + std::string(t->isSilent() ? "yes" : "no") + "\n";
-            s.print(out); return;
-        }
-        int total = t->count();
-        if (total == 0) { s.print("  (empty)\n"); return; }
-        std::string out;
-        for (int i = 0; i < total; ++i) {
-            auto* c = t->child(i);
-            auto nm = c->name().empty() ? "(anon)" : c->name();
-            out += "  [" + std::to_string(i) + "] " + nm;
-            auto k = t->keyOf(c);
-            if (k != nm && k != "(anon)") out += "  (key: " + k + ")";
-            if (!c->get().isNull()) out += "  = " + varPreview(c->get());
-            out += "\n";
-        }
-        out += "  (" + std::to_string(total) + " total)\n";
-        s.print(out);
-    };
-
-    auto getImpl = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        const int pc = f.posCount();
-        Node* t = nullptr;
-        if (pc == 0) {
-            t = s.cur;
-        } else if (pc == 1) {
-            t = s.resolve(f.pos(0));
-            if (!t) {
-                s.print("not found: " + f.pos(0) + "\n");
-                return;
-            }
-        } else {
-            s.print("usage: get [path] [-t]\n");
-            return;
-        }
-        if (f.has("type", 't')) {
-            s.print(t->get().isNull() ? "(none)\n" : std::string(varTypeName(t->get().type())) + "\n");
-            return;
-        }
-        if (t->get().isNull()) { s.print("(none)\n"); return; }
-        const auto& v = t->get();
-        s.print(varPreview(v, 256) + "  (" + varTypeName(v.type()) + ")\n");
-    };
-    cmds["get"] = getImpl;
-    cmds["g"] = getImpl;
-
-    auto setImpl = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        const int pc = f.posCount();
-
-        if (f.has("null")) {
-            Node* t = nullptr;
-            if (pc == 0) {
-                t = s.cur;
-            } else if (pc == 1) {
-                t = s.resolve(f.pos(0));
-                if (!t) {
-                    s.print("not found: " + f.pos(0) + "\n");
-                    return;
-                }
-            } else {
-                s.print("usage: set [path] --null\n");
-                return;
-            }
-            t->set(Var());
-            s.print("value cleared\n");
-            return;
-        }
-
-        if (f.has("trigger", 't')) {
-            // Trigger mode
-            Node* t = nullptr;
-            if (pc == 0) {
-                t = s.cur;
-            } else if (pc == 1) {
-                t = s.resolve(f.pos(0));
-                if (!t) {
-                    s.print("not found: " + f.pos(0) + "\n");
-                    return;
-                }
-            } else {
-                s.print("usage: set [path] --trigger\n");
-                return;
-            }
-            t->trigger<Node::NODE_CHANGED>();
-            if (t->isWatching()) t->activate(Node::NODE_CHANGED, t);
-            s.print("triggered: " + nodeSummary(t) + "\n");
-            return;
-        }
-
-        Node*       t = nullptr;
-        std::string valueRaw;
-
-        if (pc == 0) {
-            t = s.cur;
-            valueRaw = "";
-        } else if (pc == 1) {
-            t = s.cur;
-            valueRaw = f.pos(0);
-        } else if (pc == 2) {
-            t = s.resolve(f.pos(0));
-            if (!t) {
-                s.print("not found: " + f.pos(0) + "\n");
-                return;
-            }
-            valueRaw = f.pos(1);
-        } else {
-            s.print("usage: set [path] [value] [--null] [--trigger/-t]\n");
-            return;
-        }
-
-        Var v = parseVar(valueRaw);
-        t->set(std::move(v));
-        s.print("set: " + varPreview(t->get()) + "  (" + varTypeName(t->get().type()) + ")\n");
-    };
-    cmds["set"] = setImpl;
-    cmds["s"] = setImpl;
-
-    cmds["mk"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        auto name = f.get("name", 'n');
-        if (!name.empty() || f.has("anon", 'a')) {
-            auto* t = s.target(args);
-            auto ovStr = f.get("overlap", 'o', "0");
-            int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
-            auto atStr = f.get("at");
-            bool hasAt = f.has("at") && isInt(atStr);
-            if (f.has("anon", 'a')) {
-                auto* n = t->append(overlap);
-                if (n) s.print("appended " + std::to_string(1 + overlap) + " anon -> index: " + std::to_string(t->indexOf(n)) + "\n");
-                else s.print("failed\n");
-                return;
-            }
-            if (hasAt) {
-                int idx = std::stoi(atStr);
-                auto* c = new Node(name);
-                if (t->insert(c, idx)) s.print("inserted '" + name + "' at [" + std::to_string(idx) + "]\n");
-                else { delete c; s.print("insert failed\n"); }
-                return;
-            }
-            auto* n = t->append(name, overlap);
-            if (n) s.print("appended " + std::to_string(1 + overlap) + " '" + name + "' -> last: " + t->keyOf(n) + "\n");
-            else s.print("failed\n");
-            return;
-        }
-        auto path = f.pos(0);
-        if (path.empty()) { s.print("usage: mk <path> | mk -n <name> [-o N] [-a] [--at IDX]\n"); return; }
-        bool absolute = path[0] == '/';
-        Node* base = absolute ? s.root : s.cur;
-        std::string relPath = absolute ? path.substr(1) : path;
-        auto* n = base->at(relPath);
-        if (n) s.print("created: /" + n->path(s.root) + "\n");
-        else s.print("failed\n");
-    };
-
-    cmds["rm"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        auto* t = s.target(args);
-        if (f.has("clear", 'c')) {
-            int n = t->count();
-            t->clear();
-            s.print("cleared " + std::to_string(n) + " children\n");
-            return;
-        }
-        if (f.has("index", 'i')) {
-            auto idxStr = f.get("index", 'i');
-            if (!isInt(idxStr)) { s.print("usage: rm -i <index>\n"); return; }
-            int idx = std::stoi(idxStr);
-            if (t->remove(idx)) s.print("removed [" + std::to_string(idx) + "]\n");
-            else s.print("no child at index " + std::to_string(idx) + "\n");
-            return;
-        }
-        if (f.has("name", 'n')) {
-            auto nm = f.get("name", 'n');
-            if (nm.empty()) { s.print("usage: rm -n <name> [-o N]\n"); return; }
-            auto ovStr = f.get("overlap", 'o', "0");
-            int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
-            if (t->remove(nm, overlap)) s.print("removed '" + nm + "'\n");
-            else s.print("no child '" + nm + "' overlap " + std::to_string(overlap) + "\n");
-            return;
-        }
-        if (f.has("all")) {
-            auto nm = f.get("all");
-            if (nm.empty()) { s.print("usage: rm --all <name>\n"); return; }
-            int n = t->remove(nm);
-            s.print("removed " + std::to_string(n) + " children named '" + nm + "'\n");
-            return;
-        }
-        auto childPath = f.pos(0);
-        if (!childPath.empty()) {
-            bool absolute = childPath[0] == '/';
-            Node* base = absolute ? s.root : s.cur;
-            std::string relPath = absolute ? childPath.substr(1) : childPath;
-            if (base->erase(relPath)) s.print("removed\n");
-            else s.print("failed (not found or is root)\n");
-            return;
-        }
-        s.print("usage: rm [path] <target> | rm -i IDX | rm -n NAME [-o N] | rm --all NAME | rm -c\n");
-    };
-
-    // --- mv / cp ---
-
-    cmds["mv"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        auto srcPath = f.pos(0);
-        if (srcPath.empty()) { s.print("usage: mv <src> [dest] [--at INDEX]\n"); return; }
-        auto* src = s.resolve(srcPath);
-        if (!src) { s.print("not found: " + srcPath + "\n"); return; }
-        auto destPath = f.pos(1);
-        auto* dest = destPath.empty() ? s.cur : s.resolve(destPath);
-        if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
-        if (src == dest) { s.print("cannot move node into itself\n"); return; }
-        auto atStr = f.get("at");
-        if (f.has("at") && isInt(atStr)) {
-            int idx = std::stoi(atStr);
-            if (dest->insert(src, idx)) s.print("moved to [" + std::to_string(idx) + "] " + src->path(s.root) + "\n");
-            else s.print("insert failed\n");
-            return;
-        }
-        dest->insert(src);
-        s.print("moved to " + src->path(s.root) + "\n");
-    };
-
-    cmds["cp"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        auto srcPath = f.pos(0);
-        if (srcPath.empty()) { s.print("usage: cp <src> [dest] [-r] [-u] [-I]\n"); return; }
-        auto* src = s.resolve(srcPath);
-        if (!src) { s.print("not found: " + srcPath + "\n"); return; }
-        auto destPath = f.pos(1);
-        auto* dest = destPath.empty() ? s.cur : s.resolve(destPath);
-        if (!dest) { s.print("dest not found: " + destPath + "\n"); return; }
-        if (src == dest) { s.print("cannot copy node onto itself\n"); return; }
-        if (src->isAncestorOf(dest) || dest->isAncestorOf(src)) {
-            s.print("cannot copy between overlapping subtrees\n"); return;
-        }
-        bool ai = !f.has("no-insert", 'I'), ar = f.has("remove", 'r'), au = f.has("update", 'u');
-        dest->copy(src, ai, ar, au);
-        s.print("copied /" + src->path(s.root) + " -> /" + dest->path(s.root)
-            + "  (insert:" + std::string(ai?"on":"off") + ", remove:" + std::string(ar?"on":"off")
-            + ", update:" + std::string(au?"on":"off") + ")\n");
-    };
-
-    // --- Schema ---
-
-    cmds["schema"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        auto format = f.pos(0);
-        if (format.empty()) {
-            auto fmts = schema::schemaFormatNames();
-            std::string out = "available formats: json, xml, md, bin, var";
-            for (auto& fn : fmts) out += ", " + fn;
-            s.print(out + "\n"); return;
-        }
-        auto pathStr = f.pos(1);
-        auto* t = pathStr.empty() ? s.cur : s.resolve(pathStr);
-        if (!t) { s.print("not found: " + pathStr + "\n"); return; }
-
-        bool isImport = f.has("import", 'i');
-        auto file = f.get("file", 'f');
-        auto importContent = f.get("import", 'i');
-
-        if (isImport) {
-            std::string content;
-            if (!file.empty()) {
-                std::ifstream ifs(file, format == "bin" ? std::ios::binary : std::ios::in);
-                if (!ifs.is_open()) { s.print("cannot read: " + file + "\n"); return; }
-                content.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-            } else if (!importContent.empty()) {
-                content = importContent;
-            } else {
-                s.print("usage: schema " + format + " -i <content> | -i -f <file>\n");
-                return;
-            }
-
-            bool ok = schema::importSchemaFormat(format, t, content);
-            if (ok) {
-                s.print(file.empty() ? "imported\n" : "imported from " + file + "\n");
-            } else {
-                s.print("import failed (invalid " + format + ")\n");
-            }
-            return;
-        }
-
-        // Export
-        std::string result = schema::exportSchemaFormat(format, t);
-        if (result.empty()) {
-            s.print("unknown format: " + format + "\n");
-            return;
-        }
-
-        if (format == "bin") {
-            // bin format returns hex string from registry, need special handling
-            if (!file.empty()) {
-                // For file output, use direct binary export
-                auto bytes = impl::bin::exportTree(t);
-                std::ofstream ofs(file, std::ios::binary);
-                if (!ofs.is_open()) { s.print("cannot write: " + file + "\n"); return; }
-                ofs.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-                s.print("saved to " + file + " (" + std::to_string(bytes.size()) + " bytes)\n");
-                return;
-            }
-            // For terminal output, convert hex string to formatted dump
-            std::ostringstream oss;
-            for (size_t i = 0; i < result.size(); i += 2) {
-                if (i > 0 && (i/2) % 16 == 0) oss << "\n";
-                else if (i > 0) oss << " ";
-                oss << result.substr(i, 2);
-            }
-            oss << "\n(" << std::dec << (result.size()/2) << " bytes)\n";
-            s.print(oss.str());
-            return;
-        }
-
-        if (!file.empty()) {
-            std::ofstream ofs(file);
-            if (!ofs.is_open()) { s.print("cannot write: " + file + "\n"); return; }
-            ofs << result;
-            s.print("saved to " + file + "\n");
-        } else {
-            s.print(result);
+    cmds["history"] = [](S& s, Args) {
+        for (size_t i = 0; i < s.history.size(); ++i) {
+            s.print(std::to_string(i) + "  " + s.history[i] + "\n");
         }
     };
-
-    // --- Shadow ---
-
-    cmds["shadow"] = [](S& s, Args args) {
-        auto f = parseFlags(args);
-        auto* t = s.target(args);
-        if (f.has("clear")) { t->setShadow(nullptr); s.print("shadow cleared\n"); return; }
-        auto setPath = f.get("set");
-        if (f.has("set")) {
-            if (setPath.empty()) { s.print("usage: shadow --set <path>\n"); return; }
-            auto* sh = s.resolve(setPath);
-            if (!sh) { s.print("not found: " + setPath + "\n"); return; }
-            t->setShadow(sh);
-            s.print("shadow set to: " + sh->path(s.root) + "\n"); return;
-        }
-        auto* sh = t->shadow();
-        s.print(sh ? "shadow: " + nodeSummary(sh) + " (/" + sh->path(s.root) + ")\n" : "(no shadow)\n");
-    };
-
-    // --- Help ---
 
     cmds["help"] = [](S& s, Args args) {
         auto f = parseFlags(args);
         auto specific = f.pos(0);
         if (!specific.empty()) {
-            // Accept both "ros topic once" (space) and "ros.topic.once" (dot)
             std::string key = specific;
-            // Collect remaining positional args as additional words
             for (int pi = 1; ; ++pi) {
                 auto w = f.pos(pi);
                 if (w.empty()) break;
                 key += "." + w;
             }
-            std::replace(key.begin(), key.end(), ' ', '.');
-            auto h = command::help(key);
-            std::string displayKey = key;
-            std::replace(displayKey.begin(), displayKey.end(), '.', ' ');
-            s.print(h.empty() ? "unknown command: " + displayKey + "\n" : displayKey + ": " + h + "\n");
+            Node* builtin = nullptr;
+            if (const Node* root = factory::at("builtin").node()) {
+                builtin = const_cast<Node*>(root)->find(key);
+            }
+            if (builtin) {
+                auto h = builtin->get("help").toString();
+                s.print(h.empty() ? key + "\n" : key + ": " + h + "\n");
+                return;
+            }
+            auto h = command::factory().help(key);
+            s.print(h.empty() ? "unknown command: " + key + "\n" : key + ": " + h + "\n");
             return;
         }
+
+        // Deliberate display order (grouped), aliases g/s intentionally omitted.
+        static const char* const kBuiltinOrder[] = {
+            "pwd", "cd", "root", "up", "ls",
+            "first", "last", "prev", "next", "sibling",
+            "get", "set", "mk", "rm", "mv", "cp",
+            "schema",
+        };
+
         std::string out;
-        out += "=== Node Commands ===\n";
-        out += "  ls [path] [-t] [-l] [-n]   list children / tree / details (default path: current)\n";
-        out += "  get [path] [-t]            get value or type (default path: current)\n";
-        out += "  set [path] <value> [--null] [-t|--trigger]  set value, clear, or trigger (default: current)\n";
-        out += "  mk <path> | -n NAME        create at path (relative to cur)\n";
-        out += "  rm <path> [-i] [-n] [-c]   remove at path (relative to cur)\n";
-        out += "  mv <src> [dest] [--at N]   reparent node\n";
-        out += "  cp <src> [dest] [-r] [-u]  copy subtree\n";
-        out += "  schema <fmt> [path] [-f FILE] [-i] export/import\n";
-        out += "  shadow [path] [--set/--clear] shadow ops\n";
-        out += "\n=== Navigation ===\n";
-        out += "  cd <path>       navigate ('.' and '..')\n";
-        out += "  pwd             print current path\n";
-        out += "  root            go to root\n";
-        out += "  up [N]          go up N levels\n";
-        out += "  first / last    first/last child\n";
-        out += "  prev / next     prev/next sibling\n";
-        out += "  sibling <N>     sibling at offset\n";
-        out += "\n=== Orphan Pool ===\n";
-        out += "  take <idx|path> detach to orphan pool\n";
-        out += "  orphans         list orphan pool\n";
-        out += "  adopt <N>       adopt orphan into current\n";
-        out += "\n=== Other ===\n";
-        out += "  quit / exit     disconnect\n";
-        auto userCmds = command::keys();
+        out += "=== Builtin Commands ===\n";
+        for (const char* k : kBuiltinOrder) {
+            Node* builtin = factory::at("builtin").node(k);
+            if (!builtin) continue;
+            std::string key = k;
+            out += "  " + key;
+            auto h = builtin->get("help").toString();
+            if (!h.empty()) { int pad = 18 - (int)key.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
+            out += "\n";
+        }
+        out += "\n=== Session Commands ===\n";
+        out += "  take <idx|path>\n  orphans\n  adopt <N>\n  history\n  quit / exit\n";
+
+        auto userCmds = command::factory().keys();
         if (!userCmds.empty()) {
+            std::sort(userCmds.begin(), userCmds.end());
             out += "\n=== User Commands ===\n";
             for (auto& k : userCmds) {
-                auto h = command::help(k);
-                std::string displayK = k;
-                std::replace(displayK.begin(), displayK.end(), '.', ' ');
-                out += "  " + displayK;
-                if (!h.empty()) { int pad = 22 - (int)displayK.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
+                auto h = command::factory().help(k);
+                out += "  " + k;
+                if (!h.empty()) { int pad = 18 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
                 out += "\n";
             }
         }
@@ -745,7 +876,7 @@ std::string TerminalSession::execute(const std::string& line)
     if (args.empty()) return {};
 
     _p->history.push_back(line);
-    auto& cmd = args[0];
+    std::string cmd = args[0];
     auto& s = *_p;
 
     if (cmd == "quit" || cmd == "exit")
@@ -768,64 +899,50 @@ std::string TerminalSession::execute(const std::string& line)
 
     // Try multi-word command: "ros topic once" -> "ros.topic.once"
     // Always find the longest match (most words consumed).
-    auto [resolvedCmd, cmdWordCount] = resolveCommand(args);
+    auto [builtinNode, builtinWordCount] = resolveFactoryCommand(factory::at("builtin"), args);
+    auto [cmdNode, cmdWordCount] = resolveFactoryCommand(command::factory(), args);
+    Factory& resolvedFactory = builtinNode ? factory::at("builtin") : command::factory();
+    std::string resolvedName;
+    for (size_t i = 0; i < (builtinNode ? builtinWordCount : cmdWordCount); ++i) {
+        if (i > 0) resolvedName += ".";
+        resolvedName += args[i];
+    }
+    size_t resolvedWordCount = builtinNode ? builtinWordCount : cmdWordCount;
 
-    if (Command cmd(resolvedCmd); cmd.isValid()) {
-        Var::ListV list;
-        for (size_t i = cmdWordCount; i < args.size(); ++i)
-            list.push_back(Var(args[i]));
-        Var inputVar = list.empty() ? Var() : Var(std::move(list));
-
+    if (builtinNode || cmdNode) {
         if (asyncMode) {
-            Pipeline* detached = nullptr;
-            auto r = cmd.call(inputVar, s.cur, false, &detached);
+            // Detached run: the Pipeline graph keeps itself alive (strong self in
+            // the dispatch chain) until FINISHED has been delivered. The pipeline
+            // rebinds the command's i/o at dispatch, so input goes on the PIPELINE.
+            Pipeline pipe;
+            prepareCommandInput(pipe.inputNode(), s.root, s.cur, args, resolvedWordCount);
+            pipe.add(command::create(resolvedFactory, resolvedName));
 
-            if (detached) {
-                auto asyncOut = s.asyncOutput;
-                std::string cmdName = resolvedCmd;
-                detached->setResultHandler([asyncOut, detached, cmdName](const Result& res) {
-                    std::string text;
-                    if (res.isSuccess() || res.isAccepted()) {
-                        if (!res.content().isNull())
-                            text = res.content().toString();
-                    } else {
-                        text = Var(res).toString();
+            auto asyncOut = s.asyncOutput;
+            pipe.onFinished(nullptr, [asyncOut, resolvedName](Pipeline& pipe) {
+                std::string text = renderCommandOutput(pipe.outputNode(), pipe.result());
+                if (asyncOut && !text.empty()) {
+                    if (text.back() != '\n') {
+                        text.push_back('\n');
                     }
-                    if (asyncOut && !text.empty()) {
-                        if (text.back() != '\n')
-                            text.push_back('\n');
-                        asyncOut("\x1b[33m[" + cmdName + "]\x1b[0m " + text);
-                    }
-                    delete detached;
-                });
-                s.print("accepted\n");
-                return s.output;
-            }
-
-            // Command completed synchronously despite async request
-            if (r.isSuccess() || r.isAccepted()) {
-                auto& content = r.content();
-                if (!content.isNull())
-                    s.print(content.toString());
-            } else {
-                s.print(Var(r).toString() + "\n");
-            }
+                    asyncOut("\x1b[33m[" + resolvedName + "]\x1b[0m " + text);
+                }
+            });
+            pipe.async();
+            s.print("accepted\n");
             return s.output;
         }
 
-        // Default: synchronous execution
-        auto r = cmd.call(inputVar, s.cur, true, nullptr);
-        if (r.isSuccess() || r.isAccepted()) {
-            auto& content = r.content();
-            if (!content.isNull())
-                s.print(content.toString());
-        } else {
-            s.print(Var(r).toString() + "\n");
-        }
+        // Single synchronous command — no pipeline needed.
+        Command cmdObj = command::create(resolvedFactory, resolvedName);
+        prepareCommandInput(cmdObj.inputNode(), s.root, s.cur, args, resolvedWordCount);
+        cmdObj.run();
+        updateCurrentFromOut(s.cur, cmdObj.outputNode());
+        s.print(renderCommandOutput(cmdObj.outputNode(), cmdObj.result()));
         return s.output;
     }
 
-    s.print("unknown: " + resolvedCmd + "  (type 'help')\n");
+    s.print("unknown: " + cmd + "  (type 'help')\n");
     return s.output;
 }
 
@@ -863,8 +980,9 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
     bool endsWithSpace = !partial.empty() && std::isspace(static_cast<unsigned char>(partial.back()));
 
     // --- Determine command boundary ---
-    // resolveCommand finds the longest prefix of tokens that is a known registered command.
-    auto [cmdKey, cmdWords] = resolveCommand(tokens);
+    auto [builtinNode, builtinWords] = resolveFactoryCommand(factory::at("builtin"), tokens);
+    auto [cmdNode, cmdWords] = resolveFactoryCommand(command::factory(), tokens);
+    size_t matchedWords = builtinNode ? builtinWords : cmdWords;
 
     // A built-in (session-local) command is always a single word.
     bool firstIsBuiltin = !tokens.empty() &&
@@ -873,12 +991,12 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
     // We are past the command name when:
     //   - a registered command matched AND (there's a trailing space OR extra tokens after it)
     //   - OR the first token is a built-in AND (trailing space OR more tokens follow)
-    bool pastCmd = (!cmdKey.empty() && (endsWithSpace || tokens.size() > cmdWords)) ||
+    bool pastCmd = ((builtinNode || cmdNode) && (endsWithSpace || tokens.size() > matchedWords)) ||
                    (firstIsBuiltin   && (endsWithSpace || tokens.size() > 1));
 
     if (pastCmd) {
         // Complete the current argument token as a node path.
-        size_t cmdWordCount = !cmdKey.empty() ? cmdWords : 1; // built-in = 1 word
+        size_t cmdWordCount = (builtinNode || cmdNode) ? matchedWords : 1; // local command = 1 word
         std::string prefix;
         if (endsWithSpace)
             prefix = "";
@@ -908,12 +1026,15 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
         for (auto* extra : {"quit", "exit"})
             if (std::string(extra).compare(0, typedPrefix.size(), typedPrefix) == 0)
                 matches.push_back(extra);
+        for (auto& key : factory::at("builtin").keys())
+            if (key.compare(0, typedPrefix.size(), typedPrefix) == 0)
+                matches.push_back(key);
     }
 
-    // Registered multi-word commands: keys use "/" internally, display with spaces.
-    for (auto& key : command::keys()) {
+    // Registered multi-word commands: keys use "." internally, display with spaces.
+    for (auto& key : command::factory().keys()) {
         std::string keySpace = key;
-        std::replace(keySpace.begin(), keySpace.end(), '/', ' ');
+        std::replace(keySpace.begin(), keySpace.end(), '.', ' ');
 
         if (keySpace.size() < typedPrefix.size()) continue;
         if (keySpace.compare(0, typedPrefix.size(), typedPrefix) != 0) continue;

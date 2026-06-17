@@ -1,346 +1,98 @@
 // ----------------------------------------------------------------------------
-// loop.h — Event loop framework (LoopTraits + LoopRef on std::pair)
+// loop.h - Event loop base class and core loop accessors
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
-//
-// Design:
-//   Loop<T>        — template loop, backend determined by LoopTraits<T>
-//   LoopTraits<T>  — specialization point per backend (static polymorphism)
-//   LoopRef        — type-erased handle for cross-template usage
-//
-//   Core default:  Loop<AsioContext>  (alias: EventLoop)
-//   Qt extension:  Loop<QEventLoop>   — specialize LoopTraits<QEventLoop> in veQt
-//   RTT extension: Loop<RttActivity>  — specialize LoopTraits<RttActivity> in veRtt
-//
-// ----------------------------------------------------------------------------
 
 #pragma once
-
-#include <utility>
 
 #include "base.h"
 
 namespace ve {
 
 // ============================================================================
-// LoopTraits<T> — specialization point
+// Loop - virtual event loop interface
 // ============================================================================
 //
-// Each specialization must define:
+// Loop is a borrowed runtime object. Optional loop parameters use Loop*:
+// nullptr means inline/direct execution. The core keeps only the official
+// loop::main() and loop::pool() pointers; user-defined loops are ordinary
+// objects managed by their owner.
 //
-//   struct Context;                            // backend state (can be opaque)
-//   static Context* create(int threads);       // allocate & init
-//   static void     destroy(Context*);         // stop & free
-//   static void     post(Context*, Task);      // queue a task (thread-safe)
-//   static bool     start(Context*);           // begin processing
-//   static bool     stop(Context*);            // stop processing
-//   static bool     running(const Context*);   // is active?
-//
-// Optional extensions (add if backend supports):
-//   static void     postDelayed(Context*, Task, std::chrono::milliseconds);
-//   static int      postRepeating(Context*, Task, std::chrono::milliseconds);
-//   static void     cancel(Context*, int timer_id);
-//   static bool     isCurrentThread(const Context*);  // is caller on a worker thread?
-//   static size_t   runOne(Context*);                 // pump one queued task; returns count run
-//
-// The isCurrentThread / runOne pair enables sync nested command::call from a
-// loop's own worker thread: drivePipeline detects re-entrancy and pumps events
-// instead of blocking on a condition_variable (which would starve itself).
-// Backends without these become "not pumpable" — sync re-entry stays a deadlock
-// risk on those backends, as it was before.
-//
-
-template<typename T>
-struct LoopTraits;   // primary: intentionally undefined — specialize per backend
-
-struct LoopRef;
-
-
-// ============================================================================
-// Loop<T> — generic event loop
-// ============================================================================
-//
-// Wraps a backend via LoopTraits<T>. Non-copyable, non-movable.
-//
-// Usage:
-//   EventLoop main_loop("main");          // asio (default)
-//   main_loop.start();
-//   main_loop.post([]{ doWork(); });
-//   main_loop.stop();
-//
-//   // In veQt:
-//   Loop<QEventLoop> qt_loop("qt");       // Qt backend
-//
-
-template<typename T>
-class Loop
+class VE_API Loop : public Entity
 {
-    using Traits  = LoopTraits<T>;
-    using Context = typename Traits::Context;
-
-    Context*    _ctx;
-    std::string _name;
-    Alive  _alive = Alive::create();
-
 public:
-    explicit Loop(const std::string& name = "", int threads = 1)
-        : _ctx(Traits::create(threads)), _name(name) {}
+    explicit Loop(const std::string& name = "");
+    virtual ~Loop();
 
-    ~Loop() {
-        _alive.kill();
-        if (_ctx) { Traits::destroy(_ctx); _ctx = nullptr; }
-    }
+    virtual void   post(Task task);
+    virtual bool   start();
+    virtual bool   stop();
+    virtual bool   isRunning() const;
+    virtual size_t processEvents();
 
-    const Alive& alive() const { return _alive; }
+    // Block as the process main loop until quit(). Default: poll processEvents()
+    // while isRunning(). Framework loops override exec() with the native one
+    // (QApplication::exec etc.); quit() must unblock exec() from any thread.
+    // A quit() issued before exec() makes exec() return immediately.
+    virtual int    exec();
+    virtual void   quit(int exit_code = 0);
 
-    // --- Core API ---
-    void post(Task task)         { Traits::post(_ctx, std::move(task)); }
-    void post(Alive token, Task task) {
-        if (!token) { post(std::move(task)); return; }
-        Traits::post(_ctx, [token = std::move(token), task = std::move(task)]() {
-            if (!token.dead()) task();
-        });
-    }
-    bool start()                { return Traits::start(_ctx); }
-    bool stop()                 { return Traits::stop(_ctx); }
-    bool isRunning() const      { return Traits::running(_ctx); }
+protected:
+    std::atomic<bool> _quit{false};
+    std::atomic<int>  _exit_code{0};
+};
 
-    // --- Optional pump API (used by drivePipeline for re-entrant sync calls) ---
-    // SFINAE-detected so backends without these traits stay compilable; absent
-    // backends fall back to "not on worker thread" / "no-op pump", which keeps
-    // the legacy CV-wait behaviour for them.
+// Standard core implementations. These are concrete runtime loops users may
+// construct directly when they need a temporary event loop.
+class VE_API AsioLoop : public Loop
+{
+public:
+    explicit AsioLoop(const std::string& name = "");
+    ~AsioLoop() override;
+
+    void   post(Task task) override;
+    bool   start() override;
+    bool   stop() override;
+    bool   isRunning() const override;
+    size_t processEvents() override;
+
 private:
-    template<typename Tr, typename = void>
-    struct has_thread_check_ : std::false_type {};
-    template<typename Tr>
-    struct has_thread_check_<Tr, std::void_t<decltype(Tr::isCurrentThread(
-        std::declval<const typename Tr::Context*>()))>> : std::true_type {};
+    VE_DECLARE_UNIQUE_PRIVATE
+};
 
-    template<typename Tr, typename = void>
-    struct has_run_one_ : std::false_type {};
-    template<typename Tr>
-    struct has_run_one_<Tr, std::void_t<decltype(Tr::runOne(
-        std::declval<typename Tr::Context*>()))>> : std::true_type {};
-
+class VE_API AsioPoolLoop : public Loop
+{
 public:
-    bool isCurrentThread() const {
-        if constexpr (has_thread_check_<Traits>::value)
-            return Traits::isCurrentThread(_ctx);
-        else
-            return false;
-    }
-    size_t runOne() {
-        if constexpr (has_run_one_<Traits>::value)
-            return Traits::runOne(_ctx);
-        else
-            return 0;
-    }
+    explicit AsioPoolLoop(const std::string& name = "", unsigned threads = 4);
+    ~AsioPoolLoop() override;
 
-    // --- Backend access (requires complete Context type) ---
-    Context*           contextPtr()       { return _ctx; }
-    const Context*     contextPtr() const { return _ctx; }
-    const std::string& name()       const { return _name; }
+    void   post(Task task) override;
+    bool   start() override;
+    bool   stop() override;
+    bool   isRunning() const override;
+    size_t processEvents() override;
 
-    // --- Implicit conversion to type-erased handle ---
-    operator LoopRef();
-
-    Loop(const Loop&) = delete;
-    Loop& operator=(const Loop&) = delete;
+private:
+    VE_DECLARE_UNIQUE_PRIVATE
 };
-
-
-namespace detail {
-
-template<typename U, typename = void>
-struct has_loop_ref_interface : std::false_type {};
-
-template<typename U>
-struct has_loop_ref_interface<U, std::void_t<
-    decltype(std::declval<U&>().post(std::declval<Task>())),
-    decltype(std::declval<const U&>().alive())
->> : std::true_type {};
-
-template<typename U>
-inline constexpr bool has_loop_ref_interface_v = has_loop_ref_interface<std::decay_t<U>>::value;
-
-// Pumpable = has isCurrentThread() + runOne() on the loop object itself.
-// (Loop<T> exposes these unconditionally via SFINAE-on-traits, so this just
-// detects "is it a real Loop<T>-like".)
-template<typename U, typename = void>
-struct has_pump_interface : std::false_type {};
-
-template<typename U>
-struct has_pump_interface<U, std::void_t<
-    decltype(std::declval<const U&>().isCurrentThread()),
-    decltype(std::declval<U&>().runOne())
->> : std::true_type {};
-
-template<typename U>
-inline constexpr bool has_pump_interface_v = has_pump_interface<std::decay_t<U>>::value;
-
-} // namespace detail
-
-
-// ============================================================================
-// LoopRef — type-erased loop handle
-// ============================================================================
-//
-// Extends std::pair<std::function<void(Task)>, Alive>: first = queue to loop, second = lifetime
-// (Alive false means first may be dangling). Prefer explicit two-arg ctor when wiring by hand.
-//
-// from(T&) binds to an object that exposes post(Task) and alive() (typically Loop<Backend>,
-// e.g. Loop<QEventLoop> after LoopTraits<QEventLoop> exists). It does not copy T; the
-// closure holds &loop until the LoopRef is destroyed. Only Alive is shared by value.
-//
-// Primary use cases:
-//   Object::connect() / once() with queued dispatch
-//   Pipeline Step async completion
-//   loop::post(LoopRef, ...)
-//
-//   obj.connect(SIG, observer, action, LoopRef::from(some_loop));
-//   // trigger → loop.post(action) instead of direct call
-//
-
-struct LoopRef : std::pair<std::function<void(Task)>, Alive>
-{
-    VE_INHERIT_CONSTRUCTOR(pair, LoopRef, std::pair<std::function<void(Task)>, Alive>)
-
-    // Optional pump probe + run-one closures. Filled by LoopRef::from(Loop&)
-    // when the source Loop exposes isCurrentThread()/runOne(); empty otherwise.
-    // drivePipeline reads these to detect re-entrant sync calls from a loop's
-    // own worker thread and pump events instead of CV-blocking.
-    std::function<bool()>   probe;
-    std::function<size_t()> run_one;
-
-    template<typename T, typename = std::enable_if_t<
-        detail::has_loop_ref_interface_v<T> && !std::is_same_v<std::decay_t<T>, LoopRef>>>
-    static LoopRef from(T& loop) {
-        LoopRef r([&loop](Task t) { loop.post(std::move(t)); }, loop.alive());
-        if constexpr (detail::has_pump_interface_v<T>) {
-            r.probe   = [&loop]() { return loop.isCurrentThread(); };
-            r.run_one = [&loop]() { return loop.runOne(); };
-        }
-        return r;
-    }
-
-    void post(Task task) const {
-        if (!first || second.dead()) return;
-        first(std::move(task));
-    }
-
-    void post(Alive token, Task task) const {
-        if (!first || second.dead()) return;
-        if (!token) { first(std::move(task)); return; }
-        first([token = std::move(token), task = std::move(task)]() {
-            if (!token.dead()) task();
-        });
-    }
-
-    // True iff probe is set AND reports the caller is on the loop's worker.
-    bool isCurrentThread() const { return probe && probe(); }
-    // Pump one task; returns 0 when no pump closure is available.
-    size_t runOne() const { return run_one ? run_one() : 0; }
-
-    explicit operator bool() const { return static_cast<bool>(first); }
-};
-
-
-template<typename T>
-inline Loop<T>::operator LoopRef() { return LoopRef::from(*this); }
-
-
-// ============================================================================
-// AsioContext — default backend (asio::io_context)
-// ============================================================================
-
-struct AsioContext;   // tag type
-
-template<>
-struct LoopTraits<AsioContext>
-{
-    struct Context;   // opaque — defined in loop.cpp
-
-    static VE_API Context* create(int threads);
-    static VE_API void     destroy(Context*);
-    static VE_API void     post(Context*, Task);
-    static VE_API bool     start(Context*);
-    static VE_API bool     stop(Context*);
-    static VE_API bool     running(const Context*);
-
-    // Pump extensions: re-entrant sync support for drivePipeline.
-    static VE_API bool     isCurrentThread(const Context*);
-    static VE_API size_t   runOne(Context*);
-};
-
-
-// Default alias
-using EventLoop = Loop<AsioContext>;
-
-
-// ============================================================================
-// loop:: — global loop accessors
-// ============================================================================
-//
-// loop::main()  — single-threaded, for signal dispatch / thread-affinity
-// loop::pool()  — multi-threaded, for compute / IO tasks
-// loop::post()  — convenience: post to main loop
-//
 
 namespace loop {
 
-VE_API EventLoop& main();
-VE_API EventLoop& pool(int threads = 4);
+// Built-in core loops. setMain/setPool borrow the pointer and never delete it.
+VE_API Loop* main();
+VE_API Loop* pool();
+VE_API void  setMain(Loop* loop);
+VE_API void  setPool(Loop* loop);
 
-/// Post to main loop
-inline void post(Task task) { main().post(std::move(task)); }
-
-/// Post to any loop
-template<typename T>
-void post(Loop<T>& loop, Task task) { loop.post(std::move(task)); }
-
-/// Guarded post to main loop. Task is discarded if token is false.
-VE_API void post(Alive token, Task task);
-
-/// Guarded post with context to main loop.
-VE_API void post(Alive token, void* ctx, Task task);
-
-/// Guarded post to a specific loop.
-VE_API void post(LoopRef loop, Alive token, Task task);
-
-/// Returns the owner of the currently executing loop task (nullptr if none).
-VE_API void* context();
-
-/// Sets loop context, returns previous value. For internal / Loop-backend use.
-VE_API void* setContext(void* ctx);
-
-struct ContextGuard {
-    void* prev;
-    ContextGuard(void* ctx) : prev(setContext(ctx)) {}
-    ~ContextGuard() { setContext(prev); }
-    ContextGuard(const ContextGuard&) = delete;
-    ContextGuard& operator=(const ContextGuard&) = delete;
-};
-
-// ---- Main loop runner (used by entry::run) --------------------------------
-//
-// Default: blocks on condition_variable until quit() is called.
-// Modules (e.g. ve.qt) may replace via setMainRunner() to plug in their
-// own event loop (QApplication::exec, etc.).
-
-using RunFunc  = std::function<int()>;
-using QuitFunc = std::function<void(int)>;
-
-/// Block on the main event loop. Returns exit code.
-VE_API int  run();
-
-/// Request the main event loop to stop with the given exit code.
-VE_API void quit(int exit_code = 0);
-
-/// Replace the default main-loop implementation.
-VE_API void setMainRunner(RunFunc run_fn, QuitFunc quit_fn);
+// The loop whose task is currently executing on this thread (thread-local), or
+// nullptr when not inside any loop. Core loops set this while running tasks;
+// custom loops may call setCurrent() to participate. Used as the default driver
+// for Pipeline::sync()/pipeline::async().
+VE_API Loop* current();
+VE_API void  setCurrent(Loop* loop);
 
 } // namespace loop
 

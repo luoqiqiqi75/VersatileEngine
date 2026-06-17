@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ve/core/command.h"
 #include "ve/core/var.h"
 
 namespace ve::ros {
@@ -38,10 +39,10 @@ struct TopicOnceRequest {
 };
 
 VE_API Var::ListV listTopics(const std::string& filter = "");
-VE_API Var::DictV topicInfo(const std::string& topic_name);
-VE_API Var::DictV subscribeTopic(const TopicSubscriptionConfig& config);
-VE_API Var::DictV unsubscribeTopic(const std::string& name);
-VE_API Var::DictV publishTopic(const TopicPublishRequest& request);
-VE_API Var::DictV onceTopic(const TopicOnceRequest& request);
+VE_API Result topicInfo(const std::string& topic_name, Node* out = nullptr);
+VE_API Result subscribeTopic(const TopicSubscriptionConfig& config, Node* out = nullptr);
+VE_API Result unsubscribeTopic(const std::string& name, Node* out = nullptr);
+VE_API Result publishTopic(const TopicPublishRequest& request, Node* out = nullptr);
+VE_API Result onceTopic(const TopicOnceRequest& request, Node* out = nullptr);
 
 } // namespace ve::ros

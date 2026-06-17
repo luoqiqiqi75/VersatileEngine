@@ -607,52 +607,28 @@ inline constexpr bool is_dict_like_v = basic::is_dict_like<T>::value;
 template<typename V>
 using Dict = OrderedHashMap<std::string, V>;
 
-using Task = std::function<void()>;
-
-// Alive: lightweight lifetime token (null = no tracking = always alive)
-struct Alive : std::shared_ptr<std::atomic<bool>>
+class VE_API Entity
 {
-    using shared_ptr::shared_ptr;
-    Alive() = default;
-    Alive(shared_ptr p) : shared_ptr(std::move(p)) {}
+public:
+    explicit Entity(const std::string& name = "") : _name(name) {}
+    virtual ~Entity() = default;
 
-    static Alive create() { return Alive(std::make_shared<std::atomic<bool>>(true)); }
-    bool dead() const { return *this && !get()->load(std::memory_order_acquire); }
-    void kill()       { if (*this) get()->store(false, std::memory_order_release); }
-};
+    Entity(const Entity&) = delete;
+    Entity& operator=(const Entity&) = delete;
 
-template<typename T>
-struct ResultT : std::pair<int, T>
-{
-    using BaseT = std::pair<int, T>;
+    const std::string& name() const { return _name; }
 
-    enum Code : int {
-        SUCCESS =  0,
-        FAIL    = -1,
-        ACCEPT  =  1,
-    };
-
-    ResultT() : BaseT(static_cast<int>(SUCCESS), T{}) {}
-
-    int        code() const { return BaseT::first; }
-    const T&   content() const { return BaseT::second; }
-
-    bool isSuccess()  const { return BaseT::first == 0; }
-    bool isError()    const { return BaseT::first < 0; }
-    bool isAccepted() const { return BaseT::first > 0; }
-
-    ResultT& setContent(const T& v) { BaseT::second = v; return *this; }
-    ResultT& setContent(T&& v)      { BaseT::second = std::move(v); return *this; }
-
-    explicit operator bool() const { return isSuccess(); }
-
-    static ResultT ok(T content = {}) { return ResultT(static_cast<int>(SUCCESS), std::move(content)); }
-    static ResultT fail(T content = {}) { return ResultT(static_cast<int>(FAIL), std::move(content)); }
-    static ResultT fail(int code, T content = {}) { return ResultT(code < 0 ? code : static_cast<int>(FAIL), std::move(content)); }
-    static ResultT accept() { return ResultT(static_cast<int>(ACCEPT), T{}); }
+protected:
+    int _flags = 0;
 
 private:
-    ResultT(int c, T content) : BaseT(c, std::move(content)) {}
+    std::string _name;
 };
+
+using Task = std::function<void()>;
+
+// Result — defined in var.h (requires full Var type).
+// Layout: { int code; std::string message; Var data; }
+// See var.h for the full definition + factory methods.
 
 }

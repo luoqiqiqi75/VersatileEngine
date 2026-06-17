@@ -13,26 +13,18 @@ type CommandInfo = {
 };
 
 type VeOkReply<T> = {
-  ok: true;
+  code: number;
   id?: unknown;
   data: T;
 };
 
-type VeAcceptedReply = {
-  ok: true;
-  id?: unknown;
-  accepted: true;
-  task_id: string;
-};
-
 type VeErrorReply = {
-  ok: false;
+  code: number;
   id?: unknown;
-  code: string;
-  error: string;
+  message?: string;
 };
 
-type VeReply<T> = VeOkReply<T> | VeAcceptedReply | VeErrorReply;
+type VeReply<T> = VeOkReply<T> | VeErrorReply;
 
 type CommandListResponse = {
   commands?: CommandInfo[];
@@ -103,9 +95,9 @@ async function listCommands(): Promise<CommandInfo[]> {
   const payload = await httpJson<VeReply<CommandListResponse>>("/ve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ op: "command.list" }),
+    body: JSON.stringify({ op: "commands", params: {} }),
   });
-  if (!payload.ok || !("data" in payload) || !Array.isArray(payload.data.commands)) {
+  if ((payload as any).code < 0 || !("data" in payload) || !Array.isArray(payload.data.commands)) {
     return [];
   }
   return payload.data.commands.filter((c) => !!c?.name);
@@ -140,41 +132,10 @@ async function pingVe(): Promise<{ ok: boolean; text: string }> {
   }
 }
 
-function commandArgsForVe(args: unknown): { args?: unknown; wait?: boolean; id?: unknown } {
-  if (args == null) {
-    return { args: [] };
-  }
-  if (Array.isArray(args)) {
-    return { args };
-  }
-  if (typeof args === "object") {
-    const obj = args as Record<string, unknown>;
-    const out: { args?: unknown; wait?: boolean; id?: unknown } = {};
-    if ("wait" in obj && typeof obj.wait === "boolean") {
-      out.wait = obj.wait;
-    }
-    if ("id" in obj) {
-      out.id = obj.id;
-    }
-    if (Array.isArray(obj.args)) {
-      out.args = obj.args;
-      return out;
-    }
-    if (Array.isArray(obj.argv)) {
-      out.args = obj.argv;
-      return out;
-    }
-    const clone = { ...obj };
-    delete clone.wait;
-    delete clone.id;
-    if (Object.keys(clone).length === 0) {
-      out.args = [];
-    } else {
-      out.args = clone;
-    }
-    return out;
-  }
-  return { args };
+function commandArgsForVe(args: unknown): Record<string, unknown> {
+  if (args == null) return {};
+  if (typeof args === "object" && !Array.isArray(args)) return args as Record<string, unknown>;
+  return {};
 }
 
 async function callCommand(name: string, args: unknown): Promise<VeReply<unknown>> {
@@ -182,9 +143,8 @@ async function callCommand(name: string, args: unknown): Promise<VeReply<unknown
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      op: "command.run",
-      name,
-      ...commandArgsForVe(args),
+      cmd: name,
+      params: commandArgsForVe(args),
     }),
   });
 }
@@ -254,22 +214,16 @@ async function main(): Promise<void> {
         content: [
           {
             type: "text",
-            text: `HTTP call failed (${VE_HTTP_BASE}/ve op=command.run name=${name}): ${errorText(err)}`,
+            text: `HTTP call failed (${VE_HTTP_BASE}/ve cmd=${name}): ${errorText(err)}`,
           },
         ],
       };
     }
 
-    if (payload.ok) {
-      if ("accepted" in payload && payload.accepted) {
-        return {
-          content: [{ type: "text", text: `accepted: task_id=${payload.task_id}` }],
-        };
-      }
+    if (payload.code >= 0) {
       if (!("data" in payload)) {
         return {
-          isError: true,
-          content: [{ type: "text", text: "missing command result payload" }],
+          content: [{ type: "text", text: "ok" }],
         };
       }
       return {
@@ -279,7 +233,7 @@ async function main(): Promise<void> {
 
     return {
       isError: true,
-      content: [{ type: "text", text: text(`${payload.code}: ${payload.error}`) }],
+      content: [{ type: "text", text: text(`${payload.code}: ${(payload as VeErrorReply).message}`) }],
     };
   });
 

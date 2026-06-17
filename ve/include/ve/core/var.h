@@ -60,11 +60,29 @@ public:
 
     // Block implicit pointer-to-bool conversion for non-char/void data pointers.
     // Function pointers are allowed (routed to callable via template ctor).
-    // Data pointers must be stored explicitly via Var(static_cast<void*>(p)).
+    // Data pointers must be stored explicitly via Var::ptr(p) or Var(static_cast<void*>(p)).
     template<typename T, std::enable_if_t<
         basic::Meta<T>::is_raw_pointer
         && !std::is_same_v<T, void*>, int> = 0>
     Var(T) = delete;
+
+    template<typename T, std::enable_if_t<
+        basic::Meta<T>::is_raw_pointer
+        && !std::is_const_v<std::remove_pointer_t<std::decay_t<T>>>
+        && !std::is_volatile_v<std::remove_pointer_t<std::decay_t<T>>>, int> = 0>
+    static Var ptr(T p) { return Var(static_cast<void*>(p)); }
+
+    template<typename T>
+    static Var arg(T&& v) {
+        using U = std::decay_t<T>;
+        if constexpr (std::is_same_v<U, Var>) {
+            return std::forward<T>(v);
+        } else if constexpr (basic::Meta<U>::is_raw_pointer) {
+            return ptr(v);
+        } else {
+            return Var(std::forward<T>(v));
+        }
+    }
 
     template<typename T>
     Var(const T& v) : _type(NONE), _storage{} {
@@ -150,6 +168,12 @@ public:
 
     // callable invoke
     Var invoke(const Var& input = {}) const;
+    template<typename... Args, std::enable_if_t<
+        (sizeof...(Args) > 0)
+        && !(sizeof...(Args) == 1 && (... && std::is_same_v<std::decay_t<Args>, Var>)), int> = 0>
+    Var invoke(Args&&... args) const {
+        return invoke(Var(ListV{arg(std::forward<Args>(args))...}));
+    }
 
     // value extraction (type-safe, returns default on mismatch)
     bool toBool(bool def = false) const;
@@ -284,8 +308,6 @@ private:
     } _storage;
 };
 
-using Result = ResultT<Var>;
-
 namespace detail {
 
 inline Var wrapCallableRet() { return Var(); }
@@ -293,10 +315,8 @@ inline Var wrapCallableRet() { return Var(); }
 template<typename R>
 inline Var wrapCallableRet(R&& ret) {
     using Ret = std::decay_t<R>;
-    if constexpr (std::is_same_v<Ret, Result>) {
-        return Var::custom(std::forward<R>(ret));
-    } else if constexpr (basic::Meta<Ret>::is_raw_pointer) {
-        return Var(static_cast<void*>(ret));
+    if constexpr (basic::Meta<Ret>::is_raw_pointer) {
+        return Var::ptr(ret);
     } else {
         return Var(std::forward<R>(ret));
     }

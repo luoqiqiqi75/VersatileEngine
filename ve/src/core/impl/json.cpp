@@ -8,11 +8,16 @@
 
 namespace ve::impl::json {
 
+struct JsonOpts {
+    int indent = 2;
+    bool auto_ignore = true;
+};
+
 // ============================================================================
 // Stringify helpers (pure C++)
 // ============================================================================
-static void nodeToJsonImpl(const Node* node, std::string& out, const schema::ExportOptions& options, int depth);
-static void nodeToJsonImplWithDepth(const Node* node, std::string& out, const schema::ExportOptions& options, int depth, int maxDepth, int currentDepth);
+static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& options, int depth);
+static void nodeToJsonImplWithDepth(const Node* node, std::string& out, const JsonOpts& options, int depth, int maxDepth, int currentDepth);
 
 static void escape(const std::string& s, std::string& out)
 {
@@ -99,7 +104,7 @@ static void varToJson(const Var& v, std::string& out)
     }
 }
 
-static bool isIgnoredChild(const Node* child, const schema::ExportOptions& options)
+static bool isIgnoredChild(const Node* child, const JsonOpts& options)
 {
     return options.auto_ignore
         && child
@@ -107,7 +112,7 @@ static bool isIgnoredChild(const Node* child, const schema::ExportOptions& optio
         && child->name()[0] == '_';
 }
 
-static void nodeToJsonImpl(const Node* node, std::string& out, const schema::ExportOptions& options, int depth)
+static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& options, int depth)
 {
     const int indent = options.indent;
     std::string pad(depth * indent, ' ');
@@ -202,7 +207,7 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const schema::Exp
     out += pad + "}";
 }
 
-static void nodeToJsonImplWithDepth(const Node* node, std::string& out, const schema::ExportOptions& options, int depth, int maxDepth, int currentDepth)
+static void nodeToJsonImplWithDepth(const Node* node, std::string& out, const JsonOpts& options, int depth, int maxDepth, int currentDepth)
 {
     const int indent = options.indent;
     std::string pad(depth * indent, ' ');
@@ -322,29 +327,24 @@ std::string stringify(const Var& v)
     return out;
 }
 
-std::string exportTree(const Node* node, int indent)
-{
-    schema::ExportOptions options;
-    options.indent = indent;
-    return exportTree(node, options);
-}
-
-std::string exportTree(const Node* node, const schema::ExportOptions& options)
+std::string exportTree(const Node* node, int indent, bool auto_ignore)
 {
     if (!node) return "null";
+    JsonOpts opts{indent, auto_ignore};
     std::string out;
     out.reserve(256);
-    nodeToJsonImpl(node, out, options, 0);
+    nodeToJsonImpl(node, out, opts, 0);
     out += "\n";
     return out;
 }
 
-std::string exportTree(const Node* node, int maxDepth, const schema::ExportOptions& options)
+std::string exportTree(const Node* node, int maxDepth, int indent, bool auto_ignore)
 {
     if (!node) return "null";
+    JsonOpts opts{indent, auto_ignore};
     std::string out;
     out.reserve(256);
-    nodeToJsonImplWithDepth(node, out, options, 0, maxDepth, 0);
+    nodeToJsonImplWithDepth(node, out, opts, 0, maxDepth, 0);
     out += "\n";
     return out;
 }
@@ -530,7 +530,7 @@ bool importTree(Node* node, const std::string& json)
     return true;
 }
 
-bool importTree(Node* node, const std::string& json, const schema::ImportOptions& options)
+bool importTree(Node* node, const std::string& json, int copy_flags)
 {
     if (!node || json.empty()) return false;
 
@@ -545,7 +545,7 @@ bool importTree(Node* node, const std::string& json, const schema::ImportOptions
 
     Node parsed("json_import");
     domToNode(val, &parsed);
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+    node->copy(&parsed, copy_flags);
     return true;
 }
 

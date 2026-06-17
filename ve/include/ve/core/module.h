@@ -59,29 +59,6 @@ protected:
     virtual void deinit();
 };
 
-template<class T>
-class TemplateModule : public Module, public T
-{
-protected:
-    void init() override { return T::init(); }
-    void ready() override { return T::ready(); }
-    void deinit() override { return T::deinit(); }
-};
-
-class CustomModule : public Module
-{
-public:
-    using StateF = std::function<void()>;
-
-protected:
-    UnorderedHashMap<State, StateF> f_;
-
-protected:
-    void init() override { if (auto f = f_.value(INIT, NULL)) f(); }
-    void ready() override { if (auto f = f_.value(READY, NULL)) f(); }
-    void deinit() override { if (auto f = f_.value(DEINIT, NULL)) f(); }
-};
-
 using ModuleFactory = Factory;
 
 namespace module {
@@ -94,7 +71,7 @@ inline Module* instance(const std::string& key)
 {
     auto* nd = factory().node(key, VE_FACTORY_KEY_SEP);
     if (!nd) return nullptr;
-    if (auto* inst = nd->find("instance", false))
+    if (auto* inst = nd->find("instance"))
         return static_cast<Module*>(inst->get().toPointer());
     return nullptr;
 }

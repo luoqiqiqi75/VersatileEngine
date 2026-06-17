@@ -129,15 +129,15 @@ static Var unpackVar(const msgpack::object& obj)
 // Node tree → MessagePack (format: {_v: value, _c: [[name, node], ...]})
 // ============================================================================
 
-static bool isIgnoredChild(const Node* child, const schema::ExportOptions& options)
+static bool isIgnoredChild(const Node* child, bool auto_ignore)
 {
-    return options.auto_ignore
+    return auto_ignore
         && child
         && !child->name().empty()
         && child->name()[0] == '_';
 }
 
-static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, const schema::ExportOptions& options)
+static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, bool auto_ignore)
 {
     int fieldCount = 0;
     const Var& nodeValue = node->get();
@@ -147,7 +147,7 @@ static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, co
     Vector<const Node*> visible_children;
     visible_children.reserve(all_children.sizeAsInt());
     for (auto* child : all_children) {
-        if (!isIgnoredChild(child, options)) {
+        if (!isIgnoredChild(child, auto_ignore)) {
             visible_children.push_back(child);
         }
     }
@@ -173,7 +173,7 @@ static void packNode(const Node* node, msgpack::packer<msgpack::sbuffer>& pk, co
             const std::string& name = child->name();
             pk.pack_str(static_cast<uint32_t>(name.size()));
             pk.pack_str_body(name.data(), name.size());
-            packNode(child, pk, options);
+            packNode(child, pk, auto_ignore);
         }
     }
 }
@@ -259,12 +259,7 @@ Var readVar(const uint8_t*& ptr, const uint8_t* end)
     }
 }
 
-Bytes exportTree(const Node* node)
-{
-    return exportTree(node, schema::ExportOptions{});
-}
-
-Bytes exportTree(const Node* node, const schema::ExportOptions& options)
+Bytes exportTree(const Node* node, bool auto_ignore)
 {
     if (!node) {
         return {};
@@ -272,17 +267,17 @@ Bytes exportTree(const Node* node, const schema::ExportOptions& options)
 
     msgpack::sbuffer sbuf;
     msgpack::packer<msgpack::sbuffer> pk(&sbuf);
-    packNode(node, pk, options);
+    packNode(node, pk, auto_ignore);
 
     return Bytes(sbuf.data(), sbuf.data() + sbuf.size());
 }
 
 bool importTree(Node* node, const uint8_t* data, size_t len)
 {
-    return importTree(node, data, len, schema::ImportOptions{});
+    return importTree(node, data, len, Node::COPY_DEFAULT);
 }
 
-bool importTree(Node* node, const uint8_t* data, size_t len, const schema::ImportOptions& options)
+bool importTree(Node* node, const uint8_t* data, size_t len, int copy_flags)
 {
     if (!node || !data || len == 0) {
         return false;
@@ -295,7 +290,7 @@ bool importTree(Node* node, const uint8_t* data, size_t len, const schema::Impor
         Node parsed("bin_import");
         unpackNode(obj, &parsed);
 
-        node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+        node->copy(&parsed, copy_flags);
         return true;
     }
     catch (...) {

@@ -1,7 +1,7 @@
 #include "ve/core/log.h"
-#include "ve/core/loop.h"
 #include "ve/core/module.h"
 #include "ve/core/node.h"
+#include "ve/entry.h"
 #include "ve/qt/qml/qml_register.h"
 
 #include <QQmlApplicationEngine>
@@ -23,6 +23,7 @@ protected:
     {
         Node* cfg = node()->find("config");
         if (!cfg) {
+            veLogW << "[ve.qt.launch] no config, skip QML";
             return;
         }
 
@@ -56,7 +57,7 @@ private:
 
         if (engine_->rootObjects().isEmpty()) {
             veLogE << "[ve.qt.launch] Failed to load QML: " << main_qml;
-            loop::quit(-1);
+            entry::requestQuit(-1);
             return;
         }
 

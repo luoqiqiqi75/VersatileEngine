@@ -1,156 +1,220 @@
 #include "ve_test.h"
 
-#include "../src/service/node_protocol.h"
-#include "../src/service/node_task_service.h"
-#include "../src/service/subscribe_service.h"
+#include "../src/service/node_commands.h"
 
-#include <ve/core/command.h>
-#include <ve/core/loop.h>
 #include <ve/core/node.h>
-
-#include <atomic>
-#include <chrono>
-#include <thread>
+#include <ve/core/command.h>
+#include <ve/core/schema.h>
+#include <ve/core/pipeline.h>
 
 using namespace ve;
 
-static bool wait_until(const std::function<bool()>& fn, int timeoutMs = 1000)
+static bool runEnvelope(service::Session* session, Pipeline& pipe)
 {
-    using clock = std::chrono::steady_clock;
-    const auto deadline = clock::now() + std::chrono::milliseconds(timeoutMs);
-    while (clock::now() < deadline) {
-        if (fn()) {
+    pipe.contextNode()->set("_session", Var::ptr(session));
+
+    Node* batch_n = pipe.contextNode()->find("batch");
+    if (batch_n) {
+        Node* out = pipe.contextNode()->at("data");
+        for (auto* item : batch_n->children()) {
+            auto ref = service::resolveCmd(item);
+            if (!ref.factory) {
+                pipe.contextNode()->set("code", int64_t(service::ERR_NOT_FOUND));
+                pipe.contextNode()->set("message", "unknown: " + ref.key);
+                return true;
+            }
+            Command* c = pipe.add(command::create(*ref.factory, ref.key));
+            c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
+        }
+    } else {
+        auto ref = service::resolveCmd(pipe.contextNode());
+        if (!ref.factory) {
+            pipe.contextNode()->set("code", int64_t(ref.key.empty() ? service::ERR_INVALID : service::ERR_NOT_FOUND));
+            pipe.contextNode()->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        Command* c = pipe.add(command::create(*ref.factory, ref.key));
+        c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
     }
-    return fn();
+
+    pipe.sync();
+    return service::finalizeReply(pipe);
 }
 
-VE_TEST(node_protocol_get_set_and_list) {
+VE_TEST(node_dispatch_get_set_and_children) {
+    service::registerNodeCommands();
     Node root("root");
-    service::SubscribeService subscribe(&root);
-    service::NodeTaskService tasks(&root);
+    service::Session session(&root, &root);
 
-    Node setReq("req");
-    Node setReply("rep");
-    setReq.set("op", "node.set");
-    setReq.set("path", "a/value");
-    setReq.at("value")->set(Var(42));
-    service::dispatchNodeProtocol(&root, &setReq, &setReply, &subscribe, &tasks);
-    VE_ASSERT(setReply.get("ok").toBool(false));
-    VE_ASSERT_EQ(root.find("a/value")->getInt(), 42);
+    // set
+    {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "set");
+        pipe.contextNode()->at("params")->set("path", "a/value");
+        pipe.contextNode()->at("params")->at("value")->set(Var(42));
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+        VE_ASSERT_EQ(root.find("a/value")->getInt(), 42);
+    }
 
-    Node getReq("req");
-    Node getReply("rep");
-    getReq.set("op", "node.get");
-    getReq.set("path", "a/value");
-    getReq.set("meta", true);
-    service::dispatchNodeProtocol(&root, &getReq, &getReply, &subscribe, &tasks);
-    VE_ASSERT(getReply.get("ok").toBool(false));
-    Node* getData = getReply.find("data");
-    VE_ASSERT(getData != nullptr);
-    VE_ASSERT_EQ(getData->get("value").toInt(), 42);
-    VE_ASSERT(getData->find("meta") != nullptr);
+    // get
+    {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "get");
+        pipe.contextNode()->at("params")->set("path", "a/value");
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+        VE_ASSERT_EQ(pipe.contextNode()->get("data/value").toInt(), 42);
+    }
 
-    Node listReq("req");
-    Node listReply("rep");
-    listReq.set("op", "node.list");
-    listReq.set("path", "a");
-    service::dispatchNodeProtocol(&root, &listReq, &listReply, &subscribe, &tasks);
-    VE_ASSERT(listReply.get("ok").toBool(false));
-    Node* children = listReply.find("data/children");
-    VE_ASSERT(children != nullptr);
-    VE_ASSERT_EQ(children->count(), 1);
+    // children
+    {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "children");
+        pipe.contextNode()->at("params")->set("path", "a");
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+        Node* children = pipe.contextNode()->find("data/children");
+        VE_ASSERT(children != nullptr);
+        VE_ASSERT_EQ(children->count(), 1);
+    }
 }
 
-VE_TEST(node_protocol_batch_keeps_item_boundaries) {
+VE_TEST(node_dispatch_batch) {
+    service::registerNodeCommands();
     Node root("root");
     root.set("one", 1);
     root.set("two", 2);
+    service::Session session(&root, &root);
 
-    Node batchReq("req");
-    Node batchReply("rep");
-    batchReq.set("op", "batch");
+    Pipeline pipe;
+    Node* batch = pipe.contextNode()->at("batch");
 
-    Node* item1 = batchReq.at("items")->append("");
-    item1->set("op", "node.get");
-    item1->set("path", "one");
+    Node* item1 = batch->append();
+    item1->set("op", "get");
+    item1->at("params")->set("path", "one");
 
-    Node* item2 = batchReq.at("items")->append("");
-    item2->set("op", "node.get");
-    item2->set("path", "two");
+    Node* item2 = batch->append();
+    item2->set("op", "get");
+    item2->at("params")->set("path", "two");
 
-    service::dispatchNodeProtocol(&root, &batchReq, &batchReply, nullptr, nullptr, 8);
-    VE_ASSERT(batchReply.get("ok").toBool(false));
-    Node* items = batchReply.find("data");
-    VE_ASSERT(items != nullptr);
-    VE_ASSERT_EQ(items->count(), 2);
-    VE_ASSERT_EQ(items->child(0)->get("data/value").toInt(), 1);
-    VE_ASSERT_EQ(items->child(1)->get("data/value").toInt(), 2);
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* data = pipe.contextNode()->find("data");
+    VE_ASSERT(data != nullptr);
+    VE_ASSERT_EQ(data->count(), 2);
+    VE_ASSERT_EQ(data->child(0)->get("value").toInt(), 1);
+    VE_ASSERT_EQ(data->child(1)->get("value").toInt(), 2);
 }
 
-VE_TEST(subscribe_service_counts_are_shared) {
+VE_TEST(node_dispatch_subscribe_unsupported_without_send) {
+    service::registerNodeCommands();
     Node root("root");
-    service::SubscribeService s1(&root);
-    service::SubscribeService s2(&root);
+    service::Session session(&root, &root);
 
-    s1.subscribe(1, "watch/me");
-    s2.subscribe(2, "/watch/me");
-    VE_ASSERT_EQ(static_cast<int>(s1.getSubscriberCount("watch/me")), 2);
-    VE_ASSERT_EQ(static_cast<int>(s2.getSubscriberCount("/watch/me")), 2);
-
-    s1.removeSession(1);
-    VE_ASSERT_EQ(static_cast<int>(s2.getSubscriberCount("watch/me")), 1);
-
-    s2.unsubscribe(2, "watch/me");
-    VE_ASSERT_EQ(static_cast<int>(s1.getSubscriberCount("watch/me")), 0);
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "subscribe");
+    pipe.contextNode()->at("params")->set("path", "a");
+    runEnvelope(&session, pipe);
+    VE_ASSERT(pipe.contextNode()->get("code").toInt(0) < 0);
 }
 
-VE_TEST(node_protocol_async_command_creates_task_and_event) {
-    EventLoop loop("proto_async");
-    loop.start();
-
-    command::reg("_test_proto_async",
-        [](Node*) -> Result {
-            return Result::ok(Var("async-done"));
-        },
-        LoopRef::from(loop),
-        "async protocol test");
-
+VE_TEST(node_dispatch_export_full) {
+    service::registerNodeCommands();
     Node root("root");
-    service::SubscribeService subscribe(&root);
-    service::NodeTaskService tasks(&root);
+    root.set("a/x", 1);
+    root.set("a/y", 2);
+    root.set("a/deep/z", 3);
+    service::Session session(&root, &root);
 
-    Node taskEvent("event");
-    std::atomic<bool> gotEvent{false};
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "export");
+    pipe.contextNode()->at("params")->set("path", "a");
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* tree = pipe.contextNode()->find("data/tree");
+    VE_ASSERT(tree != nullptr);
+    VE_ASSERT_EQ(tree->get("x").toInt(), 1);
+    VE_ASSERT_EQ(tree->get("y").toInt(), 2);
+    VE_ASSERT_EQ(tree->get("deep/z").toInt(), 3);
+}
 
-    Node req("req");
-    Node reply("rep");
-    req.set("op", "command.run");
-    req.set("id", 99);
-    req.set("name", "_test_proto_async");
-    req.set("wait", false);
+VE_TEST(node_dispatch_export_depth) {
+    service::registerNodeCommands();
+    Node root("root");
+    root.set("a/x", 1);
+    root.set("a/deep/z", 3);
+    service::Session session(&root, &root);
 
-    service::dispatchNodeProtocol(&root, &req, &reply, &subscribe, &tasks, 500, false, 0, true,
-        [&](const Node& event) {
-        taskEvent.copy(&event, true, true, true);
-        gotEvent.store(true, std::memory_order_release);
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "export");
+    pipe.contextNode()->at("params")->set("path", "a");
+    pipe.contextNode()->at("params")->set("depth", int64_t(1));
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* tree = pipe.contextNode()->find("data/tree");
+    VE_ASSERT(tree != nullptr);
+    VE_ASSERT_EQ(tree->get("x").toInt(), 1);
+    // depth=1: "deep" child exists but "deep/z" not exported
+    VE_ASSERT(tree->find("deep") != nullptr);
+    VE_ASSERT(tree->find("deep/z") == nullptr);
+}
+
+VE_TEST(node_dispatch_import) {
+    service::registerNodeCommands();
+    Node root("root");
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "import");
+    pipe.contextNode()->at("params")->set("path", "b");
+    pipe.contextNode()->at("params")->at("tree")->set("x", 10);
+    pipe.contextNode()->at("params")->at("tree")->set("y", 20);
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    VE_ASSERT_EQ(root.get("b/x").toInt(), 10);
+    VE_ASSERT_EQ(root.get("b/y").toInt(), 20);
+}
+
+VE_TEST(node_dispatch_watch_with_session_pushes) {
+    service::registerNodeCommands();
+    Node root("root");
+    root.set("watch/me", 1);
+
+    std::string lastPush;
+    service::Session session(&root, &root, [&](std::string msg) {
+        lastPush = std::move(msg);
     });
-    VE_ASSERT(reply.get("ok").toBool(false));
-    VE_ASSERT(reply.get("accepted").toBool(false));
-    VE_ASSERT(!reply.get("task_id").toString().empty());
 
-    VE_ASSERT(wait_until([&]() { return gotEvent.load(std::memory_order_acquire); }, 1500));
-    VE_ASSERT_EQ(taskEvent.get("event").toString(), "task.result");
-    VE_ASSERT(taskEvent.get("ok").toBool(false));
-    VE_ASSERT_EQ(taskEvent.get("data").toString(), "async-done");
+    // subscribe
+    {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "subscribe");
+        pipe.contextNode()->at("params")->set("path", "watch/me");
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    }
 
-    Node* taskNode = root.find("ve/server/tasks/" + reply.get("task_id").toString());
-    VE_ASSERT(taskNode != nullptr);
-    VE_ASSERT_EQ(taskNode->get("status").toString(), "done");
-    VE_ASSERT_EQ(taskNode->get("result").toString(), "async-done");
+    // trigger change
+    root.find("watch/me")->set(7);
+    VE_ASSERT(!lastPush.empty());
 
-    loop.stop();
-    command::factory().node()->erase("_test_proto_async");
+    // verify event JSON contains the data
+    Node event;
+    schema::toNode<schema::JsonS>(&event, lastPush);
+    VE_ASSERT_EQ(event.get("event").toString(), std::string("node.changed"));
+    VE_ASSERT_EQ(event.find("data")->getInt(), 7);
+
+    // unsubscribe
+    lastPush.clear();
+    {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "unsubscribe");
+        pipe.contextNode()->at("params")->set("path", "watch/me");
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    }
+
+    root.find("watch/me")->set(9);
+    VE_ASSERT(lastPush.empty());
 }

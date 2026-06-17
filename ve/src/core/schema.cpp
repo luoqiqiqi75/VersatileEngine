@@ -1,12 +1,12 @@
 // ----------------------------------------------------------------------------
-// schema.cpp — Schema::build + SchemaTraits<Json/Bin> implementations
+// schema.cpp — Schema::build + format export/import implementations
 // ----------------------------------------------------------------------------
 #include "ve/core/schema.h"
 #include "ve/core/node.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/impl/bin.h"
-#include "ve/core/impl/xml.h"  // for SchemaTraits<Xml>
-#include "ve/core/impl/md.h"   // for SchemaTraits<Md>
+#include "ve/core/impl/xml.h"
+#include "ve/core/impl/md.h"
 #include <sstream>
 #include <iomanip>
 
@@ -25,84 +25,84 @@ void Schema::build(Node* node) const
 }
 
 // ============================================================================
-// SchemaTraits<JsonS>
+// JsonS
 // ============================================================================
 
 namespace schema {
 
-std::string SchemaTraits<JsonS>::exportNode(const Node* node, int indent)
+std::string JsonS::fromNode(const Node* node, int indent)
 {
-    return impl::json::exportTree(node, indent);
+    return impl::json::exportTree(node, indent, true);
 }
 
-std::string SchemaTraits<JsonS>::exportNode(const Node* node, const ExportOptions& options)
+std::string JsonS::fromNode(const Node* node, const JsonS::ExportOptions& options)
 {
-    return impl::json::exportTree(node, options);
+    return impl::json::exportTree(node, options.indent, options.auto_ignore);
 }
 
-bool SchemaTraits<JsonS>::importNode(Node* node, const std::string& data)
+bool JsonS::toNode(Node* node, const std::string& data)
 {
     return impl::json::importTree(node, data);
 }
 
-bool SchemaTraits<JsonS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+bool JsonS::toNode(Node* node, const std::string& data, int copy_flags)
 {
-    return impl::json::importTree(node, data, options);
+    return impl::json::importTree(node, data, copy_flags);
 }
 
 // ============================================================================
-// SchemaTraits<BinS>
+// BinS
 // ============================================================================
 
-Bytes SchemaTraits<BinS>::exportNode(const Node* node)
+Bytes BinS::fromNode(const Node* node)
 {
     return impl::bin::exportTree(node);
 }
 
-Bytes SchemaTraits<BinS>::exportNode(const Node* node, const ExportOptions& options)
+Bytes BinS::fromNode(const Node* node, const BinS::ExportOptions& options)
 {
-    return impl::bin::exportTree(node, options);
+    return impl::bin::exportTree(node, options.auto_ignore);
 }
 
-bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len)
+bool BinS::toNode(Node* node, const uint8_t* data, size_t len)
 {
     return impl::bin::importTree(node, data, len);
 }
 
-bool SchemaTraits<BinS>::importNode(Node* node, const uint8_t* data, size_t len, const ImportOptions& options)
+bool BinS::toNode(Node* node, const uint8_t* data, size_t len, int copy_flags)
 {
-    return impl::bin::importTree(node, data, len, options);
+    return impl::bin::importTree(node, data, len, copy_flags);
 }
 
 // ============================================================================
-// SchemaTraits<Xml>
+// XmlS
 // ============================================================================
 
-std::string SchemaTraits<XmlS>::exportNode(const Node* node, int indent)
+std::string XmlS::fromNode(const Node* node, int indent)
 {
-    return impl::xml::exportTree(node, indent);
+    return impl::xml::exportTree(node, indent, true);
 }
 
-std::string SchemaTraits<XmlS>::exportNode(const Node* node, const ExportOptions& options)
+std::string XmlS::fromNode(const Node* node, const XmlS::ExportOptions& options)
 {
-    return impl::xml::exportTree(node, options);
+    return impl::xml::exportTree(node, options.indent, options.auto_ignore);
 }
 
-bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data)
+bool XmlS::toNode(Node* node, const std::string& data)
 {
     return impl::xml::importTree(node, data);
 }
 
-bool SchemaTraits<XmlS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+bool XmlS::toNode(Node* node, const std::string& data, int copy_flags)
 {
-    return impl::xml::importTree(node, data, options);
+    return impl::xml::importTree(node, data, copy_flags);
 }
 
 // ============================================================================
-// SchemaTraits<Var>
+// VarS
 // ============================================================================
 
-static Var nodeToVarImpl(const Node* node, const ExportOptions& options)
+static Var nodeToVarImpl(const Node* node, const VarS::ExportOptions& options)
 {
     if (!node) return Var();
 
@@ -172,13 +172,12 @@ static Var nodeToVarImpl(const Node* node, const ExportOptions& options)
     return Var(std::move(dict));
 }
 
-Var SchemaTraits<VarS>::exportNode(const Node* node)
+Var VarS::fromNode(const Node* node)
 {
-    ExportOptions options;
-    return exportNode(node, options);
+    return fromNode(node, VarS::ExportOptions{});
 }
 
-Var SchemaTraits<VarS>::exportNode(const Node* node, const ExportOptions& options)
+Var VarS::fromNode(const Node* node, const VarS::ExportOptions& options)
 {
     return nodeToVarImpl(node, options);
 }
@@ -255,42 +254,42 @@ static void varToNodeImpl(const Var& var, Node* node)
     }
 }
 
-bool SchemaTraits<VarS>::importNode(Node* node, const Var& data)
+bool VarS::toNode(Node* node, const Var& data)
 {
-    return importNode(node, data, ImportOptions{});
+    return toNode(node, data, Node::COPY_DEFAULT);
 }
 
-bool SchemaTraits<VarS>::importNode(Node* node, const Var& data, const ImportOptions& options)
+bool VarS::toNode(Node* node, const Var& data, int copy_flags)
 {
     if (!node) return false;
     Node parsed("var_import");
     varToNodeImpl(data, &parsed);
-    node->copy(&parsed, options.auto_insert, options.auto_remove, options.auto_update);
+    node->copy(&parsed, copy_flags);
     return true;
 }
 
 // ============================================================================
-// SchemaTraits<MdS>
+// MdS
 // ============================================================================
 
-std::string SchemaTraits<MdS>::exportNode(const Node* node, int indent)
+std::string MdS::fromNode(const Node* node, int indent)
 {
-    return impl::md::exportTree(node, indent);
+    return impl::md::exportTree(node, indent, true);
 }
 
-std::string SchemaTraits<MdS>::exportNode(const Node* node, const ExportOptions& options)
+std::string MdS::fromNode(const Node* node, const MdS::ExportOptions& options)
 {
-    return impl::md::exportTree(node, options);
+    return impl::md::exportTree(node, options.indent, options.auto_ignore);
 }
 
-bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data)
+bool MdS::toNode(Node* node, const std::string& data)
 {
     return impl::md::importTree(node, data);
 }
 
-bool SchemaTraits<MdS>::importNode(Node* node, const std::string& data, const ImportOptions& options)
+bool MdS::toNode(Node* node, const std::string& data, int copy_flags)
 {
-    return impl::md::importTree(node, data, options);
+    return impl::md::importTree(node, data, copy_flags);
 }
 
 // ============================================================================
@@ -358,18 +357,18 @@ std::vector<std::string> schemaFormatNames()
     return names;
 }
 
-std::string exportSchemaFormat(const std::string& name, const Node* node)
+std::string schemaFromNode(const std::string& name, const Node* node)
 {
     auto& reg = formatRegistry();
     if (reg.count(name) == 0) return {};
-    return reg[name].exportFn(node);
+    return reg[name].fromNodeFn(node);
 }
 
-bool importSchemaFormat(const std::string& name, Node* node, const std::string& data)
+bool schemaToNode(const std::string& name, Node* node, const std::string& data)
 {
     auto& reg = formatRegistry();
     if (reg.count(name) == 0) return false;
-    return reg[name].importFn(node, data);
+    return reg[name].toNodeFn(node, data);
 }
 
 } // namespace schema

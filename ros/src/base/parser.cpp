@@ -123,13 +123,11 @@ bool applySchemaJson(const std::string& json_text, Node* target, Node* schema_no
         return false;
 
     if (schema_node)
-        target->copy(schema_node, true, true, false);
+        target->copy(schema_node, Node::COPY_STRICT);
 
-    schema::ImportOptions options;
-    options.auto_insert = schema_node == nullptr;
-    options.auto_remove = false;
-    options.auto_update = true;
-    return schema::importAs<schema::JsonS>(target, json_text, options);
+    int copy_flags = Node::COPY_UPDATE | Node::COPY_REPLACE
+                   | (schema_node == nullptr ? Node::COPY_INSERT : 0);
+    return schema::toNode<schema::JsonS>(target, json_text, copy_flags);
 }
 
 void insertParserLocked(const ParserDescriptor& parser)
@@ -297,24 +295,20 @@ bool parsePayload(const std::string& key,
     return fn(ParseRequest{payload, target, schema}, error);
 }
 
-Var::ListV parserInfoList()
+void parserInfoList(Node* out)
 {
     registerBuiltins();
-
-    Var::ListV list;
     std::lock_guard<std::mutex> lock(registry().mu);
     for (const auto& key : registry().order) {
         const auto& parser = registry().canonical.value(key);
-        Var::DictV item;
-        item["key"] = Var(parser.key);
-        item["summary"] = Var(parser.summary);
+        auto* child = out->at(key);
+        child->set("key", Var(parser.key));
+        child->set("summary", Var(parser.summary));
         Var::ListV aliases;
         for (const auto& alias : parser.aliases)
             aliases.push_back(Var(alias));
-        item["aliases"] = Var(std::move(aliases));
-        list.push_back(Var(std::move(item)));
+        schema::VarS::toNode(child->at("aliases"), Var(std::move(aliases)));
     }
-    return list;
 }
 
 Strings parserKeys()

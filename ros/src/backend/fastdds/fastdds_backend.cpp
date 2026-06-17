@@ -83,90 +83,19 @@ public:
     }
 
     Var::ListV listTopics(const std::string&) const override { return {}; }
-    Var::DictV topicInfo(const std::string& topic) const override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS topic discovery is not implemented in v1");
-        dict["topic"] = Var(topic);
-        return dict;
-    }
-    Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS generic subscribe is not implemented in v1");
-        dict["name"] = Var(config.name);
-        dict["topic"] = Var(config.topic);
-        return dict;
-    }
-    Var::DictV unsubscribeTopic(const std::string& name) override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS generic unsubscribe is not implemented in v1");
-        dict["name"] = Var(name);
-        return dict;
-    }
-    Var::DictV publishTopic(const TopicPublishRequest& request) override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS generic publish is not implemented in v1");
-        dict["topic"] = Var(request.topic);
-        return dict;
-    }
-    Var::DictV onceTopic(const TopicOnceRequest& request) override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS generic once is not implemented in v1");
-        dict["topic"] = Var(request.topic);
-        return dict;
-    }
+    Result topicInfo(const std::string&, Node*) const override { return Result::fail("Fast DDS topic discovery not implemented in v1"); }
+    Result subscribeTopic(const TopicSubscriptionConfig&, Node*) override { return Result::fail("Fast DDS generic subscribe not implemented in v1"); }
+    Result unsubscribeTopic(const std::string&, Node*) override { return Result::fail("Fast DDS generic unsubscribe not implemented in v1"); }
+    Result publishTopic(const TopicPublishRequest&, Node*) override { return Result::fail("Fast DDS generic publish not implemented in v1"); }
+    Result onceTopic(const TopicOnceRequest&, Node*) override { return Result::fail("Fast DDS generic once not implemented in v1"); }
 
     Var::ListV listServices(const std::string&) const override { return {}; }
-    Var::DictV serviceInfo(const std::string& service) const override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS service discovery is not implemented in v1");
-        dict["service"] = Var(service);
-        return dict;
-    }
-    Var::DictV callService(const ServiceCallRequest& request) override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS service call is not implemented in v1");
-        dict["service"] = Var(request.service);
-        dict["type"] = Var(request.type);
-        return dict;
-    }
+    Result serviceInfo(const std::string&, Node*) const override { return Result::fail("Fast DDS service discovery not implemented in v1"); }
+    Result callService(const ServiceCallRequest&, Node*) override { return Result::fail("Fast DDS service call not implemented in v1"); }
 
-    Var::DictV listParams(const std::string&) const override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS parameter APIs are not implemented in v1");
-        return dict;
-    }
-
-    Var::DictV getParam(const std::string&, const std::string&) const override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS parameter APIs are not implemented in v1");
-        return dict;
-    }
-
-    Var::DictV setParam(const std::string&, const std::string&, const Var&) const override
-    {
-        Var::DictV dict;
-        dict["ok"] = Var(false);
-        dict["message"] = Var("Fast DDS parameter APIs are not implemented in v1");
-        return dict;
-    }
+    Result listParams(const std::string&, Node*) const override { return Result::fail("Fast DDS parameter APIs not implemented in v1"); }
+    Result getParam(const std::string&, const std::string&, Node*) const override { return Result::fail("Fast DDS parameter APIs not implemented in v1"); }
+    Result setParam(const std::string&, const std::string&, const Var&, Node*) const override { return Result::fail("Fast DDS parameter APIs not implemented in v1"); }
 
 private:
     int domain_id_ = 0;

@@ -67,7 +67,9 @@ enum State : int {
     SHUTDOWN
 };
 
-struct Options {
+// NOTE: transitional — Options bypasses the node tree; it should eventually
+// dissolve into ve/entry/* nodes.
+struct VE_API Options {
     std::string config_file;
     bool verbose      = false;
     // Enable the local stdio terminal via ve/client/terminal/stdio/enabled.
@@ -79,6 +81,14 @@ struct Options {
     int  pool_threads = 4;
     int    argc = 0;
     char** argv = nullptr;
+
+    std::string app_name;                 // from argv[0]; applied by setup()
+    std::vector<std::string> plugins;     // CLI plugin libs -> ve/entry/plugins
+    std::vector<std::pair<std::string, std::string>> sets;  // --set=path=value -> ve/entry/<path>
+
+    // Parse argv into this Options. Returns false (after printing to stderr)
+    // on invalid arguments; the caller should exit with code 2.
+    bool parse(int argc, char** argv);
 };
 
 // Load configuration into node::root().
@@ -95,7 +105,7 @@ VE_API int  run();
 // Deinitialize modules in reverse order and release runtime state.
 VE_API void deinit();
 
-// Request run() to return via loop::quit()
+// Request run() to return. Delegates to loop::main()->quit().
 VE_API void requestQuit(int exit_code = 0);
 
 // Convenience: setup + init + run + deinit

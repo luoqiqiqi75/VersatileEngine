@@ -1,4 +1,4 @@
-// schema_qt.cpp — QJsonS / QVariantS SchemaTraits implementation
+// schema_qt.cpp — QJsonS / QVariantS format implementation
 #include "ve/qt/schema_qt.h"
 
 namespace ve::schema {
@@ -7,58 +7,58 @@ namespace ve::schema {
 // QJsonS — delegates to VarS via varToQJsonValue / qJsonValueToVar
 // ============================================================================
 
-QJsonValue SchemaTraits<QJsonS>::exportNode(const Node* node)
+QJsonValue QJsonS::fromNode(const Node* node)
 {
-    return exportNode(node, ExportOptions{});
+    return fromNode(node, {});
 }
 
-QJsonValue SchemaTraits<QJsonS>::exportNode(const Node* node, const ExportOptions& options)
+QJsonValue QJsonS::fromNode(const Node* node, const ExportOptions& options)
 {
-    const Var v = SchemaTraits<VarS>::exportNode(node, options);
+    const Var v = VarS::fromNode(node, {options.auto_ignore});
     return qt::varToQJsonValue(v);
 }
 
-bool SchemaTraits<QJsonS>::importNode(Node* node, const QJsonValue& data)
+bool QJsonS::toNode(Node* node, const QJsonValue& data)
 {
-    return importNode(node, data, ImportOptions{});
+    return toNode(node, data, Node::COPY_DEFAULT);
 }
 
-bool SchemaTraits<QJsonS>::importNode(Node* node, const QJsonValue& data, const ImportOptions& options)
+bool QJsonS::toNode(Node* node, const QJsonValue& data, int copy_flags)
 {
     if (!node) {
         return false;
     }
     const Var v = qt::qJsonValueToVar(data);
-    return SchemaTraits<VarS>::importNode(node, v, options);
+    return VarS::toNode(node, v, copy_flags);
 }
 
 // ============================================================================
 // QVariantS — delegates to VarS via varToQVariant / qVariantToVar
 // ============================================================================
 
-QVariant SchemaTraits<QVariantS>::exportNode(const Node* node)
+QVariant QVariantS::fromNode(const Node* node)
 {
-    return exportNode(node, ExportOptions{});
+    return fromNode(node, {});
 }
 
-QVariant SchemaTraits<QVariantS>::exportNode(const Node* node, const ExportOptions& options)
+QVariant QVariantS::fromNode(const Node* node, const ExportOptions& options)
 {
-    const Var v = SchemaTraits<VarS>::exportNode(node, options);
+    const Var v = VarS::fromNode(node, {options.auto_ignore});
     return qt::varToQVariant(v);
 }
 
-bool SchemaTraits<QVariantS>::importNode(Node* node, const QVariant& data)
+bool QVariantS::toNode(Node* node, const QVariant& data)
 {
-    return importNode(node, data, ImportOptions{});
+    return toNode(node, data, Node::COPY_DEFAULT);
 }
 
-bool SchemaTraits<QVariantS>::importNode(Node* node, const QVariant& data, const ImportOptions& options)
+bool QVariantS::toNode(Node* node, const QVariant& data, int copy_flags)
 {
     if (!node) {
         return false;
     }
     const Var v = qt::qVariantToVar(data);
-    return SchemaTraits<VarS>::importNode(node, v, options);
+    return VarS::toNode(node, v, copy_flags);
 }
 
 } // namespace ve::schema

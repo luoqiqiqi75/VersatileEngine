@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include "base.h"
 #include "var.h"
 #include "loop.h"
@@ -16,12 +18,6 @@ constexpr const char* VE_UNDEFINED_OBJECT_NAME = "@undefined";
 
 namespace ve {
 
-struct ObjectData
-{
-protected:
-    int _flags = 0;
-};
-
 /**
 * @brief Object — minimal controllable entity with signal/slot
 *
@@ -29,7 +25,7 @@ protected:
 * Callbacks are invoked outside the lock (no deadlock in trigger).
 *
 * Dispatch priority for trigger():
-*   1. per-connection LoopRef  (if set in connect())
+*   1. per-connection Loop  (if set in connect())
 *   2. direct call             (zero-overhead, default for pure C++)
 *
 * Signal data passing (Godot-like):
@@ -41,7 +37,7 @@ protected:
 *   connect<S>(obs, [](int a, string b) { ... })       → auto-unpack from Var
 *   connect<S>(obs, []() { ... })                      → ignore data
 */
-struct VE_API Object : public ObjectData
+struct VE_API Object : Entity
 {
     // --- internal: Var → typed args dispatch (uses basic::FnTraits) ---
     //
@@ -77,27 +73,24 @@ public:
     explicit Object(const std::string& name = "");
     ~Object();
 
-    const std::string& name() const;
     MutexT& mutex() const;
 
-    enum ObjectSignal : SignalT {
-        OBJECT_DELETED = static_cast<SignalT>(-1)  // all-F's — emitted in destructor, no data
-    };
+    // Sender of the Object signal currently being delivered on this thread.
+    // Null outside signal delivery.
+    static Object* sender();
 
     enum ObjectFlag : int {
-        SILENT = 0x01,  // suppress signal emission (except OBJECT_DELETED)
+        SILENT = 0x01,  // suppress signal emission
     };
 
     bool isSilent() const { return flags::get(_flags, SILENT); }
     void silent(bool on) { flags::set(_flags, SILENT, on); }
 
-    bool hasConnection(SignalT signal);
-    bool hasConnection(SignalT signal, Object* observer);
-    template<SignalT S> bool hasConnection() { return hasConnection(S); }
-    template<SignalT S> bool hasConnection(Object* observer) { return hasConnection(S, observer); }
+    bool hasConnection(SignalT signal, const Object* observer = nullptr) const;
+    template<SignalT S> bool hasConnection(Object* observer = nullptr) const { return hasConnection(S, observer); }
 
     // --- connect (compile-time signal) ---
-    template<SignalT S> void connect(Object* observer, const ActionT& action, LoopRef loop = {})
+    template<SignalT S> void connect(Object* observer, const ActionT& action, Loop* loop = nullptr)
     { connect(S, observer, action, loop); }
 
     // Typed connect (runtime signal): any callable → auto-wrap into ActionT
@@ -106,7 +99,7 @@ public:
     //   connect(sig, obs, [](int a, string b) { ... })    multi-arg unpack
     template<typename Fn,
         std::enable_if_t<!std::is_convertible_v<Fn, ActionT>, int> = 0>
-    void connect(SignalT signal, Object* observer, Fn fn, LoopRef loop = {}) {
+    void connect(SignalT signal, Object* observer, Fn fn, Loop* loop = nullptr) {
         using Tuple = typename basic::FnTraits<std::decay_t<Fn>>::ArgsTuple;
         connect(signal, observer, [fn](const Var& data) {
             _call(fn, data, static_cast<Tuple*>(nullptr),
@@ -120,7 +113,7 @@ public:
     //   connect<S>(obs, []() { ... })                     ignore data
     template<SignalT S, typename Fn,
         std::enable_if_t<!std::is_convertible_v<Fn, ActionT>, int> = 0>
-    void connect(Object* observer, Fn fn, LoopRef loop = {}) {
+    void connect(Object* observer, Fn fn, Loop* loop = nullptr) {
         using Tuple = typename basic::FnTraits<std::decay_t<Fn>>::ArgsTuple;
         connect(S, observer, [fn](const Var& data) {
             _call(fn, data, static_cast<Tuple*>(nullptr),
@@ -156,12 +149,12 @@ public:
 
     // --- once (single-shot connect, auto-disconnects after first trigger) ---
 
-    template<SignalT S> void once(Object* observer, const ActionT& action, LoopRef loop = {})
+    template<SignalT S> void once(Object* observer, const ActionT& action, Loop* loop = nullptr)
     { once(S, observer, action, loop); }
 
     template<SignalT S, typename Fn,
         std::enable_if_t<!std::is_convertible_v<Fn, ActionT>, int> = 0>
-    void once(Object* observer, Fn fn, LoopRef loop = {}) {
+    void once(Object* observer, Fn fn, Loop* loop = nullptr) {
         using Tuple = typename basic::FnTraits<std::decay_t<Fn>>::ArgsTuple;
         once(S, observer, [fn](const Var& data) {
             _call(fn, data, static_cast<Tuple*>(nullptr),
@@ -173,12 +166,13 @@ public:
     void disconnect(SignalT signal, Object* observer);
     void disconnect(Object* observer);
     template<SignalT S> void disconnect(Object* observer) { disconnect(S, observer); }
+    void disconnectAll();
 
 protected:
     // Runtime-signal connect/trigger — prefer compile-time template versions above.
     // Protected so derived classes (e.g. Node::activate) can still use them directly.
-    void connect(SignalT signal, Object* observer, const ActionT& action, LoopRef loop = {});
-    void once(SignalT signal, Object* observer, const ActionT& action, LoopRef loop = {});
+    void connect(SignalT signal, const Object* observer, const ActionT& action, Loop* loop = nullptr);
+    void once(SignalT signal, const Object* observer, const ActionT& action, Loop* loop = nullptr);
     void trigger(SignalT signal, const Var& data = {});
 
 private:

@@ -119,7 +119,7 @@ For internal, non-exposed dispatch the same idea applies one level down: store `
 
 ### Building structured payloads — Node as transient aggregator
 
-To assemble a structured blob for serialization (YAML / JSON / Bin / Markdown), prefer a **temporary unowned `Node`** as the build container, then serialize via `schema::exportAs<F>(&node)`. The schema layer is Node-centric — every format implements `SchemaTraits<F>::exportNode(const Node*)`. A `Node` with no parent and no subscribers carries near-zero reactive overhead, so this is a cheap and idiomatic build-up form. Direct `Var::DictV` / `Var::ListV` manipulation remains appropriate at boundaries where a `Var` is already in hand and one-shot serialization is the only goal.
+To assemble a structured blob for serialization (YAML / JSON / Bin / Markdown), prefer a **temporary unowned `Node`** as the build container, then serialize via `schema::fromNode<F>(&node)`. The schema layer is Node-centric — every format implements `Format::fromNode(const Node*)`. A `Node` with no parent and no subscribers carries near-zero reactive overhead, so this is a cheap and idiomatic build-up form. Direct `Var::DictV` / `Var::ListV` manipulation remains appropriate at boundaries where a `Var` is already in hand and one-shot serialization is the only goal.
 
 ## Memory and Ownership
 

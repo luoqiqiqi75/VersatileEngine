@@ -1,21 +1,15 @@
-#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
-#include "dynamic_typesupport_bridge.h"
-#endif
-
 #include "ve/ros/backend.h"
+
 #include "ve/core/schema.h"
 #include "ve/ros/yaml_schema.h"
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/parameter_client.hpp>
 
-#include <chrono>
-#include <cstring>
-#include <iomanip>
-#include <mutex>
-#include <sstream>
-#include <thread>
-#include <unordered_map>
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+#include "dynamic_typesupport_bridge.h"
+#endif
+
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -252,58 +246,47 @@ bool isInternalParamName(const std::string& name)
         || name == "start_type_description_service";
 }
 
-Var::DictV makeResult(bool ok, std::string message)
-{
-    Var::DictV result;
-    result["ok"] = Var(ok);
-    result["message"] = Var(std::move(message));
-    return result;
-}
-
-Var::DictV decodedMessageResult(const rclcpp::SerializedMessage& message,
-                                const std::string& topic,
-                                const std::string& type,
-                                const std::string& payload_format,
+Result decodedMessageResult(const rclcpp::SerializedMessage& message,
+                            const std::string& topic,
+                            const std::string& type,
+                            const std::string& payload_format,
 #ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
-                                const std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>& bridge
+                            const std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>& bridge,
 #else
-                                const std::shared_ptr<void>& bridge
+                            const std::shared_ptr<void>& bridge,
 #endif
-                                )
+                            Node* out)
 {
-    Var::DictV result = makeResult(true, "topic message decoded");
-    result["topic"] = Var(topic);
-    result["type"] = Var(type);
-    result["payload_format"] = Var(payload_format);
-    result["size"] = Var(static_cast<int64_t>(message.size()));
+    out->set("topic", Var(topic));
+    out->set("type", Var(type));
+    out->set("payload_format", Var(payload_format));
+    out->set("size", Var(static_cast<int64_t>(message.size())));
 
     const auto& raw = message.get_rcl_serialized_message();
     if (payload_format == "cdr_hex") {
-        result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
-        return result;
+        out->set("data", Var(encodeHex(raw.buffer, raw.buffer_length)));
+        return Result::ok();
     }
 
 #ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
     Var decoded;
     std::string error;
     if (bridge && bridge->deserializeToVar(message, decoded, error)) {
-        result["value"] = decoded;
+        schema::VarS::toNode(out->at("value"), decoded);
         if (payload_format == "yaml")
-            result["yaml"] = Var(ve::ros::yaml::encode(decoded));
-        return result;
+            out->set("yaml", Var(ve::ros::yaml::encode(decoded)));
+        return Result::ok();
     }
 
-    result["ok"] = Var(false);
-    result["message"] = Var(error);
-    result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
-    result["fallback_format"] = Var("cdr_hex");
+    out->set("data", Var(encodeHex(raw.buffer, raw.buffer_length)));
+    out->set("fallback_format", Var(std::string("cdr_hex")));
+    return Result::fail(error);
 #else
-    result["ok"] = Var(false);
-    result["message"] = Var("dynamic typesupport not available (ROS 2 Foxy), use cdr_hex format");
-    result["data"] = Var(encodeHex(raw.buffer, raw.buffer_length));
-    result["fallback_format"] = Var("cdr_hex");
+    (void)bridge;
+    out->set("data", Var(encodeHex(raw.buffer, raw.buffer_length)));
+    out->set("fallback_format", Var(std::string("cdr_hex")));
+    return Result::fail("dynamic typesupport not available (ROS 2 Foxy), use cdr_hex format");
 #endif
-    return result;
 }
 
 class RclcppBackend : public Backend
@@ -462,29 +445,23 @@ public:
         return items;
     }
 
-    Var::DictV topicInfo(const std::string& topic) const override
+    Result topicInfo(const std::string& topic, Node* out) const override
     {
-        Var::DictV result;
-        result["topic"] = Var(topic);
+        if (!out) return Result::fail("no output node");
 
         std::lock_guard<std::mutex> lock(mu_);
-        if (!node_) {
-            result["ok"] = Var(false);
-            result["message"] = Var("rclcpp backend is not started");
-            return result;
-        }
+        if (!node_) return Result::fail("rclcpp backend is not started");
 
         const auto topics = node_->get_topic_names_and_types();
         auto it = topics.find(topic);
-        if (it == topics.end()) {
-            result["ok"] = Var(false);
-            result["message"] = Var("topic not found");
-            return result;
-        }
+        if (it == topics.end()) return Result::fail("topic not found");
+
+        out->set("topic", Var(topic));
 
         Var::ListV type_list;
         for (const auto& type : it->second)
             type_list.push_back(Var(type));
+        schema::VarS::toNode(out->at("types"), Var(std::move(type_list)));
 
         Var::ListV publishers;
         for (const auto& endpoint : node_->get_publishers_info_by_topic(topic)) {
@@ -494,6 +471,7 @@ public:
             item["topic_type"] = Var(endpoint.topic_type());
             publishers.push_back(Var(std::move(item)));
         }
+        schema::VarS::toNode(out->at("publishers"), Var(std::move(publishers)));
 
         Var::ListV subscriptions;
         for (const auto& endpoint : node_->get_subscriptions_info_by_topic(topic)) {
@@ -503,42 +481,36 @@ public:
             item["topic_type"] = Var(endpoint.topic_type());
             subscriptions.push_back(Var(std::move(item)));
         }
+        schema::VarS::toNode(out->at("subscriptions"), Var(std::move(subscriptions)));
 
-        result["ok"] = Var(true);
-        result["message"] = Var("topic info ok");
-        result["types"] = Var(std::move(type_list));
-        result["publisher_count"] = Var(static_cast<int64_t>(node_->count_publishers(topic)));
-        result["subscriber_count"] = Var(static_cast<int64_t>(node_->count_subscribers(topic)));
-        result["publishers"] = Var(std::move(publishers));
-        result["subscriptions"] = Var(std::move(subscriptions));
-        return result;
+        out->set("publisher_count", Var(static_cast<int64_t>(node_->count_publishers(topic))));
+        out->set("subscriber_count", Var(static_cast<int64_t>(node_->count_subscribers(topic))));
+        return Result::ok();
     }
 
-    Var::DictV subscribeTopic(const TopicSubscriptionConfig& config) override
+    Result subscribeTopic(const TopicSubscriptionConfig& config, Node* out) override
     {
 #ifndef VE_ROS_HAS_GENERIC_PUBSUB
-        return makeResult(false, "GenericSubscription not available on Foxy, requires Galactic+");
+        return Result::fail("GenericSubscription not available on Foxy, requires Galactic+");
 #else
         std::lock_guard<std::mutex> lock(mu_);
-        if (!node_)
-            return makeResult(false, "rclcpp backend is not started");
+        if (!node_) return Result::fail("rclcpp backend is not started");
         if (config.name.empty() || config.topic.empty())
-            return makeResult(false, "name/topic is required");
+            return Result::fail("name/topic is required");
 
         std::string topic_type = config.type.empty() ? inferTopicTypeLocked(config.topic) : config.type;
-        if (topic_type.empty())
-            return makeResult(false, "topic type is required");
+        if (topic_type.empty()) return Result::fail("topic type is required");
 
         const std::string payload_format = normalizedPayloadFormat(config.payload_format);
         std::string bridge_error;
 #ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         if (payload_format != "cdr_hex" && !bridge->initialize(topic_type, bridge_error))
-            return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+            return Result::fail("failed to initialize dynamic bridge: " + bridge_error);
 #else
         auto bridge = std::shared_ptr<void>{};
         if (payload_format != "cdr_hex")
-            return makeResult(false, "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+            return Result::fail("dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
 #endif
 
         auto target_path = config.target_node;
@@ -554,16 +526,14 @@ public:
              type = topic_type,
              target_path,
              payload_format,
-             bridge,
-             this](std::shared_ptr<rclcpp::SerializedMessage> message) {
+             bridge](std::shared_ptr<rclcpp::SerializedMessage> message) {
                 Node payload("payload");
-                const auto decoded = decodedMessageResult(*message, topic, type, payload_format, bridge);
-                schema::importAs<schema::VarS>(&payload, Var(decoded), schema::ImportOptions{true, false, true});
+                decodedMessageResult(*message, topic, type, payload_format, bridge, &payload);
 
                 if (!target_path.empty())
-                    ve::n(target_path)->copy(&payload, true, true, false);
+                    ve::n(target_path)->copy(&payload, Node::COPY_STRICT);
                 auto* rx = ve::n("ve/ros/runtime/subscriptions/" + name + "/messages_rx");
-                rx->set(rx->getInt64(0) + 1);
+                rx->set(Var(rx->getInt64(0) + 1));
             });
 
         SubscriptionInfo info;
@@ -574,55 +544,52 @@ public:
         info.subscription = subscription;
         subscriptions_.insertOne(config.name, std::move(info));
 
-        Var::DictV result = makeResult(true, "topic subscribed");
-        result["name"] = Var(config.name);
-        result["topic"] = Var(config.topic);
-        result["type"] = Var(topic_type);
-        result["target_node"] = Var(target_path);
-        result["payload_format"] = Var(payload_format);
-        return result;
+        if (out) {
+            out->set("name", Var(config.name));
+            out->set("topic", Var(config.topic));
+            out->set("type", Var(topic_type));
+            out->set("target_node", Var(target_path));
+            out->set("payload_format", Var(payload_format));
+        }
+        return Result::ok();
 #endif
     }
 
-    Var::DictV unsubscribeTopic(const std::string& name) override
+    Result unsubscribeTopic(const std::string& name, Node* out) override
     {
 #ifndef VE_ROS_HAS_GENERIC_PUBSUB
-        return makeResult(false, "GenericSubscription not available on Foxy, requires Galactic+");
+        return Result::fail("GenericSubscription not available on Foxy, requires Galactic+");
 #else
         std::lock_guard<std::mutex> lock(mu_);
         if (!subscriptions_.has(name))
-            return makeResult(false, "subscription not found");
+            return Result::fail("subscription not found");
         subscriptions_.erase(name);
-
-        Var::DictV result = makeResult(true, "topic unsubscribed");
-        result["name"] = Var(name);
-        return result;
+        if (out)
+            out->set("name", Var(name));
+        return Result::ok();
 #endif
     }
 
-    Var::DictV publishTopic(const TopicPublishRequest& request) override
+    Result publishTopic(const TopicPublishRequest& request, Node* out) override
     {
 #ifndef VE_ROS_HAS_GENERIC_PUBSUB
-        return makeResult(false, "GenericPublisher not available on Foxy, requires Galactic+");
+        return Result::fail("GenericPublisher not available on Foxy, requires Galactic+");
 #else
         std::lock_guard<std::mutex> lock(mu_);
-        if (!node_)
-            return makeResult(false, "rclcpp backend is not started");
-        if (request.topic.empty())
-            return makeResult(false, "topic is required");
+        if (!node_) return Result::fail("rclcpp backend is not started");
+        if (request.topic.empty()) return Result::fail("topic is required");
 
         std::string topic_type = request.type.empty() ? inferTopicTypeLocked(request.topic) : request.type;
-        if (topic_type.empty())
-            return makeResult(false, "topic type is required");
+        if (topic_type.empty()) return Result::fail("topic type is required");
 
         const std::string payload_format = normalizedPayloadFormat(request.payload_format);
         rclcpp::SerializedMessage message;
         if (payload_format == "cdr_hex") {
             std::vector<uint8_t> bytes;
             if (!decodeHex(request.payload, bytes))
-                return makeResult(false, "invalid cdr_hex payload");
+                return Result::fail("invalid cdr_hex payload");
             message.reserve(bytes.size());
-            auto & raw = message.get_rcl_serialized_message();
+            auto& raw = message.get_rcl_serialized_message();
             std::memcpy(raw.buffer, bytes.data(), bytes.size());
             raw.buffer_length = bytes.size();
         } else {
@@ -630,15 +597,13 @@ public:
             auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
             std::string error;
             if (!bridge->initialize(topic_type, error))
-                return makeResult(false, "failed to initialize dynamic bridge: " + error);
+                return Result::fail("failed to initialize dynamic bridge: " + error);
 
-            const Var payload = payload_format == "yaml"
-                ? ve::ros::yaml::decode(request.payload)
-                : ve::ros::yaml::decode(request.payload);
+            const Var payload = ve::ros::yaml::decode(request.payload);
             if (!bridge->serializeFromVar(payload, message, error))
-                return makeResult(false, "failed to serialize payload: " + error);
+                return Result::fail("failed to serialize payload: " + error);
 #else
-            return makeResult(false, "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+            return Result::fail("dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
 #endif
         }
 
@@ -650,50 +615,49 @@ public:
 
         publisher->publish(message);
 
-        Var::DictV result = makeResult(true, "topic publish ok");
-        result["topic"] = Var(request.topic);
-        result["type"] = Var(topic_type);
-        result["size"] = Var(static_cast<int64_t>(message.size()));
-        result["payload_format"] = Var(payload_format);
-        return result;
+        if (out) {
+            out->set("topic", Var(request.topic));
+            out->set("type", Var(topic_type));
+            out->set("size", Var(static_cast<int64_t>(message.size())));
+            out->set("payload_format", Var(payload_format));
+        }
+        return Result::ok();
 #endif
     }
 
-    Var::DictV onceTopic(const TopicOnceRequest& request) override
+    Result onceTopic(const TopicOnceRequest& request, Node* out) override
     {
 #ifndef VE_ROS_HAS_GENERIC_PUBSUB
-        return makeResult(false, "GenericSubscription not available on Foxy, requires Galactic+");
+        return Result::fail("GenericSubscription not available on Foxy, requires Galactic+");
 #else
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
-            if (!node_)
-                return makeResult(false, "rclcpp backend is not started");
+            if (!node_) return Result::fail("rclcpp backend is not started");
             node = node_;
         }
 
-        if (request.topic.empty())
-            return makeResult(false, "topic is required");
+        if (request.topic.empty()) return Result::fail("topic is required");
 
         const std::string topic_type = request.type.empty()
             ? inferTopicTypeLocked(request.topic)
             : request.type;
-        if (topic_type.empty())
-            return makeResult(false, "topic type is required");
+        if (topic_type.empty()) return Result::fail("topic type is required");
 
         const std::string payload_format = normalizedPayloadFormat(request.payload_format);
 #ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         std::string bridge_error;
         if (payload_format != "cdr_hex" && !bridge->initialize(topic_type, bridge_error))
-            return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+            return Result::fail("failed to initialize dynamic bridge: " + bridge_error);
 #else
         auto bridge = std::shared_ptr<void>{};
         if (payload_format != "cdr_hex")
-            return makeResult(false, "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+            return Result::fail("dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
 #endif
 
-        auto promise = std::make_shared<std::promise<Var::DictV>>();
+        auto temp = std::make_shared<Node>("temp");
+        auto promise = std::make_shared<std::promise<Result>>();
         auto future = promise->get_future();
         auto delivered = std::make_shared<std::atomic<bool>>(false);
 
@@ -701,26 +665,25 @@ public:
             request.topic,
             topic_type,
             makeQos(request.qos),
-            [promise, delivered, topic = request.topic, type = topic_type, payload_format, bridge]
+            [promise, delivered, temp, topic = request.topic, type = topic_type, payload_format, bridge]
             (std::shared_ptr<rclcpp::SerializedMessage> message) {
                 if (delivered->exchange(true))
                     return;
-                promise->set_value(decodedMessageResult(*message, topic, type, payload_format, bridge));
+                promise->set_value(decodedMessageResult(*message, topic, type, payload_format, bridge, temp.get()));
             });
 
         const auto status = future.wait_for(std::chrono::milliseconds(request.timeout_ms));
         if (status != std::future_status::ready)
-            return makeResult(false, "topic once timeout");
+            return Result::fail("topic once timeout");
 
-        auto result = future.get();
-        if (result.value("ok").toBool(false) && !request.target_node.empty()) {
-            Node payload("payload");
-            schema::importAs<schema::VarS>(&payload, Var(result), schema::ImportOptions{true, false, true});
-            ve::n(request.target_node)->copy(&payload, true, true, false);
-            result["target_node"] = Var(request.target_node);
+        auto r = future.get();
+        if (r && !request.target_node.empty()) {
+            ve::n(request.target_node)->copy(temp.get(), Node::COPY_STRICT);
+            temp->set("target_node", Var(request.target_node));
         }
-        result["message"] = Var(result.value("ok").toBool(false) ? "topic once ok" : result.value("message").toString());
-        return result;
+        if (out)
+            out->copy(temp.get());
+        return r;
 #endif
     }
 
@@ -755,127 +718,115 @@ public:
         return items;
     }
 
-    Var::DictV serviceInfo(const std::string& service) const override
+    Result serviceInfo(const std::string& service, Node* out) const override
     {
-        Var::DictV result;
-        result["service"] = Var(service);
+        if (!out) return Result::fail("no output node");
 
         std::lock_guard<std::mutex> lock(mu_);
-        if (!node_) {
-            result["ok"] = Var(false);
-            result["message"] = Var("rclcpp backend is not started");
-            return result;
-        }
+        if (!node_) return Result::fail("rclcpp backend is not started");
 
         const auto services = node_->get_service_names_and_types();
         auto it = services.find(service);
-        if (it == services.end()) {
-            result["ok"] = Var(false);
-            result["message"] = Var("service not found");
-            return result;
-        }
+        if (it == services.end()) return Result::fail("service not found");
+
+        out->set("service", Var(service));
 
         Var::ListV type_list;
         for (const auto& type : it->second)
             type_list.push_back(Var(type));
+        schema::VarS::toNode(out->at("types"), Var(std::move(type_list)));
 
-        result["ok"] = Var(true);
-        result["message"] = Var("service info ok");
-        result["types"] = Var(std::move(type_list));
 #ifdef VE_ROS_HAS_GENERIC_PUBSUB
-        result["server_count"] = Var(static_cast<int64_t>(node_->count_services(service)));
-        result["client_count"] = Var(static_cast<int64_t>(node_->count_clients(service)));
+        out->set("server_count", Var(static_cast<int64_t>(node_->count_services(service))));
+        out->set("client_count", Var(static_cast<int64_t>(node_->count_clients(service))));
 #else
-        result["server_count"] = Var(static_cast<int64_t>(0));
-        result["client_count"] = Var(static_cast<int64_t>(0));
+        out->set("server_count", Var(static_cast<int64_t>(0)));
+        out->set("client_count", Var(static_cast<int64_t>(0)));
 #endif
-        return result;
+        return Result::ok();
     }
 
-    Var::DictV callService(const ServiceCallRequest& request) override
+    Result callService(const ServiceCallRequest& request, Node* out) override
     {
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
-            if (!node_)
-                return makeResult(false, "rclcpp backend is not started");
+            if (!node_) return Result::fail("rclcpp backend is not started");
             node = node_;
         }
 
         const std::string& service = request.service;
         const std::string& type = request.type;
-        if (service.empty())
-            return makeResult(false, "service name is required");
-        if (type.empty())
-            return makeResult(false, "service type is required");
+        if (service.empty()) return Result::fail("service name is required");
+        if (type.empty()) return Result::fail("service type is required");
 
         const std::string fmt = normalizedPayloadFormat(request.payload_format);
 #ifndef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
-        return makeResult(false, "dynamic typesupport not available on Foxy, service calls require Galactic+");
+        return Result::fail("dynamic typesupport not available on Foxy, service calls require Galactic+");
 #else
         if (fmt == "cdr_hex")
-            return makeResult(false, "cdr_hex payload format is not supported for service calls; use yaml or var");
+            return Result::fail("cdr_hex payload format is not supported for service calls; use yaml or var");
         if (fmt != "yaml" && fmt != "var")
-            return makeResult(false, "unsupported payload format: " + fmt);
+            return Result::fail("unsupported payload format: " + fmt);
 
         auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
         std::string bridge_error;
         if (!bridge->initializeService(type, bridge_error))
-            return makeResult(false, "failed to initialize dynamic bridge: " + bridge_error);
+            return Result::fail("failed to initialize dynamic bridge: " + bridge_error);
 
         const Var request_var = ve::ros::yaml::decode(request.request);
 
         rclcpp::SerializedMessage request_msg;
         if (!bridge->serializeRequest(request_var, request_msg, bridge_error))
-            return makeResult(false, "failed to serialize request: " + bridge_error);
+            return Result::fail("failed to serialize request: " + bridge_error);
 
         auto client = node->create_generic_client(service, type);
         if (!client->wait_for_service(std::chrono::milliseconds(request.timeout_wait_ms)))
-            return makeResult(false, "service not available: " + service);
+            return Result::fail("service not available: " + service);
 
         auto& raw_request = request_msg.get_rcl_serialized_message();
         auto future_and_id = client->async_send_request(static_cast<void*>(&raw_request));
         if (future_and_id.future.wait_for(std::chrono::milliseconds(request.timeout_response_ms)) != std::future_status::ready)
-            return makeResult(false, "service call timeout");
+            return Result::fail("service call timeout");
 
         auto response_shared = future_and_id.future.get();
         auto* response_raw = static_cast<rcl_serialized_message_t*>(response_shared.get());
         rclcpp::SerializedMessage response_msg(*response_raw);
         Var response_var;
         if (!bridge->deserializeResponse(response_msg, response_var, bridge_error))
-            return makeResult(false, "failed to deserialize response: " + bridge_error);
+            return Result::fail("failed to deserialize response: " + bridge_error);
 
-        Var::DictV result = makeResult(true, "service call ok");
-        result["service"] = Var(service);
-        result["type"] = Var(type);
-        result["payload_format"] = Var(fmt);
-        result["response"] = response_var;
-        if (fmt == "yaml")
-            result["yaml"] = Var(ve::ros::yaml::encode(response_var));
-        return result;
+        if (out) {
+            out->set("service", Var(service));
+            out->set("type", Var(type));
+            out->set("payload_format", Var(fmt));
+            schema::VarS::toNode(out->at("response"), response_var);
+            if (fmt == "yaml")
+                out->set("yaml", Var(ve::ros::yaml::encode(response_var)));
+        }
+        return Result::ok();
 #endif
     }
 
-    Var::DictV listParams(const std::string& node_name = "") const override
+    Result listParams(const std::string& node_name, Node* out) const override
     {
+        if (!out) return Result::fail("no output node");
+
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
-            if (!node_)
-                return makeResult(false, "rclcpp backend is not started");
+            if (!node_) return Result::fail("rclcpp backend is not started");
             node = node_;
         }
 
-        // Specific node: return param names + values
         if (!node_name.empty()) {
             const std::string nn = normalizeRemoteNodeName(node_name);
             auto client = paramClient(node, nn);
-            if (!client)
-                return makeResult(false, "parameter service not ready");
+            if (!client) return Result::fail("parameter service not ready");
 
             auto list_future = client->list_parameters({}, 0);
             if (list_future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready)
-                return makeResult(false, "param list timeout");
+                return Result::fail("param list timeout");
 
             Var::ListV param_names;
             std::vector<std::string> names_to_get;
@@ -886,106 +837,95 @@ public:
                 }
             }
 
-            Var::DictV params_dict;
+            out->set("node", Var(nn));
+            schema::VarS::toNode(out->at("params"), Var(std::move(param_names)));
+
             if (!names_to_get.empty()) {
                 auto get_future = client->get_parameters(names_to_get);
                 if (get_future.wait_for(std::chrono::milliseconds(2000)) == std::future_status::ready) {
                     const auto values = get_future.get();
+                    auto* vals = out->at("values");
                     for (std::size_t i = 0; i < values.size() && i < names_to_get.size(); ++i)
-                        params_dict[names_to_get[i]] = parameterValueToVar(values[i].get_parameter_value());
+                        vals->set(names_to_get[i], parameterValueToVar(values[i].get_parameter_value()));
                 }
             }
-
-            Var::DictV result = makeResult(true, "param list ok");
-            result["node"] = Var(nn);
-            result["params"] = Var(std::move(param_names));
-            result["values"] = Var(std::move(params_dict));
-            return result;
+            return Result::ok();
         }
 
-        // No node specified: just return node names (don't query params)
-        Var::DictV result = makeResult(true, "param list ok");
         Var::ListV nodes_list;
         for (const auto& [name, ns] : node->get_node_graph_interface()->get_node_names_and_namespaces()) {
             if (isRuntimeHelperNode(name, ns))
                 continue;
             nodes_list.push_back(Var(fqNodeName(name, ns)));
         }
-        result["nodes"] = Var(std::move(nodes_list));
-        return result;
+        schema::VarS::toNode(out->at("nodes"), Var(std::move(nodes_list)));
+        return Result::ok();
     }
 
-    Var::DictV getParam(const std::string& node_name, const std::string& name) const override
+    Result getParam(const std::string& node_name, const std::string& name, Node* out) const override
     {
+        if (!out) return Result::fail("no output node");
+
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
-            if (!node_)
-                return makeResult(false, "rclcpp backend is not started");
+            if (!node_) return Result::fail("rclcpp backend is not started");
             node = node_;
         }
 
-        const std::string normalized_node_name = normalizeRemoteNodeName(node_name);
-        if (normalized_node_name.empty() || name.empty())
-            return makeResult(false, "node/name is required");
+        const std::string nn = normalizeRemoteNodeName(node_name);
+        if (nn.empty() || name.empty()) return Result::fail("node/name is required");
 
-        auto client = paramClient(node, normalized_node_name);
-        if (!client)
-            return makeResult(false, "parameter service not ready");
+        auto client = paramClient(node, nn);
+        if (!client) return Result::fail("parameter service not ready");
 
         auto future = client->get_parameters({name});
         if (future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready)
-            return makeResult(false, "param get timeout");
+            return Result::fail("param get timeout");
 
         const auto params = future.get();
-        Var::DictV result = makeResult(true, "param get ok");
-        if (params.empty()) {
-            result["ok"] = Var(false);
-            result["message"] = Var("parameter not found");
-            return result;
-        }
-        result["node"] = Var(normalized_node_name);
-        result["name"] = Var(name);
-        result["value"] = parameterValueToVar(params.front().get_parameter_value());
-        return result;
+        if (params.empty()) return Result::fail("parameter not found");
+
+        out->set("node", Var(nn));
+        out->set("name", Var(name));
+        out->set("value", parameterValueToVar(params.front().get_parameter_value()));
+        return Result::ok();
     }
 
-    Var::DictV setParam(const std::string& node_name, const std::string& name, const Var& value) const override
+    Result setParam(const std::string& node_name, const std::string& name, const Var& value, Node* out) const override
     {
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
-            if (!node_)
-                return makeResult(false, "rclcpp backend is not started");
+            if (!node_) return Result::fail("rclcpp backend is not started");
             node = node_;
         }
 
-        const std::string normalized_node_name = normalizeRemoteNodeName(node_name);
-        if (normalized_node_name.empty() || name.empty())
-            return makeResult(false, "node/name is required");
+        const std::string nn = normalizeRemoteNodeName(node_name);
+        if (nn.empty() || name.empty()) return Result::fail("node/name is required");
 
         rclcpp::ParameterValue parameter_value;
         std::string error;
         if (!varToParameterValue(value, parameter_value, error))
-            return makeResult(false, error);
+            return Result::fail(error);
 
-        auto client = paramClient(node, normalized_node_name);
-        if (!client)
-            return makeResult(false, "parameter service not ready");
+        auto client = paramClient(node, nn);
+        if (!client) return Result::fail("parameter service not ready");
 
         auto future = client->set_parameters({rclcpp::Parameter(name, parameter_value)});
         if (future.wait_for(std::chrono::milliseconds(1000)) != std::future_status::ready)
-            return makeResult(false, "param set timeout");
+            return Result::fail("param set timeout");
 
         const auto results = future.get();
-        Var::DictV result = makeResult(!results.empty() && results.front().successful,
-                                       results.empty() ? "parameter set failed" : results.front().reason);
-        result["node"] = Var(normalized_node_name);
-        result["name"] = Var(name);
-        result["value"] = value;
-        if (!results.empty())
-            result["successful"] = Var(results.front().successful);
-        return result;
+        if (results.empty() || !results.front().successful)
+            return Result::fail(results.empty() ? "parameter set failed" : results.front().reason);
+
+        if (out) {
+            out->set("node", Var(nn));
+            out->set("name", Var(name));
+            out->set("value", value);
+        }
+        return Result::ok();
     }
 
 private:

@@ -174,36 +174,6 @@ VE_TEST(node_complex_deep_tree) {
     veLogI << "deep tree path length: " << p.size() << " chars";
 }
 
-VE_TEST(node_complex_shadow_mixed) {
-    Node proto("proto");
-    proto.append("camera");
-    proto.append("lidar");
-    proto.append("imu");
-
-    Node inst("inst");
-    inst.setShadow(&proto);
-    inst.append("camera");  // override
-    inst.append("gps");
-
-    for (int i = 0; i < 5; ++i) inst.append("");
-
-    veLogI << "=== Shadow mixed ===\n" << inst.dump();
-
-    // child() only sees local children
-    VE_ASSERT(inst.child("camera") != nullptr);
-    VE_ASSERT(inst.child("camera") != proto.child("camera"));
-    VE_ASSERT(inst.child("gps") != nullptr);
-    VE_ASSERT(inst.child("lidar") == nullptr);   // not local
-
-    // find() uses shadow fallback
-    VE_ASSERT(inst.find("lidar") == proto.child("lidar"));
-    VE_ASSERT(inst.find("imu") == proto.child("imu"));
-    VE_ASSERT(inst.find("nonexistent") == nullptr);
-
-    // count("") = count() = total local children (camera + gps + 5 anon = 7)
-    VE_ASSERT_EQ(inst.count(), 7);
-}
-
 VE_TEST(node_complex_wide_tree) {
     Node root("root");
     for (int g = 0; g < 1000; ++g) {
@@ -1176,7 +1146,7 @@ VE_TEST(node_bench_copy_wide_10k) {
     dst.silent(true);
 
     BENCH_BEGIN;
-    dst.copy(&src, true, false, true);
+    dst.copy(&src, Node::COPY_DEFAULT | Node::COPY_UPDATE);
     BENCH_END("copy: wide 10k named children");
 
     VE_ASSERT_EQ(dst.count(), 10000);
@@ -1190,7 +1160,7 @@ VE_TEST(node_bench_copy_wide_100k) {
     dst.silent(true);
 
     BENCH_BEGIN;
-    dst.copy(&src, true, false, true);
+    dst.copy(&src, Node::COPY_DEFAULT | Node::COPY_UPDATE);
     BENCH_END("copy: wide 100k named children");
 
     VE_ASSERT_EQ(dst.count(), 100000);
@@ -1200,15 +1170,14 @@ VE_TEST(node_bench_schema_json_roundtrip_10k) {
     Node src("src");
     buildWideNamedTree(src, 10000);
 
-    schema::ExportOptions ex;
+    schema::JsonS::ExportOptions ex;
     ex.indent = 0;
 
     BENCH_BEGIN;
-    std::string json = schema::exportAs<schema::JsonS>(&src, ex);
+    std::string json = schema::fromNode<schema::JsonS>(&src, ex);
     Node        dst("dst");
     dst.silent(true);
-    schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
+    VE_ASSERT(schema::toNode<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     BENCH_END("schema: json export+import merge 10k wide");
 
     VE_ASSERT_EQ(dst.count(), 10000);
@@ -1218,14 +1187,13 @@ VE_TEST(node_bench_schema_bin_roundtrip_10k) {
     Node src("src");
     buildWideNamedTree(src, 10000);
 
-    schema::ExportOptions ex;
+    schema::BinS::ExportOptions ex;
 
     BENCH_BEGIN;
-    Bytes       bytes = schema::exportAs<schema::BinS>(&src, ex);
+    Bytes       bytes = schema::fromNode<schema::BinS>(&src, ex);
     Node        dst("dst");
     dst.silent(true);
-    schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::BinS>(&dst, bytes.data(), bytes.size(), im));
+    VE_ASSERT(schema::toNode<schema::BinS>(&dst, bytes.data(), bytes.size(), Node::COPY_DEFAULT));
     BENCH_END("schema: bin export+import merge 10k wide");
 
     VE_ASSERT_EQ(dst.count(), 10000);
@@ -1236,15 +1204,14 @@ VE_TEST(node_bench_schema_json_roundtrip_100k) {
     Node src("src");
     buildWideNamedTree(src, 100000);
 
-    schema::ExportOptions ex;
+    schema::JsonS::ExportOptions ex;
     ex.indent = 0;
 
     BENCH_BEGIN;
-    std::string json = schema::exportAs<schema::JsonS>(&src, ex);
+    std::string json = schema::fromNode<schema::JsonS>(&src, ex);
     Node        dst("dst");
     dst.silent(true);
-    schema::ImportOptions im;
-    VE_ASSERT(schema::importAs<schema::JsonS>(&dst, json, im));
+    VE_ASSERT(schema::toNode<schema::JsonS>(&dst, json, Node::COPY_DEFAULT));
     BENCH_END("schema: json export+import merge 100k wide (VE_NODE_BENCH_LARGE)");
 
     VE_ASSERT_EQ(dst.count(), 100000);

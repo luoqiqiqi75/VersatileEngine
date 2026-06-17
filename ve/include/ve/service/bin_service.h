@@ -35,7 +35,7 @@ VE_API bool  tryPopFrame(Bytes& buf, uint8_t& flag, Var& outVar);
 class VE_API BinTcpServer
 {
 public:
-    explicit BinTcpServer(Node* root, uint16_t port);
+    explicit BinTcpServer(const Node* config_n);
     ~BinTcpServer();
 
     bool start();
@@ -45,8 +45,7 @@ public:
     uint16_t port() const;
 
 private:
-    struct Private;
-    std::unique_ptr<Private> _p;
+    VE_DECLARE_UNIQUE_PRIVATE
 };
 
 class VE_API BinTcpClient
