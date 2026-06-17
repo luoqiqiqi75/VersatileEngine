@@ -58,6 +58,7 @@ public:
     bool   stop() override;
     bool   isRunning() const override;
     size_t processEvents() override;
+    int    exec() override;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

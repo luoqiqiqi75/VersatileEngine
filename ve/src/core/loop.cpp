@@ -6,12 +6,10 @@
 #include <asio/io_context.hpp>
 #include <asio/executor_work_guard.hpp>
 #include <asio/post.hpp>
+#include <asio/signal_set.hpp>
 
-#include <atomic>
-#include <mutex>
+#include <csignal>
 #include <optional>
-#include <thread>
-#include <vector>
 
 namespace ve {
 
@@ -113,6 +111,7 @@ bool AsioLoop::stop()
 }
 
 bool AsioLoop::isRunning() const { return _p->is_running; }
+
 size_t AsioLoop::processEvents()
 {
     Loop* prev = loop::current();
@@ -121,6 +120,20 @@ size_t AsioLoop::processEvents()
     loop::setCurrent(prev);
     return n;
 }
+
+int AsioLoop::exec()
+  {
+      asio::signal_set signals(_p->io, SIGINT, SIGTERM);
+      signals.async_wait([this](const asio::error_code& ec, int) {
+          if (!ec) quit(0);
+      });
+
+      while (isRunning() && !_quit.load(std::memory_order_acquire)) {
+          if (processEvents() == 0) std::this_thread::yield();
+      }
+      _quit.store(false, std::memory_order_release);
+      return _exit_code.load(std::memory_order_acquire);
+  }
 
 struct AsioPoolLoop::Private
 {
