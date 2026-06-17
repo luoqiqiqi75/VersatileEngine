@@ -1,21 +1,15 @@
-#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
-#include "dynamic_typesupport_bridge.h"
-#endif
-
 #include "ve/ros/backend.h"
+
 #include "ve/core/schema.h"
 #include "ve/ros/yaml_schema.h"
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/parameter_client.hpp>
 
-#include <chrono>
-#include <cstring>
-#include <iomanip>
-#include <mutex>
-#include <sstream>
-#include <thread>
-#include <unordered_map>
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+#include "dynamic_typesupport_bridge.h"
+#endif
+
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -453,6 +447,8 @@ public:
 
     Result topicInfo(const std::string& topic, Node* out) const override
     {
+        if (!out) return Result::fail("no output node");
+
         std::lock_guard<std::mutex> lock(mu_);
         if (!node_) return Result::fail("rclcpp backend is not started");
 
@@ -619,10 +615,12 @@ public:
 
         publisher->publish(message);
 
-        out->set("topic", Var(request.topic));
-        out->set("type", Var(topic_type));
-        out->set("size", Var(static_cast<int64_t>(message.size())));
-        out->set("payload_format", Var(payload_format));
+        if (out) {
+            out->set("topic", Var(request.topic));
+            out->set("type", Var(topic_type));
+            out->set("size", Var(static_cast<int64_t>(message.size())));
+            out->set("payload_format", Var(payload_format));
+        }
         return Result::ok();
 #endif
     }
@@ -683,7 +681,8 @@ public:
             ve::n(request.target_node)->copy(temp.get(), Node::COPY_STRICT);
             temp->set("target_node", Var(request.target_node));
         }
-        out->copy(temp.get());
+        if (out)
+            out->copy(temp.get());
         return r;
 #endif
     }
@@ -721,6 +720,8 @@ public:
 
     Result serviceInfo(const std::string& service, Node* out) const override
     {
+        if (!out) return Result::fail("no output node");
+
         std::lock_guard<std::mutex> lock(mu_);
         if (!node_) return Result::fail("rclcpp backend is not started");
 
@@ -795,18 +796,22 @@ public:
         if (!bridge->deserializeResponse(response_msg, response_var, bridge_error))
             return Result::fail("failed to deserialize response: " + bridge_error);
 
-        out->set("service", Var(service));
-        out->set("type", Var(type));
-        out->set("payload_format", Var(fmt));
-        schema::VarS::toNode(out->at("response"), response_var);
-        if (fmt == "yaml")
-            out->set("yaml", Var(ve::ros::yaml::encode(response_var)));
+        if (out) {
+            out->set("service", Var(service));
+            out->set("type", Var(type));
+            out->set("payload_format", Var(fmt));
+            schema::VarS::toNode(out->at("response"), response_var);
+            if (fmt == "yaml")
+                out->set("yaml", Var(ve::ros::yaml::encode(response_var)));
+        }
         return Result::ok();
 #endif
     }
 
     Result listParams(const std::string& node_name, Node* out) const override
     {
+        if (!out) return Result::fail("no output node");
+
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -859,6 +864,8 @@ public:
 
     Result getParam(const std::string& node_name, const std::string& name, Node* out) const override
     {
+        if (!out) return Result::fail("no output node");
+
         std::shared_ptr<rclcpp::Node> node;
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -913,9 +920,11 @@ public:
         if (results.empty() || !results.front().successful)
             return Result::fail(results.empty() ? "parameter set failed" : results.front().reason);
 
-        out->set("node", Var(nn));
-        out->set("name", Var(name));
-        out->set("value", value);
+        if (out) {
+            out->set("node", Var(nn));
+            out->set("name", Var(name));
+            out->set("value", value);
+        }
         return Result::ok();
     }
 
