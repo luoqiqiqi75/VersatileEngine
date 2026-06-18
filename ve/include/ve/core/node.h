@@ -365,6 +365,7 @@ template<typename T1, typename T2, typename... Ts> std::string path(const T1& t1
 
 }
 
+// Returns non-null when auto_create is true (default); null only with auto_create=false and path not found.
 VE_API Node* n(const std::string& path, bool auto_create = true);
 
 // ============================================================================

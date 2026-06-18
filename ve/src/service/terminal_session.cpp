@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 namespace ve {
@@ -805,6 +806,25 @@ void TerminalSession::Private::initCommands()
                 s.print(h.empty() ? key + "\n" : key + ": " + h + "\n");
                 return;
             }
+            if (Node* d = command::factory().describe(key)) {
+                std::string out = key;
+                std::string desc = d->get("description").toString();
+                if (!desc.empty()) out += " - " + desc;
+                out += "\nusage: " + command::factory().usage(key) + "\n";
+                if (Node* props = d->find("input_schema/properties")) {
+                    std::unordered_set<std::string> req;
+                    if (Node* r = d->find("input_schema/required"))
+                        for (Node* c : r->children()) req.insert(c->get().toString());
+                    for (Node* p : props->children()) {
+                        std::string pd = p->get("description").toString();
+                        out += "  " + p->name() + (req.count(p->name()) ? " (required)" : "");
+                        if (!pd.empty()) out += "  " + pd;
+                        out += "\n";
+                    }
+                }
+                s.print(out);
+                return;
+            }
             auto h = command::factory().help(key);
             s.print(h.empty() ? "unknown command: " + key + "\n" : key + ": " + h + "\n");
             return;
@@ -909,13 +929,36 @@ std::string TerminalSession::execute(const std::string& line)
     }
     size_t resolvedWordCount = builtinNode ? builtinWordCount : cmdWordCount;
 
+    // Fill a command's input node. If the command declares an input_schema
+    // (describe), bind CLI tokens to named fields (terminal analog of
+    // cmd.input<JsonS>(body)); otherwise fall back to the raw-argv convention.
+    // Returns false (and prints usage) on a bind error.
+    auto fillInput = [&](Node* in) -> bool {
+        Node* sch = resolvedFactory.describe(resolvedName);
+        sch = sch ? sch->find("input_schema") : nullptr;
+        if (sch) {
+            ve::Strings toks(args.begin() + resolvedWordCount, args.end());
+            std::string err;
+            if (!resolvedFactory.bind(resolvedName, toks, in, &err)) {
+                s.print((err.empty() ? std::string("bad arguments") : err)
+                        + "\nusage: " + resolvedFactory.usage(resolvedName) + "\n");
+                return false;
+            }
+            if (s.root) in->at("root")->set(Var::ptr(s.root));
+            if (s.cur)  in->at("current")->set(Var::ptr(s.cur));
+            return true;
+        }
+        prepareCommandInput(in, s.root, s.cur, args, resolvedWordCount);
+        return true;
+    };
+
     if (builtinNode || cmdNode) {
         if (asyncMode) {
             // Detached run: the Pipeline graph keeps itself alive (strong self in
             // the dispatch chain) until FINISHED has been delivered. The pipeline
             // rebinds the command's i/o at dispatch, so input goes on the PIPELINE.
             Pipeline pipe;
-            prepareCommandInput(pipe.inputNode(), s.root, s.cur, args, resolvedWordCount);
+            if (!fillInput(pipe.inputNode())) return s.output;
             pipe.add(command::create(resolvedFactory, resolvedName));
 
             auto asyncOut = s.asyncOutput;
@@ -935,7 +978,7 @@ std::string TerminalSession::execute(const std::string& line)
 
         // Single synchronous command — no pipeline needed.
         Command cmdObj = command::create(resolvedFactory, resolvedName);
-        prepareCommandInput(cmdObj.inputNode(), s.root, s.cur, args, resolvedWordCount);
+        if (!fillInput(cmdObj.inputNode())) return s.output;
         cmdObj.run();
         updateCurrentFromOut(s.cur, cmdObj.outputNode());
         s.print(renderCommandOutput(cmdObj.outputNode(), cmdObj.result()));

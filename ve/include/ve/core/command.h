@@ -133,12 +133,10 @@ public:
     explicit Command(Node* factory_n, Node* ctx_n = nullptr, Node* in_n = nullptr, Node* out_n = nullptr);
     ~Command();
 
-    std::string help() const { return node()->get("help").toString(); } // global
-
     Node* contextNode() const;
     Node* inputNode() const;
     Node* outputNode() const;
-    void setContextNodes(Node* ctx_n, Node* in_n, Node* out_n);
+    Command& setContextNodes(Node* ctx_n, Node* in_n, Node* out_n);
 
     bool valid() const;
 
@@ -167,35 +165,25 @@ VE_API Factory& factory();
 
 // Register any callable: plain functions/lambdas are adapted to Proc via
 // convert::parse(F, Proc&) above (Proc-shaped callables pass straight through).
-template<typename F>
-inline auto reg(Factory& f, const std::string& key, F&& fn)
+template<typename F, typename... Args>
+inline auto reg(Factory& f, const std::string& key, F&& fn, Args&&... args)
 {
     Proc p;
     convert::parse(std::forward<F>(fn), p);
-    return f.reg(key, Var::callable(std::move(p)));
+    return f.reg(key, Var::callable(std::move(p)), std::forward<Args>(args)...);
 }
-template<typename F>
-inline auto reg(const std::string& key, F&& fn)
+template<typename F, typename... Args>
+inline auto reg(const std::string& key, F&& fn, Args&&... args)
 {
-    return reg(factory(), key, std::forward<F>(fn));
-}
-template<typename F>
-inline auto reg(Factory& f, const std::string& key, F&& fn, const std::string& help)
-{
-    Proc p;
-    convert::parse(std::forward<F>(fn), p);
-    return f.reg(key, Var::callable(std::move(p)), help);
-}
-template<typename F>
-inline auto reg(const std::string& key, F&& fn, const std::string& help)
-{
-    return reg(factory(), key, std::forward<F>(fn), help);
+    return reg(factory(), key, std::forward<F>(fn), std::forward<Args>(args)...);
 }
 
 inline Command create(const Factory& factory, const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
 { return Command(factory.node(key, sep), ctx, in, out); }
 inline Command create(const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
 { return create(factory(), key, ctx, in, out, sep); }
+
+inline Node* describe(const std::string& key, char sep = VE_FACTORY_KEY_SEP) { return factory().describe(key, sep); }
 
 } // namespace command
 

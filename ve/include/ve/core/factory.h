@@ -241,11 +241,34 @@ public:
         return f_n ? f_n->get().isCallable() : false;
     }
 
+    // The command's describe subtree (<key>/describe), or nullptr.
+    Node* describe(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const
+    {
+        Node* f_n = node(key, sep);
+        return f_n ? f_n->find("describe") : nullptr;
+    }
+
+    // One-line help: describe/description, falling back to a legacy "help" child.
     std::string help(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const
     {
-        const auto* f_n = node(key, sep);
+        if (Node* d = describe(key, sep)) {
+            std::string desc = d->get("description").toString();
+            if (!desc.empty()) return desc;
+        }
+        Node* f_n = node(key, sep);
         return f_n ? f_n->get("help").toString() : std::string();
     }
+
+    // Terminal usage line: explicit describe/usage, else synthesized from input_schema.
+    std::string usage(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const;
+
+    // Bind a CLI token list to a command's input node using describe/input_schema:
+    // named flags (--name / -x) first, then positionals in property-declaration order,
+    // coerced to each field's declared type. Missing a "required" field returns false
+    // (with *err set). No schema -> returns true and leaves `in` untouched (caller may
+    // fall back to a raw-argv convention). The terminal analog of cmd.input<JsonS>(body).
+    bool bind(const std::string& key, const Strings& tokens, Node* in,
+              std::string* err = nullptr, char sep = VE_FACTORY_KEY_SEP) const;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

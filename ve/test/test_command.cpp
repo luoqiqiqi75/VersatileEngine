@@ -6,6 +6,7 @@
 #include <ve/core/loop.h>
 #include <ve/core/pipeline.h>
 #include <ve/core/node.h>
+#include <ve/core/schema.h>
 
 #include <atomic>
 #include <chrono>
@@ -48,7 +49,7 @@ VE_TEST(factory_reg_proc_and_command_run)
 
     Command cmd = command::create("_test_cmd_add", &ctx, in, out);
     VE_ASSERT(cmd.valid());
-    VE_ASSERT_EQ(cmd.help(), std::string("add five"));
+    VE_ASSERT_EQ(command::factory().help("_test_cmd_add"), std::string("add five"));
 
     Result r = cmd.run().result();   // run() is chainable, result() reads back
     VE_ASSERT(r.isSuccess());
@@ -450,4 +451,48 @@ VE_TEST(pipeline_slow_command_async)
     worker.stop();
 
     VE_ASSERT(done.load());
+}
+
+VE_TEST(factory_bind_from_describe)
+{
+    // The describe-driven arg binder: CLI tokens -> named input fields, coerced
+    // by the input_schema. This is the terminal analog of cmd.input<JsonS>(body).
+    auto& f = command::factory();
+    Node* n = f.reg("_test_bind",
+        Var::callable([](Node*, Node*, Node*) -> Result { return Result::ok(); }));
+    schema::JsonS::toNode(n->at("describe"),
+        R"({"usage":"_test_bind <path> [count]",
+            "input_schema":{"type":"object",
+              "properties":{
+                "path":{"type":"string"},
+                "count":{"type":"integer"},
+                "flag":{"type":"boolean"}},
+              "required":["path"]}})");
+
+    // positional path + integer + boolean flag
+    {
+        Node in;
+        std::string err;
+        VE_ASSERT(f.bind("_test_bind", ve::Strings{"a/b", "5", "--flag"}, &in, &err));
+        VE_ASSERT_EQ(in.get("path").toString(), std::string("a/b"));
+        VE_ASSERT_EQ(in.get("count").toInt(), 5);
+        VE_ASSERT(in.get("flag").toBool());
+    }
+
+    // named flag fills path; positionals then skip it
+    {
+        Node in;
+        VE_ASSERT(f.bind("_test_bind", ve::Strings{"--path", "x"}, &in, nullptr));
+        VE_ASSERT_EQ(in.get("path").toString(), std::string("x"));
+    }
+
+    // missing required -> fail with message
+    {
+        Node in;
+        std::string err;
+        VE_ASSERT(!f.bind("_test_bind", ve::Strings{}, &in, &err));
+        VE_ASSERT(!err.empty());
+    }
+
+    VE_ASSERT_EQ(f.usage("_test_bind"), std::string("_test_bind <path> [count]"));
 }

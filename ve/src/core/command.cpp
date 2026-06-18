@@ -11,8 +11,6 @@ struct Command::Private
 {
     Loop* l = nullptr;
 
-    Node* template_n = nullptr;
-
     Node* ctx_n = nullptr;
     Node* in_n = nullptr;
     Node* out_n = nullptr;
@@ -27,7 +25,6 @@ Command::Command(Node* factory_n, Node* ctx_n, Node* in_n, Node* out_n) : NodeRe
     _p->r = Result::fail(-0xff01, "command invalid");
     if (factory_n) {
         _p->l = factory_n->get("loop").as<Loop*>();
-        _p->template_n = factory_n->find("template");
     }
     setContextNodes(ctx_n, in_n, out_n);
 }
@@ -38,12 +35,12 @@ Node* Command::contextNode() const { return _p->ctx_n; }
 Node* Command::inputNode() const { return _p->in_n; }
 Node* Command::outputNode() const { return _p->out_n; }
 
-void Command::setContextNodes(Node* ctx_n, Node* in_n, Node* out_n)
+Command& Command::setContextNodes(Node* ctx_n, Node* in_n, Node* out_n)
 {
     _p->ctx_n = ctx_n ? ctx_n : &_p->internal_ctx_n;
     _p->in_n = in_n ? in_n : _p->ctx_n->at("in");
     _p->out_n = out_n ? out_n : _p->ctx_n->at("out");
-    if (_p->template_n) _p->in_n->copy(_p->template_n, ve::Node::COPY_INSERT); // insert only
+    return *this;
 }
 
 bool Command::valid() const

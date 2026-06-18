@@ -1,0 +1,210 @@
+{
+  "get": {
+    "description": "Read a node's value.",
+    "usage": "get [path]",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "node path relative to root; empty = root" }
+      },
+      "required": []
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "value": { "description": "the node's value (any type)" }
+      }
+    }
+  },
+
+  "set": {
+    "description": "Write a value to a node, creating it if missing.",
+    "usage": "set <path> <value>",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path":  { "type": "string", "description": "target node path; created if absent" },
+        "value": { "description": "value to write (any type)" }
+      },
+      "required": ["value"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path of the written node" }
+      }
+    }
+  },
+
+  "export": {
+    "description": "Export a subtree as a value tree.",
+    "usage": "export [path] [depth]",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path":  { "type": "string", "description": "subtree root; empty = root" },
+        "depth": { "type": "integer", "description": "max depth, -1 = unlimited" }
+      },
+      "required": []
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "tree": { "type": "object", "description": "the exported subtree" }
+      }
+    }
+  },
+
+  "import": {
+    "description": "Import a value tree into a node.",
+    "usage": "import <path> <tree>",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path":    { "type": "string", "description": "target path; created if absent" },
+        "tree":    { "type": "object", "description": "tree to merge in" },
+        "insert":  { "type": "boolean", "description": "add keys missing in the target (default true)" },
+        "replace": { "type": "boolean", "description": "overwrite non-null values (default true)" },
+        "remove":  { "type": "boolean", "description": "drop keys absent in the tree (default false)" },
+        "update":  { "type": "boolean", "description": "write values via update() (default false)" }
+      },
+      "required": ["path", "tree"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "path of the imported-into node" }
+      }
+    }
+  },
+
+  "children": {
+    "description": "List a node's children.",
+    "usage": "children [path]",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "parent path; empty = root" }
+      },
+      "required": []
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "children": {
+          "type": "array",
+          "description": "child entries",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name":        { "type": "string" },
+              "path":        { "type": "string" },
+              "value":       { "description": "child value if non-null" },
+              "child_count": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "erase": {
+    "description": "Erase a node and its subtree.",
+    "usage": "erase <path>",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "node path to erase" }
+      },
+      "required": ["path"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "the erased path" }
+      }
+    }
+  },
+
+  "trigger": {
+    "description": "Fire NODE_CHANGED on a node without changing its value.",
+    "usage": "trigger <path>",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "node path to trigger" }
+      },
+      "required": ["path"]
+    }
+  },
+
+  "subscribe": {
+    "description": "Subscribe to a node's changes (requires a push-capable session).",
+    "usage": "subscribe <path> [depth]",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path":      { "type": "string",  "description": "node path to watch" },
+        "depth":     { "type": "integer", "description": "subtree depth pushed on change, -1 = unlimited" },
+        "once":      { "type": "boolean", "description": "auto-unsubscribe after the first change" },
+        "immediate": { "type": "boolean", "description": "also return the current value now" }
+      },
+      "required": ["path"]
+    }
+  },
+
+  "unsubscribe": {
+    "description": "Stop watching a node.",
+    "usage": "unsubscribe <path>",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "node path to stop watching" }
+      },
+      "required": ["path"]
+    }
+  },
+
+  "commands": {
+    "description": "List registered commands.",
+    "usage": "commands",
+    "input_schema": { "type": "object", "properties": {}, "required": [] },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "commands": {
+          "type": "array",
+          "description": "registered command names + one-line help",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "help": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "describe": {
+    "description": "Return a command's full description: help, input and output schema.",
+    "usage": "describe <name>",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "command name to describe" }
+      },
+      "required": ["name"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "name":          { "type": "string" },
+        "description":   { "type": "string" },
+        "input_schema":  { "type": "object" },
+        "output_schema": { "type": "object" }
+      }
+    }
+  }
+}

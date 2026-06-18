@@ -10,6 +10,7 @@
 #include "ve/core/command.h"
 #include "ve/core/schema.h"
 #include "ve/core/pipeline.h"
+#include "ve/core/res.h"
 
 namespace ve {
 namespace service {
@@ -59,7 +60,10 @@ static Result import_(Node* ctx, Node* params, Node* data)
     Node* r = root(ctx);
     Node* tree = params->find("tree");
     if (!tree) return Result::fail(ERR_INVALID, "tree required");
-    int flags = params->get("flags").toInt(Node::COPY_DEFAULT);
+    int flags = (params->get("insert").toBool(true)   ? Node::COPY_INSERT  : 0)
+              | (params->get("replace").toBool(true)  ? Node::COPY_REPLACE : 0)
+              | (params->get("remove").toBool(false)  ? Node::COPY_REMOVE  : 0)
+              | (params->get("update").toBool(false)  ? Node::COPY_UPDATE  : 0);
     Node* target = r->at(params->get("path").toString());
     target->copy(tree, flags);
     data->set("path", target->path(r));
@@ -166,26 +170,57 @@ static Result commandList(Node*, Node*, Node* data)
     return Result::ok();
 }
 
+// Self-description: the command's describe subtree (description / usage /
+// input_schema / output_schema). Looks up std factory first, then cmd factory.
+static Result describe(Node*, Node* params, Node* data)
+{
+    std::string name = params->get("name").toString();
+    if (name.empty()) return Result::fail(ERR_INVALID, "name required");
+
+    const Factory& sf = factory::at("std");
+    const Factory& cf = command::factory();
+    Node* n = sf.node(name);
+    if (!n || !n->get().isCallable()) n = cf.node(name);
+    if (!n || !n->get().isCallable()) return Result::fail(ERR_NOT_FOUND, "not found: " + name);
+
+    data->set("name", name);
+    data->copy(n->find("describe")); // describe subtree; copy() no-ops on null
+    return Result::ok();
+}
+
 } // namespace op
 
 // ============================================================================
 // Registration + helpers
 // ============================================================================
 
+// Command docs (description / usage / input_schema / output_schema) are embedded
+// via ve_embed_files and parsed once; each command's describe subtree is attached
+// to its registered node at <key>/describe.
 void registerNodeCommands()
 {
     auto& f = factory::at("std");
     if (f.has("get")) return;
-    f.reg("get",      Var::callable(op::get),         "get node value");
-    f.reg("set",      Var::callable(op::set),         "set node value");
-    f.reg("export",   Var::callable(op::export_),     "export subtree");
-    f.reg("import",   Var::callable(op::import_),     "import tree");
-    f.reg("children", Var::callable(op::children),    "list children");
-    f.reg("erase",    Var::callable(op::erase),       "erase node");
-    f.reg("trigger",    Var::callable(op::trigger),     "trigger NODE_CHANGED");
-    f.reg("subscribe",   Var::callable(op::subscribe),   "subscribe node changes");
-    f.reg("unsubscribe", Var::callable(op::unsubscribe), "unsubscribe");
-    f.reg("commands", Var::callable(op::commandList), "list commands");
+
+    Node docs;
+    schema::JsonS::toNode(&docs, std::string(ve::res::read("ve/cmd/std.json")));
+
+    auto R = [&](const char* key, Var callable) {
+        Node* n = f.reg(key, std::move(callable));
+        n->at("describe")->copy(docs.find(key)); // copy() no-ops on null
+    };
+
+    R("get",         Var::callable(op::get));
+    R("set",         Var::callable(op::set));
+    R("export",      Var::callable(op::export_));
+    R("import",      Var::callable(op::import_));
+    R("children",    Var::callable(op::children));
+    R("erase",       Var::callable(op::erase));
+    R("trigger",     Var::callable(op::trigger));
+    R("subscribe",   Var::callable(op::subscribe));
+    R("unsubscribe", Var::callable(op::unsubscribe));
+    R("commands",    Var::callable(op::commandList));
+    R("describe",    Var::callable(op::describe));
 }
 
 CmdRef resolveCmd(Node* ctx)
