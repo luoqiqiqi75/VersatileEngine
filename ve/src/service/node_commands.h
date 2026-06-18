@@ -33,6 +33,7 @@ struct Session : Object
 };
 
 VE_API void registerNodeCommands();
+VE_API void registerTerminalBuiltins();
 
 struct CmdRef { Factory* factory = nullptr; std::string key; };
 VE_API CmdRef resolveCmd(Node* ctx);

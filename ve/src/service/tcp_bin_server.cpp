@@ -150,7 +150,6 @@ BinTcpServer::~BinTcpServer()
 
 bool BinTcpServer::start()
 {
-    registerNodeCommands();
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();

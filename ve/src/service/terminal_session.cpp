@@ -293,11 +293,11 @@ static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::st
     f.reg(key, proc, help);
 }
 
-static void registerTerminalBuiltins()
+void registerTerminalBuiltins()
 {
     static std::once_flag once;
     std::call_once(once, [] {
-        auto& builtins = factory::at("builtin");
+        auto& builtins = factory::at("service/repl");
         using S = BuiltinContext;
         using Args = const std::vector<std::string>&;
 
@@ -798,7 +798,7 @@ void TerminalSession::Private::initCommands()
                 key += "." + w;
             }
             Node* builtin = nullptr;
-            if (const Node* root = factory::at("builtin").node()) {
+            if (const Node* root = factory::at("service/repl").node()) {
                 builtin = const_cast<Node*>(root)->find(key);
             }
             if (builtin) {
@@ -841,7 +841,7 @@ void TerminalSession::Private::initCommands()
         std::string out;
         out += "=== Builtin Commands ===\n";
         for (const char* k : kBuiltinOrder) {
-            Node* builtin = factory::at("builtin").node(k);
+            Node* builtin = factory::at("service/repl").node(k);
             if (!builtin) continue;
             std::string key = k;
             out += "  " + key;
@@ -919,9 +919,9 @@ std::string TerminalSession::execute(const std::string& line)
 
     // Try multi-word command: "ros topic once" -> "ros.topic.once"
     // Always find the longest match (most words consumed).
-    auto [builtinNode, builtinWordCount] = resolveFactoryCommand(factory::at("builtin"), args);
+    auto [builtinNode, builtinWordCount] = resolveFactoryCommand(factory::at("service/repl"), args);
     auto [cmdNode, cmdWordCount] = resolveFactoryCommand(command::factory(), args);
-    Factory& resolvedFactory = builtinNode ? factory::at("builtin") : command::factory();
+    Factory& resolvedFactory = builtinNode ? factory::at("service/repl") : command::factory();
     std::string resolvedName;
     for (size_t i = 0; i < (builtinNode ? builtinWordCount : cmdWordCount); ++i) {
         if (i > 0) resolvedName += ".";
@@ -1023,7 +1023,7 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
     bool endsWithSpace = !partial.empty() && std::isspace(static_cast<unsigned char>(partial.back()));
 
     // --- Determine command boundary ---
-    auto [builtinNode, builtinWords] = resolveFactoryCommand(factory::at("builtin"), tokens);
+    auto [builtinNode, builtinWords] = resolveFactoryCommand(factory::at("service/repl"), tokens);
     auto [cmdNode, cmdWords] = resolveFactoryCommand(command::factory(), tokens);
     size_t matchedWords = builtinNode ? builtinWords : cmdWords;
 
@@ -1069,7 +1069,7 @@ std::vector<std::string> TerminalSession::complete(const std::string& partial)
         for (auto* extra : {"quit", "exit"})
             if (std::string(extra).compare(0, typedPrefix.size(), typedPrefix) == 0)
                 matches.push_back(extra);
-        for (auto& key : factory::at("builtin").keys())
+        for (auto& key : factory::at("service/repl").keys())
             if (key.compare(0, typedPrefix.size(), typedPrefix) == 0)
                 matches.push_back(key);
     }

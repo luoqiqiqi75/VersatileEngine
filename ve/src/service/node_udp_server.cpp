@@ -48,7 +48,6 @@ NodeUdpServer::~NodeUdpServer()
 
 bool NodeUdpServer::start()
 {
-    registerNodeCommands();
     _p->session = std::make_unique<Session>(_p->root, _p->root);
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {

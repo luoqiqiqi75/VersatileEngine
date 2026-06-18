@@ -70,7 +70,6 @@ NodeWsServer::~NodeWsServer()
 
 bool NodeWsServer::start()
 {
-    registerNodeCommands();
 
     _p->server.bind_connect([this](auto& session_ptr) {
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());

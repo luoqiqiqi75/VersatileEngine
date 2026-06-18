@@ -1,6 +1,6 @@
 // node_commands.cpp — envelope v2: op|cmd/params → code/message/data
 //
-// Command implementations registered in factory::at("std").
+// Command implementations registered in factory::at("service/op").
 // resolveCmd() reads "op" (std factory) or "cmd" (command factory) from ctx.
 // finalizeReply() mutates a Pipeline's contextNode into reply format.
 
@@ -177,7 +177,7 @@ static Result describe(Node*, Node* params, Node* data)
     std::string name = params->get("name").toString();
     if (name.empty()) return Result::fail(ERR_INVALID, "name required");
 
-    const Factory& sf = factory::at("std");
+    const Factory& sf = factory::at("service/op");
     const Factory& cf = command::factory();
     Node* n = sf.node(name);
     if (!n || !n->get().isCallable()) n = cf.node(name);
@@ -199,11 +199,11 @@ static Result describe(Node*, Node* params, Node* data)
 // to its registered node at <key>/describe.
 void registerNodeCommands()
 {
-    auto& f = factory::at("std");
+    auto& f = factory::at("service/op");
     if (f.has("get")) return;
 
     Node docs;
-    schema::JsonS::toNode(&docs, std::string(ve::res::read("ve/cmd/std.json")));
+    schema::JsonS::toNode(&docs, std::string(ve::res::read("ve/service/op.json")));
 
     auto R = [&](const char* key, Var callable) {
         Node* n = f.reg(key, std::move(callable));
@@ -227,7 +227,7 @@ CmdRef resolveCmd(Node* ctx)
 {
     std::string op = ctx->get("op").toString();
     if (!op.empty()) {
-        Factory& f = factory::at("std");
+        Factory& f = factory::at("service/op");
         return {f.has(op) ? &f : nullptr, op};
     }
     std::string cmd = ctx->get("cmd").toString();

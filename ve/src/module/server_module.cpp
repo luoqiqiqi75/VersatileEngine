@@ -145,6 +145,7 @@ void ServerModule::init() {
     _data_root = node()->get("file_io/data_root").toString("./data");
 
     service::registerNodeCommands();
+    service::registerTerminalBuiltins();
 }
 
 void ServerModule::bindStaticProxyTargets()

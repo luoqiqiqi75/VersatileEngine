@@ -71,7 +71,7 @@ endfunction()
 #
 # Usage:
 #   ve_embed_files(<target> ROOT <dir> FILES <f1> <f2> ...)
-#   -> ve::res::read("ve/cmd/std.json")  for ROOT=<...>/res, file <...>/res/cmd/std.json
+#   -> ve::res::read("ve/service/op.json")  for ROOT=<...>/res, file <...>/res/service/op.json
 function(ve_embed_files target)
     cmake_parse_arguments(EMB "" "ROOT" "FILES" ${ARGN})
     if(NOT EMB_FILES)

@@ -3,7 +3,7 @@
 // Files compiled into the library via the ve_embed_files() CMake helper register
 // themselves here at static-init time and are read back by logical path:
 //
-//   ve::res::read("cmd/std.json")  -> string_view over the embedded bytes
+//   ve::res::read("ve/service/op.json")  -> string_view over the embedded bytes
 //
 // Content is baked into the binary (no external file to lose); the returned view
 // stays valid for the program lifetime.

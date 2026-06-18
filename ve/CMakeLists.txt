@@ -33,8 +33,8 @@ add_library(${VE_CORE_LIBRARY}
 
 ve_add_core_library_alias(${VE_CORE_LIBRARY})
 
-# --- Embedded resources (command docs etc.) -> ve::res::read("ve/cmd/std.json") ---
-file(GLOB_RECURSE _VE_RES_FILES ${CMAKE_CURRENT_SOURCE_DIR}/res/cmd/*.json)
+# --- Embedded resources (command docs etc.) -> ve::res::read("ve/service/op.json") ---
+file(GLOB_RECURSE _VE_RES_FILES ${CMAKE_CURRENT_SOURCE_DIR}/res/service/*.json)
 ve_embed_files(${VE_CORE_LIBRARY}
     ROOT  ${CMAKE_CURRENT_SOURCE_DIR}/res
     FILES ${_VE_RES_FILES}
