@@ -269,7 +269,7 @@ static void writeBuiltinOut(BuiltinContext& s, Node* out)
 }
 
 template<typename F>
-static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::string& help = {})
+static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::string& description = {})
 {
     Proc proc = [key, fn = std::forward<F>(fn)](Node*, Node* in, Node* out) -> Result {
             BuiltinContext s;
@@ -290,7 +290,8 @@ static void regBuiltin(Factory& f, const std::string& key, F&& fn, const std::st
             return Result::ok();
     };
 
-    f.reg(key, proc, help);
+    Node* n = f.reg(key, Var::callable(std::move(proc)));
+    if (n && !description.empty()) n->at("instruction/description")->set(description);
 }
 
 void registerTerminalBuiltins()
@@ -797,20 +798,17 @@ void TerminalSession::Private::initCommands()
                 if (w.empty()) break;
                 key += "." + w;
             }
-            Node* builtin = nullptr;
-            if (const Node* root = factory::at("service/repl").node()) {
-                builtin = const_cast<Node*>(root)->find(key);
+            // Try service/repl builtin
+            {
+                auto desc = command::description(factory::at("service/repl"), key);
+                if (!desc.empty()) { s.print(key + ": " + desc + "\n"); return; }
             }
-            if (builtin) {
-                auto h = builtin->get("help").toString();
-                s.print(h.empty() ? key + "\n" : key + ": " + h + "\n");
-                return;
-            }
-            if (Node* d = command::factory().describe(key)) {
+            // Try user command with instruction
+            if (Node* d = command::instruction(key)) {
                 std::string out = key;
                 std::string desc = d->get("description").toString();
                 if (!desc.empty()) out += " - " + desc;
-                out += "\nusage: " + command::factory().usage(key) + "\n";
+                out += "\nusage: " + command::usage(key) + "\n";
                 if (Node* props = d->find("input_schema/properties")) {
                     std::unordered_set<std::string> req;
                     if (Node* r = d->find("input_schema/required"))
@@ -825,7 +823,8 @@ void TerminalSession::Private::initCommands()
                 s.print(out);
                 return;
             }
-            auto h = command::factory().help(key);
+            // Fallback: description only
+            auto h = command::description(key);
             s.print(h.empty() ? "unknown command: " + key + "\n" : key + ": " + h + "\n");
             return;
         }
@@ -841,11 +840,10 @@ void TerminalSession::Private::initCommands()
         std::string out;
         out += "=== Builtin Commands ===\n";
         for (const char* k : kBuiltinOrder) {
-            Node* builtin = factory::at("service/repl").node(k);
-            if (!builtin) continue;
+            if (!factory::at("service/repl").has(k)) continue;
             std::string key = k;
             out += "  " + key;
-            auto h = builtin->get("help").toString();
+            auto h = command::description(factory::at("service/repl"), key);
             if (!h.empty()) { int pad = 18 - (int)key.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
             out += "\n";
         }
@@ -857,7 +855,7 @@ void TerminalSession::Private::initCommands()
             std::sort(userCmds.begin(), userCmds.end());
             out += "\n=== User Commands ===\n";
             for (auto& k : userCmds) {
-                auto h = command::factory().help(k);
+                auto h = command::description(k);
                 out += "  " + k;
                 if (!h.empty()) { int pad = 18 - (int)k.size(); out += std::string(pad > 0 ? pad : 2, ' ') + h; }
                 out += "\n";
@@ -929,20 +927,28 @@ std::string TerminalSession::execute(const std::string& line)
     }
     size_t resolvedWordCount = builtinNode ? builtinWordCount : cmdWordCount;
 
-    // Fill a command's input node. If the command declares an input_schema
-    // (describe), bind CLI tokens to named fields (terminal analog of
-    // cmd.input<JsonS>(body)); otherwise fall back to the raw-argv convention.
-    // Returns false (and prints usage) on a bind error.
+    // Fill a command's input node. If the command has an instruction/input_schema,
+    // bind CLI tokens (or JSON body) to named fields; otherwise fall back to the
+    // raw-argv convention. Returns false (and prints usage) on a bind error.
     auto fillInput = [&](Node* in) -> bool {
-        Node* sch = resolvedFactory.describe(resolvedName);
-        sch = sch ? sch->find("input_schema") : nullptr;
+        Node* instr = command::instruction(resolvedFactory, resolvedName);
+        Node* sch = instr ? instr->find("input_schema") : nullptr;
         if (sch) {
             ve::Strings toks(args.begin() + resolvedWordCount, args.end());
             std::string err;
-            if (!resolvedFactory.bind(resolvedName, toks, in, &err)) {
-                s.print((err.empty() ? std::string("bad arguments") : err)
-                        + "\nusage: " + resolvedFactory.usage(resolvedName) + "\n");
-                return false;
+            // JSON body: single token starting with '{'
+            if (toks.size() == 1 && !toks[0].empty() && toks[0][0] == '{') {
+                if (!command::bindJson(toks[0], in, &err)) {
+                    s.print((err.empty() ? std::string("bad arguments") : err)
+                            + "\nusage: " + command::usage(resolvedFactory, resolvedName) + "\n");
+                    return false;
+                }
+            } else {
+                if (!command::bind(resolvedFactory, resolvedName, toks, in, &err)) {
+                    s.print((err.empty() ? std::string("bad arguments") : err)
+                            + "\nusage: " + command::usage(resolvedFactory, resolvedName) + "\n");
+                    return false;
+                }
             }
             if (s.root) in->at("root")->set(Var::ptr(s.root));
             if (s.cur)  in->at("current")->set(Var::ptr(s.cur));

@@ -165,25 +165,45 @@ VE_API Factory& factory();
 
 // Register any callable: plain functions/lambdas are adapted to Proc via
 // convert::parse(F, Proc&) above (Proc-shaped callables pass straight through).
-template<typename F, typename... Args>
-inline auto reg(Factory& f, const std::string& key, F&& fn, Args&&... args)
+// An optional description is stored at instruction/description on the registered node.
+template<typename F>
+inline Node* reg(Factory& f, const std::string& key, F&& fn, const std::string& description = {}, Loop* lr = nullptr)
 {
     Proc p;
     convert::parse(std::forward<F>(fn), p);
-    return f.reg(key, Var::callable(std::move(p)), std::forward<Args>(args)...);
+    Node* n = f.reg(key, Var::callable(std::move(p)), lr);
+    if (n && !description.empty()) n->at("instruction/description")->set(description);
+    return n;
 }
-template<typename F, typename... Args>
-inline auto reg(const std::string& key, F&& fn, Args&&... args)
+template<typename F>
+inline Node* reg(const std::string& key, F&& fn, const std::string& description = {}, Loop* lr = nullptr)
 {
-    return reg(factory(), key, std::forward<F>(fn), std::forward<Args>(args)...);
+    return reg(factory(), key, std::forward<F>(fn), description, lr);
 }
 
-inline Command create(const Factory& factory, const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
-{ return Command(factory.node(key, sep), ctx, in, out); }
-inline Command create(const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr, char sep = VE_FACTORY_KEY_SEP)
-{ return create(factory(), key, ctx, in, out, sep); }
+inline Command create(const Factory& factory, const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr)
+{ return Command(factory.node(key), ctx, in, out); }
+inline Command create(const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr)
+{ return create(factory(), key, ctx, in, out); }
 
-inline Node* describe(const std::string& key, char sep = VE_FACTORY_KEY_SEP) { return factory().describe(key, sep); }
+// instruction subtree (<key>/instruction) — description, usage, input_schema, output_schema
+inline Node* instruction(const Factory& f, const std::string& key)
+{ auto f_n = f.node(key, VE_FACTORY_KEY_SEP); return f_n ? f_n->find("instruction") : nullptr; }
+inline Node* instruction(const std::string& key) { return instruction(factory(), key); }
+
+// One-line description from instruction/description
+VE_API std::string description(const Factory& f, const std::string& key);
+inline std::string description(const std::string& key) { return description(factory(), key); }
+
+// Terminal usage line: explicit instruction/usage, else synthesized from input_schema
+VE_API std::string usage(const Factory& f, const std::string& key);
+inline std::string usage(const std::string& key) { return usage(factory(), key); }
+
+// Bind CLI token list to input node via instruction/input_schema
+VE_API bool bind(const Factory& f, const std::string& key, const Strings& tokens, Node* in, std::string* err = nullptr);
+
+// Bind JSON body string to input node
+VE_API bool bindJson(const std::string& json, Node* in, std::string* err = nullptr);
 
 } // namespace command
 

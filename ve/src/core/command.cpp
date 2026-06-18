@@ -1,9 +1,13 @@
 // command.cpp - Command instance and command factory helpers
 
 #include "ve/core/command.h"
+#include "ve/core/schema.h"
+
+#include "parse_util.h"
 
 #include <algorithm>
 #include <exception>
+#include <unordered_set>
 
 namespace ve {
 
@@ -85,6 +89,97 @@ namespace command {
 Factory& factory()
 {
     return factory::at("cmd");
+}
+
+static Var::Type schemaVarType(const std::string& t)
+{
+    if (t == "string")  return Var::STRING;
+    if (t == "integer") return Var::INT;
+    if (t == "number")  return Var::DOUBLE;
+    if (t == "boolean") return Var::BOOL;
+    return Var::NONE;
+}
+
+std::string description(const Factory& f, const std::string& key)
+{
+    auto i_n = instruction(f, key);
+    return i_n ? i_n->get("description").toString() : std::string{};
+}
+
+std::string usage(const Factory& f, const std::string& key)
+{
+    Node* d = instruction(f, key);
+    if (!d) return key;
+
+    std::string u = d->get("usage").toString();
+    if (!u.empty()) return u;
+
+    Node* schema = d->find("input_schema");
+    Node* props  = schema ? schema->find("properties") : nullptr;
+    if (!props) return key;
+
+    std::unordered_set<std::string> required;
+    if (Node* req = schema->find("required"))
+        for (Node* c : req->children()) required.insert(c->get().toString());
+
+    std::string out = key;
+    for (Node* p : props->children()) {
+        const std::string& name = p->name();
+        out += required.count(name) ? " <" + name + ">" : " [" + name + "]";
+    }
+    return out;
+}
+
+bool bind(const Factory& f, const std::string& key, const Strings& tokens, Node* in, std::string* err)
+{
+    if (!in) { if (err) *err = "no input node"; return false; }
+
+    Node* d = instruction(f, key);
+    Node* schema = d ? d->find("input_schema") : nullptr;
+    Node* props  = schema ? schema->find("properties") : nullptr;
+    if (!props) return true;
+
+    parse::Flags fl = parse::parseFlags(tokens, 0);
+
+    std::unordered_set<std::string> required;
+    if (Node* req = schema->find("required"))
+        for (Node* c : req->children()) required.insert(c->get().toString());
+
+    int posCursor = 0;
+    for (Node* p : props->children()) {
+        const std::string& name = p->name();
+        Var::Type vt = schemaVarType(p->get("type").toString());
+
+        std::string raw;
+        bool have = false;
+        if (fl.has(name)) {
+            have = true;
+            raw = fl.get(name);
+            if (vt == Var::BOOL && raw.empty()) raw = "true";
+        } else if (posCursor < fl.posCount()) {
+            have = true;
+            raw = fl.pos(posCursor++);
+        }
+        if (have) in->set(name, parse::parseValueAs(raw, vt));
+    }
+
+    for (const auto& r : required) {
+        if (!in->find(r)) {
+            if (err) *err = "missing required argument: " + r;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool bindJson(const std::string& json, Node* in, std::string* err)
+{
+    if (!in) { if (err) *err = "no input node"; return false; }
+    if (!schema::toNode<schema::JsonS>(in, json)) {
+        if (err) *err = "invalid JSON";
+        return false;
+    }
+    return true;
 }
 
 } // namespace command

@@ -124,8 +124,8 @@ static Var makeToolsListResult()
 
         Var::DictV tool;
         tool["name"] = Var(key);
-        std::string help = ve::command::factory().help(key);
-        tool["description"] = Var(help.empty() ? ("VE command: " + key) : help);
+        std::string desc = ve::command::description(key);
+        tool["description"] = Var(desc.empty() ? ("VE command: " + key) : desc);
         tool["inputSchema"] = Var(std::move(schema));
         tools.push_back(Var(std::move(tool)));
     }

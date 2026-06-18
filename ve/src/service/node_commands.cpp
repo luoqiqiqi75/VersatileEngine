@@ -165,13 +165,13 @@ static Result commandList(Node*, Node*, Node* data)
     for (const auto& key : command::factory().keys()) {
         Node* item = commands->append();
         item->set("name", key);
-        item->set("help", command::factory().help(key));
+        item->set("description", command::description(key));
     }
     return Result::ok();
 }
 
-// Self-description: the command's describe subtree (description / usage /
-// input_schema / output_schema). Looks up std factory first, then cmd factory.
+// Self-description: the command's instruction subtree (description / usage /
+// input_schema / output_schema). Looks up service/op factory first, then cmd factory.
 static Result describe(Node*, Node* params, Node* data)
 {
     std::string name = params->get("name").toString();
@@ -184,7 +184,7 @@ static Result describe(Node*, Node* params, Node* data)
     if (!n || !n->get().isCallable()) return Result::fail(ERR_NOT_FOUND, "not found: " + name);
 
     data->set("name", name);
-    data->copy(n->find("describe")); // describe subtree; copy() no-ops on null
+    data->copy(n->find("instruction"));
     return Result::ok();
 }
 
@@ -195,8 +195,8 @@ static Result describe(Node*, Node* params, Node* data)
 // ============================================================================
 
 // Command docs (description / usage / input_schema / output_schema) are embedded
-// via ve_embed_files and parsed once; each command's describe subtree is attached
-// to its registered node at <key>/describe.
+// via ve_embed_files and parsed once; each command's instruction subtree is attached
+// to its registered node at <key>/instruction.
 void registerNodeCommands()
 {
     auto& f = factory::at("service/op");
@@ -207,7 +207,7 @@ void registerNodeCommands()
 
     auto R = [&](const char* key, Var callable) {
         Node* n = f.reg(key, std::move(callable));
-        n->at("describe")->copy(docs.find(key)); // copy() no-ops on null
+        n->at("instruction")->copy(docs.find(key));
     };
 
     R("get",         Var::callable(op::get));

@@ -35,7 +35,7 @@ VE_TEST(result_code_segments)
 
 VE_TEST(factory_reg_proc_and_command_run)
 {
-    command::factory().reg("_test_cmd_add",
+    command::reg(command::factory(), "_test_cmd_add",
         [](Node*, Node* in, Node* out) -> Result {
             out->set(in->get().toInt() + 5);
             return Result::ok();
@@ -49,7 +49,7 @@ VE_TEST(factory_reg_proc_and_command_run)
 
     Command cmd = command::create("_test_cmd_add", &ctx, in, out);
     VE_ASSERT(cmd.valid());
-    VE_ASSERT_EQ(command::factory().help("_test_cmd_add"), std::string("add five"));
+    VE_ASSERT_EQ(command::description("_test_cmd_add"), std::string("add five"));
 
     Result r = cmd.run().result();   // run() is chainable, result() reads back
     VE_ASSERT(r.isSuccess());
@@ -161,14 +161,13 @@ VE_TEST(command_call_uses_bound_loop)
     Loop loop("cmd.loop");
     std::atomic<int> called{0};
 
-    command::factory().reg("_test_cmd_loop",
+    command::reg(command::factory(), "_test_cmd_loop",
         [&](Node*, Node* in, Node* out) -> Result {
             called.fetch_add(1);
             out->set(in->get().toInt() * 2);
             return Result::ok();
         },
-        {},
-        &loop);
+        {}, &loop);
 
     Node ctx("ctx");
     Node* in = ctx.at("in");
@@ -453,14 +452,14 @@ VE_TEST(pipeline_slow_command_async)
     VE_ASSERT(done.load());
 }
 
-VE_TEST(factory_bind_from_describe)
+VE_TEST(factory_bind_from_instruction)
 {
-    // The describe-driven arg binder: CLI tokens -> named input fields, coerced
+    // The instruction-driven arg binder: CLI tokens -> named input fields, coerced
     // by the input_schema. This is the terminal analog of cmd.input<JsonS>(body).
     auto& f = command::factory();
     Node* n = f.reg("_test_bind",
         Var::callable([](Node*, Node*, Node*) -> Result { return Result::ok(); }));
-    schema::JsonS::toNode(n->at("describe"),
+    schema::JsonS::toNode(n->at("instruction"),
         R"({"usage":"_test_bind <path> [count]",
             "input_schema":{"type":"object",
               "properties":{
@@ -473,7 +472,7 @@ VE_TEST(factory_bind_from_describe)
     {
         Node in;
         std::string err;
-        VE_ASSERT(f.bind("_test_bind", ve::Strings{"a/b", "5", "--flag"}, &in, &err));
+        VE_ASSERT(command::bind(f, "_test_bind", ve::Strings{"a/b", "5", "--flag"}, &in, &err));
         VE_ASSERT_EQ(in.get("path").toString(), std::string("a/b"));
         VE_ASSERT_EQ(in.get("count").toInt(), 5);
         VE_ASSERT(in.get("flag").toBool());
@@ -482,7 +481,7 @@ VE_TEST(factory_bind_from_describe)
     // named flag fills path; positionals then skip it
     {
         Node in;
-        VE_ASSERT(f.bind("_test_bind", ve::Strings{"--path", "x"}, &in, nullptr));
+        VE_ASSERT(command::bind(f, "_test_bind", ve::Strings{"--path", "x"}, &in, nullptr));
         VE_ASSERT_EQ(in.get("path").toString(), std::string("x"));
     }
 
@@ -490,9 +489,9 @@ VE_TEST(factory_bind_from_describe)
     {
         Node in;
         std::string err;
-        VE_ASSERT(!f.bind("_test_bind", ve::Strings{}, &in, &err));
+        VE_ASSERT(!command::bind(f, "_test_bind", ve::Strings{}, &in, &err));
         VE_ASSERT(!err.empty());
     }
 
-    VE_ASSERT_EQ(f.usage("_test_bind"), std::string("_test_bind <path> [count]"));
+    VE_ASSERT_EQ(command::usage(f, "_test_bind"), std::string("_test_bind <path> [count]"));
 }

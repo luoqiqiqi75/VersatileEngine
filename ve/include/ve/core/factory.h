@@ -194,7 +194,8 @@ public:
 //
 // Each Factory instance owns a subtree under /ve/factory/{name}/.
 // Registered items are child nodes whose value is Var::CALLABLE.
-// Metadata hangs as child nodes: help, loop, declare/.
+// Optional metadata (e.g. instruction/, loop) hangs as child nodes —
+// managed by the registering layer, not by Factory itself.
 //
 // Key format: caller-chosen separator (default '.', e.g. "ros.topic.list").
 // Override the global default with -DVE_FACTORY_KEY_SEP="'/'" or pass sep at the
@@ -211,12 +212,12 @@ public:
 
     // Core registration: attach callable to an existing node, track key for enumeration.
     // Caller controls node placement explicitly.
-    Node* reg(const std::string& key, Node* functor_n, Var callable, const std::string& help, Loop* lr);
+    Node* reg(const std::string& key, Node* functor_n, Var callable, Loop* lr = nullptr);
 
     // Convenience: ensure node at path-resolved key, then register.
-    Node* reg(const std::string& key, Var callable, const std::string& help = {}, Loop* lr = nullptr, char sep = VE_FACTORY_KEY_SEP)
+    Node* reg(const std::string& key, Var callable, Loop* lr = nullptr, char sep = VE_FACTORY_KEY_SEP)
     {
-        return reg(key, node(key, sep), std::move(callable), help, lr);
+        return reg(key, node(key, sep), std::move(callable), lr);
     }
 
     // Typed call: Var::invoke owns argument packing, then unpack result.
@@ -240,35 +241,6 @@ public:
         const auto* f_n = node(key, sep);
         return f_n ? f_n->get().isCallable() : false;
     }
-
-    // The command's describe subtree (<key>/describe), or nullptr.
-    Node* describe(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const
-    {
-        Node* f_n = node(key, sep);
-        return f_n ? f_n->find("describe") : nullptr;
-    }
-
-    // One-line help: describe/description, falling back to a legacy "help" child.
-    std::string help(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const
-    {
-        if (Node* d = describe(key, sep)) {
-            std::string desc = d->get("description").toString();
-            if (!desc.empty()) return desc;
-        }
-        Node* f_n = node(key, sep);
-        return f_n ? f_n->get("help").toString() : std::string();
-    }
-
-    // Terminal usage line: explicit describe/usage, else synthesized from input_schema.
-    std::string usage(const std::string& key, char sep = VE_FACTORY_KEY_SEP) const;
-
-    // Bind a CLI token list to a command's input node using describe/input_schema:
-    // named flags (--name / -x) first, then positionals in property-declaration order,
-    // coerced to each field's declared type. Missing a "required" field returns false
-    // (with *err set). No schema -> returns true and leaves `in` untouched (caller may
-    // fall back to a raw-argv convention). The terminal analog of cmd.input<JsonS>(body).
-    bool bind(const std::string& key, const Strings& tokens, Node* in,
-              std::string* err = nullptr, char sep = VE_FACTORY_KEY_SEP) const;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE
