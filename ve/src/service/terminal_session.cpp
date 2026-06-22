@@ -180,6 +180,27 @@ static std::string renderCommandOutput(Node* out, const Result& r)
     return {};
 }
 
+static std::string renderCmdResult(Node* out, const Result& r)
+{
+    std::string s;
+    if (r.isError()) {
+        s += "\x1b[31merror\x1b[0m";
+        if (!r.message().empty()) s += ": " + r.message();
+        s += "\n";
+        return s;
+    }
+    s += "\x1b[32mok\x1b[0m";
+    if (!r.message().empty()) s += ": " + r.message();
+    s += "\n";
+    if (out) {
+        for (auto* c : *out) {
+            if (c->get().isNull()) continue;
+            s += "  \x1b[36m" + c->name() + "\x1b[0m: " + varPreview(c->get()) + "\n";
+        }
+    }
+    return s;
+}
+
 static std::string availableSchemaFormatsText()
 {
     std::vector<std::string> formats = schema::schemaFormatNames();
@@ -1046,8 +1067,18 @@ std::string TerminalSession::execute(const std::string& line)
         resolvedName += args[i];
     }
 
+    bool isCmdCmd = !builtinNode && cmdNode;
+
     auto fillInput = [&](Node* in) {
         prepareCommandInput(in, this->root, this->current, args, resolvedWordCount);
+        if (isCmdCmd) {
+            Strings tokens(args.begin() + resolvedWordCount, args.end());
+            command::bind(command::factory(), resolvedName, tokens, in);
+        }
+    };
+
+    auto render = [&](Node* out, const Result& r) {
+        return isCmdCmd ? renderCmdResult(out, r) : renderCommandOutput(out, r);
     };
 
     if (resolvedNode) {
@@ -1058,8 +1089,10 @@ std::string TerminalSession::execute(const std::string& line)
             pipe.add(Command(resolvedNode));
 
             auto asyncOut = _p->asyncOutput;
-            pipe.onFinished(nullptr, [asyncOut, resolvedName](Pipeline& pipe) {
-                std::string text = renderCommandOutput(pipe.outputNode(), pipe.result());
+            pipe.onFinished(nullptr, [asyncOut, resolvedName, isCmdCmd](Pipeline& pipe) {
+                std::string text = isCmdCmd
+                    ? renderCmdResult(pipe.outputNode(), pipe.result())
+                    : renderCommandOutput(pipe.outputNode(), pipe.result());
                 if (asyncOut && !text.empty()) {
                     if (text.back() != '\n') text.push_back('\n');
                     asyncOut("\x1b[33m[" + resolvedName + "]\x1b[0m " + text);
@@ -1075,7 +1108,7 @@ std::string TerminalSession::execute(const std::string& line)
         cmdObj.contextNode()->set("_session", Var::ptr(static_cast<Session*>(this)));
         cmdObj.run();
         updateCurrentFromOut(this->current, cmdObj.outputNode());
-        _p->output += renderCommandOutput(cmdObj.outputNode(), cmdObj.result());
+        _p->output += render(cmdObj.outputNode(), cmdObj.result());
         return _p->output;
     }
 

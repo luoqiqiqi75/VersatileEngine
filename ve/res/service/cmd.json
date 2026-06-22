@@ -1,0 +1,46 @@
+{
+  "save": {
+    "instruction": {
+      "description": "Save a subtree to file.",
+      "usage": "save <path> <file> [format]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path":   { "type": "string", "description": "subtree root path" },
+          "file":   { "type": "string", "description": "output file path" },
+          "format": { "type": "string", "description": "json|bin|xml (default: auto from extension)" }
+        },
+        "required": ["path", "file"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "written file path" },
+          "size": { "type": "integer", "description": "bytes written" }
+        }
+      }
+    }
+  },
+
+  "load": {
+    "instruction": {
+      "description": "Load a file into a subtree.",
+      "usage": "load <file> <path> [format]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file":   { "type": "string", "description": "input file path" },
+          "path":   { "type": "string", "description": "target node path (created if absent)" },
+          "format": { "type": "string", "description": "json|bin|xml (default: auto from extension)" }
+        },
+        "required": ["file", "path"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "imported node path" }
+        }
+      }
+    }
+  }
+}

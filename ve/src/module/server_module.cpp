@@ -12,6 +12,7 @@
 #include "ve/service/terminal_service.h"
 
 #include "src/service/node_commands.h"
+#include "src/service/cmd_commands.h"
 #include "src/service/terminal_session.h"
 
 namespace ve {
@@ -157,6 +158,12 @@ void ServerModule::init() {
         auto& f = ve::factory::at("service/repl");
         ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/repl.json")));
         ve::service::registerReplCommands(f);
+    }
+
+    { // register cmd commands (save/load)
+        auto& f = ve::factory::at("cmd");
+        ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/cmd.json")));
+        ve::service::registerCmdCommands(f);
     }
 }
 
