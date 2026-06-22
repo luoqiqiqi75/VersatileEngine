@@ -224,6 +224,19 @@ static TerminalSession* sess(Node* ctx)
     return static_cast<TerminalSession*>(ctx->get("_session").as<Session*>());
 }
 
+struct C {
+    std::string reset;
+    std::string dim;
+    std::string cyan;
+    std::string green;
+    std::string yellow;
+    std::string bold;
+    static C from(Node* ctx) {
+        if (!sess(ctx)->useColor()) return {};
+        return {"\x1b[0m","\x1b[2m","\x1b[36m","\x1b[32m","\x1b[33m","\x1b[1m"};
+    }
+};
+
 static Node* resolveNode(Node* root, Node* cur, const std::string& path)
 {
     if (path.empty() || path == ".") return cur;
@@ -293,7 +306,8 @@ static Result cd(Node* ctx, Node* in, Node* out)
 static Result pwd(Node* ctx, Node*, Node* out)
 {
     auto* s = sess(ctx);
-    setTextOut(out, "/" + s->current->path(s->root) + "\n");
+    auto c = C::from(ctx);
+    setTextOut(out, c.cyan + ("/" + s->current->path(s->root)) + c.reset + "\n");
     return Result::ok();
 }
 
@@ -320,10 +334,11 @@ static Result up(Node* ctx, Node* in, Node* out)
 static Result first(Node* ctx, Node*, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto* f = s->current->first();
-    if (!f) { setTextOut(out, "(no children)\n"); return Result::ok(); }
+    if (!f) { setTextOut(out, "  (no children)\n"); return Result::ok(); }
     s->current = f;
-    setTextOut(out, "-> " + nodeSummary(f) + "\n");
+    setTextOut(out, "-> " + c.cyan + nodeSummary(f) + c.reset + "\n");
     setCurrentOut(out, s->current, s->root);
     return Result::ok();
 }
@@ -331,10 +346,11 @@ static Result first(Node* ctx, Node*, Node* out)
 static Result last(Node* ctx, Node*, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto* l = s->current->last();
-    if (!l) { setTextOut(out, "(no children)\n"); return Result::ok(); }
+    if (!l) { setTextOut(out, "  (no children)\n"); return Result::ok(); }
     s->current = l;
-    setTextOut(out, "-> " + nodeSummary(l) + "\n");
+    setTextOut(out, "-> " + c.cyan + nodeSummary(l) + c.reset + "\n");
     setCurrentOut(out, s->current, s->root);
     return Result::ok();
 }
@@ -342,10 +358,11 @@ static Result last(Node* ctx, Node*, Node* out)
 static Result prev(Node* ctx, Node*, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto* p = s->current->prev();
-    if (!p) { setTextOut(out, "(no prev sibling)\n"); return Result::ok(); }
+    if (!p) { setTextOut(out, "  (no prev sibling)\n"); return Result::ok(); }
     s->current = p;
-    setTextOut(out, "-> " + nodeSummary(p) + "\n");
+    setTextOut(out, "-> " + c.cyan + nodeSummary(p) + c.reset + "\n");
     setCurrentOut(out, s->current, s->root);
     return Result::ok();
 }
@@ -353,10 +370,11 @@ static Result prev(Node* ctx, Node*, Node* out)
 static Result next(Node* ctx, Node*, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto* n = s->current->next();
-    if (!n) { setTextOut(out, "(no next sibling)\n"); return Result::ok(); }
+    if (!n) { setTextOut(out, "  (no next sibling)\n"); return Result::ok(); }
     s->current = n;
-    setTextOut(out, "-> " + nodeSummary(n) + "\n");
+    setTextOut(out, "-> " + c.cyan + nodeSummary(n) + c.reset + "\n");
     setCurrentOut(out, s->current, s->root);
     return Result::ok();
 }
@@ -364,13 +382,14 @@ static Result next(Node* ctx, Node*, Node* out)
 static Result sibling(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     if (args.size() < 2) return Result::fail("usage: sibling <offset>");
     int off = std::stoi(args[1]);
     auto* sib = s->current->sibling(off);
     if (!sib) return Result::fail("no sibling at offset " + std::to_string(off));
     s->current = sib;
-    setTextOut(out, "-> " + nodeSummary(sib) + "\n");
+    setTextOut(out, "-> " + c.cyan + nodeSummary(sib) + c.reset + "\n");
     setCurrentOut(out, s->current, s->root);
     return Result::ok();
 }
@@ -378,6 +397,7 @@ static Result sibling(Node* ctx, Node* in, Node* out)
 static Result ls(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     const int lp = f.posCount();
@@ -396,40 +416,40 @@ static Result ls(Node* ctx, Node* in, Node* out)
     if (f.has("names", 'n')) {
         auto names = t->childNames();
         int anonCnt = 0;
-        for (auto* c : *t) if (c->name().empty()) ++anonCnt;
-        if (anonCnt > 0) text += "  (anon) x" + std::to_string(anonCnt) + "\n";
-        for (auto& nm : names) text += "  " + nm + "\n";
+        for (auto* ch : *t) if (ch->name().empty()) ++anonCnt;
+        if (anonCnt > 0) text += "  " + c.dim + "(anon) x" + std::to_string(anonCnt) + c.reset + "\n";
+        for (auto& nm : names) text += "  " + c.cyan + nm + c.reset + "\n";
         setTextOut(out, text); return Result::ok();
     }
     if (f.has("long", 'l')) {
         auto nm = t->name().empty() ? "(anon)" : t->name();
-        text += "  name:      " + nm + "\n";
-        text += "  path:      /" + t->path(s->root) + "\n";
-        text += "  parent:    " + std::string(t->parent() ? nodeSummary(t->parent()) : "(none)") + "\n";
-        text += "  children:  " + std::to_string(t->count()) + "\n";
-        text += "  empty:     " + std::string(t->empty() ? "yes" : "no") + "\n";
+        text += "  " + c.dim + "name:" + c.reset + "      " + c.cyan + nm + c.reset + "\n";
+        text += "  " + c.dim + "path:" + c.reset + "      " + c.cyan + "/" + t->path(s->root) + c.reset + "\n";
+        text += "  " + c.dim + "parent:" + c.reset + "    " + std::string(t->parent() ? nodeSummary(t->parent()) : "(none)") + "\n";
+        text += "  " + c.dim + "children:" + c.reset + "  " + std::to_string(t->count()) + "\n";
+        text += "  " + c.dim + "empty:" + c.reset + "     " + std::string(t->empty() ? "yes" : "no") + "\n";
         if (!t->get().isNull()) {
             const auto& v = t->get();
-            text += "  value:     " + varPreview(v) + "\n";
-            text += "  type:      " + std::string(varTypeName(v.type())) + "\n";
-        } else { text += "  value:     (none)\n"; }
-        text += "  watching:  " + std::string(t->isWatching() ? "yes" : "no") + "\n";
-        text += "  silent:    " + std::string(t->isSilent() ? "yes" : "no") + "\n";
+            text += "  " + c.dim + "value:" + c.reset + "     " + c.green + varPreview(v) + c.reset + "\n";
+            text += "  " + c.dim + "type:" + c.reset + "      " + c.yellow + varTypeName(v.type()) + c.reset + "\n";
+        } else { text += "  " + c.dim + "value:" + c.reset + "     (none)\n"; }
+        text += "  " + c.dim + "watching:" + c.reset + "  " + std::string(t->isWatching() ? "yes" : "no") + "\n";
+        text += "  " + c.dim + "silent:" + c.reset + "    " + std::string(t->isSilent() ? "yes" : "no") + "\n";
         setTextOut(out, text); return Result::ok();
     }
 
     int total = t->count();
     if (total == 0) { setTextOut(out, "  (empty)\n"); return Result::ok(); }
     for (int i = 0; i < total; ++i) {
-        auto* c = t->child(i);
-        auto nm = c->name().empty() ? "(anon)" : c->name();
-        text += "  [" + std::to_string(i) + "] " + nm;
-        auto k = t->keyOf(c);
-        if (k != nm && k != "(anon)") text += "  (key: " + k + ")";
-        if (!c->get().isNull()) text += "  = " + varPreview(c->get());
+        auto* ch = t->child(i);
+        auto nm = ch->name().empty() ? "(anon)" : ch->name();
+        text += "  " + c.dim + "[" + std::to_string(i) + "]" + c.reset + " " + c.cyan + nm + c.reset;
+        auto k = t->keyOf(ch);
+        if (k != nm && k != "(anon)") text += "  " + c.dim + "(key: " + k + ")" + c.reset;
+        if (!ch->get().isNull()) text += "  = " + c.green + varPreview(ch->get()) + c.reset;
         text += "\n";
     }
-    text += "  (" + std::to_string(total) + " total)\n";
+    text += "  " + c.dim + "(" + std::to_string(total) + " total)" + c.reset + "\n";
     setTextOut(out, text);
     return Result::ok();
 }
@@ -437,6 +457,7 @@ static Result ls(Node* ctx, Node* in, Node* out)
 static Result get(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     const int pc = f.posCount();
@@ -450,18 +471,19 @@ static Result get(Node* ctx, Node* in, Node* out)
         return Result::fail("usage: get [path] [-t]");
     }
     if (f.has("type", 't')) {
-        setTextOut(out, t->get().isNull() ? "(none)\n" : std::string(varTypeName(t->get().type())) + "\n");
+        setTextOut(out, t->get().isNull() ? "(none)\n" : c.yellow + std::string(varTypeName(t->get().type())) + c.reset + "\n");
         return Result::ok();
     }
     if (t->get().isNull()) { setTextOut(out, "(none)\n"); return Result::ok(); }
     const auto& v = t->get();
-    setTextOut(out, varPreview(v, 256) + "  (" + varTypeName(v.type()) + ")\n");
+    setTextOut(out, c.green + varPreview(v, 256) + c.reset + "  " + c.dim + "(" + varTypeName(v.type()) + ")" + c.reset + "\n");
     return Result::ok();
 }
 
 static Result set(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     const int pc = f.posCount();
@@ -487,7 +509,7 @@ static Result set(Node* ctx, Node* in, Node* out)
         } else return Result::fail("usage: set [path] --trigger");
         t->trigger<Node::NODE_CHANGED>();
         if (t->isWatching()) t->activate(Node::NODE_CHANGED, t);
-        setTextOut(out, "triggered: " + nodeSummary(t) + "\n");
+        setTextOut(out, "triggered: " + c.cyan + nodeSummary(t) + c.reset + "\n");
         return Result::ok();
     }
 
@@ -509,13 +531,14 @@ static Result set(Node* ctx, Node* in, Node* out)
 
     Var v = parseVar(valueRaw);
     t->set(std::move(v));
-    setTextOut(out, "set: " + varPreview(t->get()) + "  (" + varTypeName(t->get().type()) + ")\n");
+    setTextOut(out, "set: " + c.green + varPreview(t->get()) + c.reset + "  " + c.dim + "(" + varTypeName(t->get().type()) + ")" + c.reset + "\n");
     return Result::ok();
 }
 
 static Result mk(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     auto name = f.get("name", 'n');
@@ -527,19 +550,19 @@ static Result mk(Node* ctx, Node* in, Node* out)
         bool hasAt = f.has("at") && isInt(atStr);
         if (f.has("anon", 'a')) {
             auto* n = t->append(overlap);
-            if (n) setTextOut(out, "appended " + std::to_string(1 + overlap) + " anon -> index: " + std::to_string(t->indexOf(n)) + "\n");
+            if (n) setTextOut(out, "appended " + std::to_string(1 + overlap) + " anon -> index: " + c.cyan + std::to_string(t->indexOf(n)) + c.reset + "\n");
             else return Result::fail("append failed");
             return Result::ok();
         }
         if (hasAt) {
             int idx = std::stoi(atStr);
-            auto* c = new Node(name);
-            if (t->insert(c, idx)) setTextOut(out, "inserted '" + name + "' at [" + std::to_string(idx) + "]\n");
-            else { delete c; return Result::fail("insert failed"); }
+            auto* ch = new Node(name);
+            if (t->insert(ch, idx)) setTextOut(out, "inserted " + c.cyan + "'" + name + "'" + c.reset + " at [" + std::to_string(idx) + "]\n");
+            else { delete ch; return Result::fail("insert failed"); }
             return Result::ok();
         }
         auto* n = t->append(name, overlap);
-        if (n) setTextOut(out, "appended " + std::to_string(1 + overlap) + " '" + name + "' -> last: " + t->keyOf(n) + "\n");
+        if (n) setTextOut(out, "appended " + std::to_string(1 + overlap) + " " + c.cyan + "'" + name + "'" + c.reset + " -> last: " + t->keyOf(n) + "\n");
         else return Result::fail("append failed");
         return Result::ok();
     }
@@ -549,7 +572,7 @@ static Result mk(Node* ctx, Node* in, Node* out)
     Node* base = absolute ? s->root : s->current;
     std::string relPath = absolute ? path.substr(1) : path;
     auto* n = base->at(relPath);
-    if (n) setTextOut(out, "created: /" + n->path(s->root) + "\n");
+    if (n) setTextOut(out, "created: " + c.cyan + "/" + n->path(s->root) + c.reset + "\n");
     else return Result::fail("create failed");
     return Result::ok();
 }
@@ -557,6 +580,7 @@ static Result mk(Node* ctx, Node* in, Node* out)
 static Result rm(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     auto* t = targetFromArgs(s->root, s->current, args);
@@ -570,7 +594,7 @@ static Result rm(Node* ctx, Node* in, Node* out)
         auto idxStr = f.get("index", 'i');
         if (!isInt(idxStr)) return Result::fail("usage: rm -i <index>");
         int idx = std::stoi(idxStr);
-        if (t->remove(idx)) setTextOut(out, "removed [" + std::to_string(idx) + "]\n");
+        if (t->remove(idx)) setTextOut(out, "removed " + c.dim + std::string("[") + std::to_string(idx) + "]" + c.reset + "\n");
         else return Result::fail("no child at index " + std::to_string(idx));
         return Result::ok();
     }
@@ -579,7 +603,7 @@ static Result rm(Node* ctx, Node* in, Node* out)
         if (nm.empty()) return Result::fail("usage: rm -n <name> [-o N]");
         auto ovStr = f.get("overlap", 'o', "0");
         int overlap = isInt(ovStr) ? std::stoi(ovStr) : 0;
-        if (t->remove(nm, overlap)) setTextOut(out, "removed '" + nm + "'\n");
+        if (t->remove(nm, overlap)) setTextOut(out, "removed " + c.cyan + std::string("'") + nm + "'" + c.reset + "\n");
         else return Result::fail("no child '" + nm + "' overlap " + std::to_string(overlap));
         return Result::ok();
     }
@@ -587,7 +611,7 @@ static Result rm(Node* ctx, Node* in, Node* out)
         auto nm = f.get("all");
         if (nm.empty()) return Result::fail("usage: rm --all <name>");
         int n = t->remove(nm);
-        setTextOut(out, "removed " + std::to_string(n) + " children named '" + nm + "'\n");
+        setTextOut(out, "removed " + std::to_string(n) + " children named " + c.cyan + "'" + nm + "'" + c.reset + "\n");
         return Result::ok();
     }
     auto childPath = f.pos(0);
@@ -605,6 +629,7 @@ static Result rm(Node* ctx, Node* in, Node* out)
 static Result mv(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     auto srcPath = f.pos(0);
@@ -618,18 +643,19 @@ static Result mv(Node* ctx, Node* in, Node* out)
     auto atStr = f.get("at");
     if (f.has("at") && isInt(atStr)) {
         int idx = std::stoi(atStr);
-        if (dest->insert(src, idx)) setTextOut(out, "moved to [" + std::to_string(idx) + "] " + src->path(s->root) + "\n");
+        if (dest->insert(src, idx)) setTextOut(out, "moved to [" + std::to_string(idx) + "] " + c.cyan + src->path(s->root) + c.reset + "\n");
         else return Result::fail("insert failed");
         return Result::ok();
     }
     dest->insert(src);
-    setTextOut(out, "moved to " + src->path(s->root) + "\n");
+    setTextOut(out, "moved to " + c.cyan + src->path(s->root) + c.reset + "\n");
     return Result::ok();
 }
 
 static Result cp(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     auto f = parseFlags(args);
     auto srcPath = f.pos(0);
@@ -646,9 +672,9 @@ static Result cp(Node* ctx, Node* in, Node* out)
     int copy_flags = (ai ? Node::COPY_INSERT : 0) | (ar ? Node::COPY_REMOVE : 0)
                    | (au ? Node::COPY_UPDATE : 0) | (arp ? Node::COPY_REPLACE : 0);
     dest->copy(src, copy_flags);
-    setTextOut(out, "copied /" + src->path(s->root) + " -> /" + dest->path(s->root)
-        + "  (insert:" + std::string(ai?"on":"off") + ", remove:" + std::string(ar?"on":"off")
-        + ", update:" + std::string(au?"on":"off") + ", replace:" + std::string(arp?"on":"off") + ")\n");
+    setTextOut(out, "copied " + c.cyan + "/" + src->path(s->root) + c.reset + " -> " + c.cyan + "/" + dest->path(s->root) + c.reset
+        + "  " + c.dim + "(insert:" + std::string(ai?"on":"off") + ", remove:" + std::string(ar?"on":"off")
+        + ", update:" + std::string(au?"on":"off") + ", replace:" + std::string(arp?"on":"off") + ")" + c.reset + "\n");
     return Result::ok();
 }
 
@@ -726,21 +752,22 @@ static Result schema(Node* ctx, Node* in, Node* out)
 static Result take(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     if (args.size() < 2) return Result::fail("usage: take <index|path>");
     Node* taken = nullptr;
     if (isInt(args[1])) {
         taken = s->current->take(std::stoi(args[1]));
     } else {
-        auto* c = s->current->find(args[1]);
-        if (c && c->parent() == s->current) taken = s->current->take(c);
-        else if (c) return Result::fail("not a direct child");
+        auto* ch = s->current->find(args[1]);
+        if (ch && ch->parent() == s->current) taken = s->current->take(ch);
+        else if (ch) return Result::fail("not a direct child");
         else return Result::fail("not found: " + args[1]);
     }
     if (taken) {
         auto& pool = static_cast<TerminalSession*>(s)->orphans();
         pool.push_back(taken);
-        setTextOut(out, "taken: " + nodeSummary(taken) + " -> orphan pool [" + std::to_string(pool.size() - 1) + "]\n");
+        setTextOut(out, "taken: " + c.cyan + nodeSummary(taken) + c.reset + " -> orphan pool " + c.dim + "[" + std::to_string(pool.size() - 1) + "]" + c.reset + "\n");
     } else if (isInt(args[1])) {
         return Result::fail("no child at index " + args[1]);
     }
@@ -750,12 +777,13 @@ static Result take(Node* ctx, Node* in, Node* out)
 static Result orphans(Node* ctx, Node*, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto& pool = static_cast<TerminalSession*>(s)->orphans();
-    if (pool.empty()) { setTextOut(out, "(empty)\n"); return Result::ok(); }
+    if (pool.empty()) { setTextOut(out, "  (empty)\n"); return Result::ok(); }
     std::string text;
     for (size_t i = 0; i < pool.size(); ++i)
-        text += "  [" + std::to_string(i) + "] " + nodeSummary(pool[i]) +
-                " (" + std::to_string(pool[i]->count()) + " children)\n";
+        text += "  " + c.dim + "[" + std::to_string(i) + "]" + c.reset + " " + c.cyan + nodeSummary(pool[i]) + c.reset +
+                " " + c.dim + "(" + std::to_string(pool[i]->count()) + " children)" + c.reset + "\n";
     setTextOut(out, text);
     return Result::ok();
 }
@@ -763,6 +791,7 @@ static Result orphans(Node* ctx, Node*, Node* out)
 static Result adopt(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto args = argvFromInput(in);
     if (args.size() < 2) return Result::fail("usage: adopt <orphan_index>");
     int idx = std::stoi(args[1]);
@@ -771,17 +800,18 @@ static Result adopt(Node* ctx, Node* in, Node* out)
     auto* n = pool[idx];
     pool.erase(pool.begin() + idx);
     s->current->insert(n);
-    setTextOut(out, "adopted: " + n->path(s->root) + "\n");
+    setTextOut(out, "adopted: " + c.cyan + n->path(s->root) + c.reset + "\n");
     return Result::ok();
 }
 
 static Result history(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
+    auto c = C::from(ctx);
     auto& hist = static_cast<TerminalSession*>(s)->history();
     std::string text;
     for (size_t i = 0; i < hist.size(); ++i)
-        text += std::to_string(i) + "  " + hist[i] + "\n";
+        text += c.dim + std::to_string(i) + c.reset + "  " + hist[i] + "\n";
     setTextOut(out, text);
     return Result::ok();
 }
@@ -805,6 +835,7 @@ static Result help(Node* ctx, Node* in, Node* out)
     auto args = argvFromInput(in);
     auto fl = parseFlags(args);
     bool jsonMode = fl.has("json");
+    auto c = C::from(ctx);
 
     std::string topic;
     for (int pi = 0; ; ++pi) {
@@ -827,7 +858,7 @@ static Result help(Node* ctx, Node* in, Node* out)
             auto desc = command::description(replF, topic);
             if (desc.empty()) desc = command::description(cmdF, topic);
             if (desc.empty()) return Result::fail("unknown command: " + topic);
-            setTextOut(out, topic + " - " + desc + "\n");
+            setTextOut(out, c.bold + topic + c.reset + " - " + desc + "\n");
             return Result::ok();
         }
 
@@ -841,22 +872,22 @@ static Result help(Node* ctx, Node* in, Node* out)
 
         std::string text;
         std::string desc = instr->get("description").toString();
-        text += topic;
+        text += c.bold + topic + c.reset;
         if (!desc.empty()) text += " - " + desc;
         text += "\n\n";
 
         std::string usage = instr->get("usage").toString();
         if (usage.empty()) usage = command::usage(*sourceF, topic);
-        text += "Usage: " + usage + "\n";
+        text += c.dim + "Usage:" + c.reset + " " + usage + "\n";
 
         if (Node* props = instr->find("input_schema/properties")) {
             std::unordered_set<std::string> req;
             if (Node* r = instr->find("input_schema/required"))
-                for (Node* c : r->children()) req.insert(c->get().toString());
+                for (Node* ch : r->children()) req.insert(ch->get().toString());
 
             bool hasParams = false;
             for (Node* p : props->children()) {
-                if (!hasParams) { text += "\nParameters:\n"; hasParams = true; }
+                if (!hasParams) { text += "\n" + c.dim + "Parameters:" + c.reset + "\n"; hasParams = true; }
                 std::string pname = p->name();
                 std::string ptype = p->get("type").toString();
                 std::string pdesc = p->get("description").toString();
@@ -864,10 +895,10 @@ static Result help(Node* ctx, Node* in, Node* out)
                 bool isReq = req.count(pname) > 0;
 
                 text += "  ";
-                if (!pshort.empty()) text += "-" + pshort + ", ";
-                text += "--" + pname;
-                if (!ptype.empty()) text += " (" + ptype + ")";
-                if (isReq) text += " [required]";
+                if (!pshort.empty()) text += c.cyan + std::string("-") + pshort + c.reset + ", ";
+                text += c.cyan + std::string("--") + pname + c.reset;
+                if (!ptype.empty()) text += " " + c.dim + "(" + ptype + ")" + c.reset;
+                if (isReq) text += " " + c.yellow + std::string("[required]") + c.reset;
                 if (!pdesc.empty()) text += "  " + pdesc;
                 text += "\n";
             }
@@ -900,7 +931,7 @@ static Result help(Node* ctx, Node* in, Node* out)
     std::vector<std::string> uncategorized;
 
     for (auto& key : replF.keys()) {
-        if (key == "g" || key == "s") continue; // skip aliases
+        if (key == "g" || key == "s") continue;
         Node* instr = command::instruction(replF, key);
         std::string cat = instr ? instr->get("category").toString() : "";
         if (cat.empty()) uncategorized.push_back(key);
@@ -912,9 +943,13 @@ static Result help(Node* ctx, Node* in, Node* out)
         auto it = groups.find(cat.id);
         if (it == groups.end() || it->second.empty()) continue;
 
+        text += c.bold;
+        text += c.yellow;
         text += "=== ";
         text += cat.title;
-        text += " ===\n";
+        text += " ===";
+        text += c.reset;
+        text += "\n";
 
         auto& keys = it->second;
         std::sort(keys.begin(), keys.end());
@@ -924,7 +959,7 @@ static Result help(Node* ctx, Node* in, Node* out)
             if (usage.empty()) usage = key;
             std::string desc = instr ? instr->get("description").toString() : "";
 
-            text += "  " + usage;
+            text += "  " + c.green + usage + c.reset;
             if (!desc.empty()) {
                 int pad = 30 - (int)usage.size();
                 text += std::string(pad > 0 ? pad : 2, ' ') + desc;
@@ -936,10 +971,10 @@ static Result help(Node* ctx, Node* in, Node* out)
 
     if (!uncategorized.empty()) {
         std::sort(uncategorized.begin(), uncategorized.end());
-        text += "=== Other ===\n";
+        text += c.bold + c.yellow + "=== Other ===" + c.reset + "\n";
         for (auto& key : uncategorized) {
             auto desc = command::description(replF, key);
-            text += "  " + key;
+            text += "  " + c.green + key + c.reset;
             if (!desc.empty()) { int pad = 30 - (int)key.size(); text += std::string(pad > 0 ? pad : 2, ' ') + desc; }
             text += "\n";
         }
@@ -949,11 +984,11 @@ static Result help(Node* ctx, Node* in, Node* out)
     auto userCmds = cmdF.keys();
     if (!userCmds.empty()) {
         std::sort(userCmds.begin(), userCmds.end());
-        text += "=== User Commands ===\n";
+        text += c.bold + c.yellow + "=== User Commands ===" + c.reset + "\n";
         for (auto& k : userCmds) {
             std::string usage = command::usage(cmdF, k);
             std::string desc  = command::description(cmdF, k);
-            text += "  " + usage;
+            text += "  " + c.green + usage + c.reset;
             if (!desc.empty()) {
                 int pad = 30 - (int)usage.size();
                 text += std::string(pad > 0 ? pad : 2, ' ') + desc;
@@ -963,7 +998,7 @@ static Result help(Node* ctx, Node* in, Node* out)
         text += "\n";
     }
 
-    text += "Type 'help <command>' for details. Use --json for machine-readable output.\n";
+    text += c.dim + "Type 'help <command>' for details. Use --json for machine-readable output." + c.reset + "\n";
     setTextOut(out, text);
     return Result::ok();
 }
@@ -1035,6 +1070,7 @@ void TerminalSession::setAsyncOutput(AsyncOutputFn fn)
 
 std::vector<Node*>& TerminalSession::orphans() { return _p->orphan_pool; }
 const std::vector<std::string>& TerminalSession::history() const { return _p->hist; }
+bool TerminalSession::useColor() const { return _p->opts.prompt_color; }
 
 std::string TerminalSession::execute(const std::string& line)
 {

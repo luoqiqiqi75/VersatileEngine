@@ -39,6 +39,7 @@ public:
     std::vector<Node*>& orphans();
 
     void setAsyncOutput(AsyncOutputFn fn);
+    bool useColor() const;
 
 private:
     struct Private;
