@@ -206,7 +206,6 @@ static TerminalSession* sess(Node* ctx)
 static Node* resolveNode(Node* root, Node* cur, const std::string& path)
 {
     if (path.empty() || path == ".") return cur;
-    if (path == "..") return cur->parent() ? cur->parent() : cur;
     bool absolute = path[0] == '/';
     Node* base = absolute ? root : cur;
     std::string relPath = absolute ? path.substr(1) : path;
@@ -257,8 +256,14 @@ static Result cd(Node* ctx, Node* in, Node* out)
     auto* s = sess(ctx);
     auto args = argvFromInput(in);
     if (args.size() < 2) return Result::fail("usage: cd <path>");
-    auto* n = resolveNode(s->root, s->current, args[1]);
-    if (!n) return Result::fail("not found: " + args[1]);
+    auto& path = args[1];
+    if (path == "..") {
+        s->current = s->current->parent() ? s->current->parent() : s->current;
+        setCurrentOut(out, s->current, s->root);
+        return Result::ok();
+    }
+    auto* n = resolveNode(s->root, s->current, path);
+    if (!n) return Result::fail("not found: " + path);
     s->current = n;
     setCurrentOut(out, s->current, s->root);
     return Result::ok();
@@ -1033,7 +1038,7 @@ std::string TerminalSession::execute(const std::string& line)
 
     auto [builtinNode, builtinWordCount] = resolveFactoryCommand(factory::at("service/repl"), args);
     auto [cmdNode, cmdWordCount] = resolveFactoryCommand(command::factory(), args);
-    Factory& resolvedFactory = builtinNode ? factory::at("service/repl") : command::factory();
+    Node* resolvedNode = builtinNode ? builtinNode : cmdNode;
     size_t resolvedWordCount = builtinNode ? builtinWordCount : cmdWordCount;
     std::string resolvedName;
     for (size_t i = 0; i < resolvedWordCount; ++i) {
@@ -1045,12 +1050,12 @@ std::string TerminalSession::execute(const std::string& line)
         prepareCommandInput(in, this->root, this->current, args, resolvedWordCount);
     };
 
-    if (builtinNode || cmdNode) {
+    if (resolvedNode) {
         if (asyncMode) {
             Pipeline pipe;
             fillInput(pipe.inputNode());
             pipe.contextNode()->set("_session", Var::ptr(static_cast<Session*>(this)));
-            pipe.add(command::create(resolvedFactory, resolvedName));
+            pipe.add(Command(resolvedNode));
 
             auto asyncOut = _p->asyncOutput;
             pipe.onFinished(nullptr, [asyncOut, resolvedName](Pipeline& pipe) {
@@ -1065,7 +1070,7 @@ std::string TerminalSession::execute(const std::string& line)
             return _p->output;
         }
 
-        Command cmdObj = command::create(resolvedFactory, resolvedName);
+        Command cmdObj(resolvedNode);
         fillInput(cmdObj.inputNode());
         cmdObj.contextNode()->set("_session", Var::ptr(static_cast<Session*>(this)));
         cmdObj.run();
