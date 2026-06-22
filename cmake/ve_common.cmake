@@ -122,3 +122,16 @@ function(ve_embed_files target)
     # Re-run configure when any embedded file changes so the bytes stay in sync.
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${EMB_FILES})
 endfunction()
+
+# --- Embed a module's standard resource tree ---
+# Convention wrapper over ve_embed_files(): globs everything under <module_dir>/res
+# and embeds it rooted at <module_dir>/res, so each file is readable as
+# ve::res::read("ve/<path-relative-to-res>"). No-op when the module has no res/.
+#
+# Usage:
+#   ve_collect_resources(<target> <module_dir>)
+#   -> embeds ve/res/service/op.json as ve::res::read("ve/service/op.json"), etc.
+function(ve_collect_resources target module_dir)
+    file(GLOB_RECURSE _res_files ${module_dir}/res/*)
+    ve_embed_files(${target} ROOT ${module_dir}/res FILES ${_res_files})
+endfunction()
