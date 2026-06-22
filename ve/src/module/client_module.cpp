@@ -77,7 +77,7 @@ void ClientModule::ready()
         node()->at("terminal/stdio/runtime/stdio")->set(Var(true));
         node()->at("terminal/tcp/runtime/active")->set(Var(false));
         node()->at("terminal/tcp/runtime/last_error")->set(Var(""));
-        veLogI << "[ve/client/terminal/stdio] stdio REPL enabled";
+        if (entry::options().verbose) veLogI << "[ve/client/terminal/stdio] stdio REPL enabled";
     } else if (remote_enabled) {
         Node* tcp = node()->at("terminal/tcp");
         std::string host = tcp->at("config/host")->getString("127.0.0.1");
