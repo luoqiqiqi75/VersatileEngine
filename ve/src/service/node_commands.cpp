@@ -179,8 +179,8 @@ static Result describe(Node*, Node* params, Node* data)
 
     const Factory& sf = factory::at("service/op");
     const Factory& cf = command::factory();
-    Node* n = sf.node(name);
-    if (!n || !n->get().isCallable()) n = cf.node(name);
+    Node* n = sf.node(name, VE_FACTORY_KEY_SEP);
+    if (!n || !n->get().isCallable()) n = cf.node(name, VE_FACTORY_KEY_SEP);
     if (!n || !n->get().isCallable()) return Result::fail(ERR_NOT_FOUND, "not found: " + name);
 
     data->set("name", name);

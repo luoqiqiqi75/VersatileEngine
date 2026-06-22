@@ -111,7 +111,7 @@ void ClientModule::ready()
         loop::setMain(client_loop_.get());
 
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
-        veLogI << "[ve/client/terminal/tcp] enabled -> " << host << ":" << port;
+        if (entry::options().verbose) veLogI << "[ve/client/terminal/tcp] enabled -> " << host << ":" << port;
     } else {
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
         node()->at("terminal/tcp/runtime/active")->set(Var(false));

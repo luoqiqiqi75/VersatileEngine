@@ -1,0 +1,322 @@
+{
+  "ros": {
+    "info": {
+      "instruction": {
+        "description": "Show ros summary (state, backend, discovery caches).",
+        "category": "info",
+        "usage": "ros.info",
+        "input_schema": { "type": "object", "properties": {}, "required": [] },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "state":          { "type": "string",  "description": "module lifecycle state" },
+            "domain_id":      { "type": "integer", "description": "ROS domain id" },
+            "service_prefix": { "type": "string" },
+            "backend_active": { "type": "string",  "description": "active backend key" },
+            "backends":       { "type": "array",   "description": "available backends" },
+            "parsers":        { "type": "array",   "description": "available parsers" }
+          }
+        }
+      }
+    },
+
+    "env": {
+      "instruction": {
+        "description": "Show ROS environment variables.",
+        "category": "info",
+        "usage": "ros.env",
+        "input_schema": { "type": "object", "properties": {}, "required": [] }
+      }
+    },
+
+    "backend": {
+      "list": {
+        "instruction": {
+          "description": "List available ros backends.",
+          "category": "info",
+          "usage": "ros.backend.list",
+          "input_schema": { "type": "object", "properties": {}, "required": [] }
+        }
+      },
+      "info": {
+        "instruction": {
+          "description": "Show backend details (default: active backend).",
+          "category": "info",
+          "usage": "ros.backend.info [key]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string", "description": "backend key (default: active)" }
+            },
+            "required": []
+          }
+        }
+      }
+    },
+
+    "parser": {
+      "list": {
+        "instruction": {
+          "description": "List available ros message parsers.",
+          "category": "info",
+          "usage": "ros.parser.list",
+          "input_schema": { "type": "object", "properties": {}, "required": [] }
+        }
+      }
+    },
+
+    "node": {
+      "list": {
+        "instruction": {
+          "description": "List ROS graph nodes.",
+          "category": "discovery",
+          "usage": "ros.node.list [filter]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": { "type": "string", "short": "f", "description": "substring filter on node name" }
+            },
+            "required": []
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "array", "description": "matching node names" }
+            }
+          }
+        }
+      }
+    },
+
+    "topic": {
+      "list": {
+        "instruction": {
+          "description": "List ROS topics.",
+          "category": "topic",
+          "usage": "ros.topic.list [filter]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": { "type": "string", "short": "f", "description": "substring filter on topic name" }
+            },
+            "required": []
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "array", "description": "matching topic names" }
+            }
+          }
+        }
+      },
+      "info": {
+        "instruction": {
+          "description": "Show topic details (types, publishers, subscribers).",
+          "category": "topic",
+          "usage": "ros.topic.info <name>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "topic name" }
+            },
+            "required": ["name"]
+          }
+        }
+      },
+      "subscribe": {
+        "instruction": {
+          "description": "Subscribe to a topic and mirror messages into the node tree.",
+          "category": "topic",
+          "usage": "ros.topic.subscribe <name> <topic> [type] [target_node] [payload_format]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name":            { "type": "string", "description": "subscription handle name" },
+              "topic":           { "type": "string", "description": "topic to subscribe to" },
+              "type":            { "type": "string", "description": "message type (inferred if empty)" },
+              "target_node":     { "type": "string", "description": "node path to mirror messages into" },
+              "payload_format":  { "type": "string", "description": "yaml|var|cdr_hex (default yaml)" },
+              "qos_reliability": { "type": "string", "description": "reliable|best_effort" },
+              "qos_durability":  { "type": "string", "description": "volatile|transient_local" },
+              "qos_history":     { "type": "string", "description": "keep_last|keep_all" },
+              "qos_depth":       { "type": "integer", "description": "history depth" }
+            },
+            "required": ["name", "topic"]
+          }
+        }
+      },
+      "unsubscribe": {
+        "instruction": {
+          "description": "Remove a topic subscription.",
+          "category": "topic",
+          "usage": "ros.topic.unsubscribe <name>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "subscription handle name" }
+            },
+            "required": ["name"]
+          }
+        }
+      },
+      "publish": {
+        "instruction": {
+          "description": "Publish a message to a topic.",
+          "category": "topic",
+          "usage": "ros.topic.publish <topic> <payload> [type] [payload_format]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "topic":           { "type": "string", "description": "topic to publish to" },
+              "payload":         { "type": "string", "description": "message payload" },
+              "type":            { "type": "string", "description": "message type (inferred if empty)" },
+              "payload_format":  { "type": "string", "description": "yaml|var|cdr_hex (default yaml)" },
+              "qos_reliability": { "type": "string", "description": "reliable|best_effort" },
+              "qos_durability":  { "type": "string", "description": "volatile|transient_local" },
+              "qos_history":     { "type": "string", "description": "keep_last|keep_all" },
+              "qos_depth":       { "type": "integer", "description": "history depth" }
+            },
+            "required": ["topic", "payload"]
+          }
+        }
+      },
+      "once": {
+        "instruction": {
+          "description": "Wait for one message on a topic.",
+          "category": "topic",
+          "usage": "ros.topic.once <topic> [type] [payload_format] [timeout_ms]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "topic":           { "type": "string",  "description": "topic to read" },
+              "type":            { "type": "string",  "description": "message type (inferred if empty)" },
+              "target_node":     { "type": "string",  "description": "node path to store the message in" },
+              "payload_format":  { "type": "string",  "description": "yaml|var|cdr_hex (default yaml)" },
+              "timeout_ms":      { "type": "integer", "description": "wait timeout in milliseconds" },
+              "qos_reliability": { "type": "string",  "description": "reliable|best_effort" },
+              "qos_durability":  { "type": "string",  "description": "volatile|transient_local" },
+              "qos_history":     { "type": "string",  "description": "keep_last|keep_all" },
+              "qos_depth":       { "type": "integer", "description": "history depth" }
+            },
+            "required": ["topic"]
+          }
+        }
+      }
+    },
+
+    "service": {
+      "list": {
+        "instruction": {
+          "description": "List ROS services.",
+          "category": "service",
+          "usage": "ros.service.list [filter]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filter": { "type": "string", "short": "f", "description": "substring filter on service name" }
+            },
+            "required": []
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "array", "description": "matching service names" }
+            }
+          }
+        }
+      },
+      "info": {
+        "instruction": {
+          "description": "Show service details (type, providers).",
+          "category": "service",
+          "usage": "ros.service.info <name>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "service name" }
+            },
+            "required": ["name"]
+          }
+        }
+      },
+      "call": {
+        "instruction": {
+          "description": "Call a ROS service and return the response.",
+          "category": "service",
+          "usage": "ros.service.call <service> <type> <request> [payload_format]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "service":             { "type": "string",  "description": "service name" },
+              "type":                { "type": "string",  "description": "service type" },
+              "request":             { "type": "string",  "description": "request payload" },
+              "payload_format":      { "type": "string",  "description": "yaml|var|cdr_hex (default yaml)" },
+              "timeout_wait_ms":     { "type": "integer", "description": "wait-for-service timeout (default 5000)" },
+              "timeout_response_ms": { "type": "integer", "description": "response timeout (default 10000)" }
+            },
+            "required": ["service", "type", "request"]
+          }
+        }
+      }
+    },
+
+    "param": {
+      "list": {
+        "instruction": {
+          "description": "List params. No node: list nodes. With node: params + values.",
+          "category": "param",
+          "usage": "ros.param.list [node]",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "node": { "type": "string", "description": "node name (empty: list parameterized nodes)" }
+            },
+            "required": []
+          }
+        }
+      },
+      "get": {
+        "instruction": {
+          "description": "Get one ROS parameter.",
+          "category": "param",
+          "usage": "ros.param.get <node> <name>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "node": { "type": "string", "description": "node name" },
+              "name": { "type": "string", "description": "parameter name" }
+            },
+            "required": ["node", "name"]
+          }
+        }
+      },
+      "set": {
+        "instruction": {
+          "description": "Set one ROS parameter.",
+          "category": "param",
+          "usage": "ros.param.set <node> <name> <value>",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "node":  { "type": "string", "description": "node name" },
+              "name":  { "type": "string", "description": "parameter name" },
+              "value": { "type": "string", "description": "value (yaml-decoded)" }
+            },
+            "required": ["node", "name", "value"]
+          }
+        }
+      }
+    },
+
+    "runtime": {
+      "refresh": {
+        "instruction": {
+          "description": "Refresh cached ROS node/topic/service/param lists.",
+          "category": "info",
+          "usage": "ros.runtime.refresh",
+          "input_schema": { "type": "object", "properties": {}, "required": [] }
+        }
+      }
+    }
+  }
+}

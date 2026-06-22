@@ -36,12 +36,10 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
         if (server->start()) {
             n->set("runtime/port", p);
             n->set("runtime/listening", true);
-            if (entry::options().verbose) {
-                if (p != port) {
-                    veLogIs(name, "started on fallback port", p, "(default", port, "failed)");
-                } else {
-                    veLogIs(name, "started on port", p);
-                }
+            if (p != port) {
+                veLogIs(name, "started on fallback port", p, "(default", port, "failed)");
+            } else if (entry::options().verbose) {
+                veLogIs(name, "started on port", p);
             }
             return;
         }
@@ -126,12 +124,10 @@ template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
         if (server->start()) {
             n->set("runtime/port", p);
             n->set("runtime/listening", true);
-            if (entry::options().verbose) {
-                if (p != port) {
-                    veLogIs(name, "started on fallback port", p, "(default", port, "failed)");
-                } else {
-                    veLogIs(name, "started on port", p);
-                }
+            if (p != port) {
+                veLogIs(name, "started on fallback port", p, "(default", port, "failed)");
+            } else if (entry::options().verbose) {
+                veLogIs(name, "started on port", p);
             }
             return;
         }

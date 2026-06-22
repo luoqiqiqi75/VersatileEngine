@@ -182,7 +182,7 @@ inline Node* reg(const std::string& key, F&& fn, const std::string& description 
 }
 
 inline Command create(const Factory& factory, const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr)
-{ return Command(factory.node(key), ctx, in, out); }
+{ return Command(factory.node(key, VE_FACTORY_KEY_SEP), ctx, in, out); }
 inline Command create(const std::string& key, Node* ctx = nullptr, Node* in = nullptr, Node* out = nullptr)
 { return create(factory(), key, ctx, in, out); }
 

@@ -52,3 +52,19 @@ This repository currently ships:
 
 Legacy `data.h`, `veRos`, `veFastDDS`, and public `ve/ros/dds/*` entry points
 have been removed from the public surface.
+
+## Command instructions
+
+Command docs (`description`, `category`, `usage`, `input_schema`, `output_schema`)
+live in `res/service/ros.json`, mirroring VE core's `ve/res/service/*.json`. The
+file is embedded into `libveros` via `ve_embed_files()` and loaded at module
+`init()` with `JsonS::toNode(command::factory().node(), res::read("ve/service/ros.json"))`.
+
+`registerCommands()` only binds callables — it carries no inline doc strings.
+Each command's `instruction` subtree merges onto the same factory node that the
+callable is registered on (keyed by the dotted name, e.g. `ros.topic.info` →
+`ros/topic/info/instruction`). The `input_schema` is what lets CLI tokens bind to
+the input node in the REPL and what `help`/`describe` render across every
+interface. To change a command's docs or argument schema, edit the JSON — no
+recompile of the registration logic is needed.
+

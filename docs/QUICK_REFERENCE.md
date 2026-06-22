@@ -298,6 +298,25 @@ auto keys = command::factory().keys();        // all registered command names
 auto help = command::factory().help("save");  // help text for a command
 ```
 
+Command keys use `.` as the separator (`VE_FACTORY_KEY_SEP`) on every interface —
+`command::create`, REPL dispatch, `/cmd/<name>`, and `/ve` all resolve `ros.topic.info`
+the same way. What `keys()`/`help` list is what you call.
+
+### Rich instructions
+
+The inline `help` string is fine for simple commands. For full docs — `usage`,
+`category`, `input_schema` (required for CLI-token arg binding in the REPL),
+`output_schema` — register the callable without a help string and load an embedded
+JSON instead, the way VE core does (`ve/res/service/*.json`) and `ve/ros`
+(`ros/res/service/ros.json`):
+
+```cpp
+// at module init: merge the instruction subtrees onto the factory nodes
+schema::JsonS::toNode(command::factory().node(), std::string(res::read("ve/service/ros.json")));
+```
+
+`describe <name>` then returns the command's `instruction` subtree over any interface.
+
 ### HTTP endpoints
 
 - **`POST /cmd/<name>`** — single command, body → `in` node (JSON), response = result + output

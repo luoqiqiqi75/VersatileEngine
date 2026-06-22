@@ -3,6 +3,7 @@
 #include "ve/core/command.h"
 #include "ve/core/log.h"
 #include "ve/core/module.h"
+#include "ve/core/res.h"
 #include "ve/core/schema.h"
 #include "ve/ros/parser.h"
 #include "ve/ros/runtime.h"
@@ -87,6 +88,7 @@ public:
 protected:
     void init() override
     {
+        loadInstructions();
         registerCommands();
         syncRuntimeState("init");
     }
@@ -116,6 +118,16 @@ protected:
     }
 
 private:
+    void loadInstructions()
+    {
+        auto doc = res::read("ve/service/ros.json");
+        if (doc.empty()) {
+            veLogW << "[ve.ros] embedded ros.json not found";
+            return;
+        }
+        schema::JsonS::toNode(command::factory().node(), std::string(doc));
+    }
+
     void registerCommands()
     {
         if (commands_registered_)
@@ -125,12 +137,12 @@ private:
         command::reg("ros.info", [this](Node*, Node* out) -> Result {
             buildInfo(out);
             return Result::ok();
-        }, "Show ros summary.");
+        });
 
         command::reg("ros.backend.list", [](Node*, Node* out) -> Result {
             ros::backendInfoList(out);
             return Result::ok();
-        }, "List ros backends.");
+        });
 
         command::reg("ros.backend.info", [](Node* in, Node* out) -> Result {
             std::string key_name = in->get("key").toString();
@@ -145,17 +157,17 @@ private:
                 return Result::fail("not found: " + key_name);
             current->info(out);
             return Result::ok();
-        }, "Show backend details.");
+        });
 
         command::reg("ros.parser.list", [](Node*, Node* out) -> Result {
             ros::parserInfoList(out);
             return Result::ok();
-        }, "List ros parsers.");
+        });
 
         command::reg("ros.env", [](Node*, Node* out) -> Result {
             ros::envInfo(out);
             return Result::ok();
-        }, "Show ROS env vars.");
+        });
 
         command::reg("ros.node.list", [](Node* in, Node* out) -> Result {
             auto result = ros::listNodes(in->get("filter").toString());
@@ -170,7 +182,7 @@ private:
             }
             schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
-        }, "List ROS nodes.");
+        });
 
         command::reg("ros.topic.list", [](Node* in, Node* out) -> Result {
             auto result = ros::listTopics(in->get("filter").toString());
@@ -185,13 +197,13 @@ private:
             }
             schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
-        }, "List ROS topics.");
+        });
 
         command::reg("ros.topic.info", [](Node* in, Node* out) -> Result {
             auto name = in->get("name").toString();
             if (name.empty()) return Result::fail("topic name required");
             return ros::topicInfo(name, out);
-        }, "Show topic details.");
+        });
 
         command::reg("ros.topic.subscribe", [](Node* in, Node* out) -> Result {
             ros::TopicSubscriptionConfig config;
@@ -207,7 +219,7 @@ private:
             if (!r) return r;
             n("ve/ros/subscriptions/" + config.name)->copy(out);
             return Result::ok();
-        }, "Subscribe to a topic.");
+        });
 
         command::reg("ros.topic.unsubscribe", [](Node* in, Node* out) -> Result {
             auto name = in->get("name").toString();
@@ -216,7 +228,7 @@ private:
             if (!r) return r;
             n("ve/ros")->erase("subscriptions/" + name);
             return Result::ok();
-        }, "Remove a topic subscription.");
+        });
 
         command::reg("ros.topic.publish", [](Node* in, Node* out) -> Result {
             ros::TopicPublishRequest request;
@@ -231,7 +243,7 @@ private:
             if (!r) return r;
             n("ve/ros/publications/last")->copy(out);
             return Result::ok();
-        }, "Publish to a topic.");
+        });
 
         command::reg("ros.topic.once", [](Node* in, Node* out) -> Result {
             ros::TopicOnceRequest request;
@@ -269,7 +281,7 @@ private:
             if (!r) return r;
             n("ve/ros/once/last")->copy(out);
             return Result::ok();
-        }, "Wait for one message.");
+        });
 
         command::reg("ros.service.list", [](Node* in, Node* out) -> Result {
             auto result = ros::listServices(in->get("filter").toString());
@@ -284,13 +296,13 @@ private:
             }
             schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
-        }, "List ROS services.");
+        });
 
         command::reg("ros.service.info", [](Node* in, Node* out) -> Result {
             auto name = in->get("name").toString();
             if (name.empty()) return Result::fail("service name required");
             return ros::serviceInfo(name, out);
-        }, "Show service details.");
+        });
 
         command::reg("ros.service.call", [](Node* in, Node* out) -> Result {
             ros::ServiceCallRequest request;
@@ -306,7 +318,7 @@ private:
             if (!r) return r;
             n("ve/ros/service_calls/last")->copy(out);
             return Result::ok();
-        }, "Call a ROS service.");
+        });
 
         command::reg("ros.param.list", [](Node* in, Node* out) -> Result {
             auto node_filter = in->get("node").toString();
@@ -344,7 +356,7 @@ private:
             }
             schema::VarS::toNode(out, Var(std::move(names)));
             return Result::ok();
-        }, "List params. No node: list nodes. With node: params+values.");
+        });
 
         command::reg("ros.param.get", [](Node* in, Node* out) -> Result {
             auto node_name = in->get("node").toString();
@@ -357,7 +369,7 @@ private:
             if (nn.empty()) nn = node_name;
             n("ve/ros/params/" + stripLeadingSlashes(nn) + "/" + param_name)->set(out->get("value"));
             return Result::ok();
-        }, "Get one ROS parameter.");
+        });
 
         command::reg("ros.param.set", [](Node* in, Node* out) -> Result {
             auto node_name = in->get("node").toString();
@@ -373,14 +385,14 @@ private:
             if (nn.empty()) nn = node_name;
             n("ve/ros/params/" + stripLeadingSlashes(nn) + "/" + param_name)->set(value);
             return Result::ok();
-        }, "Set one ROS parameter.");
+        });
 
         command::reg("ros.runtime.refresh", [](Node*, Node* out) -> Result {
             std::string error;
             if (!ros::refreshRuntime(n("ve/ros"), error))
                 return Result::fail(error);
             return ros::runtimeInfo(out);
-        }, "Refresh cached ROS lists.");
+        });
     }
 
     void buildInfo(Node* out) const
