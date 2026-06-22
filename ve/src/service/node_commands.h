@@ -32,8 +32,7 @@ struct Session : Object
         : Object("_session"), root(r_n), current(c_n), send(std::move(s)) {}
 };
 
-VE_API void registerNodeCommands();
-VE_API void registerTerminalBuiltins();
+VE_API void registerNodeCommands(Factory& f);
 
 struct CmdRef { Factory* factory = nullptr; std::string key; };
 VE_API CmdRef resolveCmd(Node* ctx);

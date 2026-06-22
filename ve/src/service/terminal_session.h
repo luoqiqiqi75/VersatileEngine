@@ -1,7 +1,11 @@
-// terminal_session.h — internal: per-connection REPL state (used only by TerminalServer)
+// terminal_session.h — per-connection REPL state
+//
+// TerminalSession inherits Session (root/current/send) and adds REPL-specific
+// state (history, orphans, prompt). Used by TerminalServer and StdioClient.
 #pragma once
 
-#include <functional>
+#include "node_commands.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,7 +16,9 @@ class Node;
 
 namespace service {
 
-class TerminalSession
+void registerReplCommands(Factory& f);
+
+class TerminalSession : public Session
 {
 public:
     using AsyncOutputFn = std::function<void(const std::string&)>;
@@ -30,11 +36,9 @@ public:
     std::string prompt() const;
     std::vector<std::string> complete(const std::string& partial);
     const std::vector<std::string>& history() const;
+    std::vector<Node*>& orphans();
 
     void setAsyncOutput(AsyncOutputFn fn);
-
-    Node* root() const;
-    Node* current() const;
 
 private:
     struct Private;

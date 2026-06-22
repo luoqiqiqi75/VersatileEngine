@@ -1,0 +1,286 @@
+{
+  "cd": {
+    "instruction": {
+      "description": "Change current node.",
+      "category": "nav",
+      "usage": "cd <path>",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "target path (relative or absolute)" }
+        },
+        "required": ["path"]
+      }
+    }
+  },
+
+  "pwd": {
+    "instruction": {
+      "description": "Print current node path.",
+      "category": "nav",
+      "usage": "pwd"
+    }
+  },
+
+  "root": {
+    "instruction": {
+      "description": "Jump to root node.",
+      "category": "nav",
+      "usage": "root"
+    }
+  },
+
+  "up": {
+    "instruction": {
+      "description": "Move up N levels (default 1).",
+      "category": "nav",
+      "usage": "up [levels]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "levels": { "type": "integer", "description": "number of levels (default 1)" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "first": {
+    "instruction": { "description": "Move to first child.", "category": "nav", "usage": "first" }
+  },
+
+  "last": {
+    "instruction": { "description": "Move to last child.", "category": "nav", "usage": "last" }
+  },
+
+  "prev": {
+    "instruction": { "description": "Move to previous sibling.", "category": "nav", "usage": "prev" }
+  },
+
+  "next": {
+    "instruction": { "description": "Move to next sibling.", "category": "nav", "usage": "next" }
+  },
+
+  "sibling": {
+    "instruction": {
+      "description": "Move by sibling offset.",
+      "category": "nav",
+      "usage": "sibling <offset>",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "offset": { "type": "integer", "description": "sibling offset (+/-)" }
+        },
+        "required": ["offset"]
+      }
+    }
+  },
+
+  "ls": {
+    "instruction": {
+      "description": "List children of a node.",
+      "category": "inspect",
+      "usage": "ls [path] [-t] [-l] [-n]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path":  { "type": "string",  "description": "target node (default: current)" },
+          "tree":  { "type": "boolean", "short": "t", "description": "dump full subtree" },
+          "long":  { "type": "boolean", "short": "l", "description": "detailed node info" },
+          "names": { "type": "boolean", "short": "n", "description": "child names only" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "get": {
+    "instruction": {
+      "description": "Read a node's value.",
+      "category": "inspect",
+      "usage": "get [path] [-t]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string",  "description": "target node (default: current)" },
+          "type": { "type": "boolean", "short": "t", "description": "show type only" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "set": {
+    "instruction": {
+      "description": "Set a node's value.",
+      "category": "mutate",
+      "usage": "set [path] [value] [--null] [--trigger/-t]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path":    { "type": "string",  "description": "target node (default: current)" },
+          "value":   { "type": "string",  "description": "value to set (auto-parsed)" },
+          "null":    { "type": "boolean", "description": "clear value to null" },
+          "trigger": { "type": "boolean", "short": "t", "description": "fire NODE_CHANGED without changing value" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "mk": {
+    "instruction": {
+      "description": "Create a node or append children.",
+      "category": "mutate",
+      "usage": "mk <path> | mk -n <name> [-o N] [-a] [--at IDX]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path":    { "type": "string",  "description": "node path to create" },
+          "name":    { "type": "string",  "short": "n", "description": "child name to append" },
+          "overlap": { "type": "integer", "short": "o", "description": "overlap count (default 0)" },
+          "anon":    { "type": "boolean", "short": "a", "description": "append anonymous child" },
+          "at":      { "type": "integer", "description": "insert at index" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "rm": {
+    "instruction": {
+      "description": "Remove a node or children.",
+      "category": "mutate",
+      "usage": "rm [path] | rm -i IDX | rm -n NAME [-o N] | rm --all NAME | rm -c",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path":    { "type": "string",  "description": "child path to erase" },
+          "index":   { "type": "integer", "short": "i", "description": "remove child at index" },
+          "name":    { "type": "string",  "short": "n", "description": "remove child by name" },
+          "overlap": { "type": "integer", "short": "o", "description": "name overlap (default 0)" },
+          "all":     { "type": "string",  "description": "remove all children with name" },
+          "clear":   { "type": "boolean", "short": "c", "description": "clear all children" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "mv": {
+    "instruction": {
+      "description": "Move a node to another parent.",
+      "category": "mutate",
+      "usage": "mv <src> [dest] [--at INDEX]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "src":  { "type": "string",  "description": "source node path" },
+          "dest": { "type": "string",  "description": "destination parent (default: current)" },
+          "at":   { "type": "integer", "description": "insert at index" }
+        },
+        "required": ["src"]
+      }
+    }
+  },
+
+  "cp": {
+    "instruction": {
+      "description": "Copy a subtree into another node.",
+      "category": "mutate",
+      "usage": "cp <src> [dest] [-r] [-u] [-I] [-R]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "src":        { "type": "string",  "description": "source subtree" },
+          "dest":       { "type": "string",  "description": "destination node (default: current)" },
+          "remove":     { "type": "boolean", "short": "r", "description": "drop keys absent in source" },
+          "update":     { "type": "boolean", "short": "u", "description": "write via update()" },
+          "no-insert":  { "type": "boolean", "short": "I", "description": "skip inserting new keys" },
+          "no-replace": { "type": "boolean", "short": "R", "description": "skip replacing existing values" }
+        },
+        "required": ["src"]
+      }
+    }
+  },
+
+  "schema": {
+    "instruction": {
+      "description": "Import/export node tree in various formats (json, xml, bin, md, var).",
+      "category": "inspect",
+      "usage": "schema <format> [path] [-f file] [-i data]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "format": { "type": "string",  "description": "serialization format" },
+          "path":   { "type": "string",  "description": "target node (default: current)" },
+          "file":   { "type": "string",  "short": "f", "description": "read from / write to file" },
+          "import": { "type": "string",  "short": "i", "description": "import data (inline or with -f)" }
+        },
+        "required": []
+      }
+    }
+  },
+
+  "take": {
+    "instruction": {
+      "description": "Detach a child node into orphan pool.",
+      "category": "session",
+      "usage": "take <index|path>",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": { "type": "string", "description": "child index or path" }
+        },
+        "required": ["target"]
+      }
+    }
+  },
+
+  "orphans": {
+    "instruction": {
+      "description": "List orphan pool.",
+      "category": "session",
+      "usage": "orphans"
+    }
+  },
+
+  "adopt": {
+    "instruction": {
+      "description": "Adopt an orphan back into current node.",
+      "category": "session",
+      "usage": "adopt <index>",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer", "description": "orphan pool index" }
+        },
+        "required": ["index"]
+      }
+    }
+  },
+
+  "history": {
+    "instruction": {
+      "description": "Show command history.",
+      "category": "session",
+      "usage": "history"
+    }
+  },
+
+  "help": {
+    "instruction": {
+      "description": "Show command help. Use --json for structured output.",
+      "category": "session",
+      "usage": "help [command] [--json]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": { "type": "string",  "description": "command name for detailed help" },
+          "json":    { "type": "boolean", "description": "output as JSON (AI-friendly)" }
+        },
+        "required": []
+      }
+    }
+  }
+}

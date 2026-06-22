@@ -2,7 +2,6 @@
 #pragma once
 
 #include "ve/global.h"
-#include <cstdint>
 
 namespace ve {
 

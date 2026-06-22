@@ -2,14 +2,17 @@
 // Created by luoqi on 2026/3/24.
 //
 
-#include "src/service/node_commands.h"
 #include "ve/core/module.h"
 #include "ve/core/log.h"
 #include "ve/core/command.h"
+#include "ve/core/res.h"
 #include "ve/service/node_service.h"
 #include "ve/service/static_service.h"
 #include "ve/service/bin_service.h"
 #include "ve/service/terminal_service.h"
+
+#include "src/service/node_commands.h"
+#include "src/service/terminal_session.h"
 
 namespace ve {
 
@@ -144,8 +147,17 @@ void ServerModule::init() {
 
     _data_root = node()->get("file_io/data_root").toString("./data");
 
-    service::registerNodeCommands();
-    service::registerTerminalBuiltins();
+    { // register op commands
+        auto& f = ve::factory::at("service/op");
+        ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/op.json")));
+        ve::service::registerNodeCommands(f);
+    }
+
+    { // register repl commands
+        auto& f = ve::factory::at("service/repl");
+        ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/repl.json")));
+        ve::service::registerReplCommands(f);
+    }
 }
 
 void ServerModule::bindStaticProxyTargets()

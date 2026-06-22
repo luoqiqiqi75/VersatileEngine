@@ -197,30 +197,21 @@ static Result describe(Node*, Node* params, Node* data)
 // Command docs (description / usage / input_schema / output_schema) are embedded
 // via ve_embed_files and parsed once; each command's instruction subtree is attached
 // to its registered node at <key>/instruction.
-void registerNodeCommands()
+VE_API void registerNodeCommands(Factory& op_f)
 {
-    auto& f = factory::at("service/op");
-    if (f.has("get")) return;
+    auto R = [&](const char* key, auto callable) { op_f.reg(key, std::move(Var::callable(callable))); };
 
-    Node docs;
-    schema::JsonS::toNode(&docs, std::string(ve::res::read("ve/service/op.json")));
-
-    auto R = [&](const char* key, Var callable) {
-        Node* n = f.reg(key, std::move(callable));
-        n->at("instruction")->copy(docs.find(key));
-    };
-
-    R("get",         Var::callable(op::get));
-    R("set",         Var::callable(op::set));
-    R("export",      Var::callable(op::export_));
-    R("import",      Var::callable(op::import_));
-    R("children",    Var::callable(op::children));
-    R("erase",       Var::callable(op::erase));
-    R("trigger",     Var::callable(op::trigger));
-    R("subscribe",   Var::callable(op::subscribe));
-    R("unsubscribe", Var::callable(op::unsubscribe));
-    R("commands",    Var::callable(op::commandList));
-    R("describe",    Var::callable(op::describe));
+    R("get",         op::get);
+    R("set",         op::set);
+    R("export",      op::export_);
+    R("import",      op::import_);
+    R("children",    op::children);
+    R("erase",       op::erase);
+    R("trigger",     op::trigger);
+    R("subscribe",   op::subscribe);
+    R("unsubscribe", op::unsubscribe);
+    R("commands",    op::commandList);
+    R("describe",    op::describe);
 }
 
 CmdRef resolveCmd(Node* ctx)

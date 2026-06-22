@@ -4,10 +4,18 @@
 
 #include <ve/core/node.h>
 #include <ve/core/command.h>
+#include <ve/core/factory.h>
 #include <ve/core/schema.h>
 #include <ve/core/pipeline.h>
+#include <ve/core/res.h>
 
 using namespace ve;
+
+VE_SETUP(node_protocol) {
+    auto& f = factory::at("service/op");
+    schema::JsonS::toNode(f.node(), std::string(res::read("ve/service/op.json")));
+    service::registerNodeCommands(f);
+}
 
 static bool runEnvelope(service::Session* session, Pipeline& pipe)
 {
@@ -42,7 +50,6 @@ static bool runEnvelope(service::Session* session, Pipeline& pipe)
 }
 
 VE_TEST(node_dispatch_get_set_and_children) {
-    service::registerNodeCommands();
     Node root("root");
     service::Session session(&root, &root);
 
@@ -81,7 +88,6 @@ VE_TEST(node_dispatch_get_set_and_children) {
 }
 
 VE_TEST(node_dispatch_batch) {
-    service::registerNodeCommands();
     Node root("root");
     root.set("one", 1);
     root.set("two", 2);
@@ -108,7 +114,6 @@ VE_TEST(node_dispatch_batch) {
 }
 
 VE_TEST(node_dispatch_subscribe_unsupported_without_send) {
-    service::registerNodeCommands();
     Node root("root");
     service::Session session(&root, &root);
 
@@ -120,7 +125,6 @@ VE_TEST(node_dispatch_subscribe_unsupported_without_send) {
 }
 
 VE_TEST(node_dispatch_export_full) {
-    service::registerNodeCommands();
     Node root("root");
     root.set("a/x", 1);
     root.set("a/y", 2);
@@ -140,7 +144,6 @@ VE_TEST(node_dispatch_export_full) {
 }
 
 VE_TEST(node_dispatch_export_depth) {
-    service::registerNodeCommands();
     Node root("root");
     root.set("a/x", 1);
     root.set("a/deep/z", 3);
@@ -161,7 +164,6 @@ VE_TEST(node_dispatch_export_depth) {
 }
 
 VE_TEST(node_dispatch_import) {
-    service::registerNodeCommands();
     Node root("root");
     service::Session session(&root, &root);
 
@@ -177,7 +179,6 @@ VE_TEST(node_dispatch_import) {
 }
 
 VE_TEST(node_dispatch_watch_with_session_pushes) {
-    service::registerNodeCommands();
     Node root("root");
     root.set("watch/me", 1);
 

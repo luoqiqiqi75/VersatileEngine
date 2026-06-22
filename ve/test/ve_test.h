@@ -16,6 +16,21 @@
 
 namespace ve_test {
 
+inline std::vector<std::function<void()>>& setup_registry() {
+    static std::vector<std::function<void()>> fns;
+    return fns;
+}
+
+struct SetupRegistrar {
+    SetupRegistrar(std::function<void()> func) {
+        setup_registry().push_back(std::move(func));
+    }
+};
+
+inline void run_setup() {
+    for (auto& fn : setup_registry()) fn();
+}
+
 struct TestCase {
     std::string name;
     std::string file;
@@ -47,6 +62,7 @@ inline void report_failure(const char* file, int line, const std::string& expr) 
 }
 
 inline int run_all() {
+    run_setup();
     int passed = 0, failed = 0;
     std::cout << "\n======== ve_test ========\n\n";
 
@@ -89,6 +105,11 @@ inline int run_all() {
     static void ve_test_func_##name(); \
     static ve_test::Registrar ve_test_reg_##name(#name, __FILE__, __LINE__, ve_test_func_##name); \
     static void ve_test_func_##name()
+
+#define VE_SETUP(name) \
+    static void ve_setup_func_##name(); \
+    static ve_test::SetupRegistrar ve_setup_reg_##name(ve_setup_func_##name); \
+    static void ve_setup_func_##name()
 
 #define VE_ASSERT(expr) \
     do { if (!(expr)) ve_test::report_failure(__FILE__, __LINE__, "ASSERT( " #expr " )"); } while(0)
