@@ -136,22 +136,14 @@ static std::pair<Node*, size_t> resolveFactoryCommand(const Factory& factory,
     return {nullptr, 0};
 }
 
-static void prepareCommandInput(Node* in,
-                                Node* root,
-                                Node* current,
-                                const std::vector<std::string>& args,
-                                size_t start)
+static void prepareContext(Node* ctx,
+                           const std::vector<std::string>& args)
 {
-    if (!in) return;
-    in->clear();
-    Node* argv = in->at("argv");
+    if (!ctx) return;
+    Node* argv = ctx->at("argv");
     for (const auto& arg : args) {
         argv->append()->set(arg);
     }
-    in->set("argc", static_cast<int64_t>(args.size()));
-    in->set("command_words", static_cast<int64_t>(start));
-    if (root) in->at("root")->set(Var::ptr(root));
-    if (current) in->at("current")->set(Var::ptr(current));
 }
 
 static void updateCurrentFromOut(Node*& current, Node* out)
@@ -253,11 +245,11 @@ static Node* resolveNode(Node* root, Node* cur, const std::string& path)
     return base->find(relPath);
 }
 
-static std::vector<std::string> argvFromInput(Node* in)
+static std::vector<std::string> argvFromContext(Node* ctx)
 {
     std::vector<std::string> args;
-    if (!in) return args;
-    if (auto* argv = in->find("argv")) {
+    if (!ctx) return args;
+    if (auto* argv = ctx->find("argv")) {
         for (auto* arg : *argv)
             args.push_back(arg->getString());
     }
@@ -294,7 +286,7 @@ namespace repl {
 static Result cd(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     if (args.size() < 2) return Result::fail("usage: cd <path>");
     auto& path = args[1];
     if (path == "..") {
@@ -328,7 +320,7 @@ static Result root(Node* ctx, Node*, Node* out)
 static Result up(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     int n = (args.size() > 1 && isInt(args[1])) ? std::stoi(args[1]) : 1;
     auto* p = s->current->parent(n - 1);
     if (!p) return Result::fail("cannot go up " + std::to_string(n) + " levels");
@@ -389,7 +381,7 @@ static Result sibling(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     if (args.size() < 2) return Result::fail("usage: sibling <offset>");
     int off = std::stoi(args[1]);
     auto* sib = s->current->sibling(off);
@@ -404,7 +396,7 @@ static Result ls(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     const int lp = f.posCount();
     Node* t = nullptr;
@@ -464,7 +456,7 @@ static Result get(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     const int pc = f.posCount();
     Node* t = nullptr;
@@ -490,7 +482,7 @@ static Result set(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     const int pc = f.posCount();
 
@@ -545,7 +537,7 @@ static Result mk(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     auto name = f.get("name", 'n');
     if (!name.empty() || f.has("anon", 'a')) {
@@ -587,7 +579,7 @@ static Result rm(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     auto* t = targetFromArgs(s->root, s->current, args);
     if (f.has("clear", 'c')) {
@@ -636,7 +628,7 @@ static Result mv(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     auto srcPath = f.pos(0);
     if (srcPath.empty()) return Result::fail("usage: mv <src> [dest] [--at INDEX]");
@@ -662,7 +654,7 @@ static Result cp(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     auto srcPath = f.pos(0);
     if (srcPath.empty()) return Result::fail("usage: cp <src> [dest] [-r] [-u] [-I] [-R]");
@@ -687,7 +679,7 @@ static Result cp(Node* ctx, Node* in, Node* out)
 static Result schema(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto f = parseFlags(args);
     auto format = f.pos(0);
     if (format.empty()) {
@@ -759,7 +751,7 @@ static Result take(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     if (args.size() < 2) return Result::fail("usage: take <index|path>");
     Node* taken = nullptr;
     if (isInt(args[1])) {
@@ -798,7 +790,7 @@ static Result adopt(Node* ctx, Node* in, Node* out)
 {
     auto* s = sess(ctx);
     auto c = C::from(ctx);
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     if (args.size() < 2) return Result::fail("usage: adopt <orphan_index>");
     int idx = std::stoi(args[1]);
     auto& pool = static_cast<TerminalSession*>(s)->orphans();
@@ -838,7 +830,7 @@ static const HelpCategory kCategories[] = {
 
 static Result help(Node* ctx, Node* in, Node* out)
 {
-    auto args = argvFromInput(in);
+    auto args = argvFromContext(ctx);
     auto fl = parseFlags(args);
     bool jsonMode = fl.has("json");
     auto c = C::from(ctx);
@@ -1111,12 +1103,13 @@ std::string TerminalSession::execute(const std::string& line)
 
     bool isCmdCmd = !builtinNode && cmdNode;
 
-    auto fillInput = [&](Node* in) {
-        prepareCommandInput(in, this->root, this->current, args, resolvedWordCount);
+    auto fillCommand = [&](Node* in, Node* ctx) {
         if (isCmdCmd) {
             Strings tokens(args.begin() + resolvedWordCount, args.end());
             command::bind(command::factory(), resolvedName, tokens, in);
         }
+        prepareContext(ctx, args);
+        ctx->set("_session", Var::ptr(static_cast<Session*>(this)));
     };
 
     bool color = useColor();
@@ -1127,8 +1120,7 @@ std::string TerminalSession::execute(const std::string& line)
     if (resolvedNode) {
         if (asyncMode) {
             Pipeline pipe;
-            fillInput(pipe.inputNode());
-            pipe.contextNode()->set("_session", Var::ptr(static_cast<Session*>(this)));
+            fillCommand(pipe.inputNode(), pipe.contextNode());
             pipe.add(Command(resolvedNode));
 
             auto asyncOut = _p->asyncOutput;
@@ -1149,8 +1141,7 @@ std::string TerminalSession::execute(const std::string& line)
         }
 
         Command cmdObj(resolvedNode);
-        fillInput(cmdObj.inputNode());
-        cmdObj.contextNode()->set("_session", Var::ptr(static_cast<Session*>(this)));
+        fillCommand(cmdObj.inputNode(), cmdObj.contextNode());
         cmdObj.run();
         updateCurrentFromOut(this->current, cmdObj.outputNode());
         _p->output += render(cmdObj.outputNode(), cmdObj.result());
