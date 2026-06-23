@@ -74,7 +74,8 @@ class ServerModule : public Module
     std::string _data_root = "./data";
 
 public:
-    using Module::Module;
+    explicit ServerModule(const std::string& name);
+    ~ServerModule() override;
 
     void bindStaticProxyTargets();
 
@@ -83,6 +84,29 @@ private:
     void ready() override;
     void deinit() override;
 };
+
+ServerModule::ServerModule(const std::string& name) : Module(name)
+{
+    { // register op commands
+        auto& f = factory::at("service/op");
+        schema::JsonS::toNode(f.node(), std::string(res::read("ve/service/op.json")));
+        service::registerNodeCommands(f);
+    }
+
+    { // register repl commands
+        auto& f = factory::at("service/repl");
+        schema::JsonS::toNode(f.node(), std::string(res::read("ve/service/repl.json")));
+        service::registerReplCommands(f);
+    }
+
+    { // register cmd commands (save/load)
+        auto& f = factory::at("cmd");
+        schema::JsonS::toNode(f.node(), std::string(res::read("ve/service/cmd.json")));
+        service::registerCmdCommands(f);
+    }
+}
+
+ServerModule::~ServerModule() = default;
 
 template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
                            Node* n, int default_port, const std::string& name)
@@ -148,24 +172,6 @@ void ServerModule::init() {
     }
 
     _data_root = node()->get("file_io/data_root").toString("./data");
-
-    { // register op commands
-        auto& f = ve::factory::at("service/op");
-        ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/op.json")));
-        ve::service::registerNodeCommands(f);
-    }
-
-    { // register repl commands
-        auto& f = ve::factory::at("service/repl");
-        ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/repl.json")));
-        ve::service::registerReplCommands(f);
-    }
-
-    { // register cmd commands (save/load)
-        auto& f = ve::factory::at("cmd");
-        ve::schema::JsonS::toNode(f.node(), std::string(ve::res::read("ve/service/cmd.json")));
-        ve::service::registerCmdCommands(f);
-    }
 }
 
 void ServerModule::bindStaticProxyTargets()
