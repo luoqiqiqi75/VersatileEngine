@@ -6,6 +6,9 @@
 include(CMakeFindDependencyMacro)
 find_dependency(simdjson REQUIRED)
 
+# CMake helpers (ve_collect_resources / ve_embed_files) for downstream targets.
+include("${CMAKE_CURRENT_LIST_DIR}/ve_common.cmake" OPTIONAL)
+
 if(NOT TARGET VersatileEngine::ve)
   add_library(VersatileEngine::ve SHARED IMPORTED GLOBAL)
   set_target_properties(VersatileEngine::ve PROPERTIES

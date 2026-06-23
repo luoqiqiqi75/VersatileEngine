@@ -27,3 +27,9 @@ configure_package_config_file(
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/VersatileEngineConfig.cmake"
     DESTINATION lib/cmake/VersatileEngine
 )
+
+# --- CMake helpers usable by consumers (ve_collect_resources / ve_embed_files) ---
+# Config includes this so downstream targets can embed res/ into their binaries.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ve_common.cmake"
+    DESTINATION lib/cmake/VersatileEngine
+)
