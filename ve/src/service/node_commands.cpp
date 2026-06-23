@@ -165,7 +165,7 @@ static Result commandList(Node*, Node*, Node* data)
     for (const auto& key : command::factory().keys()) {
         Node* item = commands->append();
         item->set("name", key);
-        item->set("description", command::description(key));
+        item->set("help", command::description(key));
     }
     return Result::ok();
 }

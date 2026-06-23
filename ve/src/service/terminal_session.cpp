@@ -180,22 +180,28 @@ static std::string renderCommandOutput(Node* out, const Result& r)
     return {};
 }
 
-static std::string renderCmdResult(Node* out, const Result& r)
+static std::string renderCmdResult(Node* out, const Result& r, bool color = true)
 {
+    const char* red   = color ? "\x1b[31m" : "";
+    const char* green = color ? "\x1b[32m" : "";
+    const char* cyan  = color ? "\x1b[36m" : "";
+    const char* reset = color ? "\x1b[0m"  : "";
+
     std::string s;
     if (r.isError()) {
-        s += "\x1b[31merror\x1b[0m";
+        s += red; s += "error"; s += reset;
         if (!r.message().empty()) s += ": " + r.message();
         s += "\n";
         return s;
     }
-    s += "\x1b[32mok\x1b[0m";
+    s += green; s += "ok"; s += reset;
     if (!r.message().empty()) s += ": " + r.message();
     s += "\n";
     if (out) {
         for (auto* c : *out) {
             if (c->get().isNull()) continue;
-            s += "  \x1b[36m" + c->name() + "\x1b[0m: " + varPreview(c->get()) + "\n";
+            s += "  "; s += cyan; s += c->name(); s += reset;
+            s += ": " + varPreview(c->get()) + "\n";
         }
     }
     return s;
@@ -1113,8 +1119,9 @@ std::string TerminalSession::execute(const std::string& line)
         }
     };
 
+    bool color = useColor();
     auto render = [&](Node* out, const Result& r) {
-        return isCmdCmd ? renderCmdResult(out, r) : renderCommandOutput(out, r);
+        return isCmdCmd ? renderCmdResult(out, r, color) : renderCommandOutput(out, r);
     };
 
     if (resolvedNode) {
@@ -1125,13 +1132,15 @@ std::string TerminalSession::execute(const std::string& line)
             pipe.add(Command(resolvedNode));
 
             auto asyncOut = _p->asyncOutput;
-            pipe.onFinished(nullptr, [asyncOut, resolvedName, isCmdCmd](Pipeline& pipe) {
+            pipe.onFinished(nullptr, [asyncOut, resolvedName, isCmdCmd, color](Pipeline& pipe) {
                 std::string text = isCmdCmd
-                    ? renderCmdResult(pipe.outputNode(), pipe.result())
+                    ? renderCmdResult(pipe.outputNode(), pipe.result(), color)
                     : renderCommandOutput(pipe.outputNode(), pipe.result());
                 if (asyncOut && !text.empty()) {
                     if (text.back() != '\n') text.push_back('\n');
-                    asyncOut("\x1b[33m[" + resolvedName + "]\x1b[0m " + text);
+                    const char* y = color ? "\x1b[33m" : "";
+                    const char* r = color ? "\x1b[0m"  : "";
+                    asyncOut(std::string(y) + "[" + resolvedName + "]" + r + " " + text);
                 }
             });
             pipe.async();
