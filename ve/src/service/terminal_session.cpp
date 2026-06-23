@@ -191,7 +191,13 @@ static std::string renderCmdResult(Node* out, const Result& r, bool color = true
     s += "\n";
     if (out) {
         for (auto* c : *out) {
-            if (c->get().isNull()) continue;
+            if (c->get().isNull()) {
+                if (c->count() > 0) {
+                    s += "  "; s += cyan; s += c->name(); s += reset; s += ":\n";
+                    s += c->dump(2);
+                }
+                continue;
+            }
             s += "  "; s += cyan; s += c->name(); s += reset;
             s += ": " + varPreview(c->get()) + "\n";
         }
