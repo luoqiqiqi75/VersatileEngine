@@ -245,4 +245,4 @@ void ServerModule::deinit() {
 
 }
 
-VE_REGISTER_PRIORITY_MODULE(ve/server, ve::ServerModule, 50)
+VE_REGISTER_PRIORITY_MODULE(ve.server, ve::ServerModule, 50)

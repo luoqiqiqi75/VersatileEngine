@@ -803,21 +803,65 @@ Node* n(const std::string& path, bool auto_create)
 // Node — debug
 // ============================================================================
 
-std::string Node::dump(int depth) const
+static std::string dumpImpl(const Node* n, bool color, int depth, int indent, int tree)
+{
+    const char* dim   = color ? "\x1b[2m"  : "";
+    const char* cyan  = color ? "\x1b[36m" : "";
+    const char* green = color ? "\x1b[32m" : "";
+    const char* reset = color ? "\x1b[0m"  : "";
+
+    std::string out;
+    if (!n->get().isNull())
+        out += "= " + std::string(green) + n->get().toString() + reset + "\n";
+    else
+        out += std::string(dim) + "(none)" + reset + "\n";
+
+    if (depth == 0) return out;
+
+    int total = n->count();
+    if (total == 0) return out;
+
+    std::string pad(indent, ' ');
+    std::string bar;
+    for (int t = 1; t < tree; ++t) bar += "\xe2\x94\x80";
+    std::string connMid  = pad + "\xe2\x94\x9c" + bar;
+    std::string connLast = pad + "\xe2\x94\x94" + bar;
+    std::string contMid  = pad + "\xe2\x94\x82" + std::string(tree - 1, ' ');
+    std::string contLast(indent + tree, ' ');
+
+    int next = depth > 0 ? depth - 1 : depth;
+    for (int i = 0; i < total; ++i) {
+        auto* ch = n->child(i);
+        if (!ch) continue;
+        bool last = (i == total - 1);
+        auto key = n->keyOf(ch);
+        if (key.empty()) key = "(anon)";
+
+        const std::string& conn = last ? connLast : connMid;
+        const std::string& cont = last ? contLast : contMid;
+
+        std::string sub = dumpImpl(ch, color, next, indent, tree);
+        size_t nl = sub.find('\n');
+
+        out += std::string(dim) + conn + reset
+             + std::string(cyan) + key + reset + " "
+             + sub.substr(0, nl + 1);
+
+        size_t pos = nl + 1;
+        while (pos < sub.size()) {
+            size_t end = sub.find('\n', pos);
+            if (end == std::string::npos) break;
+            out += std::string(dim) + cont + reset + sub.substr(pos, end - pos + 1);
+            pos = end + 1;
+        }
+    }
+    return out;
+}
+
+std::string Node::dump(int depth, int indent, int tree, bool color) const
 {
     LockT lk(mutex());
-    std::string indent(depth * 2, ' ');
-    auto key = _p->parent ? _p->parent->keyOf(this) : name();
-    if (key.empty()) key = "(anon)";
-
-    std::string out = indent + key;
-    if (!_p->value.isNull()) out += " = " + _p->value.toString();
-    out += "\n";
-
-    if (_p->children)
-        for (auto* c : _p->children->nodes)
-            if (c) out += c->dump(depth + 1);
-    return out;
+    return dumpImpl(this, color, depth, indent, tree);
 }
 
 } // namespace ve

@@ -191,15 +191,8 @@ static std::string renderCmdResult(Node* out, const Result& r, bool color = true
     s += "\n";
     if (out) {
         for (auto* c : *out) {
-            if (c->get().isNull()) {
-                if (c->count() > 0) {
-                    s += "  "; s += cyan; s += c->name(); s += reset; s += ":\n";
-                    s += c->dump(2);
-                }
-                continue;
-            }
             s += "  "; s += cyan; s += c->name(); s += reset;
-            s += ": " + varPreview(c->get()) + "\n";
+            s += " " + c->dump(-1, 2, 2, color);
         }
     }
     return s;
@@ -415,9 +408,11 @@ static Result ls(Node* ctx, Node* in, Node* out)
         return Result::fail("usage: ls [path] [-t] [-l] [-n]");
     }
 
-    std::string text;
-    if (f.has("tree", 't')) { text = t->dump(); setTextOut(out, text); return Result::ok(); }
+    if (f.has("tree", 't')) {
+        setTextOut(out, t->dump(-1, 2, 2, sess(ctx)->useColor())); return Result::ok();
+    }
     if (f.has("names", 'n')) {
+        std::string text;
         auto names = t->childNames();
         int anonCnt = 0;
         for (auto* ch : *t) if (ch->name().empty()) ++anonCnt;
@@ -426,6 +421,7 @@ static Result ls(Node* ctx, Node* in, Node* out)
         setTextOut(out, text); return Result::ok();
     }
     if (f.has("long", 'l')) {
+        std::string text;
         auto nm = t->name().empty() ? "(anon)" : t->name();
         text += "  " + c.dim + "name:" + c.reset + "      " + c.cyan + nm + c.reset + "\n";
         text += "  " + c.dim + "path:" + c.reset + "      " + c.cyan + "/" + t->path(s->root) + c.reset + "\n";
@@ -444,6 +440,7 @@ static Result ls(Node* ctx, Node* in, Node* out)
 
     int total = t->count();
     if (total == 0) { setTextOut(out, "  (empty)\n"); return Result::ok(); }
+    std::string text;
     for (int i = 0; i < total; ++i) {
         auto* ch = t->child(i);
         auto nm = ch->name().empty() ? "(anon)" : ch->name();

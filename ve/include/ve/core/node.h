@@ -221,7 +221,7 @@ public:
     void activate(SignalT signal, Node* source = nullptr);
 
     // --- debug ---
-    std::string dump(int depth = 0) const;
+    std::string dump(int depth = -1, int indent = 2, int tree = 2, bool color = false) const;
 
 public:
     // get usage
