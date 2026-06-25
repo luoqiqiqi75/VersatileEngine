@@ -12,7 +12,7 @@ namespace ve {
 class CoreModule : public Module
 {
 public:
-    explicit CoreModule(const std::string& name) : Module(name)
+    CoreModule()
     {
         auto* n = node();
 

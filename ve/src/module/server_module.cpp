@@ -74,7 +74,7 @@ class ServerModule : public Module
     std::string _data_root = "./data";
 
 public:
-    explicit ServerModule(const std::string& name);
+    ServerModule();
     ~ServerModule() override;
 
     void bindStaticProxyTargets();
@@ -85,7 +85,7 @@ private:
     void deinit() override;
 };
 
-ServerModule::ServerModule(const std::string& name) : Module(name)
+ServerModule::ServerModule()
 {
     { // register op commands
         auto& f = factory::at("service/op");

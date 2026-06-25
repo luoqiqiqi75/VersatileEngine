@@ -338,10 +338,6 @@ schema::JsonS::toNode(command::factory().node(), std::string(res::read("ve/servi
 
 ```cpp
 class MyModule : public Module {
-public:
-    using Module::Module;  // Inherit constructor
-    
-private:
     void init() override {
         // Initialize resources
         // Register commands

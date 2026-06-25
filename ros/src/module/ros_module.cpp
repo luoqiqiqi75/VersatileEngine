@@ -73,7 +73,7 @@ class RosModule : public Module
     bool commands_registered_ = false;
 
 public:
-    explicit RosModule(const std::string& name) : Module(name)
+    RosModule()
     {
         node()->set("config/domain_id", Var(0));
         node()->set("config/service_prefix", Var("ve"));

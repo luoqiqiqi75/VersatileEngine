@@ -35,8 +35,6 @@ enum ModuleSignal : Object::SignalT {
 
 class VE_API Module : public Object, public NodeRef
 {
-    VE_DECLARE_PRIVATE
-
 public:
     enum State : int {
         NONE    = 0x0f00 | 0x00,
@@ -46,7 +44,9 @@ public:
     };
 
 public:
-    explicit Module(const std::string& name);
+    Module(const std::string& name, Node* module_n);
+    Module(const std::string& name);
+    Module();
     ~Module();
 
     State state() const;
@@ -57,6 +57,9 @@ protected:
     virtual void init();
     virtual void ready();
     virtual void deinit();
+
+private:
+    VE_DECLARE_PRIVATE
 };
 
 using ModuleFactory = Factory;
@@ -82,14 +85,19 @@ inline std::enable_if_t<std::is_base_of_v<Module, T>, T*> instance(const std::st
     return static_cast<T*>(instance(key));
 }
 
+namespace impl {
+VE_API void setConstructingKey(const std::string& key);
 }
 
 template<class C>
-inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
+inline std::enable_if_t<std::is_base_of_v<Module, C>> reg(
     const std::string& key, int priority = 100, int ver = 0)
 {
-    auto& f = module::factory();
-    f.reg(key, Var::callable([=]() -> Module* { return new C(key); }));
+    auto& f = factory();
+    f.reg(key, Var::callable([=]() -> Module* {
+        impl::setConstructingKey(key);
+        return new C();
+    }));
     if (priority != 100) {
         auto* nd = f.node(key, VE_FACTORY_KEY_SEP);
         if (nd) nd->at("priority")->set(Var(priority));
@@ -103,16 +111,18 @@ inline std::enable_if_t<std::is_base_of_v<Module, C>> registerModule(
 
 }
 
+}
+
 VE_API std::ostream& operator<< (std::ostream& os, ve::Module::State s);
 
 #define VE_REGISTER_MODULE(Key, Class, ...) \
     namespace { int PRIVATE_VE_AUTO_RUN_FUNC() { \
-        ve::registerModule<Class>(#Key, 100, ## __VA_ARGS__); \
+        ve::module::reg<Class>(#Key, 100, ## __VA_ARGS__); \
         return 0; \
     } int PRIVATE_VE_AUTO_RUN_VAR = PRIVATE_VE_AUTO_RUN_FUNC(); /* NOLINT */ }
 
 #define VE_REGISTER_PRIORITY_MODULE(Key, Class, ...) \
     namespace { int PRIVATE_VE_AUTO_RUN_FUNC() { \
-        ve::registerModule<Class>(#Key, __VA_ARGS__); \
+        ve::module::reg<Class>(#Key, __VA_ARGS__); \
         return 0; \
     } int PRIVATE_VE_AUTO_RUN_VAR = PRIVATE_VE_AUTO_RUN_FUNC(); /* NOLINT */ }

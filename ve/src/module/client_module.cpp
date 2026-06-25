@@ -39,7 +39,7 @@ class ClientModule : public ve::Module
     std::unique_ptr<TerminalClientLoop> client_loop_;
 
 public:
-    explicit ClientModule(const std::string& name) : ve::Module(name) {}
+    ClientModule() = default;
 
 private:
     void ready() override;

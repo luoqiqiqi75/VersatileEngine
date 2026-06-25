@@ -208,9 +208,6 @@ speed->set(1.5);
 
 class MyModule : public ve::Module
 {
-public:
-    using Module::Module;
-
     void init() override {
         ve::n("/robot/state/power")->set(0);
     }

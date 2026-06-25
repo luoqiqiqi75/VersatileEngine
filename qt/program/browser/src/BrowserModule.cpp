@@ -22,7 +22,7 @@ QString readQrcFile(const QString& qrcPath)
 
 VE_REGISTER_MODULE(browser, BrowserModule)
 
-BrowserModule::BrowserModule(const std::string& name) : Module(name)
+BrowserModule::BrowserModule()
 {
     QtWebView::initialize();
 }

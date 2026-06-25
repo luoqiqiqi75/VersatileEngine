@@ -282,7 +282,7 @@ class QtModule : public Module
     bool owns_app_ = false;
 
 public:
-    explicit QtModule(const std::string& name) : Module(name) {}
+    QtModule() = default;
 
 protected:
     void init() override

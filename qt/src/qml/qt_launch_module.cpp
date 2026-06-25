@@ -16,7 +16,7 @@ class QtLaunchModule : public Module
     QQmlApplicationEngine* engine_ = nullptr;
 
 public:
-    explicit QtLaunchModule(const std::string& name) : Module(name) {}
+    QtLaunchModule() = default;
 
 protected:
     void ready() override

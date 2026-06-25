@@ -5,7 +5,7 @@
 class BrowserModule : public ve::Module
 {
 public:
-    explicit BrowserModule(const std::string& name);
+    BrowserModule();
 
 protected:
     void ready() override;

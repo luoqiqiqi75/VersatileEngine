@@ -1,5 +1,7 @@
 #include "ve/core/module.h"
 
+#include "ve/core/log.h"
+
 #define STATE_IMPL(S, F) \
 trigger(MODULE_STATE_ABOUT_TO_CHANGE); \
 F(); _p->s = S;                        \
@@ -12,7 +14,11 @@ struct Module::Private
     State s = NONE;
 };
 
-static std::string moduleKeyToPath(const std::string& name)
+namespace {
+
+std::string s_constructing_key;
+
+std::string moduleKeyToPath(const std::string& name)
 {
     std::string path = name;
     for (auto& c : path) {
@@ -21,10 +27,23 @@ static std::string moduleKeyToPath(const std::string& name)
     return path;
 }
 
-Module::Module(const std::string& name)
-    : Object(name), NodeRef(ve::n(moduleKeyToPath(name))), _p(new Private)
+} // anon
+
+Module::Module(const std::string& name, Node* module_n) : Object(name),
+    NodeRef(module_n), _p(new Private)
+{
+    if (!_n) veLogW << "<ve.module> create " << name << " module with null node";
+}
+
+Module::Module(const std::string& name) : Module(name, n(moduleKeyToPath(name)))
 {
 }
+
+Module::Module() : Module(s_constructing_key)
+{
+    s_constructing_key.clear();
+}
+
 
 Module::~Module() noexcept { delete _p; }
 
@@ -39,6 +58,10 @@ void Module::ready() {}
 void Module::deinit() {}
 
 namespace module {
+
+namespace impl {
+void setConstructingKey(const std::string& key) { s_constructing_key = key; }
+}
 
 Factory& factory() { return factory::at("module"); }
 
