@@ -212,8 +212,12 @@ class MyModule : public ve::Module
         ve::n("/robot/state/power")->set(0);
     }
 
+    void prepare() override {
+        // resolve cross-module deps, connect peers
+    }
+
     void ready() override {
-        // all modules initialized, start working
+        // all modules prepared, start working
     }
 
     void deinit() override {

@@ -575,6 +575,15 @@ void init()
         veLogI << "[ve::entry] " << g.modules.size() << " modules initialized";
     }
 
+    // prepare(): forward order (parents first, children last)
+    for (auto& slot : g.modules) {
+        if (!slot.instance) continue;
+        if (verbose) {
+            veLogI << "[ve::entry] PREPARE: " << slot.key;
+        }
+        slot.instance->exeState<Module::PREPARE>();
+    }
+
     // ready(): reverse order (children first, parents last)
     for (int i = (int)g.modules.size() - 1; i >= 0; --i) {
         auto& slot = g.modules[i];

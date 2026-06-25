@@ -7,7 +7,7 @@
 // ----------------------------------------------------------------------------
 //
 // Lifecycle (driven by ve::entry):
-//   parents first:  all constructors → all init()
+//   parents first:  all constructors → all init() → all prepare()
 //   children first: all ready() → ... → all deinit() → all destructors
 //
 // Module key "a.b" is a child of "a". Priority inheritance ensures
@@ -16,6 +16,7 @@
 // Convention:
 //   constructor:  read node() config, create own resources (no cross-module deps)
 //   init():       data tree setup, register commands (parent before child)
+//   prepare():    resolve cross-module deps, connect peers (parent before child)
 //   ready():      start services, subscribe to data (child before parent)
 //   deinit():     stop services, disconnect (child before parent)
 //   destructor:   release own resources (child before parent)
@@ -39,6 +40,7 @@ public:
     enum State : int {
         NONE    = 0x0f00 | 0x00,
         INIT    = 0x0f00 | 0x10,
+        PREPARE = 0x0f00 | 0x40,
         READY   = 0x0f00 | 0x80,
         DEINIT  = 0x0f00 | 0xf0
     };
@@ -55,6 +57,7 @@ public:
 
 protected:
     virtual void init();
+    virtual void prepare();
     virtual void ready();
     virtual void deinit();
 

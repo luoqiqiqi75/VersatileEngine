@@ -342,6 +342,10 @@ class MyModule : public Module {
         // Initialize resources
         // Register commands
     }
+
+    void prepare() override {
+        // Resolve cross-module deps
+    }
     
     void ready() override {
         // Start services
