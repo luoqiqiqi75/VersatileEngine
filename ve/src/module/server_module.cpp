@@ -81,6 +81,7 @@ public:
 
 private:
     void init() override;
+    void prepare() override;
     void ready() override;
     void deinit() override;
 };
@@ -165,13 +166,17 @@ template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
 }
 
 void ServerModule::init() {
+    _data_root = node()->get("file_io/data_root").toString("./data");
+}
+
+void ServerModule::prepare() {
+    // Resolve cross-module config: if a terminal client is enabled, force the
+    // matching server-side REPL off (mutually exclusive, client wins).
     const bool terminal_client_stdio = n("ve/client/terminal/stdio/enabled")->getBool(false);
     const bool terminal_client_tcp = n("ve/client/terminal/tcp/enabled")->getBool(false);
     if (terminal_client_stdio || terminal_client_tcp) {
         n("ve/server/terminal/repl/enable")->set(false);
     }
-
-    _data_root = node()->get("file_io/data_root").toString("./data");
 }
 
 void ServerModule::bindStaticProxyTargets()

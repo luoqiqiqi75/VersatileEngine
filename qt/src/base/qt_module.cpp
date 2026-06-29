@@ -313,7 +313,15 @@ protected:
 
         main_loop_ = new QtMainLoop(app_);
         loop::setMain(main_loop_);
+    }
 
+    void prepare() override
+    {
+        Node* cfg = node()->find("config");
+
+        // Wire up cross-module log/event bridges once peers are constructed
+        // (qInstallMessageHandler is process-global; imol bridges connect to
+        // peers that may have been registered by other modules' init()).
         installQtMessageHandlerIfNeeded(cfg);
 
 #ifdef VE_QT_HAS_IMOL

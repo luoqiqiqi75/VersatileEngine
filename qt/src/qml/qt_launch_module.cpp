@@ -19,6 +19,13 @@ public:
     QtLaunchModule() = default;
 
 protected:
+    void prepare() override
+    {
+        // Register QML types before any QmlEngine loads QML (including plugin
+        // engines that may exist alongside the one we create in ready()).
+        ve::registerQuickNodeQml();
+    }
+
     void ready() override
     {
         Node* cfg = node()->find("config");
@@ -52,7 +59,6 @@ private:
         }
 
         engine_ = new QQmlApplicationEngine();
-        ve::registerQuickNodeQml();
         engine_->load(QUrl(QString::fromStdString(main_qml)));
 
         if (engine_->rootObjects().isEmpty()) {

@@ -42,12 +42,15 @@ public:
     ClientModule() = default;
 
 private:
-    void ready() override;
+    void prepare() override;
     void deinit() override;
 };
 
-void ClientModule::ready()
+void ClientModule::prepare()
 {
+    // Build the terminal client + main-loop wrapper in prepare() so any peer's
+    // ready() that touches loop::main() sees the final main loop. The client
+    // itself does no I/O here; it runs when entry::run() calls main_loop->exec().
     bool stdio_enabled = node()->at("terminal/stdio/enabled")->getBool(false);
     bool remote_enabled = node()->at("terminal/tcp/enabled")->getBool(false);
     if (stdio_enabled && remote_enabled) {

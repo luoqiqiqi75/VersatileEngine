@@ -93,8 +93,10 @@ protected:
         syncRuntimeState("init");
     }
 
-    void ready() override
+    void prepare() override
     {
+        // Bring up the ROS backend in prepare() so downstream modules can
+        // sub/pub from their ready() (parents prepare first).
         const std::string requested_backend = node()->get("config/backend").toString();
 
         std::string error;
