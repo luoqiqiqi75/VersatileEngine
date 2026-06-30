@@ -135,6 +135,27 @@ class VeClient:
         """List available commands (name + help)."""
         return self._transport.cmds()
 
+    def op(self, name: str, **params) -> Any:
+        """Raw op call — send any v2.1 envelope op directly.
+
+        Server-side ops (export/import/get/set/children/erase/trigger/
+        subscribe/unsubscribe/commands/describe/...) are routed by name; this
+        lets new server ops be reached without a dedicated wrapper.
+
+        Example:
+            instr = client.op("describe", name="ros.topic.list")
+        """
+        return self._transport.op(name, **params)
+
+    def describe(self, name: str) -> Dict:
+        """Fetch a command's instruction subtree.
+
+        Returns a dict with name + description / usage / input_schema /
+        output_schema / category as published by the server (the
+        `<key>/instruction` subtree on the factory node).
+        """
+        return self._transport.op("describe", name=name)
+
     def batch(self, items: List[Dict]) -> List[Any]:
         """Execute batch operations."""
         return self._transport.batch(items)

@@ -121,6 +121,19 @@ class AsyncVeClient:
         """List available commands (name + help)."""
         return await self._transport.cmds()
 
+    async def op(self, name: str, **params) -> Any:
+        """Raw op call — send any v2.1 envelope op directly.
+
+        Lets new server ops be reached without a dedicated wrapper.
+        Example: `await client.op("describe", name="ros.topic.list")`.
+        """
+        return await self._transport.op(name, **params)
+
+    async def describe(self, name: str) -> Dict:
+        """Fetch a command's instruction subtree (description / usage /
+        input_schema / output_schema / category)."""
+        return await self._transport.op("describe", name=name)
+
     async def batch(self, items: List[Dict]) -> List[Any]:
         """Execute batch operations."""
         return await self._transport.batch(items)

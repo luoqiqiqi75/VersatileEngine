@@ -98,6 +98,16 @@ class Transport(ABC):
         pass
 
     @abstractmethod
+    def op(self, name: str, **params) -> Any:
+        """Raw op call — generic envelope passthrough.
+
+        Sends a v2.1 envelope `{op: name, params: {...}}` and returns the
+        reply's `data` payload (or raises on failure). Use this to reach any
+        op the server registers without a dedicated client wrapper.
+        """
+        pass
+
+    @abstractmethod
     def ping(self) -> bool:
         pass
 
@@ -230,6 +240,12 @@ class HttpRestTransport(Transport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
+    def op(self, name: str, **params) -> Any:
+        reply = self._op(name, **params)
+        if not _ok(reply):
+            raise _reply_error(reply)
+        return reply.get("data")
+
     def batch(self, items: List[Dict]) -> List[Any]:
         reply = self._send({"batch": items})
         if not _ok(reply):
@@ -354,6 +370,11 @@ class JsonRpcTransport(Transport):
         if isinstance(data, dict):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
+
+    def op(self, name: str, **params) -> Any:
+        # JSON-RPC method = op name; result is already the data payload.
+        # RpcError propagates on failure.
+        return self._call(name, params)
 
     def ping(self) -> bool:
         try:
@@ -529,6 +550,12 @@ class TcpJsonTransport(Transport):
         if isinstance(data, dict):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
+
+    def op(self, name: str, **params) -> Any:
+        resp = self._op(name, **params)
+        if not _ok(resp):
+            raise _reply_error(resp)
+        return resp.get("data")
 
     def batch(self, items: List[Dict]) -> List[Any]:
         resp = self._send({"batch": items})
@@ -788,6 +815,12 @@ class MsgPackTransport(Transport):
         if isinstance(data, dict):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
+
+    def op(self, name: str, **params) -> Any:
+        flag, resp = self._op(name, **params)
+        if self._failed(flag, resp):
+            raise _reply_error(resp)
+        return resp.get("data")
 
     def batch(self, items: List[Dict]) -> List[Any]:
         flag, resp = self._send_message({"batch": items})

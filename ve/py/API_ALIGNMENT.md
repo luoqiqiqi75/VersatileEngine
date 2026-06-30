@@ -22,6 +22,8 @@ Python客户端API现已完全对齐JS的`veservice.js` WebSocket接口。
 | **命令** |
 | `run(name, args)` | ✓ | `command(name, args)` | `cmd` 字段 | 执行命令 |
 | `cmds()` | ✓ | `commands()` | `commands` | 列出可用命令 |
+| `send({op, params})` | ✓ | `op(name, **params)` | 任意 op | 透传 v2.1 信封，可达服务端新增 op |
+| - | - | `describe(name)` | `describe` | 取命令的 instruction 子树（usage / input_schema 等） |
 | **批量操作** |
 | `batch(items)` | ✓ | ✓ | `batch` 顶层字段 | 批量执行操作 |
 | **辅助方法** |

@@ -48,6 +48,15 @@ class AsyncTransport(ABC):
         pass
 
     @abstractmethod
+    async def op(self, name: str, **params) -> Any:
+        """Raw op call — generic envelope passthrough.
+
+        Sends a v2.1 envelope `{op: name, params: {...}}` and returns the
+        reply's `data` payload (or raises on failure).
+        """
+        pass
+
+    @abstractmethod
     async def ping(self) -> bool:
         pass
 
@@ -165,6 +174,12 @@ class AsyncHttpRestTransport(AsyncTransport):
         if isinstance(data, dict):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
+
+    async def op(self, name: str, **params) -> Any:
+        reply = await self._op(name, **params)
+        if not _ok(reply):
+            raise _reply_error(reply)
+        return reply.get("data")
 
     async def batch(self, items: List[Dict]) -> List[Any]:
         reply = await self._send({"batch": items})
@@ -288,6 +303,10 @@ class AsyncJsonRpcTransport(AsyncTransport):
         if isinstance(data, dict):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
+
+    async def op(self, name: str, **params) -> Any:
+        # JSON-RPC method = op name; result is already the data payload.
+        return await self._call(name, params)
 
     async def ping(self) -> bool:
         try:
