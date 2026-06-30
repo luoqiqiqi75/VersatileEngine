@@ -20,6 +20,7 @@
 #include <fstream>
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -998,19 +999,37 @@ static Result help(Node* ctx, Node* in, Node* out)
 
     auto userCmds = cmdF.keys();
     if (!userCmds.empty()) {
-        std::sort(userCmds.begin(), userCmds.end());
-        text += c.bold + c.yellow + "=== User Commands ===" + c.reset + "\n";
+        // Group by top-level prefix (the registering module): "leo.controller.activate"
+        // → "leo"; "save" → "" (no module, surfaced as a "general" bucket).
+        std::map<std::string, std::vector<std::string>> userGroups;
         for (auto& k : userCmds) {
-            std::string usage = command::usage(cmdF, k);
-            std::string desc  = command::description(cmdF, k);
-            text += "  " + c.green + usage + c.reset;
-            if (!desc.empty()) {
-                int pad = 30 - (int)usage.size();
-                text += std::string(pad > 0 ? pad : 2, ' ') + desc;
+            auto dot = k.find('.');
+            std::string mod = dot == std::string::npos ? std::string{} : k.substr(0, dot);
+            userGroups[mod].push_back(k);
+        }
+
+        auto emitGroup = [&](const std::string& title, std::vector<std::string>& keys) {
+            std::sort(keys.begin(), keys.end());
+            text += c.bold + c.yellow + "=== User Commands :: " + title + " ===" + c.reset + "\n";
+            for (auto& k : keys) {
+                std::string usage = command::usage(cmdF, k);
+                std::string desc  = command::description(cmdF, k);
+                text += "  " + c.green + usage + c.reset;
+                if (!desc.empty()) {
+                    int pad = 30 - (int)usage.size();
+                    text += std::string(pad > 0 ? pad : 2, ' ') + desc;
+                }
+                text += "\n";
             }
             text += "\n";
+        };
+
+        // No-prefix commands first as "general", then modules alphabetically.
+        if (auto it = userGroups.find(""); it != userGroups.end()) {
+            emitGroup("general", it->second);
+            userGroups.erase(it);
         }
-        text += "\n";
+        for (auto& [mod, keys] : userGroups) emitGroup(mod, keys);
     }
 
     text += c.dim + "Type 'help <command>' for details. Use --json for machine-readable output." + c.reset + "\n";
