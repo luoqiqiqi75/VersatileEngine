@@ -93,7 +93,7 @@ target_sources(${VE_ROS_LIBRARY} PRIVATE
 )
 
 # --- Embedded command docs -> ve::res::read("ve/service/ros.json") ---
-ve_collect_resources(${VE_ROS_LIBRARY} ${CMAKE_CURRENT_SOURCE_DIR})
+ve_collect_resources(${VE_ROS_LIBRARY} ${CMAKE_CURRENT_SOURCE_DIR} PREFIX ve)
 
 if(_VE_ROS_HAS_RCLCPP)
     file(GLOB_RECURSE _ROS_RCLCPP_SRC src/backend/rclcpp/*.cpp src/backend/rclcpp/*.h)

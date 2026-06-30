@@ -34,7 +34,7 @@ add_library(${VE_CORE_LIBRARY}
 ve_add_core_library_alias(${VE_CORE_LIBRARY})
 
 # --- Embedded resources (command docs etc.) -> ve::res::read("ve/service/op.json") ---
-ve_collect_resources(${VE_CORE_LIBRARY} ${CMAKE_CURRENT_SOURCE_DIR})
+ve_collect_resources(${VE_CORE_LIBRARY} ${CMAKE_CURRENT_SOURCE_DIR} PREFIX ve)
 
 target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE VE_LIBRARY)
 

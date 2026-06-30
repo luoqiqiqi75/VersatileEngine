@@ -63,17 +63,15 @@ function(ve_add_core_library_alias target_name)
 endfunction()
 
 # --- Embed files into a target as byte arrays, readable via ve::res::read() ---
-# Each file registers itself under a logical path. To avoid colliding with user
-# resource paths, every embedded path is prefixed with "ve/". With ROOT given the
-# path is "ve/<path-relative-to-ROOT>", otherwise "ve/<filename>".
-# Pure-CMake codegen, no external tooling. Editing an embedded file re-triggers
-# configure.
+# Each file registers itself under a logical path. With ROOT given the relative
+# part is "<path-relative-to-ROOT>", otherwise just "<filename>". The logical
+# key is "<prefix>/<rel>" if PREFIX is given, else just "<rel>". Pure-CMake
+# codegen, no external tooling. Editing an embedded file re-triggers configure.
 #
 # Usage:
-#   ve_embed_files(<target> ROOT <dir> FILES <f1> <f2> ...)
-#   -> ve::res::read("ve/service/op.json")  for ROOT=<...>/res, file <...>/res/service/op.json
+#   ve_embed_files(<target> [PREFIX <p>] ROOT <dir> FILES <f1> <f2> ...)
 function(ve_embed_files target)
-    cmake_parse_arguments(EMB "" "ROOT" "FILES" ${ARGN})
+    cmake_parse_arguments(EMB "" "PREFIX;ROOT" "FILES" ${ARGN})
     if(NOT EMB_FILES)
         return()
     endif()
@@ -89,7 +87,11 @@ function(ve_embed_files target)
         else()
             get_filename_component(_rel "${_f}" NAME)
         endif()
-        set(_logical "ve/${_rel}")
+        if(EMB_PREFIX)
+            set(_logical "${EMB_PREFIX}/${_rel}")
+        else()
+            set(_logical "${_rel}")
+        endif()
 
         file(READ "${_f}" _hex HEX)
         string(LENGTH "${_hex}" _hexlen)
@@ -125,13 +127,18 @@ endfunction()
 
 # --- Embed a module's standard resource tree ---
 # Convention wrapper over ve_embed_files(): globs everything under <module_dir>/res
-# and embeds it rooted at <module_dir>/res, so each file is readable as
-# ve::res::read("ve/<path-relative-to-res>"). No-op when the module has no res/.
+# and embeds it rooted at <module_dir>/res. The logical key is
+# "<prefix>/<path-relative-to-res>" if PREFIX is given, else just
+# "<path-relative-to-res>". No-op when the module has no res/.
 #
 # Usage:
-#   ve_collect_resources(<target> <module_dir>)
-#   -> embeds ve/res/service/op.json as ve::res::read("ve/service/op.json"), etc.
+#   ve_collect_resources(<target> <module_dir> [PREFIX <p>])
 function(ve_collect_resources target module_dir)
+    cmake_parse_arguments(VCR "" "PREFIX" "" ${ARGN})
     file(GLOB_RECURSE _res_files ${module_dir}/res/*)
-    ve_embed_files(${target} ROOT ${module_dir}/res FILES ${_res_files})
+    if(VCR_PREFIX)
+        ve_embed_files(${target} PREFIX ${VCR_PREFIX} ROOT ${module_dir}/res FILES ${_res_files})
+    else()
+        ve_embed_files(${target} ROOT ${module_dir}/res FILES ${_res_files})
+    endif()
 endfunction()
