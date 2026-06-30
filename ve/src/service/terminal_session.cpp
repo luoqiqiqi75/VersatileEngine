@@ -856,10 +856,17 @@ static Result help(Node* ctx, Node* in, Node* out)
         if (!instr) { instr = command::instruction(cmdF, topic); sourceF = &cmdF; }
 
         if (!instr) {
-            auto desc = command::description(replF, topic);
-            if (desc.empty()) desc = command::description(cmdF, topic);
-            if (desc.empty()) return Result::fail("unknown command: " + topic);
-            setTextOut(out, c.bold + topic + c.reset + " - " + desc + "\n");
+            // No instruction subtree — but the command itself may still be a
+            // registered callable (e.g. leo.controller.activate). Treat that as
+            // an "(empty)" help entry rather than reporting it as unknown.
+            Node* cmd_n = replF.node(topic, VE_FACTORY_KEY_SEP);
+            if (!cmd_n || !cmd_n->get().isCallable()) {
+                cmd_n = cmdF.node(topic, VE_FACTORY_KEY_SEP);
+            }
+            if (!cmd_n || !cmd_n->get().isCallable()) {
+                return Result::fail("unknown command: " + topic);
+            }
+            setTextOut(out, c.bold + topic + c.reset + "\n  " + c.dim + "(empty)" + c.reset + "\n");
             return Result::ok();
         }
 
@@ -875,13 +882,20 @@ static Result help(Node* ctx, Node* in, Node* out)
         std::string desc = instr->get("description").toString();
         text += c.bold + topic + c.reset;
         if (!desc.empty()) text += " - " + desc;
-        text += "\n\n";
+        text += "\n";
 
-        std::string usage = instr->get("usage").toString();
-        if (usage.empty()) usage = command::usage(*sourceF, topic);
-        text += c.dim + "Usage:" + c.reset + " " + usage + "\n";
+        // Only emit Usage/Parameters when the instruction actually carries
+        // structured info — a description-only entry stays a single line.
+        std::string explicitUsage = instr->get("usage").toString();
+        Node* props = instr->find("input_schema/properties");
+        bool hasProps = props && !props->children().empty();
 
-        if (Node* props = instr->find("input_schema/properties")) {
+        if (!explicitUsage.empty() || hasProps) {
+            std::string usage = explicitUsage.empty() ? command::usage(*sourceF, topic) : explicitUsage;
+            text += "\n" + c.dim + "Usage:" + c.reset + " " + usage + "\n";
+        }
+
+        if (hasProps) {
             std::unordered_set<std::string> req;
             if (Node* r = instr->find("input_schema/required"))
                 for (Node* ch : r->children()) req.insert(ch->get().toString());
