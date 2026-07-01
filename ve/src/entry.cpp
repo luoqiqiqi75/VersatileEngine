@@ -239,8 +239,11 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
 
 // --- setup -----------------------------------------------------------------
 
-// Helper: recursively load JSON files from directory into a config staging
-// subtree. Directory name becomes the child key (mirrors namespace mount).
+// Helper: recursively iterate *.json files under a directory into `parent`.
+// Each file becomes a child keyed by its stem; nested subdirectories become
+// intermediate child nodes keyed by their own name. The directory passed in
+// as `dir_path` itself contributes nothing — its children are attached
+// directly to `parent`.
 static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbose)
 {
     namespace fs = std::filesystem;
@@ -273,12 +276,22 @@ static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbos
     }
 }
 
-// Mount a config file/dir at /ve/entry/config/<stem>. The stem doubles as a
-// namespace so that ve.json's top-level "core" targets module "ve.core".
+// Mount config from either a JSON file or a directory:
+//   - File:      loaded at /ve/entry/config/<file_stem>. The stem doubles as
+//                a namespace so ve.json's top-level "core" targets module
+//                "ve.core".
+//   - Directory: iterated as a flat set of *.json files, each mounted at
+//                /ve/entry/config/<file_stem>. The directory name itself
+//                does not participate in the namespace.
 static void mountConfigFile(const std::string& config_path, bool verbose)
 {
     namespace fs = std::filesystem;
     std::error_code ec;
+
+    if (fs::is_directory(config_path, ec)) {
+        loadConfigDir(n("ve/entry/config"), config_path, verbose);
+        return;
+    }
 
     fs::path p(config_path);
     std::string stem = p.stem().string();
@@ -288,20 +301,15 @@ static void mountConfigFile(const std::string& config_path, bool verbose)
     }
 
     Node* mount = n("ve/entry/config")->at(stem);
-
-    if (fs::is_directory(config_path, ec)) {
-        loadConfigDir(mount, config_path, verbose);
-    } else {
-        std::string content = readFile(config_path);
-        if (content.empty()) {
-            veLogW << "[ve/entry] Config file empty or missing: " << config_path;
-            return;
-        }
-        if (!schema::toNode<schema::JsonS>(mount, content)) {
-            veLogE << "[ve/entry] Config parse failed: " << config_path;
-        } else if (verbose) {
-            veLogI << "[ve/entry] Config loaded: " << config_path;
-        }
+    std::string content = readFile(config_path);
+    if (content.empty()) {
+        veLogW << "[ve/entry] Config file empty or missing: " << config_path;
+        return;
+    }
+    if (!schema::toNode<schema::JsonS>(mount, content)) {
+        veLogE << "[ve/entry] Config parse failed: " << config_path;
+    } else if (verbose) {
+        veLogI << "[ve/entry] Config loaded: " << config_path;
     }
 }
 
