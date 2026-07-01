@@ -313,7 +313,7 @@ static void mountConfigFile(const std::string& config_path, bool verbose)
     }
 }
 
-// Fold each per-namespace options subtree (/ve/entry/config/<ns>/options)
+// Fold each per-namespace entry subtree (/ve/entry/config/<ns>/entry)
 // into /ve/entry/options. Later namespaces overlay earlier ones — order is
 // insertion order on /ve/entry/config, so a directory-loaded set follows the
 // filesystem's iteration order.
@@ -323,11 +323,11 @@ static void mergeConfigOptions()
     if (!cfg_root) return;
     Node* opts_dst = n("ve/entry/options");
     for (Node* ns : cfg_root->children()) {
-        if (Node* src = ns->find("options")) {
+        if (Node* src = ns->find("entry")) {
             opts_dst->copy(src);
-            // The options subtree is not a module config; drop it so the
+            // The entry subtree is not a module config; drop it so the
             // module-copy pass in init() doesn't see it.
-            ns->erase("options");
+            ns->erase("entry");
         }
     }
 }
@@ -370,7 +370,7 @@ void setup(Node* options_n)
         mountConfigFile(config_file, verbose);
     }
 
-    // 3. Fold per-namespace "options" out of config into /ve/entry/options.
+    // 3. Fold per-namespace "entry" out of config into /ve/entry/options.
     mergeConfigOptions();
 
     // 4. Overlay caller options — CLI / API wins over file.
