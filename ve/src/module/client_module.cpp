@@ -80,7 +80,7 @@ void ClientModule::prepare()
         node()->at("terminal/stdio/runtime/stdio")->set(Var(true));
         node()->at("terminal/tcp/runtime/active")->set(Var(false));
         node()->at("terminal/tcp/runtime/last_error")->set(Var(""));
-        if (entry::options().verbose) veLogI << "[ve/client/terminal/stdio] stdio REPL enabled";
+        if (entry::verbose()) veLogI << "[ve/client/terminal/stdio] stdio REPL enabled";
     } else if (remote_enabled) {
         Node* tcp = node()->at("terminal/tcp");
         std::string host = tcp->at("config/host")->getString("127.0.0.1");
@@ -114,7 +114,7 @@ void ClientModule::prepare()
         loop::setMain(client_loop_.get());
 
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
-        if (entry::options().verbose) veLogI << "[ve/client/terminal/tcp] enabled -> " << host << ":" << port;
+        if (entry::verbose()) veLogI << "[ve/client/terminal/tcp] enabled -> " << host << ":" << port;
     } else {
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
         node()->at("terminal/tcp/runtime/active")->set(Var(false));

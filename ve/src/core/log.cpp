@@ -143,7 +143,7 @@ std::string ve_get_log_path()
     std::error_code ec;
     fs::create_directories(log_dir, ec);
     if (ec) {
-        std::cerr << "[ve::log] Failed to create log directory: " << log_dir
+        std::cerr << "[ve/log] Failed to create log directory: " << log_dir
                   << " (" << ec.message() << ")" << std::endl;
         return "";
     }

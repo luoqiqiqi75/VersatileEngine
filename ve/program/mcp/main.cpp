@@ -151,27 +151,11 @@ static Var makeToolCallResult(const std::string& key, const Var& args)
     return Var(std::move(result));
 }
 
-static std::string parseConfigFromArgs(int argc, char** argv)
-{
-    std::string cfg = "ve.json";
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
-            cfg = argv[++i];
-        } else if (!arg.empty() && arg[0] != '-') {
-            cfg = arg;
-        }
-    }
-    return cfg;
-}
-
 } // namespace
 
 int main(int argc, char** argv)
 {
-    const std::string configPath = parseConfigFromArgs(argc, argv);
-
-    ve::entry::setup(configPath);
+    ve::entry::setup(argc, argv);
     ve::entry::init();
 
     std::string message;

@@ -10,8 +10,20 @@
 //   parents first:  all constructors → all init() → all prepare()
 //   children first: all ready() → ... → all deinit() → all destructors
 //
-// Module key "a.b" is a child of "a". Priority inheritance ensures
-// a child never precedes its nearest registered ancestor.
+// Module key
+//   "a.b.c" places the module at path /a/b/c on the global node tree
+//   ('.' -> '/'). "a" is the parent of "a.b", and so on.
+//
+// Load order
+//   Modules load in hierarchical pre-order: a parent always precedes its
+//   children, and each parent's whole subtree runs contiguously before the
+//   next sibling. Within a group of siblings sharing the same parent, order
+//   is by ascending priority (lower value = earlier); ties keep registration
+//   order. Priority is set at registration only (see VE_REGISTER_MODULE /
+//   VE_REGISTER_PRIORITY_MODULE) and is not inherited across the tree — it
+//   only orders direct siblings, so numbers on unrelated subtrees never
+//   interfere. Default priority is 100; use small distinct values (e.g.
+//   10 / 50 / 90) for readability, no need to spread them.
 //
 // Convention:
 //   constructor:  read node() config, create own resources (no cross-module deps)

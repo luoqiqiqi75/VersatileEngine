@@ -301,12 +301,14 @@ protected:
         if (QCoreApplication::instance()) {
             app_ = QCoreApplication::instance();
         } else {
-            auto& opts = entry::options();
-            int argc = opts.argc;
+            auto [argc_v, argv_v] = entry::args();
+            // QApplication expects int& — copy to a local, its adjustments
+            // stay local since the process argv is not touched again.
+            int argc = argc_v;
             if (app_type == "widgets") {
-                app_ = new QApplication(argc, opts.argv);
+                app_ = new QApplication(argc, argv_v);
             } else {
-                app_ = new QGuiApplication(argc, opts.argv);
+                app_ = new QGuiApplication(argc, argv_v);
             }
             owns_app_ = true;
         }

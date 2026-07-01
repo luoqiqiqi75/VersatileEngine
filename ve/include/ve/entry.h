@@ -17,30 +17,75 @@
 //
 // Or step-by-step:
 //
-//   ve::entry::setup("ve.json");
+//   ve::entry::setup(argc, argv);
 //   ve::entry::init();
 //   int code = ve::entry::run();
 //   ve::entry::deinit();
 //
-// Configuration JSON (ve.json) maps directly to the node tree:
+// Lifecycle:
+//   setup()  parses argv into a temporary options node and applies it. The
+//            config file (default "ve.json") is loaded into
+//            /ve/entry/config/<stem>, its "options" subtree is merged into
+//            /ve/entry/options, and finally the CLI options overlay it so
+//            command-line always wins. Nothing outside /ve/entry is written.
+//   init()   loads plugins listed in options, filters factory keys by
+//            options/modules/blacklist, materializes selected module nodes in
+//            hierarchical DFS order (siblings sorted by base priority), copies
+//            each module's config subtree in, instantiates, and drives the
+//            INIT / PREPARE / READY state machine. /ve/entry is erased once
+//            READY is reached, so downstream code sees only real module state.
+//
+// /ve/entry/options schema:
+//
+//   verbose         bool     Entry-pipeline chatter (config-load, module
+//                            creation, state transitions). Also surfaced via
+//                            entry::verbose() so modules can gate their own
+//                            first-run logs on the same switch.
+//   config_file     string   Path handed to setup(). Read by setup(Node*)
+//                            before it touches the filesystem; a value of
+//                            "" skips file loading entirely.
+//   plugins         list     [{ path, enabled?, min_api?, name? }, ...].
+//                            Loaded in order at the top of init(). Config
+//                            entries come first; CLI plugin paths (bare
+//                            .dll/.so/.dylib on argv) append.
+//   modules.blacklist list   Module keys to skip. An entry "a.b" also skips
+//                            every descendant "a.b.*". Order-independent.
+//   config_override list     Internal — each entry { path, value } is
+//                            flushed into /ve/entry/config during setup()
+//                            and then erased. This is where CLI --set,
+//                            --terminal, and --remote land; any caller
+//                            constructing an options_n manually can push
+//                            entries here too instead of pre-baking them
+//                            into a full config subtree.
+//
+// Precedence (later wins): built-in defaults ◃ config file "options" subtree
+// ◃ caller-supplied options_n. The whole /ve/entry staging area is erased
+// at the end of init(), so consumers must read anything they need before
+// READY, or use the query helpers (entry::verbose(), entry::args()).
+//
+// Config file layout (foo.json is mounted at /ve/entry/config/foo):
 //
 //   {
-//     "ve": {
-//       "entry": { "verbose": false, "plugins": [...] },
-//       "core":  { "config": { "log": { "level": "info" } } },
-//       "service": { "http": { "config": { "port": 8080 } } }
+//     "options": {
+//       "plugins":  [ { "path": "...", "enabled": true } ],
+//       "modules":  { "blacklist": ["a.b.c"] },
+//       "verbose":  true
 //     },
-//     "browser": { "config": { ... } }
+//     "core":  { ... module foo.core config ... },
+//     "sub":   { "mod": { ... module foo.sub.mod config ... } }
 //   }
 //
-// The entire JSON is loaded into node::root(). Each module reads its own
-// subtree (key with '.' replaced by '/'). No staging area or dispatch needed.
+// A module named "foo.sub.mod" reads its own subtree at /foo/sub/mod ('.' in
+// key -> '/' in path). Config subtrees that don't correspond to a loaded
+// module are dropped with the staging area.
 //
-// Module loading policy:
-//   - Registered modules (VE_REGISTER_MODULE) load by default.
-//     Config only overrides priority/depends, or disables via "enabled": false.
-//   - Plugins (dynamic libraries) do NOT load by default.
-//     Only plugins listed under ve/entry/plugins are loaded.
+// Module load policy:
+//   - Registered modules (VE_REGISTER_MODULE) load by default; put a key in
+//     options/modules/blacklist to skip it (also skips its subtree).
+//   - ve.service.* modules are opt-in: only loaded if their config subtree
+//     exists.
+//   - Plugins (dynamic libraries) do NOT load by default. Only plugins listed
+//     under /ve/entry/options/plugins (via config or CLI) are loaded.
 //
 // ----------------------------------------------------------------------------
 
@@ -67,34 +112,16 @@ enum State : int {
     SHUTDOWN
 };
 
-// NOTE: transitional — Options bypasses the node tree; it should eventually
-// dissolve into ve/entry/* nodes.
-struct VE_API Options {
-    std::string config_file;
-    bool verbose      = false;
-    // Enable the local stdio terminal via ve/client/terminal/stdio/enabled.
-    bool terminal     = false;
-    // Enable the remote terminal client via ve/client/terminal/tcp/enabled.
-    bool remote_terminal = false;
-    std::string remote_host = "127.0.0.1";
-    int remote_port = 10000;
-    int  pool_threads = 4;
-    int    argc = 0;
-    char** argv = nullptr;
+// Parse argv into a fresh options node and hand off to setup(Node*).
+VE_API void setup(int argc, char** argv);
 
-    std::string app_name;                 // from argv[0]; applied by setup()
-    std::vector<std::string> plugins;     // CLI plugin libs -> ve/entry/plugins
-    std::vector<std::pair<std::string, std::string>> sets;  // --set=path=value -> ve/entry/<path>
-
-    // Parse argv into this Options. Returns false (after printing to stderr)
-    // on invalid arguments; the caller should exit with code 2.
-    bool parse(int argc, char** argv);
-};
-
-// Load configuration into node::root().
+// Shortcut: run with defaults but override the config file path.
 VE_API void setup(const std::string& config_file);
-VE_API void setup(const Options& options);
-VE_API void setup(Node* config_node);
+
+// Merge a caller-supplied options node into the staging area, load the config
+// file it points at, and finish preparing /ve/entry for init(). Pass nullptr
+// to run with defaults (loads "ve.json" from cwd if present).
+VE_API void setup(Node* options_n);
 
 // Load plugins, create modules, and complete initialization.
 VE_API void init();
@@ -109,17 +136,20 @@ VE_API void deinit();
 VE_API void requestQuit(int exit_code = 0);
 
 // Convenience: setup + init + run + deinit
-VE_API int  exec(const std::string& config_file);
 VE_API int  exec(int argc, char** argv);
 
-// State query
+// --- queries ---
 VE_API State state();
 
-// Access the parsed Options (argc/argv available for Qt etc.)
-VE_API const Options& options();
+// Original argv as passed to setup() — kept for frameworks (Qt, ROS) that
+// need to see the process argv. argc() reflects the original count.
+VE_API std::pair<int, char**> args();
 
-// Access the ve/ root node
-VE_API Node* config();
+// Application name derived from argv[0]; used for log prefix.
+VE_API const std::string& appName();
+
+// Convenience: /ve/entry/options/verbose (or false pre-setup).
+VE_API bool   verbose();
 
 } // namespace entry
 

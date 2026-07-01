@@ -37,10 +37,13 @@ struct ModuleSlot {
 };
 
 struct EntryState {
-    entry::State      state = entry::NONE;
-    entry::Options    options;
+    entry::State       state = entry::NONE;
     Vector<ModuleSlot> modules;
 
+    int                argc = 0;
+    char**             argv = nullptr;
+    std::string        app_name;
+    bool               verbose = false;
 };
 
 EntryState& G()
@@ -133,24 +136,48 @@ int keyDepth(const std::string& key)
 
 namespace entry {
 
-// --- Options ---------------------------------------------------------------
+// --- CLI parse -------------------------------------------------------------
+//
+// Parse argv into a fresh options node, plus fill in argc/argv/app_name on
+// the entry state. On error prints to stderr and returns false; the caller
+// should exit(2).
 
-bool Options::parse(int arg_count, char** arg_values)
+namespace {
+
+// A CLI option that needs to reach a specific config path becomes a
+// "config_override" child on the options node, then setup() moves each such
+// entry into /ve/entry/config so it can be applied to the matching module
+// subtree by the normal copy pass.
+void setConfigOverride(Node* opts_n, const std::string& path, const Var& value)
 {
-    argc = arg_count;
-    argv = arg_values;
+    Node* co = opts_n->at("config_override");
+    Node* pn = co->append("");
+    pn->at("path")->set(Var(path));
+    pn->at("value")->set(value);
+}
+
+bool parseArgs(int argc, char** argv, Node* opts_n)
+{
+    auto& g = G();
+    g.argc = argc;
+    g.argv = argv;
 
     if (argc > 0 && argv[0]) {
         namespace fs = std::filesystem;
-        app_name = fs::path(argv[0]).stem().string();
+        g.app_name = fs::path(argv[0]).stem().string();
     }
+
+    bool terminal = false;
+    bool remote_terminal = false;
+    std::string remote_host = "127.0.0.1";
+    int remote_port = 10000;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
-            config_file = argv[++i];
+            opts_n->at("config_file")->set(Var(std::string(argv[++i])));
         } else if (arg == "--verbose" || arg == "-v") {
-            verbose = true;
+            opts_n->at("verbose")->set(Var(true));
         } else if (arg == "--terminal" || arg == "--local-terminal" || arg == "-t") {
             terminal = true;
         } else if (arg == "--remote" || arg == "--remote-terminal" || arg == "-r") {
@@ -181,13 +208,14 @@ bool Options::parse(int arg_count, char** arg_values)
             std::string kv = arg.substr(6);
             auto eq = kv.find('=');
             if (eq != std::string::npos) {
-                sets.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
+                setConfigOverride(opts_n, kv.substr(0, eq), Var(kv.substr(eq + 1)));
             }
         } else if (arg[0] != '-') {
             if (endsWith(arg, ".dll") || endsWith(arg, ".so") || endsWith(arg, ".dylib")) {
-                plugins.push_back(arg);
-            } else if (config_file.empty()) {
-                config_file = arg;
+                Node* pn = opts_n->at("plugins")->append("");
+                pn->at("path")->set(Var(arg));
+            } else if (!opts_n->find("config_file")) {
+                opts_n->at("config_file")->set(Var(arg));
             }
         }
     }
@@ -196,23 +224,23 @@ bool Options::parse(int arg_count, char** arg_values)
         std::cerr << "Local terminal (-t/--terminal) and remote terminal (-r/--remote) are mutually exclusive.\n";
         return false;
     }
-
-    if (config_file.empty()) {
-        config_file = "ve.json";
+    if (terminal) {
+        setConfigOverride(opts_n, "ve/client/terminal/stdio/enabled", Var(true));
+    }
+    if (remote_terminal) {
+        setConfigOverride(opts_n, "ve/client/terminal/tcp/enabled", Var(true));
+        setConfigOverride(opts_n, "ve/client/terminal/tcp/config/host", Var(remote_host));
+        setConfigOverride(opts_n, "ve/client/terminal/tcp/config/port", Var(remote_port));
     }
     return true;
 }
 
+} // anon
+
 // --- setup -----------------------------------------------------------------
 
-void setup(const std::string& config_file)
-{
-    Options opts;
-    opts.config_file = config_file;
-    setup(opts);
-}
-
-// Helper: recursively load JSON files from directory into node tree
+// Helper: recursively load JSON files from directory into a config staging
+// subtree. Directory name becomes the child key (mirrors namespace mount).
 static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbose)
 {
     namespace fs = std::filesystem;
@@ -236,83 +264,137 @@ static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbos
                 Node* child = parent->find(stem);
                 if (!child) child = parent->append(stem);
                 if (!schema::toNode<schema::JsonS>(child, content)) {
-                    veLogE << "[ve::entry] Failed to parse config: " << path;
+                    veLogE << "[ve/entry] Config parse failed: " << path;
                 } else if (verbose) {
-                    veLogI << "[ve::entry] Config loaded: " << path;
+                    veLogI << "[ve/entry] Config loaded: " << path;
                 }
             }
         }
     }
 }
 
-void setup(const Options& options)
+// Mount a config file/dir at /ve/entry/config/<stem>. The stem doubles as a
+// namespace so that ve.json's top-level "core" targets module "ve.core".
+static void mountConfigFile(const std::string& config_path, bool verbose)
 {
-    auto& g = G();
-    g.options = options;
+    namespace fs = std::filesystem;
+    std::error_code ec;
 
-    if (!options.app_name.empty()) {
-        log::setAppName(options.app_name);
+    fs::path p(config_path);
+    std::string stem = p.stem().string();
+    if (stem.empty()) {
+        veLogW << "[ve/entry] Config path has no stem: " << config_path;
+        return;
     }
 
-    Node* root = node::root();
+    Node* mount = n("ve/entry/config")->at(stem);
 
-    if (!options.config_file.empty()) {
-        namespace fs = std::filesystem;
-        std::error_code ec;
-
-        if (fs::is_directory(options.config_file, ec)) {
-            loadConfigDir(root, options.config_file, g.options.verbose);
-        } else {
-            std::string content = readFile(options.config_file);
-            if (!content.empty()) {
-                if (!schema::toNode<schema::JsonS>(root, content)) {
-                    veLogE << "[ve::entry] Failed to parse config: " << options.config_file;
-                } else if (g.options.verbose) {
-                    veLogI << "[ve::entry] Config loaded: " << options.config_file;
-                }
-            } else {
-                veLogW << "[ve::entry] Config file empty or not found: " << options.config_file;
-            }
+    if (fs::is_directory(config_path, ec)) {
+        loadConfigDir(mount, config_path, verbose);
+    } else {
+        std::string content = readFile(config_path);
+        if (content.empty()) {
+            veLogW << "[ve/entry] Config file empty or missing: " << config_path;
+            return;
+        }
+        if (!schema::toNode<schema::JsonS>(mount, content)) {
+            veLogE << "[ve/entry] Config parse failed: " << config_path;
+        } else if (verbose) {
+            veLogI << "[ve/entry] Config loaded: " << config_path;
         }
     }
-
-    // CLI overrides apply after the config file, so they win.
-    for (const auto& kv : options.sets) {
-        n("ve/entry/" + kv.first)->set(Var(kv.second));
-    }
-    for (const auto& p : options.plugins) {
-        Node* pn = n("ve/entry")->at("plugins")->append("");
-        pn->at("path")->set(Var(p));
-    }
-
-    if (n("ve/entry")->get("verbose").toBool(options.verbose)) g.options.verbose = true;
-    if (options.terminal) {
-        n("ve/client/terminal/stdio/enabled")->set(Var(true));
-    }
-    if (options.remote_terminal) {
-        n("ve/client/terminal/tcp/enabled")->set(Var(true));
-        n("ve/client/terminal/tcp/config/host")->set(Var(options.remote_host));
-        n("ve/client/terminal/tcp/config/port")->set(Var(options.remote_port));
-    }
-
-    g.state = SETUP;
-    if (g.options.verbose) veLogI << "[ve::entry] setup complete";
 }
 
-void setup(Node* config_node)
+// Fold each per-namespace options subtree (/ve/entry/config/<ns>/options)
+// into /ve/entry/options. Later namespaces overlay earlier ones — order is
+// insertion order on /ve/entry/config, so a directory-loaded set follows the
+// filesystem's iteration order.
+static void mergeConfigOptions()
+{
+    Node* cfg_root = n("ve/entry/config", false);
+    if (!cfg_root) return;
+    Node* opts_dst = n("ve/entry/options");
+    for (Node* ns : cfg_root->children()) {
+        if (Node* src = ns->find("options")) {
+            opts_dst->copy(src);
+            // The options subtree is not a module config; drop it so the
+            // module-copy pass in init() doesn't see it.
+            ns->erase("options");
+        }
+    }
+}
+
+// Apply any config_override entries recorded by CLI parsing into
+// /ve/entry/config, then remove the temporary subtree.
+static void applyConfigOverrides()
+{
+    Node* opts = n("ve/entry/options", false);
+    if (!opts) return;
+    Node* co = opts->find("config_override");
+    if (!co) return;
+    for (Node* entry : co->children()) {
+        std::string path = entry->get("path").toString("");
+        if (path.empty()) continue;
+        n("ve/entry/config/" + path)->set(entry->get("value"));
+    }
+    opts->erase("config_override");
+}
+
+void setup(Node* options_n)
 {
     auto& g = G();
 
-    Node* root = node::root();
-    if (config_node && config_node != root) {
-        std::string exported = schema::fromNode<schema::JsonS>(config_node);
-        schema::toNode<schema::JsonS>(root, exported);
+    // 1. Config path & verbose flag come from options_n directly (default
+    //    to "ve.json" so that a bare setup(nullptr) still finds a local file).
+    std::string config_file = "ve.json";
+    bool verbose = false;
+    if (options_n) {
+        config_file = options_n->get("config_file").toString(config_file);
+        verbose = options_n->get("verbose").toBool(false);
     }
 
-    g.options.verbose = n("ve/entry")->get("verbose").toBool(false);
+    if (!g.app_name.empty()) {
+        log::setAppName(g.app_name);
+    }
 
+    // 2. Load the config file/dir into /ve/entry/config/<stem>.
+    if (!config_file.empty()) {
+        mountConfigFile(config_file, verbose);
+    }
+
+    // 3. Fold per-namespace "options" out of config into /ve/entry/options.
+    mergeConfigOptions();
+
+    // 4. Overlay caller options — CLI / API wins over file.
+    Node* opts_node = n("ve/entry/options");
+    if (options_n && options_n != opts_node) {
+        opts_node->copy(options_n);
+    }
+
+    // 5. Flush residual options entries — --set / --terminal / --remote were
+    //    stored as config_override records; write them into /ve/entry/config.
+    applyConfigOverrides();
+
+    g.verbose = opts_node->get("verbose").toBool(false);
     g.state = SETUP;
-    if (g.options.verbose) veLogI << "[ve::entry] setup complete (from node)";
+    if (g.verbose) veLogI << "[ve/entry] setup complete";
+}
+
+void setup(int argc, char** argv)
+{
+    Node opts("options");
+    if (parseArgs(argc, argv, &opts)) {
+        setup(&opts);
+    } else {
+        veLogE << "[ve/entry] options parse failed!";
+    }
+}
+
+void setup(const std::string& config_file)
+{
+    Node opts("options");
+    opts.at("config_file")->set(Var(config_file));
+    setup(&opts);
 }
 
 // --- init ------------------------------------------------------------------
@@ -335,7 +417,7 @@ static void tryLoadOnePluginSpec(Node* spec_node)
     int min_api = spec_node->get("min_api").toInt(0);
 
     if (!plugin::load(path)) {
-        veLogE << "[ve::entry] Plugin load failed: " << path;
+        veLogE << "[ve/entry] Plugin load failed: " << path;
         return;
     }
 
@@ -348,7 +430,7 @@ static void tryLoadOnePluginSpec(Node* spec_node)
             pname = path;
         }
         if (!version::check(pname, min_api)) {
-            veLogE << "[ve::entry] Plugin " << pname
+            veLogE << "[ve/entry] Plugin " << pname
                    << " version check failed (min_api=" << min_api << ")";
         }
     }
@@ -356,11 +438,7 @@ static void tryLoadOnePluginSpec(Node* spec_node)
 
 static void loadPlugins()
 {
-    Node* entry_node = node::root()->find("ve/entry");
-    if (!entry_node) {
-        return;
-    }
-    Node* plugins_root = entry_node->find("plugins");
+    Node* plugins_root = n("ve/entry/options")->find("plugins");
     if (!plugins_root) {
         return;
     }
@@ -376,72 +454,124 @@ static void loadPlugins()
     }
 }
 
-static void buildModuleGraph(Vector<ModuleSlot>& slots)
+// Blacklist match: an entry "a.b" bans "a.b" and everything under it
+// ("a.b.c", "a.b.c.d", ...). No wildcard syntax.
+static bool inBlacklist(const std::string& key, const Vector<std::string>& black)
+{
+    for (const auto& b : black) {
+        if (b.empty()) continue;
+        if (key == b) return true;
+        if (key.size() > b.size() && key.compare(0, b.size(), b) == 0 && key[b.size()] == '.') {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Compute the ordered list of module keys to instantiate. Applies the
+// blacklist, keeps ve.service.* opt-in (needs a matching config subtree), and
+// emits keys in hierarchical DFS pre-order with siblings sorted by base
+// priority (parent priority is not inherited — order is scoped to siblings).
+static Vector<std::string> selectModuleKeys()
 {
     auto& factory = module::factory();
 
-    Hash<int> base_pri;
-    for (const auto& key : factory::keys("module")) {
-        auto* nd = factory.node(key, VE_FACTORY_KEY_SEP);
+    Vector<std::string> black;
+    if (Node* bn = n("ve/entry/options")->find("modules/blacklist")) {
+        for (Node* c : bn->children()) black.push_back(c->getString(""));
+    }
+
+    Node* cfg_root = n("ve/entry/config");
+
+    struct Entry {
+        std::string key;
+        int         priority = 100;
+    };
+
+    // Map: parent key -> children entries (root uses empty parent key).
+    Hash<Vector<Entry>> tree;
+    Hash<int> known;   // membership: key -> 1
+    Vector<std::string> raw_keys = factory::keys("module");
+
+    // First pass: filter, then bucket by parent key.
+    for (const auto& key : raw_keys) {
+        if (inBlacklist(key, black)) continue;
+
+        // ve.service.* is opt-in: require a matching config subtree.
+        if (key.rfind("ve.service.", 0) == 0) {
+            if (!cfg_root->find(keyToPath(key))) continue;
+        }
+
         int priority = 100;
+        auto* nd = factory.node(key, VE_FACTORY_KEY_SEP);
         if (nd) {
-            if (auto* pn = nd->find("priority"))
-                priority = pn->getInt(100);
-        }
-        bool enabled = true;
-
-        Node* mn = node::root()->find(keyToPath(key));
-        if (mn) {
-            enabled = mn->get("enabled").toBool(true);
-            priority = mn->get("priority").toInt(priority);
-        } else if (key.rfind("ve.service.", 0) == 0) {
-            // Network service modules are opt-in: require a matching subtree in config (e.g. ve.json).
-            enabled = false;
+            if (auto* pn = nd->find("priority")) priority = pn->getInt(100);
         }
 
-        if (!enabled) continue;
-        base_pri[key] = priority;
+        known[key] = 1;
+        tree[parentKey(key)].push_back(Entry{key, priority});
     }
 
-    // Enforce parent priority constraint: child.effective >= nearest ancestor.effective.
-    // Sort by depth first so parents are resolved before children.
-    Vector<std::string> keys;
-    keys.reserve(base_pri.size());
-    for (auto it = base_pri.begin(); it != base_pri.end(); ++it) {
-        keys.push_back(it->first);
-    }
-    std::stable_sort(keys.begin(), keys.end(),
-        [](const std::string& a, const std::string& b) {
-            return keyDepth(a) < keyDepth(b);
-        });
-
-    Hash<int> eff_pri;
-    for (auto& key : keys) {
-        int own = base_pri[key];
-        std::string pk = parentKey(key);
-        while (!pk.empty()) {
-            auto pit = eff_pri.find(pk);
-            if (pit != eff_pri.end()) {
-                if (own < pit->second) own = pit->second;
-                break;
-            }
+    // Re-attach orphaned subtrees: nearest surviving ancestor becomes the parent.
+    // This lets a child whose parent is blacklisted still load standalone.
+    Hash<Vector<Entry>> tree2;
+    for (auto it = tree.begin(); it != tree.end(); ++it) {
+        std::string pk = it->first;
+        while (!pk.empty() && known.find(pk) == known.end()) {
             pk = parentKey(pk);
         }
-        eff_pri[key] = own;
+        auto& bucket = tree2[pk];
+        for (auto& e : it->second) bucket.push_back(std::move(e));
     }
 
-    for (auto& key : keys) {
+    for (auto it = tree2.begin(); it != tree2.end(); ++it) {
+        std::stable_sort(it->second.begin(), it->second.end(),
+            [](const Entry& a, const Entry& b) { return a.priority < b.priority; });
+    }
+
+    Vector<std::string> ordered;
+    ordered.reserve(known.size());
+    std::function<void(const std::string&)> emit = [&](const std::string& pk) {
+        auto it = tree2.find(pk);
+        if (it == tree2.end()) return;
+        for (auto& e : it->second) {
+            ordered.push_back(e.key);
+            emit(e.key);
+        }
+    };
+    emit("");
+    return ordered;
+}
+
+// Pre-build empty module nodes in the chosen order so the underlying children
+// Vector reflects load order; then copy the corresponding config subtree in.
+static void buildModuleNodes(const Vector<std::string>& keys)
+{
+    Node* root  = node::root();
+    Node* cfg   = n("ve/entry/config");
+
+    for (const auto& key : keys) {
+        Node* mn = root->atPath(keyToPath(key));
+        if (Node* src = cfg->find(keyToPath(key))) {
+            mn->copy(src);
+        }
+    }
+}
+
+// Populate slots by walking the (already ordered) module subtrees on the real
+// node tree. Skips subtrees that were never built (blacklisted / not selected).
+static void buildModuleGraph(Vector<ModuleSlot>& slots, const Vector<std::string>& keys)
+{
+    auto& factory = module::factory();
+    slots.reserve(keys.size());
+    for (const auto& key : keys) {
         ModuleSlot slot;
         slot.key = key;
-        slot.priority = eff_pri[key];
+        if (auto* nd = factory.node(key, VE_FACTORY_KEY_SEP)) {
+            if (auto* pn = nd->find("priority")) slot.priority = pn->getInt(100);
+        }
         slots.push_back(std::move(slot));
     }
-
-    std::stable_sort(slots.begin(), slots.end(),
-        [](const ModuleSlot& a, const ModuleSlot& b) {
-            if (a.priority != b.priority) return a.priority < b.priority;
-            return keyDepth(a.key) < keyDepth(b.key);
-        });
 }
 
 static void resolveDepends(Vector<ModuleSlot>& slots)
@@ -484,7 +614,7 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
             std::string dep_key = dep->getString();
             auto dit = key_to_idx.find(dep_key);
             if (dit == key_to_idx.end()) {
-                veLogW << "[ve::entry] Dependency not found: " << slot.key << " -> " << dep_key;
+                veLogW << "[ve/entry] Dependency not found: " << slot.key << " -> " << dep_key;
                 continue;
             }
             adj[dit->second].push_back(to);
@@ -492,13 +622,10 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
         }
     }
 
-    // Kahn's topo sort with priority queue (min-heap) for deterministic ordering
-    auto cmp = [&](int a, int b) {
-        if (slots[a].priority != slots[b].priority) return slots[a].priority > slots[b].priority;
-        int da = keyDepth(slots[a].key), db = keyDepth(slots[b].key);
-        if (da != db) return da > db;
-        return a > b;
-    };
+    // Kahn's topo sort. Input order already encodes hierarchy + priority, so
+    // the ready-set tiebreaker is just input index — keeps subtrees contiguous
+    // and only lets explicit depends rearrange things.
+    auto cmp = [](int a, int b) { return a > b; };
     std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
 
     for (int i = 0; i < n_slots; ++i) {
@@ -516,7 +643,7 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
     }
 
     if ((int)order.size() != n_slots) {
-        veLogE << "[ve::entry] Circular dependency detected in module graph!";
+        veLogE << "[ve/entry] Circular dependency detected in module graph!";
         return;
     }
 
@@ -531,18 +658,23 @@ static void resolveDepends(Vector<ModuleSlot>& slots)
 void init()
 {
     auto& g = G();
-    bool verbose = g.options.verbose;
+    bool verbose = g.verbose;
 
     loadPlugins();
 
-    buildModuleGraph(g.modules);
+    // Select keys, then materialize their nodes in that exact order. Config
+    // subtrees are copied in as each node is created.
+    Vector<std::string> keys = selectModuleKeys();
+    buildModuleNodes(keys);
+
+    buildModuleGraph(g.modules, keys);
     resolveDepends(g.modules);
 
     auto& factory = module::factory();
 
     for (auto& slot : g.modules) {
         if (verbose) {
-            veLogI << "[ve::entry] Creating module: " << slot.key;
+            veLogI << "[ve/entry] Creating module: " << slot.key;
         }
         try {
             const auto& cfactory = factory;
@@ -555,10 +687,10 @@ void init()
                 nd->at("instance")->set(Var(static_cast<void*>(slot.instance)));
             }
         } catch (const std::exception& e) {
-            veLogE << "[ve::entry] Module create failed (" << slot.key << "): " << e.what();
+            veLogE << "[ve/entry] Module create failed (" << slot.key << "): " << e.what();
         }
         if (slot.instance && verbose) {
-            veLogI << "[ve::entry] Module created: " << slot.key;
+            veLogI << "[ve/entry] Module created: " << slot.key;
         }
     }
 
@@ -566,20 +698,20 @@ void init()
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
         if (verbose) {
-            veLogI << "[ve::entry] INIT: " << slot.key;
+            veLogI << "[ve/entry] INIT: " << slot.key;
         }
         slot.instance->exeState<Module::INIT>();
     }
 
     if (verbose) {
-        veLogI << "[ve::entry] " << g.modules.size() << " modules initialized";
+        veLogI << "[ve/entry] " << g.modules.size() << " modules initialized";
     }
 
     // prepare(): forward order (parents first, children last)
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
         if (verbose) {
-            veLogI << "[ve::entry] PREPARE: " << slot.key;
+            veLogI << "[ve/entry] PREPARE: " << slot.key;
         }
         slot.instance->exeState<Module::PREPARE>();
     }
@@ -589,15 +721,20 @@ void init()
         auto& slot = g.modules[i];
         if (!slot.instance) continue;
         if (verbose) {
-            veLogI << "[ve::entry] READY: " << slot.key;
+            veLogI << "[ve/entry] READY: " << slot.key;
         }
         slot.instance->exeState<Module::READY>();
     }
 
     g.state = READY;
 
+    // Staging area done its job: config has been applied to module subtrees,
+    // options captured on g / factory / module nodes. Drop it so downstream
+    // code sees a clean tree.
+    node::root()->erase("ve/entry");
+
     if (verbose) {
-        veLogI << "[ve::entry] " << g.modules.size() << " modules ready";
+        veLogI << "[ve/entry] " << g.modules.size() << " modules ready";
     }
 }
 
@@ -620,13 +757,13 @@ void requestQuit(int exit_code)
 void deinit()
 {
     auto& g = G();
-    bool verbose = g.options.verbose;
+    bool verbose = g.verbose;
 
     for (int i = (int)g.modules.size() - 1; i >= 0; --i) {
         auto& slot = g.modules[i];
         if (!slot.instance) continue;
         if (verbose) {
-            veLogI << "[ve::entry] DEINIT: " << slot.key;
+            veLogI << "[ve/entry] DEINIT: " << slot.key;
         }
         slot.instance->exeState<Module::DEINIT>();
     }
@@ -641,26 +778,15 @@ void deinit()
     g.state = SHUTDOWN;
 
     if (verbose) {
-        veLogI << "[ve::entry] deinit complete";
+        veLogI << "[ve/entry] deinit complete";
     }
 }
 
 // --- convenience -----------------------------------------------------------
 
-int exec(const std::string& config_file)
-{
-    setup(config_file);
-    init();
-    int code = run();
-    deinit();
-    return code;
-}
-
 int exec(int argc, char** argv)
 {
-    Options opts;
-    if (!opts.parse(argc, argv)) return 2;
-    setup(opts);
+    setup(argc, argv);
     init();
     int code = run();
     deinit();
@@ -671,9 +797,9 @@ int exec(int argc, char** argv)
 
 State state() { return G().state; }
 
-const Options& options() { return G().options; }
-
-Node* config() { return n("ve"); }
+std::pair<int, char**> args() { return { G().argc, G().argv }; }
+const std::string& appName() { return G().app_name; }
+bool   verbose() { return G().verbose; }
 
 } // namespace entry
 
@@ -724,7 +850,7 @@ bool load(const std::string& path)
         }
     }
     if (!mod) {
-        veLogE << "[ve::plugin] LoadLibrary failed: " << path
+        veLogE << "[ve/plugin] LoadLibrary failed: " << path
                << " (error " << err << ")";
         return false;
     }
@@ -732,7 +858,7 @@ bool load(const std::string& path)
 #else
     handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {
-        veLogE << "[ve::plugin] dlopen failed: " << path
+        veLogE << "[ve/plugin] dlopen failed: " << path
                << " (" << dlerror() << ")";
         return false;
     }
@@ -752,7 +878,7 @@ bool load(const std::string& path)
     info.api_version = version::number(name);
 
     pluginList().push_back(std::move(info));
-    veLogI << "[ve::plugin] Loaded: " << path;
+    veLogI << "[ve/plugin] Loaded: " << path;
     return true;
 }
 
@@ -768,7 +894,7 @@ bool unload(const std::string& name)
                 dlclose(it->handle);
 #endif
             }
-            veLogI << "[ve::plugin] Unloaded: " << name;
+            veLogI << "[ve/plugin] Unloaded: " << name;
             list.erase(it);
             return true;
         }
