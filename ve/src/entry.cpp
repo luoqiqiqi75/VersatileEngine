@@ -283,12 +283,20 @@ static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbos
 //   - Directory: iterated as a flat set of *.json files, each mounted at
 //                /ve/entry/config/<file_stem>. The directory name itself
 //                does not participate in the namespace.
-static void mountConfigFile(const std::string& config_path, bool verbose)
+static void mountConfigFile(std::string&& config_path, bool verbose)
 {
     namespace fs = std::filesystem;
     std::error_code ec;
 
-    if (fs::is_directory(config_path, ec)) {
+    if (config_path.empty()) {
+        if (fs::exists("ve.json", ec)) {
+            if (verbose) veLogI << "[ve/entry] use ve.json as config";
+            config_path = "ve.json";
+        } else {
+            if (verbose) veLogW << "[ve/entry] use default config";
+            return; // default settings
+        }
+    } else if (fs::is_directory(config_path, ec)) {
         loadConfigDir(n("ve/entry/config"), config_path, verbose);
         return;
     }
@@ -354,11 +362,12 @@ void setup(Node* options_n)
 
     // 1. Config path & verbose flag come from options_n directly (default
     //    to "ve.json" so that a bare setup(nullptr) still finds a local file).
-    std::string config_file = "ve.json";
+    std::string config_file;
     bool verbose = false;
     if (options_n) {
-        config_file = options_n->get("config_file").toString(config_file);
+        config_file = options_n->get("config_file").toString();
         verbose = options_n->get("verbose").toBool(false);
+        g.app_name = options_n->get("app_name").toString(g.app_name);
     }
 
     if (!g.app_name.empty()) {
@@ -366,18 +375,14 @@ void setup(Node* options_n)
     }
 
     // 2. Load the config file/dir into /ve/entry/config/<stem>.
-    if (!config_file.empty()) {
-        mountConfigFile(config_file, verbose);
-    }
+    mountConfigFile(std::move(config_file), verbose);
 
     // 3. Fold per-namespace "entry" out of config into /ve/entry/options.
     mergeConfigOptions();
 
     // 4. Overlay caller options — CLI / API wins over file.
     Node* opts_node = n("ve/entry/options");
-    if (options_n && options_n != opts_node) {
-        opts_node->copy(options_n);
-    }
+    opts_node->copy(options_n);
 
     // 5. Flush residual options entries — --set / --terminal / --remote were
     //    stored as config_override records; write them into /ve/entry/config.
