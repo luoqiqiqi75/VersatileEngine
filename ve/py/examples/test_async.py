@@ -43,13 +43,11 @@ async def test_basic_operations():
 
         # Test command
         print("\n6. Testing command (search)...")
-        try:
-            result = await client.command("search", {
-                "args": ["async", "/test", "--key", "--top", "5"]
-            })
-            print(f"   Search result: {result}")
-        except Exception as e:
-            print(f"   Search failed (command may not exist): {e}")
+        result = await client.command("search", {
+            "args": ["async", "/test", "--top", "5"]
+        })
+        assert "matches" in result and "count" in result, f"unexpected shape: {result}"
+        print(f"   Search matches: {result['matches']} (count={result['count']})")
 
     print("\n✅ All tests completed!")
 

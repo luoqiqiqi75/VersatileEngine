@@ -601,8 +601,10 @@ Deep content
 load md /docs/http-plan -f http-service-enhancement.md
 
 # 2. Search by heading
-search "Feature" /docs/http-plan --key
-# Returns: ["docs/http-plan/.../Feature 1: 批量节点读取", ...]
+search "Feature" /docs/http-plan
+# Returns: {"matches": ["docs/http-plan/.../Feature 1: 批量节点读取", ...], "count": N}
+# Default mode is 'contains' (substring, case-insensitive) on --key.
+# Use --glob for */? wildcards or --exact for strict equality; --value to match node values.
 
 # 3. Get specific section
 curl -X POST http://localhost:12000/ve \
