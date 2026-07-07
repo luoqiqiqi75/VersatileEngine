@@ -123,11 +123,14 @@ static void collect(Node* start, const SearchOpts& o, std::vector<std::string>& 
         Node* child = *top.it;
         ++top.it;
 
-        // Match check
+        bool hit = false;
         if (o.target == SearchOpts::Key) {
-            if (matchStr(o, child->name())) out.push_back(child->path(start));
+            hit = matchStr(o, child->name());
+        } else {
+            auto v = child->get();
+            if (!v.isNull()) hit = matchStr(o, v.toString());
         }
-        // Value 分支由 Task 4 补
+        if (hit) out.push_back(child->path(start));
 
         if ((int)out.size() >= o.top) break;
         stack.push_back({child, child->begin(), child->end()});

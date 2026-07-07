@@ -221,3 +221,53 @@ VE_TEST(search_unknown_mode_err_invalid) {
 
     VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(0), int(service::ERR_INVALID));
 }
+
+VE_TEST(search_value_matches_string_values) {
+    Node root("root");
+    root.at("host")->set(std::string("localhost"));
+    root.at("backup_host")->set(std::string("localhost.mirror"));
+    root.at("port")->set(int64_t(8080));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "localhost");
+    pipe.contextNode()->at("params")->set("target", "value");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 2);
+}
+
+VE_TEST(search_value_skips_null_values) {
+    Node root("root");
+    root.at("plain");            // no set → Null
+    root.at("real")->set(std::string("hello"));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "hello");
+    pipe.contextNode()->at("params")->set("target", "value");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 1);
+    VE_ASSERT_EQ(m->child(0)->getString(), std::string("real"));
+}
+
+VE_TEST(search_value_matches_numeric_toString) {
+    Node root("root");
+    root.at("port")->set(int64_t(8080));
+    root.at("other")->set(int64_t(9090));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "8080");
+    pipe.contextNode()->at("params")->set("target", "value");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 1);
+}
