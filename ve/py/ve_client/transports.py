@@ -98,7 +98,7 @@ class Transport(ABC):
         pass
 
     @abstractmethod
-    def op(self, name: str, **params) -> Any:
+    def op(self, op: str, **params) -> Any:
         """Raw op call — generic envelope passthrough.
 
         Sends a v2.1 envelope `{op: name, params: {...}}` and returns the
@@ -240,8 +240,8 @@ class HttpRestTransport(Transport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
-    def op(self, name: str, **params) -> Any:
-        reply = self._op(name, **params)
+    def op(self, op: str, **params) -> Any:
+        reply = self._op(op, **params)
         if not _ok(reply):
             raise _reply_error(reply)
         return reply.get("data")
@@ -371,10 +371,10 @@ class JsonRpcTransport(Transport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
-    def op(self, name: str, **params) -> Any:
+    def op(self, op: str, **params) -> Any:
         # JSON-RPC method = op name; result is already the data payload.
         # RpcError propagates on failure.
-        return self._call(name, params)
+        return self._call(op, params)
 
     def ping(self) -> bool:
         try:
@@ -551,8 +551,8 @@ class TcpJsonTransport(Transport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
-    def op(self, name: str, **params) -> Any:
-        resp = self._op(name, **params)
+    def op(self, op: str, **params) -> Any:
+        resp = self._op(op, **params)
         if not _ok(resp):
             raise _reply_error(resp)
         return resp.get("data")
@@ -816,8 +816,8 @@ class MsgPackTransport(Transport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
-    def op(self, name: str, **params) -> Any:
-        flag, resp = self._op(name, **params)
+    def op(self, op: str, **params) -> Any:
+        flag, resp = self._op(op, **params)
         if self._failed(flag, resp):
             raise _reply_error(resp)
         return resp.get("data")

@@ -48,7 +48,7 @@ class AsyncTransport(ABC):
         pass
 
     @abstractmethod
-    async def op(self, name: str, **params) -> Any:
+    async def op(self, op: str, **params) -> Any:
         """Raw op call — generic envelope passthrough.
 
         Sends a v2.1 envelope `{op: name, params: {...}}` and returns the
@@ -175,8 +175,8 @@ class AsyncHttpRestTransport(AsyncTransport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
-    async def op(self, name: str, **params) -> Any:
-        reply = await self._op(name, **params)
+    async def op(self, op: str, **params) -> Any:
+        reply = await self._op(op, **params)
         if not _ok(reply):
             raise _reply_error(reply)
         return reply.get("data")
@@ -304,9 +304,9 @@ class AsyncJsonRpcTransport(AsyncTransport):
             return data.get("commands", [])
         return data if isinstance(data, list) else []
 
-    async def op(self, name: str, **params) -> Any:
+    async def op(self, op: str, **params) -> Any:
         # JSON-RPC method = op name; result is already the data payload.
-        return await self._call(name, params)
+        return await self._call(op, params)
 
     async def ping(self) -> bool:
         try:

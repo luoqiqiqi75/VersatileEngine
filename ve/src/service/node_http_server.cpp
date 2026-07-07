@@ -87,18 +87,11 @@ bool NodeHttpServer::start()
     { // health protocol
         _p->startTime = std::chrono::steady_clock::now();
 
-        auto health_f = [=] {
+        _p->server.bind<http::verb::get>("/health", [this] (http::web_request&, http::web_response& rep) {
             auto elapsed = std::chrono::steady_clock::now() - _p->startTime;
             auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
-            return seconds;
-        };
-
-        _p->server.bind<http::verb::get>("/health", [=] (http::web_request&, http::web_response& rep) {
-            Pipeline pipeline;
-            pipeline.addProc(convert::to<Proc>(health_f));
-            pipeline.sync();
-            int s = pipeline.outputNode()->getInt64();
-            convert::parse(HttpRep(http::status::ok, "\"status\":\"ok\",\"uptime_s\":" + std::to_string(s) + "}"), rep);
+            convert::parse(HttpRep(http::status::ok,
+                "{\"status\":\"ok\",\"uptime_s\":" + std::to_string(seconds) + "}"), rep);
         });
     }
 

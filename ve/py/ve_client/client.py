@@ -135,7 +135,7 @@ class VeClient:
         """List available commands (name + help)."""
         return self._transport.cmds()
 
-    def op(self, name: str, **params) -> Any:
+    def op(self, op: str, **params) -> Any:
         """Raw op call — send any v2.1 envelope op directly.
 
         Server-side ops (export/import/get/set/children/erase/trigger/
@@ -145,7 +145,7 @@ class VeClient:
         Example:
             instr = client.op("describe", name="ros.topic.list")
         """
-        return self._transport.op(name, **params)
+        return self._transport.op(op, **params)
 
     def describe(self, name: str) -> Dict:
         """Fetch a command's instruction subtree.
