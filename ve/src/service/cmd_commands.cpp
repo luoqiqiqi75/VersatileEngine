@@ -81,55 +81,32 @@ static bool matchStr(const SearchOpts& o, std::string_view s)
     return false;
 }
 
-// Parse both positional (params.args = [pattern, root?, ...flags]) and named
-// (params.{pattern,root,mode,target,case_sensitive,top}); named overrides.
+// Read named fields only. When called from network with `in.args` positional
+// tokens, we first defer to command::bind — same schema-driven flag+positional
+// mapping the REPL uses, so both entrypoints share one parser.
 static Result parseSearchOpts(Node* in, SearchOpts& o)
 {
-    if (Node* argv = in->find("args")) {
-        int positional_idx = 0;
-        auto children = argv->children();
-        for (std::size_t i = 0; i < children.size(); ++i) {
-            std::string s = children[i]->getString();
-            if (!s.empty() && s[0] == '-') {
-                if      (s == "--glob")   o.mode = SearchOpts::Glob;
-                else if (s == "--exact")  o.mode = SearchOpts::Exact;
-                else if (s == "--key")    o.target = SearchOpts::Key;
-                else if (s == "--value")  o.target = SearchOpts::Value;
-                else if (s == "-i" || s == "--case-sensitive") o.case_sensitive = true;
-                else if (s == "--top") {
-                    if (i + 1 >= children.size())
-                        return Result::fail(ve::service::ERR_INVALID, "--top needs a value");
-                    o.top = children[++i]->getString().empty()
-                          ? 0 : std::atoi(children[i]->getString().c_str());
-                }
-                else return Result::fail(ve::service::ERR_INVALID, "unknown flag: " + s);
-            } else {
-                if (positional_idx == 0)      o.pattern = s;
-                else if (positional_idx == 1) o.root    = s;
-                else return Result::fail(ve::service::ERR_INVALID, "too many positional args");
-                ++positional_idx;
-            }
-        }
+    if (Node* args = in->find("args")) {
+        Strings tokens;
+        for (auto* c : args->children()) tokens.push_back(c->getString());
+        command::bind(command::factory(), "search", tokens, in);
     }
 
-    // Named overrides positional
-    if (Node* n = in->find("pattern")) o.pattern = n->getString();
-    if (Node* n = in->find("root"))    o.root    = n->getString();
-    if (Node* n = in->find("case_sensitive")) o.case_sensitive = n->getBool();
-    if (Node* n = in->find("top"))     o.top     = n->getInt();
-    if (Node* n = in->find("mode")) {
-        std::string mode = n->getString();
-        if      (mode.empty() || mode == "contains") o.mode = SearchOpts::Contains;
-        else if (mode == "glob")                     o.mode = SearchOpts::Glob;
-        else if (mode == "exact")                    o.mode = SearchOpts::Exact;
-        else return Result::fail(ve::service::ERR_INVALID, "unknown mode: " + mode);
-    }
-    if (Node* n = in->find("target")) {
-        std::string tgt = n->getString();
-        if      (tgt == "key")   o.target = SearchOpts::Key;
-        else if (tgt == "value") o.target = SearchOpts::Value;
-        else return Result::fail(ve::service::ERR_INVALID, "unknown target: " + tgt);
-    }
+    o.pattern        = in->get("pattern").toString();
+    o.root           = in->get("root").toString();
+    o.case_sensitive = in->get("case_sensitive").toBool(false);
+    o.top            = in->get("top").toInt(100);
+
+    std::string mode = in->get("mode").toString();
+    if      (mode.empty() || mode == "contains") o.mode = SearchOpts::Contains;
+    else if (mode == "glob")                     o.mode = SearchOpts::Glob;
+    else if (mode == "exact")                    o.mode = SearchOpts::Exact;
+    else return Result::fail(ve::service::ERR_INVALID, "unknown mode: " + mode);
+
+    std::string tgt = in->get("target").toString();
+    if      (tgt.empty() || tgt == "key") o.target = SearchOpts::Key;
+    else if (tgt == "value")              o.target = SearchOpts::Value;
+    else return Result::fail(ve::service::ERR_INVALID, "unknown target: " + tgt);
 
     if (o.pattern.empty()) return Result::fail(ve::service::ERR_INVALID, "pattern required");
     if (o.top <= 0)        return Result::fail(ve::service::ERR_INVALID, "top must be > 0");

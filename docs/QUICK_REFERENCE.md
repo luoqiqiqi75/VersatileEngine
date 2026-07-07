@@ -171,8 +171,8 @@ load md /docs/plan -f plan.md
 # Export as Markdown
 save md /docs/plan -f plan.md
 
-# Search by heading
-search "Feature" /docs/plan --key
+# Search by heading (default: contains match on node names)
+search "Feature" /docs/plan
 
 # Get specific section
 curl -X POST http://localhost:12000/ve \

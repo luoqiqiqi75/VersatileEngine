@@ -94,7 +94,7 @@ unsub = client.subscribe("/test", lambda path, data:
 unsub()  # 取消订阅
 
 # 命令
-result = client.command("search", {"args": ["config"]})
+result = client.command("search", {"pattern": "config"})
 commands = client.cmds()
 
 # 批量操作

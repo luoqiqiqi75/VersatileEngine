@@ -47,8 +47,8 @@ class AsyncVeClient:
         await client.trigger("/test")                # Trigger NODE_CHANGED
         children = await client.list("/")            # List children
 
-        # Command
-        result = await client.command("search", {"args": ["config"]})
+        # Command (named params match the command's input_schema)
+        result = await client.command("search", {"pattern": "config", "top": 5})
 
         # Close
         await client.close()

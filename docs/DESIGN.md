@@ -61,6 +61,42 @@ Default surfaces:
 The service layer is not separate from the model.
 It is a projection of the same node tree.
 
+### 5. Dogfood the framework, or do not ship it
+
+If a piece of framework is not used by the code in this repository, it does
+not exist. Unused APIs never get validated, and their design rots because no
+one has the pressure of being a user.
+
+The rule is simple and non-negotiable:
+
+- **Write it, use it, refine it.** The same PR that adds a framework capability
+  is the PR that puts a first real consumer on top of it. No "we'll wire it up
+  later." Later never comes, and the design ossifies around a use case no one
+  ever tried.
+- **When you use a framework API, act as a critical user.** If the shape is
+  awkward, if you find yourself parsing around it, if you need a second
+  parameter that is not there — the framework is the thing that must change,
+  not your workaround. Propose the fix, or open an issue with the pain point.
+  Silent workarounds are how "the logic loops to the sky" (逻辑绕上天) starts.
+- **Real recurring needs strengthen the framework; one-offs stay in the
+  module.** If two consumers want the same helper, promote it. If exactly one
+  wants it and it is domain-specific, keep it local. Do not preemptively
+  generalize, and do not perpetually specialize.
+
+A framework abstraction with no real caller has no ground truth. Its shape is
+whatever felt tidy in isolation, which almost always drifts from what a real
+consumer would need. The failure mode is predictable: the API grows to cover
+imagined cases, gets rewritten several times chasing an imagined "right"
+shape, and when a real consumer finally arrives, integration is a painful
+overhaul that reshapes both the abstraction and every consumer bolted on
+around it. Layers that go through this cycle carry those scars for a long
+time, and downstream code tends not to invest in maintaining them, because
+they were never really "theirs".
+
+Every module in this repo — service, terminal, ROS, RTT, adapters — is
+expected to be a first-class user of core APIs. If the framework's own authors
+will not use it as they build it, no one else will maintain it later.
+
 ## Layer Model
 
 ### Core
@@ -170,6 +206,95 @@ Current direct node signals:
 `NODE_ACTIVATED` is the subtree-level signal.
 It is the key reason VE can expose one tree to many tools without hard wiring module-to-module references.
 
+## Command Model
+
+Commands are invoked from three surfaces that must all resolve to the same shape:
+REPL, envelope `cmd` (Python / HTTP / MsgPack), and human curl to `/cmd/<name>`.
+The rule below keeps a single implementation valid for all three.
+
+### Signature
+
+Every registered command has exactly this signature:
+
+```cpp
+Result cmd::foo(Node* ctx, Node* in, Node* out);
+```
+
+- `ctx` holds session state (`_session`, and REPL `argv` when applicable). Read
+  what you need (usually `Session*`); do not use `ctx` as an alternate parameter
+  source.
+- `in` is the parameter node. Read **named fields only** (`in->get("path")`,
+  `in->get("top")`, etc.). This mirrors the command's `input_schema`.
+- `out` is where you write the result payload. Structured, matching
+  `output_schema`.
+
+Return `Result::ok()` / `Result::fail(code, msg)` / `Result::accept()`.
+
+### Instruction schema is the contract
+
+Every command ships an `instruction` subtree in a JSON resource (e.g.
+`ve/res/service/cmd.json`) with `description`, `usage`, `input_schema`,
+`output_schema`. The schema is not documentation — it is executable:
+
+- **`command::bind` maps CLI tokens to `in` fields using the schema.** Property
+  name in the schema == CLI flag name (`--<name>` or `--<name> value`) == field
+  read on `in`. These three MUST be identical.
+- Boolean properties accept bare `--<name>` (bind fills `true`).
+- Positional tokens fill schema properties in declaration order, skipping those
+  already provided by flags.
+- Unknown flags are ignored (schema is the whitelist).
+
+The REPL, `/cmd/<name>`, and network positional (`params.args`) all delegate to
+`command::bind` — no command should re-parse tokens itself.
+
+### One parser, three surfaces
+
+The only place a command consults CLI-style tokens is here, at the top of the
+command, when `params.args` is present (network positional shape):
+
+```cpp
+if (Node* args_n = in->find("args")) {
+    Strings tokens;
+    for (auto* c : args_n->children()) tokens.push_back(c->getString());
+    command::bind(command::factory(), "foo", tokens, in);
+}
+```
+
+After that, read named fields from `in` uniformly. `search` in
+`ve/src/service/cmd_commands.cpp` is the canonical reference.
+
+### If the CLI shape does not fit the schema, fix the schema — not the parser
+
+Domain-alias flags (`--value` meaning `--target value`, `--glob` meaning
+`--mode glob`) can not be expressed in `input_schema` and MUST NOT be
+smuggled in via a hand-written parser reading `ctx.argv`. That path silently
+diverges from network callers, hides the contract from `describe`, and adds an
+ad-hoc parser per command.
+
+The right response is one of:
+
+- rename the schema property so the CLI form is natural (`--mode glob` instead
+  of `--glob`),
+- use standard short flags via schema single-letter properties (`-i` maps to a
+  property named `i`),
+- accept that the CLI form the docs assumed is non-standard and revise the docs.
+
+Ad-hoc positional / flag parsing inside a command body is a design smell. If
+`in.args` is not enough, revisit the schema.
+
+### Output shape
+
+Return a structured object under `out`, not a bare list or scalar:
+
+```cpp
+Node* matches = out->at("matches");
+for (auto& p : paths) matches->append()->set(p);
+out->set("count", static_cast<int64_t>(paths.size()));
+```
+
+Clients can then rely on `output_schema` for shape. Bare lists mean every new
+consumer invents its own unwrapping heuristic.
+
 ## Module and Process Model
 
 Configuration is loaded directly into the node tree.
@@ -198,6 +323,10 @@ Process startup should remain simple:
 - Do not describe stable APIs in terms of migration phases or temporary compatibility.
 - Do not make services own product logic.
 - Do not add framework-specific glue directly into unrelated modules when an adapter boundary is available.
+- Do not hand-roll positional or flag parsing inside a command body — the
+  instruction schema plus `command::bind` is the single parser. See the Command
+  Model section.
+- Do not add framework code that no in-repo module consumes. See principle 5.
 
 ## Related Documents
 

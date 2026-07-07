@@ -68,13 +68,15 @@ async def run_command(name: str, args: Optional[Dict] = None) -> Any:
 
 @app.get("/ve/search")
 async def search_nodes(pattern: str, root: str = "/", key: bool = True, top: int = 10) -> List[str]:
-    """Search nodes by pattern."""
-    args = {
-        "args": [pattern, root, "--key" if key else "--value", "--top", str(top)]
-    }
+    """Search nodes by pattern. Returns matched paths."""
     try:
-        result = await ve_client.command("search", args)
-        return result if isinstance(result, list) else []
+        result = await ve_client.command("search", {
+            "pattern": pattern,
+            "root": root,
+            "target": "key" if key else "value",
+            "top": top,
+        })
+        return result.get("matches", []) if isinstance(result, dict) else []
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

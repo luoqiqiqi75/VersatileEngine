@@ -300,7 +300,8 @@ VE_TEST(search_positional_with_root_and_flags) {
     Node* argv = pipe.contextNode()->at("params")->at("args");
     argv->append()->set(std::string("*_port"));
     argv->append()->set(std::string("logs"));
-    argv->append()->set(std::string("--glob"));
+    argv->append()->set(std::string("--mode"));
+    argv->append()->set(std::string("glob"));
     argv->append()->set(std::string("--top"));
     argv->append()->set(std::string("5"));
     runEnvelope(&session, pipe);
@@ -321,8 +322,9 @@ VE_TEST(search_positional_case_sensitive_flag) {
     Node* argv = pipe.contextNode()->at("params")->at("args");
     argv->append()->set(std::string("Config"));
     argv->append()->set(std::string("")); // root 占位 = 用 session root
-    argv->append()->set(std::string("--case-sensitive"));
-    argv->append()->set(std::string("--exact"));
+    argv->append()->set(std::string("--case_sensitive"));
+    argv->append()->set(std::string("--mode"));
+    argv->append()->set(std::string("exact"));
     runEnvelope(&session, pipe);
 
     Node* m = pipe.contextNode()->find("data/matches");
@@ -330,33 +332,42 @@ VE_TEST(search_positional_case_sensitive_flag) {
     VE_ASSERT_EQ(m->child(0)->getString(), std::string("Config"));
 }
 
-VE_TEST(search_named_overrides_positional) {
+// command::bind fills what tokens provide; named fields left untouched by
+// tokens survive. Here `top` is set on named and args carry only pattern,
+// so top stays at 5.
+VE_TEST(search_named_and_positional_compose) {
     Node root("root");
-    root.at("aa_hit")->set(int64_t(0));
+    for (int i = 0; i < 20; ++i) root.at("hit_" + std::to_string(i))->set(int64_t(i));
     service::Session session(&root, &root);
 
     Pipeline pipe;
     pipe.contextNode()->set("cmd", "search");
     Node* args_n = pipe.contextNode()->at("params");
     Node* argv = args_n->at("args");
-    argv->append()->set(std::string("MISS"));   // positional pattern
-    args_n->set("pattern", "hit");              // named overrides
-    runEnvelope(&session, pipe);
+    argv->append()->set(std::string("hit"));    // positional pattern
+    args_n->set("top", int64_t(5));             // named top; args don't touch it
 
+    runEnvelope(&session, pipe);
     Node* m = pipe.contextNode()->find("data/matches");
-    VE_ASSERT(m && m->count() == 1);
+    VE_ASSERT(m && m->count() == 5);
 }
 
-VE_TEST(search_unknown_flag_err_invalid) {
+VE_TEST(search_target_value_via_named_flag) {
     Node root("root");
+    root.at("host")->set(std::string("localhost"));
+    root.at("port")->set(int64_t(8080));
     service::Session session(&root, &root);
 
     Pipeline pipe;
     pipe.contextNode()->set("cmd", "search");
     Node* argv = pipe.contextNode()->at("params")->at("args");
-    argv->append()->set(std::string("x"));
-    argv->append()->set(std::string("--nope"));
+    argv->append()->set(std::string("localhost"));
+    argv->append()->set(std::string("")); // root 占位
+    argv->append()->set(std::string("--target"));
+    argv->append()->set(std::string("value"));
     runEnvelope(&session, pipe);
 
-    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(0), int(service::ERR_INVALID));
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 1);
+    VE_ASSERT_EQ(m->child(0)->getString(), std::string("host"));
 }

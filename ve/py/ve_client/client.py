@@ -58,8 +58,8 @@ class VeClient:
         unsub = client.subscribe("/test", lambda path, value: print(f"{path} = {value}"))
         unsub()  # unsubscribe
 
-        # Command
-        client.command("search", {"args": ["config"]})
+        # Command (named params match the command's input_schema)
+        client.command("search", {"pattern": "config", "top": 5})
     """
 
     def __init__(self, url: str = "tcp://localhost:12200",

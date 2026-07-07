@@ -47,7 +47,7 @@
   "search": {
     "instruction": {
       "description": "Locate nodes under root by matching key or value. AI-friendly: default mode is substring 'contains' (case-insensitive). Use mode='glob' for */? wildcards or mode='exact' for strict equality. Returns matching paths, stops after 'top' hits.",
-      "usage": "search <pattern> [root] [--glob|--exact] [--key|--value] [-i|--case-sensitive] [--top N]",
+      "usage": "search <pattern> [root] [--mode contains|glob|exact] [--target key|value] [--case_sensitive] [--top N]",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -56,8 +56,7 @@
           "mode":           { "type": "string",  "enum": ["contains", "glob", "exact"], "description": "match mode; default 'contains'" },
           "target":         { "type": "string",  "enum": ["key", "value"], "description": "match target; default 'key'" },
           "case_sensitive": { "type": "boolean", "description": "default false" },
-          "top":            { "type": "integer", "description": "max matches; default 100" },
-          "args":           { "type": "array",   "description": "positional form: [pattern, root?, ...flags]; named fields override" }
+          "top":            { "type": "integer", "description": "max matches; default 100" }
         },
         "required": ["pattern"]
       },
