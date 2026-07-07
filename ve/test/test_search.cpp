@@ -55,6 +55,105 @@ VE_TEST(search_registered_and_empty_call_ok) {
     pipe.contextNode()->at("params")->set("pattern", "anything");
     runEnvelope(&session, pipe);
 
-    // Skeleton returns ok even without matches; Task 2 will assert data.matches.
     VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+}
+
+static Node* mkTree(Node& root)
+{
+    root.at("config/port")->set(int64_t(8080));
+    root.at("config/host")->set(std::string("localhost"));
+    root.at("config/nested/config")->set(int64_t(1));
+    root.at("logs/error")->set(std::string("boom"));
+    root.at("logs/info")->set(std::string("hi"));
+    return &root;
+}
+
+VE_TEST(search_contains_matches_by_name) {
+    Node root("root");
+    mkTree(root);
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "config");
+    runEnvelope(&session, pipe);
+
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* matches = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(matches != nullptr);
+    // "config" (top-level) + "config/nested/config" (leaf)
+    VE_ASSERT_EQ(matches->count(), 2);
+    VE_ASSERT_EQ(matches->child(0)->getString(), std::string("config"));
+    VE_ASSERT_EQ(matches->child(1)->getString(), std::string("config/nested/config"));
+    VE_ASSERT_EQ(pipe.contextNode()->get("data/count").toInt(-1), 2);
+}
+
+VE_TEST(search_contains_case_insensitive_by_default) {
+    Node root("root");
+    root.at("Config")->set(int64_t(0));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "CONFIG");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 1);
+}
+
+VE_TEST(search_root_narrowing) {
+    Node root("root");
+    mkTree(root);
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "config");
+    pipe.contextNode()->at("params")->set("root", "logs");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 0);
+}
+
+VE_TEST(search_root_not_found) {
+    Node root("root");
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "x");
+    pipe.contextNode()->at("params")->set("root", "nope");
+    runEnvelope(&session, pipe);
+
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(0), int(service::ERR_NOT_FOUND));
+}
+
+VE_TEST(search_top_limits_results) {
+    Node root("root");
+    for (int i = 0; i < 20; ++i) root.at("a" + std::to_string(i) + "_hit")->set(int64_t(i));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "hit");
+    pipe.contextNode()->at("params")->set("top", int64_t(3));
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 3);
+}
+
+VE_TEST(search_top_zero_returns_err_invalid) {
+    Node root("root");
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "x");
+    pipe.contextNode()->at("params")->set("top", int64_t(0));
+    runEnvelope(&session, pipe);
+
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(0), int(service::ERR_INVALID));
 }

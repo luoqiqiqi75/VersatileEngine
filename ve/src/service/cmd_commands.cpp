@@ -9,6 +9,100 @@
 namespace ve {
 namespace service {
 
+namespace {
+
+struct SearchOpts {
+    std::string pattern;
+    std::string root;
+    enum Mode { Contains, Glob, Exact };
+    enum Target { Key, Value };
+    Mode mode = Contains;
+    Target target = Key;
+    bool case_sensitive = false;
+    int top = 100;
+};
+
+static char lc(char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; }
+
+static bool containsMatch(std::string_view needle, std::string_view hay, bool cs)
+{
+    if (needle.empty()) return true;
+    if (needle.size() > hay.size()) return false;
+    const auto n = needle.size(), m = hay.size();
+    for (std::size_t i = 0; i + n <= m; ++i) {
+        std::size_t k = 0;
+        for (; k < n; ++k) {
+            char a = hay[i + k], b = needle[k];
+            if (!cs) { a = lc(a); b = lc(b); }
+            if (a != b) break;
+        }
+        if (k == n) return true;
+    }
+    return false;
+}
+
+static bool matchStr(const SearchOpts& o, std::string_view s)
+{
+    if (o.mode == SearchOpts::Contains) return containsMatch(o.pattern, s, o.case_sensitive);
+    // Glob/Exact 由 Task 3 补
+    return false;
+}
+
+// Named-only parser（Task 5 里加 positional 分支）
+static Result parseSearchOpts(Node* in, SearchOpts& o)
+{
+    o.pattern = in->get("pattern").toString();
+    if (o.pattern.empty()) return Result::fail(ve::service::ERR_INVALID, "pattern required");
+    o.root           = in->get("root").toString();
+    o.case_sensitive = in->get("case_sensitive").toBool(false);
+    o.top            = in->get("top").toInt(100);
+    if (o.top <= 0) return Result::fail(ve::service::ERR_INVALID, "top must be > 0");
+
+    std::string mode = in->get("mode").toString();
+    if (mode.empty() || mode == "contains") o.mode = SearchOpts::Contains;
+    else if (mode == "glob")                o.mode = SearchOpts::Glob;
+    else if (mode == "exact")               o.mode = SearchOpts::Exact;
+    else return Result::fail(ve::service::ERR_INVALID, "unknown mode: " + mode);
+
+    std::string tgt = in->get("target").toString();
+    if (tgt.empty() || tgt == "key") o.target = SearchOpts::Key;
+    else if (tgt == "value")         o.target = SearchOpts::Value;
+    else return Result::fail(ve::service::ERR_INVALID, "unknown target: " + tgt);
+
+    if (!o.case_sensitive) {
+        for (auto& c : o.pattern) c = lc(c);
+    }
+    return Result::ok();
+}
+
+// Iterative DFS from `start` (excluded), collect matches into `out`.
+// Stops early when out.size() == o.top.
+static void collect(Node* start, const SearchOpts& o, std::vector<std::string>& out)
+{
+    struct Frame { Node* n; Node::ChildIterator it, end; };
+    std::vector<Frame> stack;
+    stack.reserve(16);
+    stack.push_back({start, start->begin(), start->end()});
+
+    while (!stack.empty() && (int)out.size() < o.top) {
+        auto& top = stack.back();
+        if (top.it == top.end) { stack.pop_back(); continue; }
+        Node* child = *top.it;
+        ++top.it;
+
+        // Match check
+        if (o.target == SearchOpts::Key) {
+            if (matchStr(o, child->name())) out.push_back(child->path(start));
+        }
+        // Value 分支由 Task 4 补
+
+        if ((int)out.size() >= o.top) break;
+        stack.push_back({child, child->begin(), child->end()});
+    }
+}
+
+} // anonymous namespace
+
 namespace cmd {
 
 static std::string detectFormat(const std::string& file)
@@ -79,9 +173,20 @@ static Result load(Node* ctx, Node* in, Node* out)
 
 static Result search(Node* ctx, Node* in, Node* out)
 {
-    std::string pattern = in->get("pattern").toString();
-    if (pattern.empty()) return Result::fail(ERR_INVALID, "pattern required");
-    (void)ctx; (void)out;
+    SearchOpts o;
+    if (auto r = parseSearchOpts(in, o); r.isError()) return r;
+
+    auto* s = ctx->get("_session").as<Session*>();
+    Node* start = o.root.empty() ? s->root : s->root->find(o.root);
+    if (!start) return Result::fail(ERR_NOT_FOUND, "not found: " + o.root);
+
+    std::vector<std::string> paths;
+    paths.reserve(std::min(o.top, 64));
+    collect(start, o, paths);
+
+    Node* matches = out->at("matches");
+    for (auto& p : paths) matches->append()->set(p);
+    out->set("count", static_cast<int64_t>(paths.size()));
     return Result::ok();
 }
 
