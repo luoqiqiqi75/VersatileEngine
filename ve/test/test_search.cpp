@@ -157,3 +157,67 @@ VE_TEST(search_top_zero_returns_err_invalid) {
 
     VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(0), int(service::ERR_INVALID));
 }
+
+VE_TEST(search_glob_wildcards) {
+    Node root("root");
+    root.at("http_port")->set(int64_t(1));
+    root.at("http_host")->set(std::string("x"));
+    root.at("tcp_port")->set(int64_t(1));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "*_port");
+    pipe.contextNode()->at("params")->set("mode", "glob");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 2);
+}
+
+VE_TEST(search_glob_single_char) {
+    Node root("root");
+    root.at("cat")->set(int64_t(0));
+    root.at("cot")->set(int64_t(0));
+    root.at("coat")->set(int64_t(0));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "c?t");
+    pipe.contextNode()->at("params")->set("mode", "glob");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 2); // cat, cot; coat 长度不符
+}
+
+VE_TEST(search_exact_matches_full_name) {
+    Node root("root");
+    root.at("port")->set(int64_t(1));
+    root.at("porting")->set(int64_t(1));
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "port");
+    pipe.contextNode()->at("params")->set("mode", "exact");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 1);
+    VE_ASSERT_EQ(m->child(0)->getString(), std::string("port"));
+}
+
+VE_TEST(search_unknown_mode_err_invalid) {
+    Node root("root");
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "x");
+    pipe.contextNode()->at("params")->set("mode", "regex");
+    runEnvelope(&session, pipe);
+
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(0), int(service::ERR_INVALID));
+}

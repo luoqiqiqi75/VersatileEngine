@@ -41,10 +41,43 @@ static bool containsMatch(std::string_view needle, std::string_view hay, bool cs
     return false;
 }
 
+static bool globMatch(std::string_view pat, std::string_view text, bool cs)
+{
+    // Iterative backtracking: on mismatch, jump back to last '*'.
+    std::size_t p = 0, t = 0, star = std::string_view::npos, ts = 0;
+    const auto pn = pat.size(), tn = text.size();
+    auto eq = [&](char a, char b) {
+        if (!cs) { a = lc(a); b = lc(b); }
+        return a == b;
+    };
+    while (t < tn) {
+        if (p < pn && (pat[p] == '?' || eq(pat[p], text[t]))) { ++p; ++t; }
+        else if (p < pn && pat[p] == '*')                     { star = p++; ts = t; }
+        else if (star != std::string_view::npos)              { p = star + 1; t = ++ts; }
+        else                                                   return false;
+    }
+    while (p < pn && pat[p] == '*') ++p;
+    return p == pn;
+}
+
+static bool exactMatch(std::string_view pat, std::string_view text, bool cs)
+{
+    if (pat.size() != text.size()) return false;
+    for (std::size_t i = 0; i < pat.size(); ++i) {
+        char a = pat[i], b = text[i];
+        if (!cs) { a = lc(a); b = lc(b); }
+        if (a != b) return false;
+    }
+    return true;
+}
+
 static bool matchStr(const SearchOpts& o, std::string_view s)
 {
-    if (o.mode == SearchOpts::Contains) return containsMatch(o.pattern, s, o.case_sensitive);
-    // Glob/Exact 由 Task 3 补
+    switch (o.mode) {
+        case SearchOpts::Contains: return containsMatch(o.pattern, s, o.case_sensitive);
+        case SearchOpts::Glob:     return globMatch(o.pattern, s, o.case_sensitive);
+        case SearchOpts::Exact:    return exactMatch(o.pattern, s, o.case_sensitive);
+    }
     return false;
 }
 
