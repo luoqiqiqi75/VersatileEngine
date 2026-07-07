@@ -77,12 +77,21 @@ static Result load(Node* ctx, Node* in, Node* out)
     return Result::ok();
 }
 
+static Result search(Node* ctx, Node* in, Node* out)
+{
+    std::string pattern = in->get("pattern").toString();
+    if (pattern.empty()) return Result::fail(ERR_INVALID, "pattern required");
+    (void)ctx; (void)out;
+    return Result::ok();
+}
+
 } // namespace cmd
 
 void registerCmdCommands(Factory& f)
 {
     f.reg("save", Var::callable(Proc(cmd::save)));
     f.reg("load", Var::callable(Proc(cmd::load)));
+    f.reg("search", Var::callable(Proc(cmd::search)));
 }
 
 } // namespace service
