@@ -413,8 +413,12 @@ class TcpJsonTransport(Transport):
 
     def _connect(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # timeout applies ONLY to the connect() handshake; a persistent
+        # subscription socket must not silently die on idle. Request-level
+        # deadlines are enforced by event.wait(timeout=...) in _send.
         self.sock.settimeout(self.timeout)
         self.sock.connect((self.host, self.port))
+        self.sock.settimeout(None)   # switch to blocking mode for recv_loop
         self._running = True
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()
