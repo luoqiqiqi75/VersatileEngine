@@ -31,7 +31,7 @@ struct NodeUdpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12300;
 
-    asio2::udp_server server;
+    asio2::udp_server server{sharedIopool()};
     std::unique_ptr<Session> session;
 };
 

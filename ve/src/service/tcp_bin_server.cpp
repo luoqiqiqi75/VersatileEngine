@@ -33,7 +33,7 @@ struct BinTcpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 11000;
-    asio2::tcp_server server;
+    asio2::tcp_server server{sharedIopool()};
     std::mutex mtx;
     std::atomic<int> connCount{0};
 
@@ -152,6 +152,7 @@ bool BinTcpServer::start()
 {
 
     _p->server.bind_connect([this](auto& session_ptr) {
+        session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
         auto key = session_ptr->hash_key();
         {
             std::lock_guard<std::mutex> lock(_p->mtx);

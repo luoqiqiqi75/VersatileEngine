@@ -332,7 +332,7 @@ struct TerminalReplServer::Private
 
     bool     ownsRoot = false;
 
-    asio2::tcp_server server;
+    asio2::tcp_server server{sharedIopool()};
     std::mutex mtx;
     std::unordered_map<std::size_t, std::unique_ptr<ConnectionState>> connections;
     std::atomic<int> connCount{0};
@@ -359,6 +359,7 @@ TerminalReplServer::~TerminalReplServer()
 bool TerminalReplServer::start()
 {
     _p->server.bind_connect([this](auto& session_ptr) {
+        session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
         auto key = session_ptr->hash_key();
         auto cs = std::make_unique<ConnectionState>();
 

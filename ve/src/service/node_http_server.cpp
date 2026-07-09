@@ -63,7 +63,7 @@ struct NodeHttpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12000;
 
-    asio2::http_server server;
+    asio2::http_server server{sharedIopool()};
 
     std::chrono::steady_clock::time_point startTime;
     std::unique_ptr<Session> session;

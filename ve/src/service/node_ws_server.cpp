@@ -32,7 +32,7 @@ struct NodeWsServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12100;
-    asio2::ws_server server;
+    asio2::ws_server server{sharedIopool()};
     std::atomic<int> connCount{0};
     std::mutex mtx;
     std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
@@ -72,6 +72,11 @@ bool NodeWsServer::start()
 {
 
     _p->server.bind_connect([this](auto& session_ptr) {
+        // Cap the WS close-frame wait at 2s. Default is 30s (asio2 wires
+        // disconnect_timeout into websocket handshake_timeout), which hangs
+        // shutdown when a browser tab is throttled/dead and never sends the
+        // reply close frame.
+        session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
         auto sid = static_cast<uint64_t>(session_ptr->hash_key());
         {
             std::lock_guard<std::mutex> lock(_p->mtx);

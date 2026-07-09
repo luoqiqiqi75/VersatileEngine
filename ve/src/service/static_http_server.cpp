@@ -111,7 +111,7 @@ static std::string readFileBytes(const std::filesystem::path& filepath)
 struct StaticServer::Private
 {
     uint16_t port = 12400;
-    asio2::http_server server;
+    asio2::http_server server{sharedIopool()};
 
     struct ProxyRule {
         std::string prefix;
