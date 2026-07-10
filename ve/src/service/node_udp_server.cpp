@@ -6,6 +6,7 @@
 #include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
+#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -31,8 +32,17 @@ struct NodeUdpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12300;
 
-    asio2::udp_server server{sharedIopool()};
+    AsioServerPool pool;
+    asio2::udp_server server;
     std::unique_ptr<Session> session;
+
+    Private() : pool(makeServerPool()), server(pool.io()) {}
+
+    ~Private()
+    {
+        server.stop();
+        pool.drain();
+    }
 };
 
 NodeUdpServer::NodeUdpServer(const Node* config_n) : _p(std::make_unique<Private>())

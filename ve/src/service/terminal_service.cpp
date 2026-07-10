@@ -9,6 +9,7 @@
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
 #include "server_util.h"
+#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -332,10 +333,19 @@ struct TerminalReplServer::Private
 
     bool     ownsRoot = false;
 
-    asio2::tcp_server server{sharedIopool()};
+    AsioServerPool pool;
+    asio2::tcp_server server;
     std::mutex mtx;
     std::unordered_map<std::size_t, std::unique_ptr<ConnectionState>> connections;
     std::atomic<int> connCount{0};
+
+    Private() : pool(makeServerPool()), server(pool.io()) {}
+
+    ~Private()
+    {
+        server.stop();
+        pool.drain();
+    }
 };
 
 // ============================================================================

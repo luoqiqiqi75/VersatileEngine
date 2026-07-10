@@ -15,7 +15,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # --- Local overrides (gitignored, per-developer) — before ve_compile so e.g. VE_FORCE_DEBUG_INFO applies ---
-file(GLOB VE_LOCAL_CMAKE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/_*.cmake")
+file(GLOB VE_LOCAL_CMAKE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/_*.cmake")
 foreach(VE_LOCAL_CMAKE_FILE ${VE_LOCAL_CMAKE_FILES})
     include(${VE_LOCAL_CMAKE_FILE})
     get_filename_component(_fname ${VE_LOCAL_CMAKE_FILE} NAME)

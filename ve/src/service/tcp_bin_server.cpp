@@ -6,6 +6,7 @@
 #include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
+#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -33,7 +34,8 @@ struct BinTcpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 11000;
-    asio2::tcp_server server{sharedIopool()};
+    AsioServerPool pool;
+    asio2::tcp_server server;
     std::mutex mtx;
     std::atomic<int> connCount{0};
 
@@ -42,6 +44,14 @@ struct BinTcpServer::Private
         std::unique_ptr<Session> session;
     };
     std::unordered_map<std::size_t, ConnState> connections;
+
+    Private() : pool(makeServerPool()), server(pool.io()) {}
+
+    ~Private()
+    {
+        server.stop();
+        pool.drain();
+    }
 
     void sendFrame(uint64_t sid, uint8_t flag, const Var& payload)
     {
@@ -150,7 +160,6 @@ BinTcpServer::~BinTcpServer()
 
 bool BinTcpServer::start()
 {
-
     _p->server.bind_connect([this](auto& session_ptr) {
         session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
         auto key = session_ptr->hash_key();

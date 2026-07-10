@@ -20,7 +20,7 @@ else()
     set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/unsupported)
 endif()
 
-file(GLOB_RECURSE _PLAT_SOURCES ${_PLAT_DIR}/*.h ${_PLAT_DIR}/*.cpp)
+file(GLOB_RECURSE _PLAT_SOURCES CONFIGURE_DEPENDS ${_PLAT_DIR}/*.h ${_PLAT_DIR}/*.cpp)
 
 # --- Library target ---
 ve_resolve_library_target_name(VE_CORE_LIBRARY ve)

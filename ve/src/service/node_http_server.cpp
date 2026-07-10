@@ -7,6 +7,7 @@
 
 #include "node_commands.h"
 #include "server_util.h"
+#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -63,10 +64,27 @@ struct NodeHttpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12000;
 
-    asio2::http_server server{sharedIopool()};
+    // io_context lifecycle wrapper. Constructed before `server` and destroyed
+    // after, so drain() (called from ~Private below) always runs while the
+    // asio2 server value is still alive. See server_util.h.
+    AsioServerPool pool;
+    asio2::http_server server;
 
     std::chrono::steady_clock::time_point startTime;
     std::unique_ptr<Session> session;
+
+    Private() : pool(makeServerPool()), server(pool.io()) {}
+
+    ~Private()
+    {
+        // Stop the asio2 server (posts _do_stop onto the io thread), then
+        // drain owned io threads if any. Under ServerModule the module has
+        // already drained the shared pool by the time this Private is being
+        // destroyed, so drain() is a no-op. In the standalone path this is
+        // the barrier that prevents _do_stop from touching a dead server.
+        server.stop();
+        pool.drain();
+    }
 };
 
 NodeHttpServer::NodeHttpServer(const Node* config_n) : _p(std::make_unique<Private>())

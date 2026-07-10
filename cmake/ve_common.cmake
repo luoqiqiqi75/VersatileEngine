@@ -11,16 +11,16 @@
 # Sets: ${PREFIX}_INCLUDES, ${PREFIX}_SOURCES, ${PREFIX}_UI, ${PREFIX}_QRC,
 #       ${PREFIX}_TS, ${PREFIX}_ALL
 macro(ve_collect VE_IN_DIR VE_OUT_PREFIX)
-    file(GLOB_RECURSE ${VE_OUT_PREFIX}_INCLUDES  ${VE_IN_DIR}/include/*.h)
-    file(GLOB_RECURSE ${VE_OUT_PREFIX}_SOURCES
+    file(GLOB_RECURSE ${VE_OUT_PREFIX}_INCLUDES CONFIGURE_DEPENDS ${VE_IN_DIR}/include/*.h)
+    file(GLOB_RECURSE ${VE_OUT_PREFIX}_SOURCES CONFIGURE_DEPENDS
         ${VE_IN_DIR}/src/*.h
         ${VE_IN_DIR}/src/*.hpp
         ${VE_IN_DIR}/src/*.c
         ${VE_IN_DIR}/src/*.cpp
     )
-    file(GLOB_RECURSE ${VE_OUT_PREFIX}_UI   ${VE_IN_DIR}/src/*.ui)
-    file(GLOB_RECURSE ${VE_OUT_PREFIX}_QRC  ${VE_IN_DIR}/res/*.qrc)
-    file(GLOB_RECURSE ${VE_OUT_PREFIX}_TS   ${VE_IN_DIR}/res/*.ts)
+    file(GLOB_RECURSE ${VE_OUT_PREFIX}_UI   CONFIGURE_DEPENDS ${VE_IN_DIR}/src/*.ui)
+    file(GLOB_RECURSE ${VE_OUT_PREFIX}_QRC  CONFIGURE_DEPENDS ${VE_IN_DIR}/res/*.qrc)
+    file(GLOB_RECURSE ${VE_OUT_PREFIX}_TS   CONFIGURE_DEPENDS ${VE_IN_DIR}/res/*.ts)
     # _ALL: all compilable / processable files + public headers.
     # Public headers are included so AUTOMOC can find Q_OBJECT classes
     # and generate the corresponding moc_*.cpp files.
@@ -135,7 +135,7 @@ endfunction()
 #   ve_collect_resources(<target> <module_dir> [PREFIX <p>])
 function(ve_collect_resources target module_dir)
     cmake_parse_arguments(VCR "" "PREFIX" "" ${ARGN})
-    file(GLOB_RECURSE _res_files ${module_dir}/res/*)
+    file(GLOB_RECURSE _res_files CONFIGURE_DEPENDS ${module_dir}/res/*)
     if(VCR_PREFIX)
         ve_embed_files(${target} PREFIX ${VCR_PREFIX} ROOT ${module_dir}/res FILES ${_res_files})
     else()

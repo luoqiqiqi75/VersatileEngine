@@ -6,6 +6,7 @@
 #include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
+#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -32,10 +33,19 @@ struct NodeWsServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12100;
-    asio2::ws_server server{sharedIopool()};
+    AsioServerPool pool;
+    asio2::ws_server server;
     std::atomic<int> connCount{0};
     std::mutex mtx;
     std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
+
+    Private() : pool(makeServerPool()), server(pool.io()) {}
+
+    ~Private()
+    {
+        server.stop();
+        pool.drain();
+    }
 
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
@@ -70,7 +80,6 @@ NodeWsServer::~NodeWsServer()
 
 bool NodeWsServer::start()
 {
-
     _p->server.bind_connect([this](auto& session_ptr) {
         // Cap the WS close-frame wait at 2s. Default is 30s (asio2 wires
         // disconnect_timeout into websocket handshake_timeout), which hangs

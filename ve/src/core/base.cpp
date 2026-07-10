@@ -124,7 +124,7 @@ double Values::distance(const Values& o) const
     return (*this - o).norm();
 }
 
-bool Values::near(const Values& o, double epsilon) const
+bool Values::approximate(const Values& o, double epsilon) const
 {
     return distance(o) < epsilon;
 }

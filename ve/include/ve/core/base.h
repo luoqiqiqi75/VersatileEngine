@@ -566,7 +566,7 @@ public:
 
     bool operator<(const Values& other) const { return smallerThan(other); }
     bool operator>(const Values& other) const { return greaterThan(other); }
-    bool operator==(const Values& other) const { return near(other); }
+    bool operator==(const Values& other) const { return approximate(other); }
 
     // Arithmetic operators (scalar)
     Values& operator+=(double v) { return add(v); }
@@ -595,7 +595,7 @@ public:
     double sum() const;
     double norm() const;
     double distance(const Values& o) const;
-    bool near(const Values& o, double epsilon = 0.0001) const;
+    bool approximate(const Values& o, double epsilon = 0.0001) const;
 
 private:
     Unit m_unit = NONE;

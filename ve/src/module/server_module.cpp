@@ -2,15 +2,12 @@
 // Created by luoqi on 2026/3/24.
 //
 
-#include "ve/core/module.h"
+#include "src/module/server_module.h"
+
 #include "ve/core/log.h"
 #include "ve/core/command.h"
 #include "ve/core/res.h"
 #include "ve/entry.h"
-#include "ve/service/node_service.h"
-#include "ve/service/static_service.h"
-#include "ve/service/bin_service.h"
-#include "ve/service/terminal_service.h"
 
 #include "src/service/node_commands.h"
 #include "src/service/cmd_commands.h"
@@ -18,11 +15,12 @@
 
 namespace ve {
 
-template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port, const std::string& name)
+template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port,
+                                     const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
     int maxRetry = n->get("config/max_retry").toInt(-1);
-    
+
     int endPort = port;
     if (maxRetry >= 0) {
         endPort = port + maxRetry;
@@ -51,40 +49,14 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
         veLogEs(name, "failed to start on any port between", port, "and", endPort);
     }
 }
-template<typename T> void closeServer(std::unique_ptr<T>& server, Node* n)
+
+// Ask the server to stop but don't destroy it yet — io threads must drain any
+// _do_stop handler first, before the server object goes away.
+template<typename T> void stopServer(std::unique_ptr<T>& server, Node* n)
 {
-    if (server) {
-        server->stop();
-        server.reset();
-    }
+    if (server) server->stop();
     n->set("runtime/listening", false);
 }
-
-class ServerModule : public Module
-{
-    std::unique_ptr<service::NodeHttpServer> _node_http_s;
-    std::unique_ptr<service::NodeWsServer> _node_ws_s;
-    std::unique_ptr<service::NodeTcpServer> _node_tcp_s;
-    std::unique_ptr<service::NodeUdpServer> _node_udp_s;
-    std::unique_ptr<service::BinTcpServer> _bin_tcp_s;
-    std::unique_ptr<service::TerminalReplServer> _terminal_repl_s;
-    std::unique_ptr<service::TerminalReplServer> _terminal_ai_s;  // AI REPL (no banner, no current)
-    std::unique_ptr<service::StaticServer> _static_s;
-
-    std::string _data_root = "./data";
-
-public:
-    ServerModule();
-    ~ServerModule() override;
-
-    void bindStaticProxyTargets();
-
-private:
-    void init() override;
-    void prepare() override;
-    void ready() override;
-    void deinit() override;
-};
 
 ServerModule::ServerModule()
 {
@@ -238,14 +210,33 @@ void ServerModule::ready() {
 }
 
 void ServerModule::deinit() {
-    closeServer(_node_http_s, node()->at("node/http"));
-    closeServer(_node_ws_s, node()->at("node/ws"));
-    closeServer(_node_tcp_s, node()->at("node/tcp"));
-    closeServer(_node_udp_s, node()->at("node/udp"));
-    closeServer(_bin_tcp_s, node()->at("bin/tcp"));
-    closeServer(_terminal_repl_s, node()->at("terminal/repl"));
-    closeServer(_terminal_ai_s, node()->at("terminal/ai"));
-    closeServer(_static_s, node()->at("static"));
+    // Step 1: stop every server. Each stop() posts _do_stop onto the shared
+    // io thread and returns — the actual shutdown chain runs on the io thread
+    // and still references the live server object.
+    stopServer(_node_http_s, node()->at("node/http"));
+    stopServer(_node_ws_s, node()->at("node/ws"));
+    stopServer(_node_tcp_s, node()->at("node/tcp"));
+    stopServer(_node_udp_s, node()->at("node/udp"));
+    stopServer(_bin_tcp_s, node()->at("bin/tcp"));
+    stopServer(_terminal_repl_s, node()->at("terminal/repl"));
+    stopServer(_terminal_ai_s, node()->at("terminal/ai"));
+    stopServer(_static_s, node()->at("static"));
+
+    // Step 2: drain the shared io pool. Releasing the work_guard drops the
+    // idle-hold, and joining the workers waits for every posted handler
+    // (including _do_stop) to complete — all against still-live server
+    // objects. This is the shutdown barrier.
+    _pool.drain();
+
+    // Step 3: destroy the server objects. No handler can reference them now.
+    _node_http_s.reset();
+    _node_ws_s.reset();
+    _node_tcp_s.reset();
+    _node_udp_s.reset();
+    _bin_tcp_s.reset();
+    _terminal_repl_s.reset();
+    _terminal_ai_s.reset();
+    _static_s.reset();
 }
 
 }

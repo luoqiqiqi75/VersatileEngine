@@ -2,6 +2,7 @@
 #include "ve/service/static_service.h"
 #include "ve/core/log.h"
 #include "server_util.h"
+#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -111,7 +112,8 @@ static std::string readFileBytes(const std::filesystem::path& filepath)
 struct StaticServer::Private
 {
     uint16_t port = 12400;
-    asio2::http_server server{sharedIopool()};
+    AsioServerPool pool;
+    asio2::http_server server;
 
     struct ProxyRule {
         std::string prefix;
@@ -130,6 +132,14 @@ struct StaticServer::Private
     };
 
     std::vector<Mount> mounts; // sorted by prefix length descending (longest first)
+
+    Private() : pool(makeServerPool()), server(pool.io()) {}
+
+    ~Private()
+    {
+        server.stop();
+        pool.drain();
+    }
 
     Mount* findMount(const std::string& reqPath);
     bool tryProxy(const Mount& mount, const std::string& relPath,

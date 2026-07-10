@@ -78,11 +78,11 @@ target_include_directories(${VE_ROS_LIBRARY} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-file(GLOB_RECURSE _ROS_PUBLIC_HEADERS include/ve/ros/*.h)
-file(GLOB _ROS_UMBRELLA_HEADERS include/veRos)
-file(GLOB_RECURSE _ROS_BASE_SRC src/base/*.cpp src/base/*.h)
-file(GLOB_RECURSE _ROS_MODULE_SRC src/module/*.cpp src/module/*.h)
-file(GLOB_RECURSE _ROS_SERVICE_SRC src/service/*.cpp src/service/*.h)
+file(GLOB_RECURSE _ROS_PUBLIC_HEADERS CONFIGURE_DEPENDS include/ve/ros/*.h)
+file(GLOB _ROS_UMBRELLA_HEADERS CONFIGURE_DEPENDS include/veRos)
+file(GLOB_RECURSE _ROS_BASE_SRC CONFIGURE_DEPENDS src/base/*.cpp src/base/*.h)
+file(GLOB_RECURSE _ROS_MODULE_SRC CONFIGURE_DEPENDS src/module/*.cpp src/module/*.h)
+file(GLOB_RECURSE _ROS_SERVICE_SRC CONFIGURE_DEPENDS src/service/*.cpp src/service/*.h)
 
 target_sources(${VE_ROS_LIBRARY} PRIVATE
     ${_ROS_PUBLIC_HEADERS}
@@ -96,7 +96,7 @@ target_sources(${VE_ROS_LIBRARY} PRIVATE
 ve_collect_resources(${VE_ROS_LIBRARY} ${CMAKE_CURRENT_SOURCE_DIR} PREFIX ve)
 
 if(_VE_ROS_HAS_RCLCPP)
-    file(GLOB_RECURSE _ROS_RCLCPP_SRC src/backend/rclcpp/*.cpp src/backend/rclcpp/*.h)
+    file(GLOB_RECURSE _ROS_RCLCPP_SRC CONFIGURE_DEPENDS src/backend/rclcpp/*.cpp src/backend/rclcpp/*.h)
 
     # Check if rclcpp has typesupport_helpers (Galactic+)
     # Foxy (rclcpp 2.x) doesn't have this, so exclude dynamic_typesupport_bridge
@@ -115,7 +115,7 @@ if(_VE_ROS_HAS_RCLCPP)
 endif()
 
 if(_VE_ROS_HAS_FASTDDS)
-    file(GLOB_RECURSE _ROS_FASTDDS_SRC src/backend/fastdds/*.cpp src/backend/fastdds/*.h)
+    file(GLOB_RECURSE _ROS_FASTDDS_SRC CONFIGURE_DEPENDS src/backend/fastdds/*.cpp src/backend/fastdds/*.h)
     target_sources(${VE_ROS_LIBRARY} PRIVATE ${_ROS_FASTDDS_SRC})
     target_link_libraries(${VE_ROS_LIBRARY} PUBLIC fastrtps fastcdr)
     target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_FASTDDS=1)

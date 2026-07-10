@@ -13,7 +13,7 @@ set(_BROWSER_SOURCES
     res/browser.qrc
 )
 
-file(GLOB_RECURSE _BROWSER_QML res/qml/*.qml)
+file(GLOB_RECURSE _BROWSER_QML CONFIGURE_DEPENDS res/qml/*.qml)
 
 add_library(veqtbrowser ${_BROWSER_SOURCES} ${_BROWSER_QML})
 
