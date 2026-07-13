@@ -2,7 +2,6 @@
 #include "ve/service/static_service.h"
 #include "ve/core/log.h"
 #include "server_util.h"
-#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -112,8 +111,7 @@ static std::string readFileBytes(const std::filesystem::path& filepath)
 struct StaticServer::Private
 {
     uint16_t port = 12400;
-    AsioServerPool pool;
-    asio2::http_server server;
+    asio2::http_server server{sharedIopool()};
 
     struct ProxyRule {
         std::string prefix;
@@ -132,14 +130,6 @@ struct StaticServer::Private
     };
 
     std::vector<Mount> mounts; // sorted by prefix length descending (longest first)
-
-    Private() : pool(makeServerPool()), server(pool.io()) {}
-
-    ~Private()
-    {
-        server.stop();
-        pool.drain();
-    }
 
     Mount* findMount(const std::string& reqPath);
     bool tryProxy(const Mount& mount, const std::string& relPath,
@@ -372,6 +362,12 @@ bool StaticServer::updateMountProxy(const std::string& mountPrefix,
 
 bool StaticServer::start()
 {
+    // Cap the graceful-shutdown wait per session at 2s. Default is 30s, which
+    // stalls deinit when a browser tab is holding a keep-alive connection.
+    _p->server.bind_connect([](auto& session_ptr) {
+        session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
+    });
+
     _p->server.bind_not_found(
         [this](http::web_request& req, http::web_response& rep) {
             std::string reqPath = std::string(req.path());
@@ -413,7 +409,7 @@ bool StaticServer::start()
 
 void StaticServer::stop()
 {
-    _p->server.stop();
+    stopAndWait(_p->server);
 }
 
 bool StaticServer::isRunning() const

@@ -6,7 +6,6 @@
 #include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
-#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -35,8 +34,7 @@ struct NodeTcpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12200;
 
-    AsioServerPool pool;
-    asio2::tcp_server server;
+    asio2::tcp_server server{sharedIopool()};
     std::mutex mtx;
     std::atomic<int> connCount{0};
 
@@ -45,14 +43,6 @@ struct NodeTcpServer::Private
         std::unique_ptr<Session> session;
     };
     std::unordered_map<std::size_t, ConnState> connections;
-
-    Private() : pool(makeServerPool()), server(pool.io()) {}
-
-    ~Private()
-    {
-        server.stop();
-        pool.drain();
-    }
 
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
@@ -182,7 +172,7 @@ bool NodeTcpServer::start()
 
 void NodeTcpServer::stop()
 {
-    _p->server.stop();
+    stopAndWait(_p->server);
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

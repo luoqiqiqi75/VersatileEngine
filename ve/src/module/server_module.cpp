@@ -15,6 +15,26 @@
 
 namespace ve {
 
+// sharedIopool() implementation. The pointer is set by the ServerModule
+// constructor and cleared by its destructor. Servers only construct after
+// ready(), so the pointer is always valid at server construction time under
+// normal ve.entry flow. If a caller reaches here with no ServerModule
+// registered, that's a programming error — assert with a clear message.
+namespace {
+    asio2::iopool* g_shared_iopool = nullptr;
+}
+
+namespace service {
+asio2::iopool& sharedIopool()
+{
+    if (!g_shared_iopool) {
+        veLogE("ve.server not registered — server components require ServerModule");
+        std::abort();
+    }
+    return *g_shared_iopool;
+}
+} // namespace service
+
 template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port,
                                      const std::string& name)
 {
@@ -41,6 +61,12 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
             }
             return;
         }
+        // Start failed. asio2 internally posted the shutdown chain onto the
+        // io thread already, so before we destroy the failed server object
+        // and try the next port we must wait for that chain to complete —
+        // otherwise the io thread would dereference freed memory.
+        server->stop();
+        server.reset();
     }
     n->set("runtime/listening", false);
     if (port == endPort) {
@@ -50,16 +76,25 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
     }
 }
 
-// Ask the server to stop but don't destroy it yet — io threads must drain any
-// _do_stop handler first, before the server object goes away.
-template<typename T> void stopServer(std::unique_ptr<T>& server, Node* n)
+// Stop the server, block until its asio2 shutdown chain completes, then
+// destroy the object. See stopAndWait() in server_util.h for why the wait
+// is necessary.
+template<typename T> void closeServer(std::unique_ptr<T>& server, Node* n)
 {
-    if (server) server->stop();
+    if (server) {
+        server->stop();
+        server.reset();
+    }
     n->set("runtime/listening", false);
 }
 
 ServerModule::ServerModule()
 {
+    // Publish the iopool for sharedIopool() lookups before any server can
+    // be constructed. Started here; stopped in the destructor.
+    _iopool.start();
+    g_shared_iopool = &_iopool;
+
     { // register op commands
         auto& f = factory::at("service/op");
         schema::JsonS::toNode(f.node(), std::string(res::read("ve/service/op.json")));
@@ -79,7 +114,15 @@ ServerModule::ServerModule()
     }
 }
 
-ServerModule::~ServerModule() = default;
+ServerModule::~ServerModule()
+{
+    // deinit() ran earlier and already stop+waited every server, so the
+    // iopool has no in-flight handlers here. Clear the published pointer
+    // first so any late lookup fails loudly rather than touching a pool
+    // that's about to stop.
+    g_shared_iopool = nullptr;
+    _iopool.stop();
+}
 
 template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
                            Node* n, int default_port, const std::string& name)
@@ -128,6 +171,10 @@ template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
             }
             return;
         }
+        // Start failed — same shutdown-chain drain as the generic openServer;
+        // see the comment there for why this is required before reset().
+        server->stop();
+        server.reset();
     }
     n->set("runtime/listening", false);
     if (port == endPort) {
@@ -210,33 +257,18 @@ void ServerModule::ready() {
 }
 
 void ServerModule::deinit() {
-    // Step 1: stop every server. Each stop() posts _do_stop onto the shared
-    // io thread and returns — the actual shutdown chain runs on the io thread
-    // and still references the live server object.
-    stopServer(_node_http_s, node()->at("node/http"));
-    stopServer(_node_ws_s, node()->at("node/ws"));
-    stopServer(_node_tcp_s, node()->at("node/tcp"));
-    stopServer(_node_udp_s, node()->at("node/udp"));
-    stopServer(_bin_tcp_s, node()->at("bin/tcp"));
-    stopServer(_terminal_repl_s, node()->at("terminal/repl"));
-    stopServer(_terminal_ai_s, node()->at("terminal/ai"));
-    stopServer(_static_s, node()->at("static"));
-
-    // Step 2: drain the shared io pool. Releasing the work_guard drops the
-    // idle-hold, and joining the workers waits for every posted handler
-    // (including _do_stop) to complete — all against still-live server
-    // objects. This is the shutdown barrier.
-    _pool.drain();
-
-    // Step 3: destroy the server objects. No handler can reference them now.
-    _node_http_s.reset();
-    _node_ws_s.reset();
-    _node_tcp_s.reset();
-    _node_udp_s.reset();
-    _bin_tcp_s.reset();
-    _terminal_repl_s.reset();
-    _terminal_ai_s.reset();
-    _static_s.reset();
+    // Each closeServer: server->stop() (which under the hood calls
+    // stopAndWait, blocking until the asio2 shutdown chain finishes),
+    // then destroy. No handlers survive past reset(), so the iopool has
+    // nothing pending when it stops in the destructor.
+    closeServer(_node_http_s, node()->at("node/http"));
+    closeServer(_node_ws_s, node()->at("node/ws"));
+    closeServer(_node_tcp_s, node()->at("node/tcp"));
+    closeServer(_node_udp_s, node()->at("node/udp"));
+    closeServer(_bin_tcp_s, node()->at("bin/tcp"));
+    closeServer(_terminal_repl_s, node()->at("terminal/repl"));
+    closeServer(_terminal_ai_s, node()->at("terminal/ai"));
+    closeServer(_static_s, node()->at("static"));
 }
 
 }

@@ -6,7 +6,6 @@
 #include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
-#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -33,19 +32,10 @@ struct NodeWsServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12100;
-    AsioServerPool pool;
-    asio2::ws_server server;
+    asio2::ws_server server{sharedIopool()};
     std::atomic<int> connCount{0};
     std::mutex mtx;
     std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
-
-    Private() : pool(makeServerPool()), server(pool.io()) {}
-
-    ~Private()
-    {
-        server.stop();
-        pool.drain();
-    }
 
     std::unique_ptr<Session> makeSession(uint64_t sid)
     {
@@ -155,7 +145,7 @@ bool NodeWsServer::start()
 
 void NodeWsServer::stop()
 {
-    _p->server.stop();
+    stopAndWait(_p->server);
     {
         std::lock_guard<std::mutex> lock(_p->mtx);
         _p->sessions.clear();

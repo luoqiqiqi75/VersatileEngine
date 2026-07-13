@@ -2,28 +2,24 @@
 //
 // Private (under src/), not exported.
 //
-// AsioServerPool wraps "the io_context an asio2 server runs on". Two modes:
-//   - Shared: constructed from an external asio::io_context& (owned elsewhere,
-//     typically ServerModule). No worker threads owned; drain() is a no-op.
-//   - Own:    default constructor. Spins up its own io_context + worker
-//             threads; drain() releases the work_guard and joins them.
+// Threading model:
+//   ServerModule owns one asio2::iopool for the whole ve process. Every ve
+//   Server passes sharedIopool() to its asio2::xxx_server constructor, so all
+//   servers share the same worker threads. The pool starts when ServerModule
+//   is constructed and stops in its destructor — by which time deinit() has
+//   already stopped every ve Server, so no handler is left running.
 //
-// Each Server's Private has one AsioServerPool member (constructed before the
-// asio2::xxx_server value member) and, in its dtor, calls server.stop()
-// followed by pool.drain() — so that any _do_stop handler posted by stop() is
-// guaranteed to have completed before the server value is destroyed.
+// Shutdown discipline:
+//   asio2's server.stop() posts _do_stop to the io thread and returns
+//   immediately. Destroying the C++ server object before _do_stop finishes
+//   would let the io thread dereference freed memory. So we don't destroy
+//   the server until _do_stop has run to completion — bind_stop() fires at
+//   the end of that chain (_fire_stop), and stopAndWait() blocks on it.
 //
-// Under ServerModule (the normal ve.entry path) every server uses the module's
-// io_context; the module drains its own pool in deinit() before letting the
-// server unique_ptrs reset, so the per-server drain() is a no-op there. When
-// a caller instantiates a Server standalone (no ve.server module registered),
-// the pool owns its threads and the per-server drain fires — same shutdown
-// safety, no shared static state.
-//
-// Factory: server_module.h provides makeServerPool() which returns a shared
-// AsioServerPool when ServerModule is registered, else an owned one. Servers
-// call that (not AsioServerPool ctor directly) so the "shared vs own" choice
-// stays in one place.
+//   Callers use ServerModule::closeServer() which does stopAndWait() then
+//   resets the unique_ptr. Server dtors on the standalone path (destructor
+//   without deinit) still work: ~xxx_server() calls stop() and the pool is
+//   alive because it was constructed before the server member.
 #pragma once
 
 #ifdef _MSC_VER
@@ -34,62 +30,44 @@
 #pragma warning(pop)
 #endif
 
-#include <optional>
-#include <thread>
-#include <vector>
+#include <chrono>
+#include <future>
 
 namespace ve {
 namespace service {
 
-class AsioServerPool
+// The one iopool every asio2 server in ve shares. Owned by ServerModule;
+// see server_module.h for lifecycle. Servers pass this to their asio2
+// constructor:  asio2::tcp_server server{sharedIopool()};
+asio2::iopool& sharedIopool();
+
+// Stop an asio2 server and block until its _do_stop chain has fully run,
+// so it's safe to destroy the object right after this returns.
+//
+// asio2 fires bind_stop at the tail of _fire_stop (last step in the shutdown
+// chain), which we hook to a promise here. If the server is already fully
+// stopped (never started, or a previous stop() already completed) we skip
+// the wait — arming bind_stop would never resolve because _fire_stop won't
+// run again. A 3s wall-clock cap catches any pathological path where
+// bind_stop somehow doesn't fire; session disconnect_timeout is 2s so 3s
+// is enough slack.
+template <typename Server>
+inline void stopAndWait(Server& server)
 {
-public:
-    // Own-mode: allocate an io_context + worker threads.
-    explicit AsioServerPool(unsigned threads = 4)
-        : _external(nullptr)
-        , _owned_io(std::make_unique<asio::io_context>(1))
-    {
-        _owned_guard.emplace(asio::make_work_guard(*_owned_io));
-        unsigned n = threads ? threads : 1;
-        _owned_workers.reserve(n);
-        for (unsigned i = 0; i < n; ++i)
-            _owned_workers.emplace_back([&io = *_owned_io] { io.run(); });
+    if (server.is_stopped()) {
+        // Never started, or already fully stopped — no shutdown chain in
+        // flight, so nothing to wait for.
+        return;
     }
 
-    // Shared-mode: refer to an io_context owned by the caller.
-    explicit AsioServerPool(asio::io_context& external) : _external(&external) {}
-
-    ~AsioServerPool() { drain(); }
-
-    // Movable so factory helpers can return by value.
-    AsioServerPool(AsioServerPool&&) noexcept = default;
-    AsioServerPool& operator=(AsioServerPool&&) noexcept = default;
-
-    AsioServerPool(const AsioServerPool&) = delete;
-    AsioServerPool& operator=(const AsioServerPool&) = delete;
-
-    // Drain the owned io pool if any. Safe to call multiple times; no-op in
-    // shared mode. Called by Server::Private dtor after server.stop() so any
-    // handler posted by stop() completes against a still-live server.
-    void drain()
-    {
-        if (!_owned_io) return;
-        _owned_guard.reset();
-        for (auto& w : _owned_workers) if (w.joinable()) w.join();
-        _owned_workers.clear();
-    }
-
-    asio::io_context& io() noexcept
-    {
-        return _external ? *_external : *_owned_io;
-    }
-
-private:
-    asio::io_context* _external;
-    std::unique_ptr<asio::io_context> _owned_io;
-    std::optional<asio::executor_work_guard<asio::io_context::executor_type>> _owned_guard;
-    std::vector<std::thread> _owned_workers;
-};
+    auto done = std::make_shared<std::promise<void>>();
+    auto fut = done->get_future();
+    server.bind_stop([done]() {
+        try { done->set_value(); } catch (...) {} // idempotent: set_value on satisfied promise throws
+    });
+    server.stop();
+    fut.wait_for(std::chrono::seconds(3));
+}
 
 namespace detail {
     template <typename T, typename = void>
@@ -117,4 +95,3 @@ void disableWindowsPortReuse(AsioServer& server) {
 
 } // namespace service
 } // namespace ve
-

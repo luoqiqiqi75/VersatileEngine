@@ -7,7 +7,6 @@
 
 #include "node_commands.h"
 #include "server_util.h"
-#include "src/module/server_module.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -64,27 +63,10 @@ struct NodeHttpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12000;
 
-    // io_context lifecycle wrapper. Constructed before `server` and destroyed
-    // after, so drain() (called from ~Private below) always runs while the
-    // asio2 server value is still alive. See server_util.h.
-    AsioServerPool pool;
-    asio2::http_server server;
+    asio2::http_server server{sharedIopool()};
 
     std::chrono::steady_clock::time_point startTime;
     std::unique_ptr<Session> session;
-
-    Private() : pool(makeServerPool()), server(pool.io()) {}
-
-    ~Private()
-    {
-        // Stop the asio2 server (posts _do_stop onto the io thread), then
-        // drain owned io threads if any. Under ServerModule the module has
-        // already drained the shared pool by the time this Private is being
-        // destroyed, so drain() is a no-op. In the standalone path this is
-        // the barrier that prevents _do_stop from touching a dead server.
-        server.stop();
-        pool.drain();
-    }
 };
 
 NodeHttpServer::NodeHttpServer(const Node* config_n) : _p(std::make_unique<Private>())
@@ -101,6 +83,12 @@ NodeHttpServer::~NodeHttpServer()
 bool NodeHttpServer::start()
 {
     _p->session = std::make_unique<Session>(_p->root, _p->root);
+
+    // Cap the graceful-shutdown wait per session at 2s. Default is 30s, which
+    // stalls deinit when a browser tab is holding a keep-alive connection.
+    _p->server.bind_connect([](auto& session_ptr) {
+        session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
+    });
 
     { // health protocol
         _p->startTime = std::chrono::steady_clock::now();
@@ -252,8 +240,8 @@ bool NodeHttpServer::start()
 
 void NodeHttpServer::stop()
 {
+    stopAndWait(_p->server);
     _p->session.reset();
-    _p->server.stop();
 }
 
 bool NodeHttpServer::isRunning() const
