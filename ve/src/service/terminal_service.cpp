@@ -558,8 +558,12 @@ bool TerminalReplServer::start()
     return _p->server.start("0.0.0.0", _p->port);
 }
 
-void TerminalReplServer::stop()
+void TerminalReplServer::stop(bool wait)
 {
+    if (!wait) {
+        _p->server.stop();
+        return;
+    }
     stopAndWait(_p->server);
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();

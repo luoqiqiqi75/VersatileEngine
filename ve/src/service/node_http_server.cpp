@@ -238,8 +238,14 @@ bool NodeHttpServer::start()
     return _p->server.start("0.0.0.0", _p->port);
 }
 
-void NodeHttpServer::stop()
+void NodeHttpServer::stop(bool wait)
 {
+    if (!wait) {
+        // Fire the shutdown chain and return. The object must outlive the
+        // chain — a later stop(true) or the destructor will do the wait.
+        _p->server.stop();
+        return;
+    }
     stopAndWait(_p->server);
     _p->session.reset();
 }

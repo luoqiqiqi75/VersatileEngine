@@ -188,8 +188,12 @@ bool BinTcpServer::start()
     return _p->server.start("0.0.0.0", _p->port);
 }
 
-void BinTcpServer::stop()
+void BinTcpServer::stop(bool wait)
 {
+    if (!wait) {
+        _p->server.stop();
+        return;
+    }
     stopAndWait(_p->server);
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();

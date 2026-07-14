@@ -24,7 +24,7 @@ public:
     ~TerminalReplServer();
 
     bool     start();
-    void     stop();
+    void     stop(bool wait = true);
     bool     isRunning() const;
     int      connectionCount() const;
     uint16_t port() const;

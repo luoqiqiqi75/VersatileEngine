@@ -76,18 +76,6 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
     }
 }
 
-// Stop the server, block until its asio2 shutdown chain completes, then
-// destroy the object. See stopAndWait() in server_util.h for why the wait
-// is necessary.
-template<typename T> void closeServer(std::unique_ptr<T>& server, Node* n)
-{
-    if (server) {
-        server->stop();
-        server.reset();
-    }
-    n->set("runtime/listening", false);
-}
-
 ServerModule::ServerModule()
 {
     // Publish the iopool for sharedIopool() lookups before any server can
@@ -257,18 +245,37 @@ void ServerModule::ready() {
 }
 
 void ServerModule::deinit() {
-    // Each closeServer: server->stop() (which under the hood calls
-    // stopAndWait, blocking until the asio2 shutdown chain finishes),
-    // then destroy. No handlers survive past reset(), so the iopool has
-    // nothing pending when it stops in the destructor.
-    closeServer(_node_http_s, node()->at("node/http"));
-    closeServer(_node_ws_s, node()->at("node/ws"));
-    closeServer(_node_tcp_s, node()->at("node/tcp"));
-    closeServer(_node_udp_s, node()->at("node/udp"));
-    closeServer(_bin_tcp_s, node()->at("bin/tcp"));
-    closeServer(_terminal_repl_s, node()->at("terminal/repl"));
-    closeServer(_terminal_ai_s, node()->at("terminal/ai"));
-    closeServer(_static_s, node()->at("static"));
+    // Kick every server's shutdown chain in parallel. Each stop(false) just
+    // calls asio2::server::stop() and returns — the shutdown chain (including
+    // per-session disconnect_timeout, 2s) runs on the shared iopool workers
+    // for all 8 servers concurrently.
+    if (_node_http_s)     _node_http_s->stop(false);
+    if (_node_ws_s)       _node_ws_s->stop(false);
+    if (_node_tcp_s)      _node_tcp_s->stop(false);
+    if (_node_udp_s)      _node_udp_s->stop(false);
+    if (_bin_tcp_s)       _bin_tcp_s->stop(false);
+    if (_terminal_repl_s) _terminal_repl_s->stop(false);
+    if (_terminal_ai_s)   _terminal_ai_s->stop(false);
+    if (_static_s)        _static_s->stop(false);
+
+    // Destroy in the same order. Each ~NodeXxxServer() calls stop() which
+    // defaults to wait=true and blocks on its own already-in-flight chain.
+    // The first reset absorbs the ~2s disconnect_timeout wall-clock; by then
+    // the other 7 chains have completed too, so their resets return ~instantly.
+    // Serial stop(true) here (what the previous version did) would stack to
+    // ~16s; this cuts it to ~2s.
+    auto close_one = [](auto& s, Node* n) {
+        s.reset();
+        n->set("runtime/listening", false);
+    };
+    close_one(_node_http_s,     node()->at("node/http"));
+    close_one(_node_ws_s,       node()->at("node/ws"));
+    close_one(_node_tcp_s,      node()->at("node/tcp"));
+    close_one(_node_udp_s,      node()->at("node/udp"));
+    close_one(_bin_tcp_s,       node()->at("bin/tcp"));
+    close_one(_terminal_repl_s, node()->at("terminal/repl"));
+    close_one(_terminal_ai_s,   node()->at("terminal/ai"));
+    close_one(_static_s,        node()->at("static"));
 }
 
 }

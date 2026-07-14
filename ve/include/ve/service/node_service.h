@@ -17,7 +17,7 @@ public:
     ~NodeHttpServer();
 
     bool start();
-    void stop();
+    void stop(bool wait = true);
     bool isRunning() const;
 
 private:
@@ -31,7 +31,7 @@ public:
     ~NodeWsServer();
 
     bool start();
-    void stop();
+    void stop(bool wait = true);
     bool isRunning() const;
     int  connectionCount() const;
 
@@ -46,7 +46,7 @@ public:
     ~NodeTcpServer();
 
     bool start();
-    void stop();
+    void stop(bool wait = true);
     bool isRunning() const;
     int  connectionCount() const;
 
@@ -61,7 +61,7 @@ public:
     ~NodeUdpServer();
 
     bool start();
-    void stop();
+    void stop(bool wait = true);
     bool isRunning() const;
 
 private:

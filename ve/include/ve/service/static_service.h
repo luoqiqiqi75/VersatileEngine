@@ -14,12 +14,10 @@ public:
     explicit StaticServer(uint16_t port);
     ~StaticServer();
 
-    // 添加挂载点，按最长前缀匹配。prefix="/" 为根挂载。
     void addMount(const std::string& prefix, const std::string& root,
                   const std::string& defaultFile = "index.html",
                   bool spaFallback = false);
 
-    // 为指定挂载点添加代理规则（proxyPrefix 相对于 mountPrefix）
     void addMountProxy(const std::string& mountPrefix,
                        const std::string& proxyPrefix,
                        const std::string& target);
@@ -29,7 +27,7 @@ public:
                           const std::string& target);
 
     bool start();
-    void stop();
+    void stop(bool wait = true);
     bool isRunning() const;
 
 private:

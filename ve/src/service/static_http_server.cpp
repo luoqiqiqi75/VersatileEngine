@@ -407,8 +407,12 @@ bool StaticServer::start()
     return _p->server.start("0.0.0.0", _p->port);
 }
 
-void StaticServer::stop()
+void StaticServer::stop(bool wait)
 {
+    if (!wait) {
+        _p->server.stop();
+        return;
+    }
     stopAndWait(_p->server);
 }
 

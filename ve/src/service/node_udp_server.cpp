@@ -101,8 +101,12 @@ bool NodeUdpServer::start()
     return _p->server.start("0.0.0.0", _p->port);
 }
 
-void NodeUdpServer::stop()
+void NodeUdpServer::stop(bool wait)
 {
+    if (!wait) {
+        _p->server.stop();
+        return;
+    }
     stopAndWait(_p->server);
     _p->session.reset();
 }
