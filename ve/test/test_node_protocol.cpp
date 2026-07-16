@@ -219,3 +219,42 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
     root.find("watch/me")->set(9);
     VE_ASSERT(lastPush.empty());
 }
+
+VE_TEST(node_session_disconnect_isolated_from_subscriber) {
+    Node root("root");
+    root.set("watch/me", 1);
+
+    std::string subscriberPush;
+    service::Session subscriber(&root, &root, [&](std::string msg) {
+        subscriberPush = std::move(msg);
+    });
+
+    {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "subscribe");
+        pipe.contextNode()->at("params")->set("path", "watch/me");
+        runEnvelope(&subscriber, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    }
+
+    std::string disconnectedPush;
+    {
+        service::Session disconnectedClient(&root, &root, [&](std::string msg) {
+            disconnectedPush = std::move(msg);
+        });
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "subscribe");
+        pipe.contextNode()->at("params")->set("path", "watch/me");
+        runEnvelope(&disconnectedClient, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    }
+
+    root.find("watch/me")->set(7);
+    VE_ASSERT(!subscriberPush.empty());
+    VE_ASSERT(disconnectedPush.empty());
+
+    Node event;
+    schema::toNode<schema::JsonS>(&event, subscriberPush);
+    VE_ASSERT_EQ(event.get("event").toString(), std::string("node.changed"));
+    VE_ASSERT_EQ(event.find("data")->getInt(), 7);
+}

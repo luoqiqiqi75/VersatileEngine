@@ -409,6 +409,7 @@ class TcpJsonTransport(Transport):
         self._sub_lock = threading.Lock()
         self._recv_thread = None
         self._running = False
+        self._disconnect_error = None
         self._connect()
 
     def _connect(self):
@@ -424,15 +425,56 @@ class TcpJsonTransport(Transport):
         self._recv_thread.start()
 
     def _recv_loop(self):
-        while self._running:
-            try:
-                data = self.sock.recv(8192)
+        sock = self.sock
+        disconnect_error = ConnectionError("Connection closed by peer")
+        try:
+            while self._running:
+                data = sock.recv(8192)
                 if not data:
                     break
                 self.recv_buf += data.decode('utf-8')
                 self._process_messages()
-            except Exception:
-                break
+        except Exception as exc:
+            if self._running:
+                disconnect_error = ConnectionError(f"Connection lost: {exc}")
+            else:
+                disconnect_error = ConnectionError("Transport closed")
+        finally:
+            self._disconnect(disconnect_error, sock)
+
+    def _disconnect(self, error: ConnectionError, sock=None):
+        """Close the socket and fail every request waiting on this connection."""
+        with self._lock:
+            if self._disconnect_error is None:
+                self._disconnect_error = error
+            self._running = False
+            if sock is None:
+                sock = self.sock
+            if self.sock is sock:
+                self.sock = None
+            pending = list(self._pending.values())
+            self._pending.clear()
+
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+        for event, result_holder in pending:
+            result_holder[0] = self._disconnect_error
+            event.set()
+
+    def _is_connected(self) -> bool:
+        with self._lock:
+            return (self._running and self.sock is not None
+                    and self._disconnect_error is None
+                    and self._recv_thread is not None
+                    and self._recv_thread.is_alive())
 
     def _process_messages(self):
         """Parse complete JSON objects from buffer using raw_decode (handles pretty JSON)."""
@@ -464,27 +506,44 @@ class TcpJsonTransport(Transport):
                 continue
 
             # Response to a pending request
-            if msg_id is not None and msg_id in self._pending:
-                event, result_holder = self._pending.pop(msg_id)
+            with self._lock:
+                pending = self._pending.pop(msg_id, None) if msg_id is not None else None
+            if pending is not None:
+                event, result_holder = pending
                 result_holder[0] = msg
                 event.set()
 
     def _send(self, message: dict) -> dict:
         with self._lock:
+            if (not self._running or self.sock is None
+                    or self._disconnect_error is not None
+                    or self._recv_thread is None
+                    or not self._recv_thread.is_alive()):
+                raise self._disconnect_error or ConnectionError("Connection is not available")
             self._id += 1
             message["id"] = self._id
             mid = self._id
             event = threading.Event()
             result_holder = [None]
             self._pending[mid] = (event, result_holder)
+            sock = self.sock
 
         try:
-            self.sock.sendall((json.dumps(message, separators=(',', ':')) + "\n").encode('utf-8'))
+            try:
+                sock.sendall((json.dumps(message, separators=(',', ':')) + "\n").encode('utf-8'))
+            except OSError as exc:
+                error = ConnectionError(f"Failed to send request: {exc}")
+                self._disconnect(error, sock)
+                raise error from exc
             if not event.wait(timeout=self.timeout):
                 raise TimeoutError("Request timeout")
-            return result_holder[0]
+            result = result_holder[0]
+            if isinstance(result, BaseException):
+                raise result
+            return result
         finally:
-            self._pending.pop(message.get("id"), None)
+            with self._lock:
+                self._pending.pop(mid, None)
 
     def _op(self, op: str, **params) -> dict:
         return self._send({"op": op, "params": params})
@@ -615,6 +674,8 @@ class TcpJsonTransport(Transport):
             pass
 
     def ping(self) -> bool:
+        if not self._is_connected():
+            return False
         try:
             self.val("/")
             return True
@@ -622,12 +683,7 @@ class TcpJsonTransport(Transport):
             return False
 
     def close(self):
-        self._running = False
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception:
-                pass
+        self._disconnect(ConnectionError("Transport closed"))
 
     def __del__(self):
         self.close()
@@ -666,26 +722,69 @@ class MsgPackTransport(Transport):
         self._sub_lock = threading.Lock()
         self._recv_thread = None
         self._running = False
+        self._disconnect_error = None
         self._connect()
 
     def _connect(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
         self.sock.connect((self.host, self.port))
+        self.sock.settimeout(None)
         self._running = True
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()
 
     def _recv_loop(self):
-        while self._running:
-            try:
-                data = self.sock.recv(8192)
+        sock = self.sock
+        disconnect_error = ConnectionError("Connection closed by peer")
+        try:
+            while self._running:
+                data = sock.recv(8192)
                 if not data:
                     break
                 self.recv_buf += data
                 self._process_frames()
-            except Exception:
-                break
+        except Exception as exc:
+            if self._running:
+                disconnect_error = ConnectionError(f"Connection lost: {exc}")
+            else:
+                disconnect_error = ConnectionError("Transport closed")
+        finally:
+            self._disconnect(disconnect_error, sock)
+
+    def _disconnect(self, error: ConnectionError, sock=None):
+        """Close the socket and fail every request waiting on this connection."""
+        with self._lock:
+            if self._disconnect_error is None:
+                self._disconnect_error = error
+            self._running = False
+            if sock is None:
+                sock = self.sock
+            if self.sock is sock:
+                self.sock = None
+            pending = list(self._pending.values())
+            self._pending.clear()
+
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+        for event, result_holder in pending:
+            result_holder[0] = self._disconnect_error
+            event.set()
+
+    def _is_connected(self) -> bool:
+        with self._lock:
+            return (self._running and self.sock is not None
+                    and self._disconnect_error is None
+                    and self._recv_thread is not None
+                    and self._recv_thread.is_alive())
 
     def _process_frames(self):
         while len(self.recv_buf) >= 5:
@@ -719,13 +818,20 @@ class MsgPackTransport(Transport):
 
             # RESPONSE or ERROR — match to pending request
             msg_id = msg.get("id")
-            if msg_id is not None and msg_id in self._pending:
-                event, result_holder = self._pending.pop(msg_id)
+            with self._lock:
+                pending = self._pending.pop(msg_id, None) if msg_id is not None else None
+            if pending is not None:
+                event, result_holder = pending
                 result_holder[0] = (flag, msg)
                 event.set()
 
     def _send_message(self, message: dict) -> tuple:
         with self._lock:
+            if (not self._running or self.sock is None
+                    or self._disconnect_error is not None
+                    or self._recv_thread is None
+                    or not self._recv_thread.is_alive()):
+                raise self._disconnect_error or ConnectionError("Connection is not available")
             self._id += 1
             message["id"] = self._id
             mid = self._id
@@ -735,14 +841,24 @@ class MsgPackTransport(Transport):
             event = threading.Event()
             result_holder = [None]
             self._pending[mid] = (event, result_holder)
+            sock = self.sock
 
         try:
-            self.sock.sendall(header + payload)
+            try:
+                sock.sendall(header + payload)
+            except OSError as exc:
+                error = ConnectionError(f"Failed to send request: {exc}")
+                self._disconnect(error, sock)
+                raise error from exc
             if not event.wait(timeout=self.timeout):
                 raise TimeoutError("Request timeout")
-            return result_holder[0]
+            result = result_holder[0]
+            if isinstance(result, BaseException):
+                raise result
+            return result
         finally:
-            self._pending.pop(mid, None)
+            with self._lock:
+                self._pending.pop(mid, None)
 
     def _op(self, op: str, **params) -> tuple:
         return self._send_message({"op": op, "params": params})
@@ -880,6 +996,8 @@ class MsgPackTransport(Transport):
             pass
 
     def ping(self) -> bool:
+        if not self._is_connected():
+            return False
         try:
             self.val("/")
             return True
@@ -887,12 +1005,7 @@ class MsgPackTransport(Transport):
             return False
 
     def close(self):
-        self._running = False
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception:
-                pass
+        self._disconnect(ConnectionError("Transport closed"))
 
     def __del__(self):
         self.close()

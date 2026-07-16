@@ -3,6 +3,7 @@
 #include "ve/core/node.h"
 #include "ve/core/schema.h"
 #include "ve/core/command.h"
+#include "ve/core/log.h"
 #include "ve/core/pipeline.h"
 #include "node_commands.h"
 #include "server_util.h"
@@ -158,12 +159,17 @@ bool NodeTcpServer::start()
     });
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
+        const auto error = asio2::get_last_error();
+        const auto remoteAddress = session_ptr->remote_address();
+        const auto remotePort = session_ptr->remote_port();
         auto key = session_ptr->hash_key();
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             _p->connections.erase(key);
         }
         _p->connCount.fetch_sub(1, std::memory_order_relaxed);
+        veLogDs("[node/tcp] client disconnected:", remoteAddress, ":", remotePort,
+                "reason:", error.value(), error.message());
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
