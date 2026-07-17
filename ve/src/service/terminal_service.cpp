@@ -332,6 +332,7 @@ struct TerminalReplServer::Private
 
     bool     ownsRoot = false;
 
+    ServerStopBarrier stopBarrier;
     asio2::tcp_server server{sharedIopool()};
     std::mutex mtx;
     std::unordered_map<std::size_t, std::unique_ptr<ConnectionState>> connections;
@@ -555,6 +556,7 @@ bool TerminalReplServer::start()
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
+    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
@@ -564,7 +566,7 @@ void TerminalReplServer::stop(bool wait)
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server);
+    stopAndWait(_p->server, _p->stopBarrier);
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

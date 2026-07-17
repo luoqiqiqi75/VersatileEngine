@@ -31,10 +31,9 @@ private:
     void ready() override;
     void deinit() override;
 
-    // The one iopool every ve asio2 server uses. Started in the ctor,
-    // stopped in the dtor. deinit() runs before the dtor and has already
-    // stop+waited every server by that point, so the iopool has no
-    // handlers left to drain when it stops.
+    // The one iopool every ve asio2 server uses. Started in the ctor and
+    // stopped by deinit() while all registered server objects are still
+    // alive; the dtor repeats stop() as an idempotent fallback.
     //
     // Declared before the server unique_ptrs so member destruction (reverse
     // of declaration order) tears servers down first, iopool last — a

@@ -34,6 +34,7 @@ struct BinTcpServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 11000;
+    ServerStopBarrier stopBarrier;
     asio2::tcp_server server{sharedIopool()};
     std::mutex mtx;
     std::atomic<int> connCount{0};
@@ -191,6 +192,7 @@ bool BinTcpServer::start()
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
+    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
@@ -200,7 +202,7 @@ void BinTcpServer::stop(bool wait)
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server);
+    stopAndWait(_p->server, _p->stopBarrier);
     std::lock_guard<std::mutex> lock(_p->mtx);
     _p->connections.clear();
 }

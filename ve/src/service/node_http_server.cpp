@@ -63,6 +63,7 @@ struct NodeHttpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12000;
 
+    ServerStopBarrier stopBarrier;
     asio2::http_server server{sharedIopool()};
 
     std::chrono::steady_clock::time_point startTime;
@@ -235,6 +236,7 @@ bool NodeHttpServer::start()
     }
 
     disableWindowsPortReuse(_p->server);
+    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
@@ -246,7 +248,7 @@ void NodeHttpServer::stop(bool wait)
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server);
+    stopAndWait(_p->server, _p->stopBarrier);
     _p->session.reset();
 }
 

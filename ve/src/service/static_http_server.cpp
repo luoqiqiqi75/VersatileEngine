@@ -111,6 +111,7 @@ static std::string readFileBytes(const std::filesystem::path& filepath)
 struct StaticServer::Private
 {
     uint16_t port = 12400;
+    ServerStopBarrier stopBarrier;
     asio2::http_server server{sharedIopool()};
 
     struct ProxyRule {
@@ -404,6 +405,7 @@ bool StaticServer::start()
         });
 
     ve::service::disableWindowsPortReuse(_p->server);
+    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
@@ -413,7 +415,7 @@ void StaticServer::stop(bool wait)
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server);
+    stopAndWait(_p->server, _p->stopBarrier);
 }
 
 bool StaticServer::isRunning() const

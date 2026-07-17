@@ -104,10 +104,10 @@ ServerModule::ServerModule()
 
 ServerModule::~ServerModule()
 {
-    // deinit() ran earlier and already stop+waited every server, so the
-    // iopool has no in-flight handlers here. Clear the published pointer
-    // first so any late lookup fails loudly rather than touching a pool
-    // that's about to stop.
+    // Normally deinit() has already stopped the pool while every registered
+    // server was still alive. Keep this stop as a fallback for paths that skip
+    // deinit(); member destruction happens after this body, so the registered
+    // server pointers are still valid while iopool::stop() drains them.
     g_shared_iopool = nullptr;
     _iopool.stop();
 }
@@ -245,10 +245,9 @@ void ServerModule::ready() {
 }
 
 void ServerModule::deinit() {
-    // Kick every server's shutdown chain in parallel. Each stop(false) just
-    // calls asio2::server::stop() and returns — the shutdown chain (including
-    // per-session disconnect_timeout, 2s) runs on the shared iopool workers
-    // for all 8 servers concurrently.
+    // Request shutdown for every server, but keep all wrapper objects alive.
+    // asio2 registers raw server pointers in the shared iopool and removes
+    // them through an asynchronously posted unregobj() handler.
     if (_node_http_s)     _node_http_s->stop(false);
     if (_node_ws_s)       _node_ws_s->stop(false);
     if (_node_tcp_s)      _node_tcp_s->stop(false);
@@ -258,12 +257,14 @@ void ServerModule::deinit() {
     if (_terminal_ai_s)   _terminal_ai_s->stop(false);
     if (_static_s)        _static_s->stop(false);
 
-    // Destroy in the same order. Each ~NodeXxxServer() calls stop() which
-    // defaults to wait=true and blocks on its own already-in-flight chain.
-    // The first reset absorbs the ~2s disconnect_timeout wall-clock; by then
-    // the other 7 chains have completed too, so their resets return ~instantly.
-    // Serial stop(true) here (what the previous version did) would stack to
-    // ~16s; this cuts it to ~2s.
+    // Drain and stop the shared pool before destroying any server. This is the
+    // final barrier for both shutdown handlers and the posted unregobj()
+    // handlers. Stopping the pool after reset() would let its object registry
+    // call server.stop() through dangling raw pointers.
+    _iopool.stop();
+
+    // The pool can no longer execute callbacks against the wrappers, so they
+    // and their per-connection state are now safe to destroy.
     auto close_one = [](auto& s, Node* n) {
         s.reset();
         n->set("runtime/listening", false);

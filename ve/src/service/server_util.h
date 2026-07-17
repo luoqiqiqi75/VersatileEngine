@@ -10,16 +10,10 @@
 //   already stopped every ve Server, so no handler is left running.
 //
 // Shutdown discipline:
-//   asio2's server.stop() posts _do_stop to the io thread and returns
-//   immediately. Destroying the C++ server object before _do_stop finishes
-//   would let the io thread dereference freed memory. So we don't destroy
-//   the server until _do_stop has run to completion — bind_stop() fires at
-//   the end of that chain (_fire_stop), and stopAndWait() blocks on it.
-//
-//   Callers use ServerModule::closeServer() which does stopAndWait() then
-//   resets the unique_ptr. Server dtors on the standalone path (destructor
-//   without deinit) still work: ~xxx_server() calls stop() and the pool is
-//   alive because it was constructed before the server member.
+//   A failed start schedules asio2's shutdown before start() returns. Every
+//   wrapper therefore arms ServerStopBarrier before calling start(). On stop,
+//   we wait for that pre-bound notification and then flush the shared iopool,
+//   ensuring the rest of _handle_stop has returned before object destruction.
 #pragma once
 
 #ifdef _MSC_VER
@@ -30,8 +24,11 @@
 #pragma warning(pop)
 #endif
 
-#include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <future>
+#include <mutex>
+#include <vector>
 
 namespace ve {
 namespace service {
@@ -41,32 +38,77 @@ namespace service {
 // constructor:  asio2::tcp_server server{sharedIopool()};
 asio2::iopool& sharedIopool();
 
-// Stop an asio2 server and block until its _do_stop chain has fully run,
-// so it's safe to destroy the object right after this returns.
-//
-// asio2 fires bind_stop at the tail of _fire_stop (last step in the shutdown
-// chain), which we hook to a promise here. If the server is already fully
-// stopped (never started, or a previous stop() already completed) we skip
-// the wait — arming bind_stop would never resolve because _fire_stop won't
-// run again. A 3s wall-clock cap catches any pathological path where
-// bind_stop somehow doesn't fire; session disconnect_timeout is 2s so 3s
-// is enough slack.
-template <typename Server>
-inline void stopAndWait(Server& server)
+// A generation-counted stop notification. arm() must run before start(), when
+// no server callback can be firing. This avoids both the missed-notification
+// race and listener mutation concurrent with asio2::_fire_stop().
+class ServerStopBarrier
 {
-    if (server.is_stopped()) {
-        // Never started, or already fully stopped — no shutdown chain in
-        // flight, so nothing to wait for.
-        return;
+    struct State
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::uint64_t expected = 0;
+        std::uint64_t completed = 0;
+    };
+
+public:
+    template <typename Server>
+    void arm(Server& server)
+    {
+        auto state = _state;
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            ++state->expected;
+        }
+        server.bind_stop([state]() {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                ++state->completed;
+            }
+            state->cv.notify_all();
+        });
     }
 
-    auto done = std::make_shared<std::promise<void>>();
-    auto fut = done->get_future();
-    server.bind_stop([done]() {
-        try { done->set_value(); } catch (...) {} // idempotent: set_value on satisfied promise throws
-    });
+    void wait()
+    {
+        auto state = _state;
+        std::unique_lock<std::mutex> lock(state->mutex);
+        const std::uint64_t target = state->expected;
+        if (target == 0) return; // constructed but never started
+        state->cv.wait(lock, [&] { return state->completed >= target; });
+    }
+
+private:
+    std::shared_ptr<State> _state = std::make_shared<State>();
+};
+
+// Wait until every handler already queued on every shared-pool worker has
+// returned. Called only from the process/module thread, never an iopool worker.
+inline void flushSharedIopool()
+{
+    auto& pool = sharedIopool();
+    if (pool.stopped()) return;
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(pool.size());
+    for (std::size_t i = 0; i < pool.size(); ++i) {
+        auto done = std::make_shared<std::promise<void>>();
+        futures.emplace_back(done->get_future());
+        auto io = pool.get(i);
+        asio::post(io->context(), [done]() { done->set_value(); });
+    }
+    for (auto& future : futures) future.wait();
+}
+
+template <typename Server>
+inline void stopAndWait(Server& server, ServerStopBarrier& barrier)
+{
     server.stop();
-    fut.wait_for(std::chrono::seconds(3));
+    if (sharedIopool().stopped()) return;
+    barrier.wait();
+    // _fire_stop notifies from inside _handle_stop. A queue barrier posted
+    // after that notification runs after the remainder of _handle_stop.
+    flushSharedIopool();
 }
 
 namespace detail {
