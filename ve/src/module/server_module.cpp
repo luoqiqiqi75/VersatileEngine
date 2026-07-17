@@ -15,27 +15,23 @@
 
 namespace ve {
 
-// sharedIopool() implementation. The pointer is set by the ServerModule
-// constructor and cleared by its destructor. Servers only construct after
-// ready(), so the pointer is always valid at server construction time under
-// normal ve.entry flow. If a caller reaches here with no ServerModule
-// registered, that's a programming error — assert with a clear message.
+// Module-scoped default runtime used by the built-in server wrappers.
 namespace {
-    asio2::iopool* g_shared_iopool = nullptr;
+    service::ServerRuntime* g_server_runtime = nullptr;
 }
 
 namespace service {
-asio2::iopool& sharedIopool()
+ServerRuntime& serverRuntime()
 {
-    if (!g_shared_iopool) {
+    if (!g_server_runtime) {
         veLogE("ve.server not registered — server components require ServerModule");
         std::abort();
     }
-    return *g_shared_iopool;
+    return *g_server_runtime;
 }
 } // namespace service
 
-template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int default_port,
+template<typename T> void openServer(std::shared_ptr<T>& server, Node* n, int default_port,
                                      const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
@@ -50,7 +46,7 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
 
     for (int p = port; p <= endPort; ++p) {
         n->set("config/port", p);
-        server = std::make_unique<T>(n->at("config"));
+        server = service::serverRuntime().make<T>(n->at("config"));
         if (server->start()) {
             n->set("runtime/port", p);
             n->set("runtime/listening", true);
@@ -61,11 +57,9 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
             }
             return;
         }
-        // Start failed. asio2 internally posted the shutdown chain onto the
-        // io thread already, so before we destroy the failed server object
-        // and try the next port we must wait for that chain to complete —
-        // otherwise the io thread would dereference freed memory.
-        server->stop();
+        // The runtime retains failed wrappers until pool shutdown, so retrying
+        // cannot destroy an object still referenced by asio2 handlers.
+        server->stop(false);
         server.reset();
     }
     n->set("runtime/listening", false);
@@ -78,10 +72,7 @@ template<typename T> void openServer(std::unique_ptr<T>& server, Node* n, int de
 
 ServerModule::ServerModule()
 {
-    // Publish the iopool for sharedIopool() lookups before any server can
-    // be constructed. Started here; stopped in the destructor.
-    _iopool.start();
-    g_shared_iopool = &_iopool;
+    g_server_runtime = &_runtime;
 
     { // register op commands
         auto& f = factory::at("service/op");
@@ -104,15 +95,12 @@ ServerModule::ServerModule()
 
 ServerModule::~ServerModule()
 {
-    // Normally deinit() has already stopped the pool while every registered
-    // server was still alive. Keep this stop as a fallback for paths that skip
-    // deinit(); member destruction happens after this body, so the registered
-    // server pointers are still valid while iopool::stop() drains them.
-    g_shared_iopool = nullptr;
-    _iopool.stop();
+    // Idempotent fallback for paths that skip deinit().
+    _runtime.shutdown();
+    g_server_runtime = nullptr;
 }
 
-template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
+template<> void openServer(std::shared_ptr<ve::service::StaticServer>& server,
                            Node* n, int default_port, const std::string& name)
 {
     int port = n->get("config/port").toInt(default_port);
@@ -128,7 +116,7 @@ template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
     Node* mounts_node = n->find("config/mounts");
 
     for (int p = port; p <= endPort; ++p) {
-        server = std::make_unique<service::StaticServer>(static_cast<uint16_t>(p));
+        server = service::serverRuntime().make<service::StaticServer>(static_cast<uint16_t>(p));
         if (mounts_node) {
             for (Node* mount : mounts_node->children()) {
                 std::string prefix      = mount->get("prefix").toString("/");
@@ -159,9 +147,8 @@ template<> void openServer(std::unique_ptr<ve::service::StaticServer>& server,
             }
             return;
         }
-        // Start failed — same shutdown-chain drain as the generic openServer;
-        // see the comment there for why this is required before reset().
-        server->stop();
+        // Runtime keeps the discarded wrapper alive until pool shutdown.
+        server->stop(false);
         server.reset();
     }
     n->set("runtime/listening", false);
@@ -245,26 +232,10 @@ void ServerModule::ready() {
 }
 
 void ServerModule::deinit() {
-    // Request shutdown for every server, but keep all wrapper objects alive.
-    // asio2 registers raw server pointers in the shared iopool and removes
-    // them through an asynchronously posted unregobj() handler.
-    if (_node_http_s)     _node_http_s->stop(false);
-    if (_node_ws_s)       _node_ws_s->stop(false);
-    if (_node_tcp_s)      _node_tcp_s->stop(false);
-    if (_node_udp_s)      _node_udp_s->stop(false);
-    if (_bin_tcp_s)       _bin_tcp_s->stop(false);
-    if (_terminal_repl_s) _terminal_repl_s->stop(false);
-    if (_terminal_ai_s)   _terminal_ai_s->stop(false);
-    if (_static_s)        _static_s->stop(false);
+    // Includes active servers and discarded failed-start instances. Runtime
+    // retains every wrapper while requesting stop and joining the shared pool.
+    _runtime.shutdown();
 
-    // Drain and stop the shared pool before destroying any server. This is the
-    // final barrier for both shutdown handlers and the posted unregobj()
-    // handlers. Stopping the pool after reset() would let its object registry
-    // call server.stop() through dangling raw pointers.
-    _iopool.stop();
-
-    // The pool can no longer execute callbacks against the wrappers, so they
-    // and their per-connection state are now safe to destroy.
     auto close_one = [](auto& s, Node* n) {
         s.reset();
         n->set("runtime/listening", false);

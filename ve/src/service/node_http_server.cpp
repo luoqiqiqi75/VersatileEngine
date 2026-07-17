@@ -63,8 +63,7 @@ struct NodeHttpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12000;
 
-    ServerStopBarrier stopBarrier;
-    asio2::http_server server{sharedIopool()};
+    asio2::http_server server{serverRuntime().pool()};
 
     std::chrono::steady_clock::time_point startTime;
     std::unique_ptr<Session> session;
@@ -236,19 +235,17 @@ bool NodeHttpServer::start()
     }
 
     disableWindowsPortReuse(_p->server);
-    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
 void NodeHttpServer::stop(bool wait)
 {
     if (!wait) {
-        // Fire the shutdown chain and return. The object must outlive the
-        // chain — a later stop(true) or the destructor will do the wait.
+        // Runtime owns the wrapper until shared-pool shutdown completes.
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server, _p->stopBarrier);
+    _p->server.stop();
     _p->session.reset();
 }
 

@@ -32,8 +32,7 @@ struct NodeWsServer::Private
 {
     Node*    root = nullptr;
     uint16_t port = 12100;
-    ServerStopBarrier stopBarrier;
-    asio2::ws_server server{sharedIopool()};
+    asio2::ws_server server{serverRuntime().pool()};
     std::atomic<int> connCount{0};
     std::mutex mtx;
     std::unordered_map<uint64_t, std::unique_ptr<Session>> sessions;
@@ -141,7 +140,6 @@ bool NodeWsServer::start()
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
-    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
@@ -151,7 +149,7 @@ void NodeWsServer::stop(bool wait)
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server, _p->stopBarrier);
+    _p->server.stop();
     {
         std::lock_guard<std::mutex> lock(_p->mtx);
         _p->sessions.clear();

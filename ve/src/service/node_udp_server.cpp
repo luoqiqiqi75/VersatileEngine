@@ -31,8 +31,7 @@ struct NodeUdpServer::Private
     Node*    root = nullptr;
     uint16_t port = 12300;
 
-    ServerStopBarrier stopBarrier;
-    asio2::udp_server server{sharedIopool()};
+    asio2::udp_server server{serverRuntime().pool()};
     std::unique_ptr<Session> session;
 };
 
@@ -99,7 +98,6 @@ bool NodeUdpServer::start()
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
-    _p->stopBarrier.arm(_p->server);
     return _p->server.start("0.0.0.0", _p->port);
 }
 
@@ -109,7 +107,7 @@ void NodeUdpServer::stop(bool wait)
         _p->server.stop();
         return;
     }
-    stopAndWait(_p->server, _p->stopBarrier);
+    _p->server.stop();
     _p->session.reset();
 }
 

@@ -1,8 +1,7 @@
 // server_module.h — internal declaration of ve.server ServerModule.
 //
-// Not exported (under src/, no VE_API). Only server_module.cpp needs to see
-// the full class. Other TUs get to the shared iopool through the free
-// function sharedIopool() declared in server_util.h.
+// Not exported (under src/, no VE_API). Only server_module.cpp needs the full
+// class; asio2-specific ownership lives in service::ServerRuntime.
 #pragma once
 
 #include "ve/core/module.h"
@@ -31,24 +30,19 @@ private:
     void ready() override;
     void deinit() override;
 
-    // The one iopool every ve asio2 server uses. Started in the ctor and
-    // stopped by deinit() while all registered server objects are still
-    // alive; the dtor repeats stop() as an idempotent fallback.
-    //
-    // Declared before the server unique_ptrs so member destruction (reverse
-    // of declaration order) tears servers down first, iopool last — a
-    // safety net for exit paths that skip deinit(). deinit() explicitly
-    // enforces the same order.
-    asio2::iopool _iopool{4};
+    // Owns the shared asio2 pool and every wrapper constructed on it. Declared
+    // before module references so reverse member destruction releases those
+    // references first; shutdown() is also called explicitly by deinit().
+    service::ServerRuntime _runtime{4};
 
-    std::unique_ptr<service::NodeHttpServer> _node_http_s;
-    std::unique_ptr<service::NodeWsServer> _node_ws_s;
-    std::unique_ptr<service::NodeTcpServer> _node_tcp_s;
-    std::unique_ptr<service::NodeUdpServer> _node_udp_s;
-    std::unique_ptr<service::BinTcpServer> _bin_tcp_s;
-    std::unique_ptr<service::TerminalReplServer> _terminal_repl_s;
-    std::unique_ptr<service::TerminalReplServer> _terminal_ai_s;
-    std::unique_ptr<service::StaticServer> _static_s;
+    std::shared_ptr<service::NodeHttpServer> _node_http_s;
+    std::shared_ptr<service::NodeWsServer> _node_ws_s;
+    std::shared_ptr<service::NodeTcpServer> _node_tcp_s;
+    std::shared_ptr<service::NodeUdpServer> _node_udp_s;
+    std::shared_ptr<service::BinTcpServer> _bin_tcp_s;
+    std::shared_ptr<service::TerminalReplServer> _terminal_repl_s;
+    std::shared_ptr<service::TerminalReplServer> _terminal_ai_s;
+    std::shared_ptr<service::StaticServer> _static_s;
 
     std::string _data_root = "./data";
 };
