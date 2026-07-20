@@ -7,6 +7,8 @@
 #include "ve/core/log.h"
 #include "ve/service/rescue.h"
 
+#include <cstdio>
+
 namespace ve {
 
 class CoreModule : public Module
@@ -18,7 +20,9 @@ public:
 
         { // rescue
             if (n->get("config/rescue/enabled").toBool(true)) {
-                service::setupRescue();
+                if (!service::trySetupRescue()) {
+                    std::fputs("[VE] crash reporting could not be installed\n", stderr);
+                }
             }
         }
 

@@ -3,7 +3,7 @@
 #
 # Provides: ve/global.h (VE_API), ve/core/base.h (Object, Manager),
 #           ve/core/log.h,
-#           ve/core/factory.h, platform/ (rescue, StackWalker)
+#           ve/core/factory.h, platform crash reporting
 # =============================================================================
 
 message(STATUS "")
@@ -14,8 +14,8 @@ ve_collect(${CMAKE_CURRENT_SOURCE_DIR} _CORE)
 # --- Platform-specific sources ---
 if(WIN32)
     set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/win)
-elseif(UNIX AND NOT APPLE AND NOT ANDROID)
-    set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/linux)
+elseif(UNIX)
+    set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/posix)
 else()
     set(_PLAT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/unsupported)
 endif()
@@ -55,6 +55,63 @@ target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_asio2)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_pugixml)
 target_link_libraries(${VE_CORE_LIBRARY} PRIVATE ve_dep_msgpack)
+
+if(WIN32)
+    target_link_libraries(${VE_CORE_LIBRARY} PRIVATE dbghelp)
+elseif(UNIX)
+    # libunwind can start directly from sigaction's ucontext, unlike
+    # backtrace()/_Unwind_Backtrace() which start inside the rescue handler.
+    find_path(_VE_LIBUNWIND_INCLUDE_DIR libunwind.h)
+    find_library(_VE_LIBUNWIND_LIBRARY NAMES unwind)
+
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _VE_PROCESSOR)
+    if(_VE_PROCESSOR MATCHES "^(x86_64|amd64)$")
+        find_library(_VE_LIBUNWIND_PLATFORM_LIBRARY NAMES unwind-x86_64)
+    elseif(_VE_PROCESSOR MATCHES "^(aarch64|arm64)$")
+        find_library(_VE_LIBUNWIND_PLATFORM_LIBRARY NAMES unwind-aarch64)
+    elseif(_VE_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+        find_library(_VE_LIBUNWIND_PLATFORM_LIBRARY NAMES unwind-x86)
+    elseif(_VE_PROCESSOR MATCHES "^arm")
+        find_library(_VE_LIBUNWIND_PLATFORM_LIBRARY NAMES unwind-arm)
+    endif()
+
+    if(_VE_LIBUNWIND_INCLUDE_DIR AND _VE_LIBUNWIND_LIBRARY)
+        include(CheckCXXSourceCompiles)
+        set(_VE_REQUIRED_INCLUDES_SAVE "${CMAKE_REQUIRED_INCLUDES}")
+        set(_VE_REQUIRED_LIBRARIES_SAVE "${CMAKE_REQUIRED_LIBRARIES}")
+        set(CMAKE_REQUIRED_INCLUDES "${_VE_LIBUNWIND_INCLUDE_DIR}")
+        set(CMAKE_REQUIRED_LIBRARIES "${_VE_LIBUNWIND_LIBRARY}")
+        if(_VE_LIBUNWIND_PLATFORM_LIBRARY)
+            list(APPEND CMAKE_REQUIRED_LIBRARIES "${_VE_LIBUNWIND_PLATFORM_LIBRARY}")
+        endif()
+        check_cxx_source_compiles([[
+            #define UNW_LOCAL_ONLY
+            #include <libunwind.h>
+            int main() {
+                unw_cursor_t cursor;
+                unw_context_t context;
+                return unw_init_local2(&cursor, &context, UNW_INIT_SIGNAL_FRAME);
+            }
+        ]] VE_RESCUE_HAS_LIBUNWIND)
+        set(CMAKE_REQUIRED_INCLUDES "${_VE_REQUIRED_INCLUDES_SAVE}")
+        set(CMAKE_REQUIRED_LIBRARIES "${_VE_REQUIRED_LIBRARIES_SAVE}")
+    endif()
+
+    if(VE_RESCUE_HAS_LIBUNWIND)
+        target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE VE_RESCUE_HAS_LIBUNWIND=1)
+        target_include_directories(${VE_CORE_LIBRARY} PRIVATE "${_VE_LIBUNWIND_INCLUDE_DIR}")
+        target_link_libraries(${VE_CORE_LIBRARY} PRIVATE "${_VE_LIBUNWIND_LIBRARY}")
+        if(_VE_LIBUNWIND_PLATFORM_LIBRARY)
+            target_link_libraries(${VE_CORE_LIBRARY} PRIVATE "${_VE_LIBUNWIND_PLATFORM_LIBRARY}")
+        endif()
+        message(STATUS "Crash stack unwinder: libunwind (signal context)")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # Dependency-free fallback walks frame records from ucontext. Preserve
+        # them in libve even in optimized builds.
+        target_compile_options(${VE_CORE_LIBRARY} PRIVATE -fno-omit-frame-pointer)
+        message(STATUS "Crash stack unwinder: frame-pointer fallback")
+    endif()
+endif()
 
 # OpenSSL (required by asio_impl.cpp SSL symbols on Linux)
 if(UNIX AND NOT APPLE AND NOT ANDROID)
