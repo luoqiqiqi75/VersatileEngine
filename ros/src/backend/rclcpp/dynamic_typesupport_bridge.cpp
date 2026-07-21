@@ -591,6 +591,30 @@ bool DynamicTypesupportBridge::serializeRequest(const ve::Var& value,
     return doSerialize(p_->request, value, out, error);
 }
 
+std::shared_ptr<void> DynamicTypesupportBridge::requestFromVar(const ve::Var& value,
+                                                               std::string& error) const
+{
+    if (!ready_ || !p_ || !is_service_) {
+        error = "bridge was not initialized as a service";
+        return {};
+    }
+
+    void* request = p_->request.create_message();
+    if (!request) {
+        error = "failed to allocate service request";
+        return {};
+    }
+    if (!varToMessage(value, request, p_->request.introspection_members, error)) {
+        p_->request.destroy_message(request);
+        return {};
+    }
+
+    const auto owner = p_;
+    return std::shared_ptr<void>(request, [owner](void* message) {
+        owner->request.destroy_message(message);
+    });
+}
+
 bool DynamicTypesupportBridge::deserializeResponse(const rclcpp::SerializedMessage& message,
                                                    ve::Var& out,
                                                    std::string& error) const
@@ -604,6 +628,22 @@ bool DynamicTypesupportBridge::deserializeResponse(const rclcpp::SerializedMessa
         return false;
     }
     return doDeserialize(p_->response, message, out, error);
+}
+
+bool DynamicTypesupportBridge::responseToVar(const void* response,
+                                             ve::Var& out,
+                                             std::string& error) const
+{
+    if (!ready_ || !p_ || !is_service_) {
+        error = "bridge was not initialized as a service";
+        return false;
+    }
+    if (!response || !p_->response.ready()) {
+        error = "service response is unavailable";
+        return false;
+    }
+    out = messageToVar(response, p_->response.introspection_members);
+    return true;
 }
 
 } // namespace ve::ros::rclcpp_backend

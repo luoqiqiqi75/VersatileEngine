@@ -31,9 +31,14 @@ public:
     bool serializeRequest(const ve::Var& value,
                           rclcpp::SerializedMessage& out,
                           std::string& error) const;
+    std::shared_ptr<void> requestFromVar(const ve::Var& value,
+                                         std::string& error) const;
     bool deserializeResponse(const rclcpp::SerializedMessage& message,
                              ve::Var& out,
                              std::string& error) const;
+    bool responseToVar(const void* response,
+                       ve::Var& out,
+                       std::string& error) const;
 
 private:
     bool ready_ = false;

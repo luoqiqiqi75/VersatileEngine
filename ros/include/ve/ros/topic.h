@@ -25,6 +25,7 @@ struct TopicPublishRequest {
     std::string topic;
     std::string type;
     std::string payload;
+    Var value;
     std::string payload_format = "cdr_hex";
     QosProfile qos;
 };

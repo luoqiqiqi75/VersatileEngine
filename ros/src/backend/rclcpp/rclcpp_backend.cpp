@@ -372,6 +372,9 @@ public:
         subscriptions_.clear();
 #ifdef VE_ROS_HAS_GENERIC_PUBSUB
         publishers_.clear();
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+        publisher_bridges_.clear();
+#endif
 #endif
         spinning_.store(false);
         if (executor_) {
@@ -575,14 +578,50 @@ public:
 #ifndef VE_ROS_HAS_GENERIC_PUBSUB
         return Result::fail("GenericPublisher not available on Foxy, requires Galactic+");
 #else
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!node_) return Result::fail("rclcpp backend is not started");
         if (request.topic.empty()) return Result::fail("topic is required");
 
-        std::string topic_type = request.type.empty() ? inferTopicTypeLocked(request.topic) : request.type;
-        if (topic_type.empty()) return Result::fail("topic type is required");
-
         const std::string payload_format = normalizedPayloadFormat(request.payload_format);
+        std::string topic_type;
+        rclcpp::GenericPublisher::SharedPtr publisher;
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+        std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge> bridge;
+#endif
+
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!node_) return Result::fail("rclcpp backend is not started");
+
+            topic_type = request.type.empty()
+                ? inferTopicTypeLocked(request.topic)
+                : request.type;
+            if (topic_type.empty()) return Result::fail("topic type is required");
+
+            publisher = publishers_.value(
+                request.topic, rclcpp::GenericPublisher::SharedPtr{});
+            if (!publisher) {
+                publisher = node_->create_generic_publisher(
+                    request.topic, topic_type, makeQos(request.qos));
+                publishers_.insertOne(request.topic, publisher);
+            }
+
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+            if (payload_format != "cdr_hex") {
+                bridge = publisher_bridges_.value(
+                    request.topic,
+                    std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>{});
+                if (!bridge || bridge->type() != topic_type) {
+                    bridge = std::make_shared<
+                        ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
+                    std::string error;
+                    if (!bridge->initialize(topic_type, error))
+                        return Result::fail(
+                            "failed to initialize dynamic bridge: " + error);
+                    publisher_bridges_.insertOne(request.topic, bridge);
+                }
+            }
+#endif
+        }
+
         rclcpp::SerializedMessage message;
         if (payload_format == "cdr_hex") {
             std::vector<uint8_t> bytes;
@@ -594,23 +633,16 @@ public:
             raw.buffer_length = bytes.size();
         } else {
 #ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
-            auto bridge = std::make_shared<ve::ros::rclcpp_backend::DynamicTypesupportBridge>();
+            const Var payload = payload_format == "var"
+                ? request.value
+                : ve::ros::yaml::decode(request.payload);
             std::string error;
-            if (!bridge->initialize(topic_type, error))
-                return Result::fail("failed to initialize dynamic bridge: " + error);
-
-            const Var payload = ve::ros::yaml::decode(request.payload);
             if (!bridge->serializeFromVar(payload, message, error))
                 return Result::fail("failed to serialize payload: " + error);
 #else
-            return Result::fail("dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
+            return Result::fail(
+                "dynamic typesupport not available on Foxy, use payload_format=cdr_hex");
 #endif
-        }
-
-        auto publisher = publishers_.value(request.topic, rclcpp::GenericPublisher::SharedPtr{});
-        if (!publisher) {
-            publisher = node_->create_generic_publisher(request.topic, topic_type, makeQos(request.qos));
-            publishers_.insertOne(request.topic, publisher);
         }
 
         publisher->publish(message);
@@ -776,24 +808,21 @@ public:
 
         const Var request_var = ve::ros::yaml::decode(request.request);
 
-        rclcpp::SerializedMessage request_msg;
-        if (!bridge->serializeRequest(request_var, request_msg, bridge_error))
-            return Result::fail("failed to serialize request: " + bridge_error);
+        auto request_msg = bridge->requestFromVar(request_var, bridge_error);
+        if (!request_msg)
+            return Result::fail("failed to build request: " + bridge_error);
 
         auto client = node->create_generic_client(service, type);
         if (!client->wait_for_service(std::chrono::milliseconds(request.timeout_wait_ms)))
             return Result::fail("service not available: " + service);
 
-        auto& raw_request = request_msg.get_rcl_serialized_message();
-        auto future_and_id = client->async_send_request(static_cast<void*>(&raw_request));
+        auto future_and_id = client->async_send_request(request_msg.get());
         if (future_and_id.future.wait_for(std::chrono::milliseconds(request.timeout_response_ms)) != std::future_status::ready)
             return Result::fail("service call timeout");
 
         auto response_shared = future_and_id.future.get();
-        auto* response_raw = static_cast<rcl_serialized_message_t*>(response_shared.get());
-        rclcpp::SerializedMessage response_msg(*response_raw);
         Var response_var;
-        if (!bridge->deserializeResponse(response_msg, response_var, bridge_error))
+        if (!bridge->responseToVar(response_shared.get(), response_var, bridge_error))
             return Result::fail("failed to deserialize response: " + bridge_error);
 
         if (out) {
@@ -983,6 +1012,10 @@ private:
     Dict<SubscriptionInfo> subscriptions_;
 #ifdef VE_ROS_HAS_GENERIC_PUBSUB
     Dict<rclcpp::GenericPublisher::SharedPtr> publishers_;
+#ifdef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
+    Dict<std::shared_ptr<ve::ros::rclcpp_backend::DynamicTypesupportBridge>>
+        publisher_bridges_;
+#endif
 #endif
     mutable std::unordered_map<std::string, std::shared_ptr<rclcpp::AsyncParametersClient>> param_clients_;
 };
