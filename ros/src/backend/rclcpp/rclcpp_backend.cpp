@@ -794,7 +794,9 @@ public:
 
         const std::string fmt = normalizedPayloadFormat(request.payload_format);
 #ifndef VE_ROS_HAS_DYNAMIC_TYPESUPPORT
-        return Result::fail("dynamic typesupport not available on Foxy, service calls require Galactic+");
+        return Result::fail("dynamic typesupport is unavailable; service calls require Galactic+");
+#elif !defined(VE_ROS_HAS_GENERIC_SERVICE)
+        return Result::fail("GenericClient is unavailable; service calls require Jazzy (rclcpp 28+)");
 #else
         if (fmt == "cdr_hex")
             return Result::fail("cdr_hex payload format is not supported for service calls; use yaml or var");

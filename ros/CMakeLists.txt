@@ -107,11 +107,37 @@ if(_VE_ROS_HAS_RCLCPP)
     else()
         target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_DYNAMIC_TYPESUPPORT=1)
         target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_GENERIC_PUBSUB=1)
+        if(NOT rclcpp_VERSION VERSION_LESS "28.0.0")
+            target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_GENERIC_SERVICE=1)
+        else()
+            message(STATUS
+                "  - rclcpp ${rclcpp_VERSION} < 28.0: GenericClient service calls are unavailable")
+        endif()
     endif()
 
     target_sources(${VE_ROS_LIBRARY} PRIVATE ${_ROS_RCLCPP_SRC})
     ament_target_dependencies(${VE_ROS_LIBRARY} PUBLIC rclcpp)
     target_compile_definitions(${VE_ROS_LIBRARY} PRIVATE VE_ROS_HAS_RCLCPP=1)
+
+    if(VE_BUILD_TEST AND NOT rclcpp_VERSION VERSION_LESS "28.0.0")
+        find_package(rcl_interfaces REQUIRED)
+        add_executable(veros_dynamic_service_bridge_test
+            test/test_dynamic_service_bridge.cpp
+            src/backend/rclcpp/dynamic_typesupport_bridge.cpp
+        )
+        target_compile_features(veros_dynamic_service_bridge_test PRIVATE cxx_std_17)
+        target_compile_definitions(veros_dynamic_service_bridge_test PRIVATE
+            VE_ROS_HAS_GENERIC_SERVICE=1
+        )
+        target_include_directories(veros_dynamic_service_bridge_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/backend/rclcpp
+        )
+        target_link_libraries(veros_dynamic_service_bridge_test VersatileEngine::ve)
+        ament_target_dependencies(veros_dynamic_service_bridge_test
+            rclcpp
+            rcl_interfaces
+        )
+    endif()
 endif()
 
 if(_VE_ROS_HAS_FASTDDS)

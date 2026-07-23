@@ -50,6 +50,26 @@ This repository currently ships:
 - a secondary Fast DDS backend in `src/backend/fastdds`
 - a single official `RosModule` in `src/module/ros_module.cpp`
 
+## Dynamic Typesupport Boundaries
+
+Dynamic topics and dynamic services use different native object contracts:
+
+- Topic publish/subscribe exchanges serialized messages. The bridge may create a
+  C message with `rosidl_generator_c`, inspect it with
+  `rosidl_typesupport_introspection_c`, and serialize it with the matching C
+  typesupport before passing the serialized buffer to rclcpp.
+- `rclcpp::GenericClient` exchanges deserialized C++ request and response
+  objects. The service bridge must allocate from the C++ introspection
+  `size_of_`, call its `init_function`, access fields through
+  `rosidl_typesupport_introspection_cpp`, and call `fini_function` before
+  releasing the object.
+
+Never pass a C message object directly to `GenericClient`. Numeric-only
+messages can appear layout-compatible, but fields such as `string`, sequences,
+and nested messages require constructed C++ objects. Generic service calls are
+therefore enabled only when rclcpp provides `GenericClient` (rclcpp 28+, ROS 2
+Jazzy), while older dynamic topic support remains available independently.
+
 Legacy `data.h`, `veRos`, `veFastDDS`, and public `ve/ros/dds/*` entry points
 have been removed from the public surface.
 
