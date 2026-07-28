@@ -49,12 +49,14 @@ struct JsonS
 {
     struct ExportOptions
     {
-        int         indent      = 2;
-        bool        auto_ignore = true;
-        std::string newline     = "\n";
-        std::string tail        = "\n";
+        int         indent      = 2;     // spaces per level
+        bool        auto_ignore = true;  // skip "_"-prefixed children
+        std::string newline     = "\n";  // between lines; "" = single-line output
+        std::string tail        = "\n";  // appended once after the document
+        int         max_depth   = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
     };
-    static ExportOptions compact() { return {0, true, "", ""}; }
+    // Single-line, no trailing newline: for framed transports.
+    static ExportOptions compact() { return {0, true, "", "", -1}; }
 
     VE_API static std::string fromNode(const Node* node, int indent = 2);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
@@ -74,8 +76,14 @@ struct BinS
 
 struct XmlS
 {
-    using ExportOptions = JsonS::ExportOptions;
-    static ExportOptions compact() { return JsonS::compact(); }
+    struct ExportOptions
+    {
+        int         indent      = 2;
+        bool        auto_ignore = true;
+        std::string newline     = "\n";
+        std::string tail        = "\n";
+    };
+    static ExportOptions compact() { return {0, true, "", ""}; }
 
     VE_API static std::string fromNode(const Node* node, int indent = 2);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);

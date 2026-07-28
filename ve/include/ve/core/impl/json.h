@@ -33,7 +33,7 @@ struct ExportOpts
     bool        auto_ignore = true;  // skip "_"-prefixed children
     std::string newline     = "\n";  // between lines; "" = single-line output
     std::string tail        = "\n";  // appended once after the document
-    int         maxDepth    = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
+    int         max_depth   = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
 };
 
 VE_API std::string exportTree(const Node* node, const ExportOpts& opts = {});

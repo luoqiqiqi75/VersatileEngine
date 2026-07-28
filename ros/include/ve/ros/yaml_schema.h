@@ -20,8 +20,7 @@ VE_API Var         decode(const std::string& yaml_str);
 
 namespace ve::schema {
 
-// YAML's compact form is flow style ({a: 1, b: [2, 3]}), not a line-ending
-// change, so it uses its own options rather than schema::TextExportOptions.
+// YAML's compact form is flow style ({a: 1, b: [2, 3]}), not a line-ending change.
 struct YamlS
 {
     struct ExportOptions

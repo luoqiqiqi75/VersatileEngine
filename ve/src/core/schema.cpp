@@ -44,6 +44,7 @@ std::string JsonS::fromNode(const Node* node, const JsonS::ExportOptions& option
     o.auto_ignore = options.auto_ignore;
     o.newline     = options.newline;
     o.tail        = options.tail;
+    o.max_depth   = options.max_depth;
     return impl::json::exportTree(node, o);
 }
 
