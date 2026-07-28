@@ -74,6 +74,11 @@ bool looksLikeConfigOrPluginArg(std::string_view arg)
     return endsWith(s, ".json") || endsWith(s, ".dll") || endsWith(s, ".so") || endsWith(s, ".dylib");
 }
 
+bool isPluginPath(const std::string& s)
+{
+    return endsWith(s, ".dll") || endsWith(s, ".so") || endsWith(s, ".dylib");
+}
+
 bool parseHostPort(std::string_view input, std::string& host, int& port)
 {
     if (input.empty()) {
@@ -119,15 +124,6 @@ std::string parentKey(const std::string& key)
     return (pos == std::string::npos) ? std::string{} : key.substr(0, pos);
 }
 
-int keyDepth(const std::string& key)
-{
-    int d = 0;
-    for (char c : key) {
-        if (c == '.') ++d;
-    }
-    return d;
-}
-
 } // anon
 
 // ============================================================================
@@ -138,23 +134,14 @@ namespace entry {
 
 // --- CLI parse -------------------------------------------------------------
 //
-// Parse argv into a fresh options node, plus fill in argc/argv/app_name on
-// the entry state. On error prints to stderr and returns false; the caller
-// should exit(2).
+// Parse argv into a fresh options node, plus fill in argc/argv/app_name on the
+// entry state. Every flag writes straight to the path it will occupy on
+// /ve/entry, so there is no second representation to keep in sync. Tokens VE
+// does not recognize are left alone — they stay in the argv subtree for the
+// application to parse, so adding a flag here cannot break a downstream
+// launcher. On error prints to stderr and returns false.
 
 namespace {
-
-// A CLI option that needs to reach a specific config path becomes a
-// "config_override" child on the options node, then setup() moves each such
-// entry into /ve/entry/config so it can be applied to the matching module
-// subtree by the normal copy pass.
-void setConfigOverride(Node* opts_n, const std::string& path, const Var& value)
-{
-    Node* co = opts_n->at("config_override");
-    Node* pn = co->append("");
-    pn->at("path")->set(Var(path));
-    pn->at("value")->set(value);
-}
 
 bool parseArgs(int argc, char** argv, Node* opts_n)
 {
@@ -165,6 +152,12 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
     if (argc > 0 && argv[0]) {
         namespace fs = std::filesystem;
         g.app_name = fs::path(argv[0]).stem().string();
+    }
+
+    // Every token, verbatim — VE-consumed or not.
+    Node* argv_n = opts_n->at("argv");
+    for (int i = 0; i < argc; ++i) {
+        if (argv[i]) argv_n->append("")->set(Var(std::string(argv[i])));
     }
 
     bool terminal = false;
@@ -204,20 +197,14 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
                 std::cerr << "Invalid remote endpoint: " << arg.substr(18) << '\n';
                 return false;
             }
-        } else if (arg.rfind("--set=", 0) == 0) {
-            std::string kv = arg.substr(6);
-            auto eq = kv.find('=');
-            if (eq != std::string::npos) {
-                setConfigOverride(opts_n, kv.substr(0, eq), Var(kv.substr(eq + 1)));
-            }
         } else if (arg[0] != '-') {
-            if (endsWith(arg, ".dll") || endsWith(arg, ".so") || endsWith(arg, ".dylib")) {
-                Node* pn = opts_n->at("plugins")->append("");
-                pn->at("path")->set(Var(arg));
-            } else if (!opts_n->find("config_file")) {
+            if (isPluginPath(arg)) {
+                opts_n->at("plugins")->append("")->at("path")->set(Var(arg));
+            } else if (endsWith(arg, ".json") && !opts_n->find("config_file")) {
                 opts_n->at("config_file")->set(Var(arg));
             }
         }
+        // Anything else: not ours. It is already in the argv subtree.
     }
 
     if (terminal && remote_terminal) {
@@ -225,189 +212,120 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
         return false;
     }
     if (terminal) {
-        setConfigOverride(opts_n, "ve/client/terminal/stdio/enabled", Var(true));
+        opts_n->at("modules/ve/client/terminal/stdio/enabled")->set(Var(true));
     }
     if (remote_terminal) {
-        setConfigOverride(opts_n, "ve/client/terminal/tcp/enabled", Var(true));
-        setConfigOverride(opts_n, "ve/client/terminal/tcp/config/host", Var(remote_host));
-        setConfigOverride(opts_n, "ve/client/terminal/tcp/config/port", Var(remote_port));
+        Node* tcp = opts_n->at("modules/ve/client/terminal/tcp");
+        tcp->at("enabled")->set(Var(true));
+        tcp->at("config/host")->set(Var(remote_host));
+        tcp->at("config/port")->set(Var(remote_port));
     }
     return true;
+}
+
+// Apply /ve/entry/log + app during setup, so the entry pipeline's own logs
+// already honor the config. This is the only place log settings are applied.
+void applyLogSettings(Node* entry_n)
+{
+    std::string app = entry_n->get("app").toString();
+    if (!app.empty()) {
+        G().app_name = app;
+    }
+    if (!G().app_name.empty()) {
+        log::setAppName(G().app_name);
+    }
+
+    std::string level = entry_n->get("log/level").toString("info");
+    if (level.empty()) level = "info";
+    switch (level[0]) {
+        case 'd': log::setLevel(LogLevel::Debug);  break;
+        case 'w': log::setLevel(LogLevel::Waring); break;
+        case 'e': log::setLevel(LogLevel::Error);  break;
+        default:  log::setLevel(LogLevel::Info);   break;
+    }
+
+    std::string dir = entry_n->get("log/dir").toString();
+    if (!dir.empty()) {
+        log::setLogDir(dir);
+    }
 }
 
 } // anon
 
 // --- setup -----------------------------------------------------------------
 
-// Helper: recursively iterate *.json files under a directory into `parent`.
-// Each file becomes a child keyed by its stem; nested subdirectories become
-// intermediate child nodes keyed by their own name. The directory passed in
-// as `dir_path` itself contributes nothing — its children are attached
-// directly to `parent`.
-static void loadConfigDir(Node* parent, const std::string& dir_path, bool verbose)
-{
-    namespace fs = std::filesystem;
-    std::error_code ec;
-
-    if (!fs::is_directory(dir_path, ec)) return;
-
-    for (auto& entry : fs::directory_iterator(dir_path, ec)) {
-        if (ec) break;
-
-        std::string path = entry.path().string();
-        std::string stem = entry.path().stem().string();
-
-        if (entry.is_directory()) {
-            Node* child = parent->find(stem);
-            if (!child) child = parent->append(stem);
-            loadConfigDir(child, path, verbose);
-        } else if (entry.is_regular_file() && entry.path().extension() == ".json") {
-            std::string content = readFile(path);
-            if (!content.empty()) {
-                Node* child = parent->find(stem);
-                if (!child) child = parent->append(stem);
-                if (!schema::toNode<schema::JsonS>(child, content)) {
-                    veLogE << "[ve/entry] Config parse failed: " << path;
-                } else if (verbose) {
-                    veLogI << "[ve/entry] Config loaded: " << path;
-                }
-            }
-        }
-    }
-}
-
-// Mount config from either a JSON file or a directory:
-//   - File:      loaded at /ve/entry/config/<file_stem>. The stem doubles as
-//                a namespace so ve.json's top-level "core" targets module
-//                "ve.core".
-//   - Directory: iterated as a flat set of *.json files, each mounted at
-//                /ve/entry/config/<file_stem>. The directory name itself
-//                does not participate in the namespace.
-static void mountConfigFile(std::string&& config_path, bool verbose)
-{
-    namespace fs = std::filesystem;
-    std::error_code ec;
-
-    if (config_path.empty()) {
-        if (fs::exists("ve.json", ec)) {
-            if (verbose) veLogI << "[ve/entry] use ve.json as config";
-            config_path = "ve.json";
-        } else {
-            if (verbose) veLogW << "[ve/entry] use default config";
-            return; // default settings
-        }
-    } else if (fs::is_directory(config_path, ec)) {
-        loadConfigDir(n("ve/entry/config"), config_path, verbose);
-        return;
-    }
-
-    fs::path p(config_path);
-    std::string stem = p.stem().string();
-    if (stem.empty()) {
-        veLogW << "[ve/entry] Config path has no stem: " << config_path;
-        return;
-    }
-
-    Node* mount = n("ve/entry/config")->at(stem);
-    std::string content = readFile(config_path);
-    if (content.empty()) {
-        veLogW << "[ve/entry] Config file empty or missing: " << config_path;
-        return;
-    }
-    if (!schema::toNode<schema::JsonS>(mount, content)) {
-        veLogE << "[ve/entry] Config parse failed: " << config_path;
-    } else if (verbose) {
-        veLogI << "[ve/entry] Config loaded: " << config_path;
-    }
-}
-
-// Fold each per-namespace entry subtree (/ve/entry/config/<ns>/entry)
-// into /ve/entry/options. Later namespaces overlay earlier ones — order is
-// insertion order on /ve/entry/config, so a directory-loaded set follows the
-// filesystem's iteration order.
-static void mergeConfigOptions()
-{
-    Node* cfg_root = n("ve/entry/config", false);
-    if (!cfg_root) return;
-    Node* opts_dst = n("ve/entry/options");
-    for (Node* ns : cfg_root->children()) {
-        if (Node* src = ns->find("entry")) {
-            opts_dst->copy(src);
-            // The entry subtree is not a module config; drop it so the
-            // module-copy pass in init() doesn't see it.
-            ns->erase("entry");
-        }
-    }
-}
-
-// Apply any config_override entries recorded by CLI parsing into
-// /ve/entry/config, then remove the temporary subtree.
-static void applyConfigOverrides()
-{
-    Node* opts = n("ve/entry/options", false);
-    if (!opts) return;
-    Node* co = opts->find("config_override");
-    if (!co) return;
-    for (Node* entry : co->children()) {
-        std::string path = entry->get("path").toString("");
-        if (path.empty()) continue;
-        n("ve/entry/config/" + path)->set(entry->get("value"));
-    }
-    opts->erase("config_override");
-}
-
-void setup(Node* options_n)
+bool setup(Node* options_n)
 {
     auto& g = G();
 
-    // 1. Config path & verbose flag come from options_n directly (default
-    //    to "ve.json" so that a bare setup(nullptr) still finds a local file).
+    // 1. Settings setup() itself needs before it can read anything: where the
+    //    config file is, and whether to narrate. Default to "ve.json" so a bare
+    //    setup(nullptr) still picks up a local file.
     std::string config_file;
     bool verbose = false;
     if (options_n) {
         config_file = options_n->get("config_file").toString();
         verbose = options_n->get("verbose").toBool(false);
-        g.app_name = options_n->get("app_name").toString(g.app_name);
+        g.app_name = options_n->get("app").toString(g.app_name);
     }
 
-    if (!g.app_name.empty()) {
-        log::setAppName(g.app_name);
+    Node* entry_n = n("ve/entry");
+
+    // 2. Load the single startup config file. A missing file is not an error —
+    //    every setting has a built-in default.
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (config_file.empty() && fs::exists("ve.json", ec)) {
+        config_file = "ve.json";
+    }
+    if (!config_file.empty()) {
+        std::string content = readFile(config_file);
+        if (content.empty()) {
+            veLogW << "[ve/entry] Config file empty or missing: " << config_file;
+        } else if (!schema::toNode<schema::JsonS>(entry_n, content)) {
+            veLogE << "[ve/entry] Config parse failed: " << config_file;
+            return false;
+        } else if (verbose) {
+            veLogI << "[ve/entry] Config loaded: " << config_file;
+        }
     }
 
-    // 2. Load the config file/dir into /ve/entry/config/<stem>.
-    mountConfigFile(std::move(config_file), verbose);
+    // 3. Refuse a config that asks for a newer VE rather than silently
+    //    ignoring the parts this build does not understand.
+    int required = entry_n->get("version").toInt(0);
+    if (required > VE_ENTRY_VERSION) {
+        veLogE << "[ve/entry] Config requires VE version " << required
+               << ", this build supports " << VE_ENTRY_VERSION;
+        return false;
+    }
 
-    // 3. Fold per-namespace "entry" out of config into /ve/entry/options.
-    mergeConfigOptions();
+    // 4. Overlay caller options — CLI wins over the file.
+    entry_n->copy(options_n);
 
-    // 4. Overlay caller options — CLI / API wins over file.
-    Node* opts_node = n("ve/entry/options");
-    opts_node->copy(options_n);
+    // 5. Logging is live from here on.
+    applyLogSettings(entry_n);
 
-    // 5. Flush residual options entries — --set / --terminal / --remote were
-    //    stored as config_override records; write them into /ve/entry/config.
-    applyConfigOverrides();
-
-    g.verbose = opts_node->get("verbose").toBool(false);
+    g.verbose = entry_n->get("verbose").toBool(false);
     g.state = SETUP;
     if (g.verbose) veLogI << "[ve/entry] setup complete";
+    return true;
 }
 
-void setup(int argc, char** argv)
+bool setup(int argc, char** argv)
 {
     Node opts("options");
-    if (parseArgs(argc, argv, &opts)) {
-        setup(&opts);
-    } else {
+    if (!parseArgs(argc, argv, &opts)) {
         veLogE << "[ve/entry] options parse failed!";
+        return false;
     }
+    return setup(&opts);
 }
 
-void setup(const std::string& config_file)
+bool setup(const std::string& config_file)
 {
     Node opts("options");
     opts.at("config_file")->set(Var(config_file));
-    setup(&opts);
+    return setup(&opts);
 }
 
 // --- init ------------------------------------------------------------------
@@ -451,7 +369,7 @@ static void tryLoadOnePluginSpec(Node* spec_node)
 
 static void loadPlugins()
 {
-    Node* plugins_root = n("ve/entry/options")->find("plugins");
+    Node* plugins_root = n("ve/entry")->find("plugins");
     if (!plugins_root) {
         return;
     }
@@ -490,11 +408,11 @@ static Vector<std::string> selectModuleKeys()
     auto& factory = module::factory();
 
     Vector<std::string> black;
-    if (Node* bn = n("ve/entry/options")->find("modules/blacklist")) {
+    if (Node* bn = n("ve/entry")->find("blacklist")) {
         for (Node* c : bn->children()) black.push_back(c->getString(""));
     }
 
-    Node* cfg_root = n("ve/entry/config");
+    Node* mods_root = n("ve/entry/modules");
 
     struct Entry {
         std::string key;
@@ -512,7 +430,7 @@ static Vector<std::string> selectModuleKeys()
 
         // ve.service.* is opt-in: require a matching config subtree.
         if (key.rfind("ve.service.", 0) == 0) {
-            if (!cfg_root->find(keyToPath(key))) continue;
+            if (!mods_root->find(keyToPath(key))) continue;
         }
 
         int priority = 100;
@@ -560,12 +478,13 @@ static Vector<std::string> selectModuleKeys()
 // Vector reflects load order; then copy the corresponding config subtree in.
 static void buildModuleNodes(const Vector<std::string>& keys)
 {
-    Node* root  = node::root();
-    Node* cfg   = n("ve/entry/config");
+    Node* root = node::root();
+    Node* mods = n("ve/entry/modules");
 
     for (const auto& key : keys) {
-        Node* mn = root->atPath(keyToPath(key));
-        if (Node* src = cfg->find(keyToPath(key))) {
+        std::string path = keyToPath(key);
+        Node* mn = root->atPath(path);
+        if (Node* src = mods->find(path)) {
             mn->copy(src);
         }
     }
@@ -742,7 +661,7 @@ void init()
     g.state = READY;
 
     // Staging area done its job: config has been applied to module subtrees,
-    // options captured on g / factory / module nodes. Drop it so downstream
+    // settings captured on g / factory / module nodes. Drop it so downstream
     // code sees a clean tree.
     node::root()->erase("ve/entry");
 
@@ -799,7 +718,7 @@ void deinit()
 
 int exec(int argc, char** argv)
 {
-    setup(argc, argv);
+    if (!setup(argc, argv)) return 2;
     init();
     int code = run();
     deinit();

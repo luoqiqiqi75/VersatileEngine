@@ -244,13 +244,19 @@ Or step-by-step:
 #include <ve/entry.h>
 
 int main(int argc, char* argv[]) {
-    ve::entry::setup("ve.json");
+    if (!ve::entry::setup("ve.json")) return 2;
     ve::entry::init();
     int code = ve::entry::run();    // blocks on event loop
     ve::entry::deinit();
     return code;
 }
 ```
+
+`setup()` loads a single startup config file — `ve.json` in the working
+directory by default, overridable with `-c <path>`. It holds only what VE needs
+to boot (`app`, `log`, `version`, `blacklist`, `plugins`) plus a `modules`
+subtree that VE copies onto the node tree. See
+[CORE.md](docs/CORE.md#veentry) for the format.
 
 ### Terminal REPL
 

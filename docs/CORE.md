@@ -208,7 +208,7 @@ Modules should be small, explicit, and tree-oriented.
 
 It is responsible for:
 
-- loading config into the node tree
+- loading the startup config into the node tree
 - loading plugins
 - creating and ordering modules
 - starting the main loop
@@ -223,6 +223,89 @@ int main(int argc, char* argv[]) {
     return ve::entry::exec(argc, argv);
 }
 ```
+
+Or step by step, when the application needs to act between phases:
+
+```cpp
+if (!ve::entry::setup(argc, argv)) return 2;   // config file + CLI
+// ... read /ve/entry, write nodes this app owns ...
+ve::entry::init();                             // plugins + modules + READY
+int code = ve::entry::run();
+ve::entry::deinit();
+```
+
+#### Startup config file
+
+`setup()` loads **one** file, `ve.json` in the working directory by default.
+Override it with `-c <path>` or a bare `*.json` positional. A missing file is
+not an error: every setting has a built-in default. The file name carries no
+meaning — `leo.json` and `ve.json` behave identically.
+
+```json
+{
+  "app":       "leo",
+  "log":       { "level": "info", "dir": "" },
+  "version":   2,
+  "blacklist": [ "ve.service.x" ],
+  "plugins":   [ { "path": "veqt.dll", "enabled": true, "min_api": 0 } ],
+
+  "modules": {
+    "ve":  { "server": { "node": { "http": { "config": { "port": 12000 } } } } },
+    "leo": { "robot":  { "controller": { "backend": "external" } } }
+  }
+}
+```
+
+The reserved top-level keys are the only ones VE interprets:
+
+| Key | Meaning |
+| --- | --- |
+| `app` | Log app name |
+| `log` | `level` (`d`/`i`/`w`/`e`) and `dir`; applied during `setup()` |
+| `version` | Minimum VE version this config needs; `setup()` fails if it exceeds `VE_ENTRY_VERSION` |
+| `blacklist` | Module keys to skip. `"a.b"` also skips `a.b.*` |
+| `plugins` | Loaded in order at the top of `init()` |
+| `modules` | Per-module config, keyed by node path |
+
+Everything a module reads lives under `modules`, keyed by node path:
+`modules/ve/server` is copied to `/ve/server`. Module keys use `.`
+(`ve.server`), node paths use `/` (`ve/server`); they name the same thing.
+Subtrees matching no loaded module are dropped. Because module config is nested
+under `modules`, a module can be named anything without colliding with a
+reserved key.
+
+#### CLI flags
+
+Recognized only by `setup(int, char**)`. Each writes straight into the node
+tree, so there is no second representation to keep in sync.
+
+| Flag | Effect |
+| --- | --- |
+| `-c <path>` / `--config <path>` | Startup config file |
+| `<path>.json` | Same, as a bare positional (first wins) |
+| `<path>.dll` / `.so` / `.dylib` | Appended to `plugins` |
+| `-v` / `--verbose` | `verbose = true` |
+| `-t` / `--terminal` | `modules/ve/client/terminal/stdio/enabled` |
+| `-r [host:port]` / `--remote` | `modules/ve/client/terminal/tcp/*` |
+
+`-t` and `-r` are mutually exclusive. Precedence is built-in defaults, then the
+config file, then the CLI.
+
+**Unrecognized flags are ignored, not rejected.** They stay in `/ve/entry/argv`
+(also reachable via `entry::args()`) for the application to parse. An app with
+its own switches reads them there and writes the nodes it owns before calling
+`init()` — so adding a flag to VE can never break a downstream launcher, and an
+app never has to pre-register anything with VE.
+
+There is deliberately no generic "override any path" flag. Settings belong in
+the config file, where they are reviewable and diffable.
+
+#### `/ve/entry` is staging only
+
+`setup()` builds `/ve/entry`; `init()` copies `modules/*` onto the real module
+subtrees and then **erases `/ve/entry`** once `READY` is reached. Anything you
+need from it must be read before `READY`, or through `entry::verbose()` /
+`entry::args()`.
 
 ## Core Usage Patterns
 

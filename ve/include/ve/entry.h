@@ -23,69 +23,91 @@
 //   ve::entry::deinit();
 //
 // Lifecycle:
-//   setup()  parses argv into a temporary options node and applies it. The
-//            config file (default "ve.json") is loaded into
-//            /ve/entry/config/<stem>, its "options" subtree is merged into
-//            /ve/entry/options, and finally the CLI options overlay it so
-//            command-line always wins. Nothing outside /ve/entry is written.
-//   init()   loads plugins listed in options, filters factory keys by
-//            options/modules/blacklist, materializes selected module nodes in
-//            hierarchical DFS order (siblings sorted by base priority), copies
-//            each module's config subtree in, instantiates, and drives the
-//            INIT / PREPARE / READY state machine. /ve/entry is erased once
-//            READY is reached, so downstream code sees only real module state.
+//   setup()  loads ONE startup config file into /ve/entry, then overlays the
+//            caller's options node on top so CLI always wins. Nothing outside
+//            /ve/entry is written.
+//   init()   loads plugins, filters factory keys by the blacklist, materializes
+//            selected module nodes in hierarchical DFS order (siblings sorted
+//            by base priority), copies each module's subtree from
+//            /ve/entry/modules, instantiates, and drives the INIT / PREPARE /
+//            READY state machine. /ve/entry is erased once READY is reached,
+//            so downstream code sees only real module state.
 //
-// /ve/entry/options schema:
-//
-//   verbose         bool     Entry-pipeline chatter (config-load, module
-//                            creation, state transitions). Also surfaced via
-//                            entry::verbose() so modules can gate their own
-//                            first-run logs on the same switch.
-//   config_file     string   Path handed to setup(). Read by setup(Node*)
-//                            before it touches the filesystem; a value of
-//                            "" skips file loading entirely.
-//   plugins         list     [{ path, enabled?, min_api?, name? }, ...].
-//                            Loaded in order at the top of init(). Config
-//                            entries come first; CLI plugin paths (bare
-//                            .dll/.so/.dylib on argv) append.
-//   modules.blacklist list   Module keys to skip. An entry "a.b" also skips
-//                            every descendant "a.b.*". Order-independent.
-//   config_override list     Internal — each entry { path, value } is
-//                            flushed into /ve/entry/config during setup()
-//                            and then erased. This is where CLI --set,
-//                            --terminal, and --remote land; any caller
-//                            constructing an options_n manually can push
-//                            entries here too instead of pre-baking them
-//                            into a full config subtree.
-//
-// Precedence (later wins): built-in defaults ◃ config file "options" subtree
-// ◃ caller-supplied options_n. The whole /ve/entry staging area is erased
-// at the end of init(), so consumers must read anything they need before
-// READY, or use the query helpers (entry::verbose(), entry::args()).
-//
-// Config file layout (foo.json is mounted at /ve/entry/config/foo):
+// Startup config file (default "ve.json" in cwd; override with -c / --config).
+// A missing file is not an error — every setting has a built-in default. The
+// file name carries no meaning: leo.json and ve.json behave identically.
 //
 //   {
-//     "options": {
-//       "plugins":  [ { "path": "...", "enabled": true } ],
-//       "modules":  { "blacklist": ["a.b.c"] },
-//       "verbose":  true
-//     },
-//     "core":  { ... module foo.core config ... },
-//     "sub":   { "mod": { ... module foo.sub.mod config ... } }
+//     "app":       "leo",                          // log app name
+//     "log":       { "level": "info", "dir": "" }, // level: d|i|w|e
+//     "version":   2,                              // minimum VE version required
+//     "blacklist": [ "ve.service.x" ],             // module keys to skip
+//     "plugins":   [ { "path": "veqt.dll", "enabled": true, "min_api": 0 } ],
+//
+//     "modules": {                                 // copied onto the node tree
+//       "ve":  { "server": { "node": { "http": { "config": { "port": 12000 } } } } },
+//       "leo": { "robot":  { "controller": { "backend": "external" } } }
+//     }
 //   }
 //
-// A module named "foo.sub.mod" reads its own subtree at /foo/sub/mod ('.' in
-// key -> '/' in path). Config subtrees that don't correspond to a loaded
-// module are dropped with the staging area.
+// Reserved top-level keys are app / log / version / blacklist / plugins /
+// modules. Everything a module reads lives under "modules", keyed by node path
+// — /ve/entry/modules/ve/server is copied to /ve/server. Module keys use '.'
+// ("ve.server"), node paths use '/' ("ve/server"); they name the same thing.
+// Subtrees under "modules" that match no loaded module are dropped with the
+// staging area.
+//
+// /ve/entry after setup():
+//
+//   app        string   Log app name.
+//   log        node     level / dir. Applied during setup() so the entry
+//                       pipeline's own logs honor it.
+//   version    int      Minimum VE version this config requires. setup() fails
+//                       if it exceeds VE_ENTRY_VERSION.
+//   blacklist  list     Module keys to skip. An entry "a.b" also skips every
+//                       descendant "a.b.*". Order-independent.
+//   plugins    list     [{ path, enabled?, min_api?, name? }, ...], loaded in
+//                       order at the top of init(). File entries come first;
+//                       CLI plugin paths (bare .dll/.so/.dylib) append.
+//   modules    node     Per-module config, keyed by node path.
+//   argv       list     Every argv token, verbatim — including the ones VE did
+//                       not consume. Apps with their own flags parse this (or
+//                       entry::args()) instead of pre-registering with VE.
+//   verbose    bool     Entry-pipeline chatter (config load, module creation,
+//                       state transitions). Also via entry::verbose() so
+//                       modules can gate their own first-run logs on it.
+//
+// CLI flags, recognized only by setup(int, char**). Each one writes straight
+// into the options node, so the node tree is the single representation:
+//
+//   -c <path> / --config <path>   startup config file
+//   <path>.json                   same, as a bare positional (first wins)
+//   <path>.dll/.so/.dylib         appended to plugins
+//   -v / --verbose                verbose = true
+//   -t / --terminal               modules/ve/client/terminal/stdio/enabled
+//   -r [host:port] / --remote     modules/ve/client/terminal/tcp/*
+//
+// -t and -r are mutually exclusive. Unrecognized flags are ignored, not
+// rejected: they stay in /ve/entry/argv for the application to parse, so
+// adding a flag to VE can never break a downstream launcher.
+//
+// There is no generic "override any path from the command line" flag. Settings
+// belong in the config file, where they are reviewable and diffable; an app
+// that needs its own switches parses /ve/entry/argv (or entry::args()) and
+// writes the nodes it owns before calling init().
+//
+// Precedence (later wins): built-in defaults - config file - caller options
+// (CLI). The whole /ve/entry staging area is erased at the end of init(), so
+// consumers must read what they need before READY, or use the query helpers
+// (entry::verbose(), entry::args()).
 //
 // Module load policy:
 //   - Registered modules (VE_REGISTER_MODULE) load by default; put a key in
-//     options/modules/blacklist to skip it (also skips its subtree).
-//   - ve.service.* modules are opt-in: only loaded if their config subtree
-//     exists.
+//     blacklist to skip it (also skips its subtree).
+//   - ve.service.* modules are opt-in: only loaded if a matching subtree
+//     exists under "modules".
 //   - Plugins (dynamic libraries) do NOT load by default. Only plugins listed
-//     under /ve/entry/options/plugins (via config or CLI) are loaded.
+//     under /ve/entry/plugins (via config file or CLI) are loaded.
 //
 // ----------------------------------------------------------------------------
 
@@ -103,6 +125,11 @@ class Node;
 
 namespace entry {
 
+// Highest config-file "version" this build understands. setup() fails when a
+// config asks for more, so an old binary refuses a config it cannot honor
+// instead of silently ignoring the parts it does not know.
+constexpr int VE_ENTRY_VERSION = 2;
+
 enum State : int {
     NONE,
     SETUP,
@@ -113,15 +140,16 @@ enum State : int {
 };
 
 // Parse argv into a fresh options node and hand off to setup(Node*).
-VE_API void setup(int argc, char** argv);
+VE_API bool setup(int argc, char** argv);
 
 // Shortcut: run with defaults but override the config file path.
-VE_API void setup(const std::string& config_file);
+VE_API bool setup(const std::string& config_file);
 
-// Merge a caller-supplied options node into the staging area, load the config
-// file it points at, and finish preparing /ve/entry for init(). Pass nullptr
-// to run with defaults (loads "ve.json" from cwd if present).
-VE_API void setup(Node* options_n);
+// Merge a caller-supplied options node into /ve/entry, load the config file it
+// points at, and finish preparing the staging area for init(). Pass nullptr to
+// run with defaults (loads "ve.json" from cwd if present). Returns false when
+// the config requires a newer VE than this build.
+VE_API bool setup(Node* options_n);
 
 // Load plugins, create modules, and complete initialization.
 VE_API void init();
@@ -142,14 +170,16 @@ VE_API int  exec(int argc, char** argv);
 VE_API State state();
 
 // Original argv as passed to setup() — kept for frameworks (Qt, ROS) that
-// need to see the process argv. argc() reflects the original count.
+// need to see the process argv, and for apps parsing their own flags. argc()
+// reflects the original count. /ve/entry/argv holds the same tokens until
+// init() erases the staging area.
 VE_API std::pair<int, char**> args();
+
+// Convenience: /ve/entry/verbose (or false pre-setup).
+VE_API bool   verbose();
 
 // Application name derived from argv[0]; used for log prefix.
 VE_API const std::string& appName();
-
-// Convenience: /ve/entry/options/verbose (or false pre-setup).
-VE_API bool   verbose();
 
 } // namespace entry
 

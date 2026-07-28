@@ -1,7 +1,10 @@
 // core_module.cpp - ve::CoreModule (ve.core)
 //
-// System module: log configuration, crash handler (rescue).
-//   constructor: rescue + log config (from JSON defaults)
+// System module: crash handler (rescue).
+//   constructor: rescue setup
+//
+// Log configuration lives on /ve/entry/log and is applied by ve::entry::setup()
+// so the entry pipeline's own output honors it — not here.
 
 #include "ve/core/module.h"
 #include "ve/core/log.h"
@@ -16,32 +19,9 @@ class CoreModule : public Module
 public:
     CoreModule()
     {
-        auto* n = node();
-
-        { // rescue
-            if (n->get("config/rescue/enabled").toBool(true)) {
-                if (!service::trySetupRescue()) {
-                    std::fputs("[VE] crash reporting could not be installed\n", stderr);
-                }
-            }
-        }
-
-        { // log
-            std::string lvl = n->get("config/log/level").toString("info");
-            if (lvl[0] == 'd') {
-                log::setLevel(LogLevel::Debug);
-            } else if (lvl[0] == 'w') {
-                log::setLevel(LogLevel::Waring);
-            } else if (lvl[0] == 'e') {
-                log::setLevel(LogLevel::Error);
-            } else {
-                log::setLevel(LogLevel::Info);
-            }
-
-            log::setAppName(n->get("config/log/app").toString("ve"));
-            std::string log_dir = n->get("config/log/dir").toString("");
-            if (!log_dir.empty()) {
-                log::setLogDir(log_dir);
+        if (node()->get("config/rescue/enabled").toBool(true)) {
+            if (!service::trySetupRescue()) {
+                std::fputs("[VE] crash reporting could not be installed\n", stderr);
             }
         }
     }

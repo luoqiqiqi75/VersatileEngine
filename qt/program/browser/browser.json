@@ -1,36 +1,41 @@
 {
-  "ve": {
-    "entry": {
-      "plugins": [
-        { "path": "libveqt.dll" },
-        { "path": "veqtbrowser.dll" }
-      ]
-    },
-    "server": {
-      "static": {
-        "enable": true,
-        "config": {
-          "mounts": [
-            {
-              "prefix": "/",
-              "root": "./webapp",
-              "spa_fallback": true
-            }
-          ]
-        }
-      }
-    },
-    "qt": {
-      "config": {
-        "app_type": "gui",
-        "attr": {
-          "ShareOpenGLContexts": true
+  "app": "veqtbrowser",
+  "log": { "level": "info" },
+  "version": 2,
+
+  "plugins": [
+    { "path": "libveqt.dll" },
+    { "path": "veqtbrowser.dll" }
+  ],
+
+  "modules": {
+    "ve": {
+      "server": {
+        "static": {
+          "enable": true,
+          "config": {
+            "mounts": [
+              {
+                "prefix": "/",
+                "root": "./webapp",
+                "spa_fallback": true
+              }
+            ]
+          }
         }
       },
-      "launch": {
+      "qt": {
         "config": {
-          "type": "qml",
-          "main_qml": "qrc:/qml/Main.qml"
+          "app_type": "gui",
+          "attr": {
+            "ShareOpenGLContexts": true
+          }
+        },
+        "launch": {
+          "config": {
+            "type": "qml",
+            "main_qml": "qrc:/qml/Main.qml"
+          }
         }
       }
     }
