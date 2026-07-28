@@ -120,9 +120,8 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int p
     }
 }
 
-std::string exportTree(const Node* node, int indent, bool auto_ignore)
+std::string exportTree(const Node* node, bool auto_ignore)
 {
-    (void)indent;
     if (!node) {
         return "";
     }

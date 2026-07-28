@@ -42,7 +42,9 @@ class Node;
 namespace impl::md {
 
 // Node tree → MD string
-VE_API std::string exportTree(const Node* node, int indent = 2, bool auto_ignore = true);
+// Markdown is line-based (headings/list items must start a line), so there are
+// no indent or line-ending knobs.
+VE_API std::string exportTree(const Node* node, bool auto_ignore = true);
 
 // MD string → Node tree
 VE_API bool importTree(Node* node, const std::string& md);

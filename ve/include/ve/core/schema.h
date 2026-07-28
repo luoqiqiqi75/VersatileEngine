@@ -47,8 +47,14 @@ namespace schema {
 
 struct JsonS
 {
-    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
-    static ExportOptions compact() { return {0, true}; }
+    struct ExportOptions
+    {
+        int         indent      = 2;
+        bool        auto_ignore = true;
+        std::string newline     = "\n";
+        std::string tail        = "\n";
+    };
+    static ExportOptions compact() { return {0, true, "", ""}; }
 
     VE_API static std::string fromNode(const Node* node, int indent = 2);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
@@ -68,7 +74,8 @@ struct BinS
 
 struct XmlS
 {
-    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
+    using ExportOptions = JsonS::ExportOptions;
+    static ExportOptions compact() { return JsonS::compact(); }
 
     VE_API static std::string fromNode(const Node* node, int indent = 2);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
@@ -88,9 +95,9 @@ struct VarS
 
 struct MdS
 {
-    struct ExportOptions { int indent = 2; bool auto_ignore = true; };
+    struct ExportOptions { bool auto_ignore = true; };
 
-    VE_API static std::string fromNode(const Node* node, int indent = 2);
+    VE_API static std::string fromNode(const Node* node);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
     VE_API static bool        toNode(Node* node, const std::string& data);
     VE_API static bool        toNode(Node* node, const std::string& data, int copy_flags);

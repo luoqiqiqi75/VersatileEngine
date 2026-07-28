@@ -57,18 +57,38 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node, bool au
     }
 }
 
-std::string exportTree(const Node* node, int indent, bool auto_ignore)
+std::string exportTree(const Node* node, const ExportOpts& opts)
 {
     if (!node) return "";
 
     pugi::xml_document doc;
     auto root = doc.append_child(node->name().empty() ? "root" : node->name().c_str());
 
-    nodeToXmlNode(node, root, auto_ignore);
+    nodeToXmlNode(node, root, opts.auto_ignore);
+
+    // pugixml only breaks lines in indent mode; format_raw emits a single line.
+    const bool pretty = !opts.newline.empty();
+    const std::string pad = pretty ? std::string(opts.indent, ' ') : std::string();
 
     std::ostringstream oss;
-    doc.save(oss, indent > 0 ? "  " : "", pugi::format_default);
-    return oss.str();
+    doc.save(oss, pad.c_str(), pretty ? pugi::format_indent : pugi::format_raw);
+    std::string out = oss.str();
+
+    // pugixml always writes "\n"; rewrite when the caller asked for something else.
+    if (pretty && opts.newline != "\n") {
+        std::string rewritten;
+        rewritten.reserve(out.size());
+        for (char c : out) {
+            if (c == '\n') rewritten += opts.newline;
+            else           rewritten += c;
+        }
+        out.swap(rewritten);
+    }
+
+    // Normalize the document end so `tail` is what the caller asked for.
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    out += opts.tail;
+    return out;
 }
 
 // Helper: recursive pugixml node -> ve::Node (attrs as @key children)

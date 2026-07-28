@@ -110,12 +110,19 @@ namespace ve::schema {
 
 std::string YamlS::fromNode(const Node* node, int indent)
 {
-    return fromNode(node, ExportOptions{indent});
+    ExportOptions o;
+    o.indent = indent;
+    return fromNode(node, o);
 }
 
-std::string YamlS::fromNode(const Node* node, const ExportOptions&)
+std::string YamlS::fromNode(const Node* node, const ExportOptions& options)
 {
     YAML::Emitter emitter;
+    emitter.SetIndent(options.indent > 0 ? options.indent : 2);
+    if (options.flow) {
+        emitter.SetMapFormat(YAML::Flow);
+        emitter.SetSeqFormat(YAML::Flow);
+    }
     emitter << ve::ros::yaml::varToYaml(schema::fromNode<schema::VarS>(node));
     return emitter.c_str();
 }

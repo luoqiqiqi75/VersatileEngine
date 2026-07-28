@@ -26,11 +26,17 @@ VE_API std::string stringify(const Var& v);
 VE_API Var         parse(const std::string& json);
 
 // Node tree <-> JSON string
-// auto_ignore: skip "_"-prefixed children on export.
-// maxDepth: limits tree depth (-1 = unlimited, 0 = value only, 1 = direct children).
 // importTree(copy_flags) performs merge-style import through Node::copy().
-VE_API std::string exportTree(const Node* node, int indent = 2, bool auto_ignore = true);
-VE_API std::string exportTree(const Node* node, int maxDepth, int indent, bool auto_ignore);
+struct ExportOpts
+{
+    int         indent      = 2;     // spaces per level; 0 = no indent
+    bool        auto_ignore = true;  // skip "_"-prefixed children
+    std::string newline     = "\n";  // between lines; "" = single-line output
+    std::string tail        = "\n";  // appended once after the document
+    int         maxDepth    = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
+};
+
+VE_API std::string exportTree(const Node* node, const ExportOpts& opts = {});
 VE_API bool        importTree(Node* node, const std::string& json);
 VE_API bool        importTree(Node* node, const std::string& json, int copy_flags);
 

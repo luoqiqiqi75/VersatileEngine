@@ -32,12 +32,19 @@ namespace schema {
 
 std::string JsonS::fromNode(const Node* node, int indent)
 {
-    return impl::json::exportTree(node, indent, true);
+    ExportOptions o;
+    o.indent = indent;
+    return fromNode(node, o);
 }
 
 std::string JsonS::fromNode(const Node* node, const JsonS::ExportOptions& options)
 {
-    return impl::json::exportTree(node, options.indent, options.auto_ignore);
+    impl::json::ExportOpts o;
+    o.indent      = options.indent;
+    o.auto_ignore = options.auto_ignore;
+    o.newline     = options.newline;
+    o.tail        = options.tail;
+    return impl::json::exportTree(node, o);
 }
 
 bool JsonS::toNode(Node* node, const std::string& data)
@@ -80,12 +87,19 @@ bool BinS::toNode(Node* node, const uint8_t* data, size_t len, int copy_flags)
 
 std::string XmlS::fromNode(const Node* node, int indent)
 {
-    return impl::xml::exportTree(node, indent, true);
+    ExportOptions o;
+    o.indent = indent;
+    return fromNode(node, o);
 }
 
 std::string XmlS::fromNode(const Node* node, const XmlS::ExportOptions& options)
 {
-    return impl::xml::exportTree(node, options.indent, options.auto_ignore);
+    impl::xml::ExportOpts o;
+    o.indent      = options.indent;
+    o.auto_ignore = options.auto_ignore;
+    o.newline     = options.newline;
+    o.tail        = options.tail;
+    return impl::xml::exportTree(node, o);
 }
 
 bool XmlS::toNode(Node* node, const std::string& data)
@@ -272,14 +286,14 @@ bool VarS::toNode(Node* node, const Var& data, int copy_flags)
 // MdS
 // ============================================================================
 
-std::string MdS::fromNode(const Node* node, int indent)
+std::string MdS::fromNode(const Node* node)
 {
-    return impl::md::exportTree(node, indent, true);
+    return fromNode(node, ExportOptions{});
 }
 
 std::string MdS::fromNode(const Node* node, const MdS::ExportOptions& options)
 {
-    return impl::md::exportTree(node, options.indent, options.auto_ignore);
+    return impl::md::exportTree(node, options.auto_ignore);
 }
 
 bool MdS::toNode(Node* node, const std::string& data)

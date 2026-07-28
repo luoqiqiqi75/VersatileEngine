@@ -21,7 +21,15 @@ class Node;
 namespace impl::xml {
 
 // Node tree <-> XML string
-VE_API std::string exportTree(const Node* node, int indent = 2, bool auto_ignore = true);
+struct ExportOpts
+{
+    int         indent      = 2;
+    bool        auto_ignore = true;
+    std::string newline     = "\n";
+    std::string tail        = "\n";
+};
+
+VE_API std::string exportTree(const Node* node, const ExportOpts& opts = {});
 VE_API bool        importTree(Node* node, const std::string& xml);
 VE_API bool        importTree(Node* node, const std::string& xml, int copy_flags);
 
