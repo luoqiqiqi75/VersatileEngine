@@ -129,3 +129,4 @@ endif()
 message(STATUS "")
 
 add_subdirectory(example/bench)
+add_subdirectory(test)

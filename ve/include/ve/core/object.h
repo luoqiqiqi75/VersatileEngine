@@ -166,7 +166,38 @@ public:
     void disconnect(SignalT signal, Object* observer);
     void disconnect(Object* observer);
     template<SignalT S> void disconnect(Object* observer) { disconnect(S, observer); }
+    void disconnectAll(SignalT signal);   // drop every observer of one signal
     void disconnectAll();
+
+    // --- timers ---
+    //
+    // A timer cannot outlive a scheduler, so it is not an entity of its own:
+    // startTimer() allocates a signal on this object and returns its id. The
+    // object emits that signal every interval, carrying a 1-based tick count.
+    //
+    //     auto tick = startTimer(100);
+    //     connect(tick, this, [](int64_t n) { ... });
+    //     killTimer(tick);
+    //
+    // The timer runs on `loop` — by default the loop executing the call, else
+    // loop::main(). Ticks are delivered on that loop's thread unless the
+    // connection names a Loop of its own. Repeating timers are fixed-rate and
+    // skip missed ticks rather than bursting to catch up; a single-shot timer
+    // drops its connections after firing.
+    //
+    // Timers die with the object: ~Object kills them and waits for an in-flight
+    // tick, so a slot never runs against a dead object. killTimer() only stops
+    // future ticks — it is safe from any thread, including from the slot itself.
+    //
+    // Ids are process-unique, never reused, and always >= TIMER_BASE, so they
+    // cannot collide with framework signals (which all live below it).
+    // Returns 0 when the loop has no scheduler.
+    static constexpr SignalT TIMER_BASE = 0x1'0000'0000;
+
+    SignalT startTimer(uint64_t ms, bool repeat = true, Loop* loop = nullptr);
+    bool    killTimer(SignalT id);
+    bool    hasTimer(SignalT id) const;
+    void    killTimers();
 
 protected:
     // Runtime-signal connect/trigger — prefer compile-time template versions above.

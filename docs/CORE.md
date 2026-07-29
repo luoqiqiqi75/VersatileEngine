@@ -116,9 +116,24 @@ Use it when you need:
 - thread-safe signal connections
 - lightweight lifecycle ownership
 - observer registration
+- timers
 
 Use `Object` for runtime actors.
 Use `Node` for shared state.
+
+A timer is just a signal the object emits on a schedule. `startTimer()` returns
+the signal id; the tick carries a 1-based counter.
+
+```cpp
+auto tick = startTimer(100);                        // ms, repeating
+connect(tick, this, [](int64_t n) { /* ... */ });
+killTimer(tick);
+```
+
+The schedule lives on a `ve::Loop` (by default the loop running the call, else
+`loop::main()`), so ticks arrive on that loop's thread. Timers die with the
+object; `Loop::addTimer()` is the raw primitive underneath and is not meant for
+application code.
 
 ### `ve::Node`
 

@@ -1,5 +1,15 @@
 #include "ve/core/object.h"
+#include "ve/core/log.h"
+#include "ve/core/loop.h"
 #include "ve/core/var.h"
+
+#include <algorithm>
+#include <condition_variable>
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace ve {
 
@@ -84,6 +94,62 @@ struct SenderScope {
     ~SenderScope() { t_sender = prev; }
 };
 
+// Keeps a loop's tick from touching a dead Object. The gate outlives the Object
+// (the tick holds a shared_ptr); ~Object closes it and drains in-flight ticks.
+struct TimerGate
+{
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool alive = true;
+    std::vector<std::thread::id> inflight;
+
+    // Returns false when the Object is gone and the tick must be dropped.
+    bool enter()
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (!alive) return false;
+        inflight.push_back(std::this_thread::get_id());
+        return true;
+    }
+
+    void leave()
+    {
+        std::unique_lock<std::mutex> lk(mtx);
+        auto it = std::find(inflight.begin(), inflight.end(), std::this_thread::get_id());
+        if (it != inflight.end()) inflight.erase(it);
+        lk.unlock();
+        cv.notify_all();
+    }
+
+    // Waits out ticks running on other threads. A tick that destroys its own
+    // owner is this very call stack and cannot be waited on — excluded, so the
+    // pathological case degrades instead of deadlocking.
+    void close()
+    {
+        std::unique_lock<std::mutex> lk(mtx);
+        alive = false;
+        const auto self = std::this_thread::get_id();
+        cv.wait(lk, [&] {
+            return std::none_of(inflight.begin(), inflight.end(),
+                                [&](std::thread::id t) { return t != self; });
+        });
+    }
+};
+
+// Scoped enter/leave — a throwing slot must not strand close() forever.
+struct TimerPass
+{
+    TimerGate* gate = nullptr;
+
+    explicit TimerPass(const std::shared_ptr<TimerGate>& g)
+        : gate(g->enter() ? g.get() : nullptr)
+    {}
+
+    ~TimerPass() { if (gate) gate->leave(); }
+
+    explicit operator bool() const { return gate != nullptr; }
+};
+
 } // namespace
 
 struct Object::Private
@@ -100,6 +166,15 @@ struct Object::Private
         Object* observer() const { return target.as<Object>(); }
     };
     UnorderedHashMap<SignalT, Vector<Connection>> connections;
+
+    struct Timer {
+        Loop*             loop   = nullptr;
+        Loop::TimerHandle handle = 0;
+        int64_t           count  = 0;
+        bool              repeat = true;
+    };
+    UnorderedHashMap<SignalT, Timer> timers;
+    std::shared_ptr<TimerGate> gate = std::make_shared<TimerGate>();
 
 
     void addConnection(SignalT signal, const ActionT& action, Token target,
@@ -140,6 +215,8 @@ Object::Object(const std::string& name) : Entity(name), _p(std::make_unique<Priv
 
 Object::~Object()
 {
+    killTimers();
+    _p->gate->close();
     _p->token.kill();
     LockT lk(_p->mtx);
     _p->connections.clear();
@@ -186,6 +263,12 @@ void Object::disconnect(Object* observer)
 {
     LockT lk(_p->mtx);
     _p->removeObserverAll(observer);
+}
+
+void Object::disconnectAll(SignalT signal)
+{
+    LockT lk(_p->mtx);
+    _p->connections.erase(signal);
 }
 
 void Object::disconnectAll()
@@ -247,6 +330,101 @@ void Object::trigger(SignalT signal, const Var& data /*= {}*/)
             vec.erase(std::remove_if(vec.begin(), vec.end(),
                 &Private::isDead), vec.end());
         }
+    }
+}
+
+// ============================================================================
+// Timers
+// ============================================================================
+
+Object::SignalT Object::startTimer(uint64_t ms, bool repeat, Loop* lp)
+{
+    if (!lp) lp = loop::current();
+    if (!lp) lp = loop::main();
+    if (!lp) return 0;
+
+    static std::atomic<SignalT> seq{TIMER_BASE};
+    const SignalT id = seq.fetch_add(1, std::memory_order_relaxed);
+
+    auto gate = _p->gate;
+
+    // Held across addTimer(): a tick that fires on the loop thread before
+    // addTimer() even returns blocks on this same lock, so it can never observe
+    // a half-registered timer. Lock order is always Object::mtx -> the loop's
+    // timer mutex; killTimer() releases this lock before calling back into the
+    // loop, so the reverse edge never exists.
+    LockT lk(_p->mtx);
+    _p->timers[id] = Private::Timer{lp, 0, 0, repeat};
+
+    const Loop::TimerHandle handle = lp->addTimer(ms, repeat, [this, gate, id] {
+        TimerPass pass(gate);
+        if (!pass) return;
+
+        int64_t count = 0;
+        bool    done  = false;
+        {
+            LockT tick_lk(_p->mtx);
+            auto it = _p->timers.find(id);
+            if (it == _p->timers.end()) return;   // killed between fire and here
+            count = ++it->second.count;
+            done  = !it->second.repeat;
+            if (done) _p->timers.erase(it);       // single shot: self-removing
+        }
+
+        // A throwing slot would otherwise escape into the loop's run() and take
+        // the whole thread down with it.
+        try {
+            trigger(id, Var(count));
+        } catch (const std::exception& e) {
+            veLogE << "timer slot threw:" << e.what();
+        } catch (...) {
+            veLogE << "timer slot threw";
+        }
+
+        if (done) disconnectAll(id);
+    });
+
+    if (!handle) {
+        _p->timers.erase(id);   // the loop has no scheduler
+        return 0;
+    }
+    // Not find()-then-assign: a single-shot tick may already have erased the
+    // record, and re-inserting it would strand a timer nothing can kill.
+    if (auto* rec = _p->timers.ptr(id)) rec->handle = handle;
+    return id;
+}
+
+bool Object::killTimer(SignalT id)
+{
+    Private::Timer timer;
+    {
+        LockT lk(_p->mtx);
+        auto it = _p->timers.find(id);
+        if (it == _p->timers.end()) return false;
+        timer = it->second;
+        _p->timers.erase(it);
+    }
+    if (timer.loop && timer.handle) timer.loop->removeTimer(timer.handle);
+    disconnectAll(id);
+    return true;
+}
+
+bool Object::hasTimer(SignalT id) const
+{
+    LockT lk(_p->mtx);
+    return _p->timers.find(id) != _p->timers.end();
+}
+
+void Object::killTimers()
+{
+    UnorderedHashMap<SignalT, Private::Timer> dead;
+    {
+        LockT lk(_p->mtx);
+        dead.swap(_p->timers);
+    }
+    for (auto& kv : dead) {
+        if (kv.second.loop && kv.second.handle) kv.second.loop->removeTimer(kv.second.handle);
+        disconnectAll(kv.first);
     }
 }
 

@@ -13,8 +13,21 @@
 #include <functional>
 #include <sstream>
 #include <cmath>
+#include <chrono>
+#include <thread>
 
 namespace ve_test {
+
+// Poll a predicate until it holds or the deadline passes. For anything driven by
+// another thread (loops, timers) — never assert on timing directly.
+inline bool wait_until(const std::function<bool()>& fn, int timeout_ms = 1000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (fn()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return fn();
+}
 
 inline std::vector<std::function<void()>>& setup_registry() {
     static std::vector<std::function<void()>> fns;
@@ -152,3 +165,5 @@ inline int run_all() {
     } while(0)
 
 #define VE_RUN_ALL() ve_test::run_all()
+
+#define VE_WAIT(...) ve_test::wait_until(__VA_ARGS__)

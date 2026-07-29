@@ -40,6 +40,19 @@ public:
     virtual int    exec();
     virtual void   quit(int exit_code = 0);
 
+    // --- scheduling primitive ---
+    //
+    // Raw delayed execution. This is the backend behind Object::startTimer();
+    // application code should use that instead — a bare handle has no owner and
+    // must be removed by hand.
+    //
+    // `tick` runs on the loop's own thread. Repeating timers are fixed-rate and
+    // skip missed ticks rather than bursting to catch up. Timers do not outlive
+    // stop(). Returns 0 when the loop has no scheduler (the plain Loop).
+    using TimerHandle = uint64_t;
+    virtual TimerHandle addTimer(uint64_t ms, bool repeat, Task tick);
+    virtual bool        removeTimer(TimerHandle handle);
+
 protected:
     std::atomic<bool> _quit{false};
     std::atomic<int>  _exit_code{0};
@@ -60,6 +73,9 @@ public:
     size_t processEvents() override;
     int    exec() override;
 
+    TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
+    bool        removeTimer(TimerHandle handle) override;
+
 private:
     VE_DECLARE_UNIQUE_PRIVATE
 };
@@ -75,6 +91,9 @@ public:
     bool   stop() override;
     bool   isRunning() const override;
     size_t processEvents() override;
+
+    TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
+    bool        removeTimer(TimerHandle handle) override;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

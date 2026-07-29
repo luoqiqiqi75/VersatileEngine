@@ -22,6 +22,12 @@
 #include <QWidget>
 #include <QtGlobal>
 
+#include <atomic>
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+
 #ifdef VE_QT_HAS_IMOL
 #  include "imol/logmanager.h"
 #  include "ve/qt/imol_legacy.h"
@@ -206,9 +212,138 @@ void applyEarlySettings()
     }
 }
 
+// ============================================================================
+// QtTimers — QTimer-backed scheduler shared by QtLoop and QtMainLoop
+// ============================================================================
+//
+// A QTimer must be created, started and stopped on the thread that owns it, but
+// addTimer()/removeTimer() may be called from any thread. Both are therefore
+// marshalled onto the context object's thread, and each timer carries a
+// cancelled flag so a remove that beats the queued create still wins.
+//
+class QtTimers
+{
+public:
+    using TimerHandle = Loop::TimerHandle;
+
+    QtTimers(Loop* owner, QObject* context) : owner_(owner), context_(context) {}
+
+    ~QtTimers() { clear(); }
+
+    TimerHandle add(uint64_t ms, bool repeat, Task tick)
+    {
+        if (!tick || !context_) return 0;
+
+        const TimerHandle h = ++seq_;
+        auto rec = std::make_shared<Rec>();
+        rec->tick = std::move(tick);
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            recs_[h] = rec;
+        }
+
+        QMetaObject::invokeMethod(context_, [this, h, rec, ms, repeat] {
+            if (rec->cancelled.load(std::memory_order_acquire)) return;
+
+            auto* qt_timer = new QTimer(context_);
+            qt_timer->setTimerType(Qt::PreciseTimer);
+            qt_timer->setSingleShot(!repeat);
+
+            QObject::connect(qt_timer, &QTimer::timeout, qt_timer, [this, h, rec, repeat, qt_timer] {
+                if (rec->cancelled.load(std::memory_order_acquire)) return;
+                if (!repeat) {
+                    // Retire before the tick, so removeTimer() is honest inside it.
+                    forget(h);
+                    rec->cancelled.store(true, std::memory_order_release);
+                    rec->timer.store(nullptr, std::memory_order_release);
+                    qt_timer->deleteLater();
+                }
+
+                Loop* prev = loop::current();
+                loop::setCurrent(owner_);
+                // Throwing through the Qt event loop is undefined behaviour.
+                try {
+                    rec->tick();
+                } catch (const std::exception& e) {
+                    veLogE << "qt timer tick threw:" << e.what();
+                } catch (...) {
+                    veLogE << "qt timer tick threw";
+                }
+                loop::setCurrent(prev);
+            });
+
+            // Publish only after a final cancel check: remove() may have run
+            // while this create sat in the event queue.
+            rec->timer.store(qt_timer, std::memory_order_release);
+            if (rec->cancelled.load(std::memory_order_acquire)) {
+                rec->timer.store(nullptr, std::memory_order_release);
+                qt_timer->deleteLater();
+                return;
+            }
+            qt_timer->start(static_cast<int>(ms));
+        }, Qt::QueuedConnection);
+
+        return h;
+    }
+
+    bool remove(TimerHandle h)
+    {
+        std::shared_ptr<Rec> rec;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it = recs_.find(h);
+            if (it == recs_.end()) return false;
+            rec = it->second;
+            recs_.erase(it);
+        }
+        kill(rec);
+        return true;
+    }
+
+    void clear()
+    {
+        std::unordered_map<TimerHandle, std::shared_ptr<Rec>> dead;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            dead.swap(recs_);
+        }
+        for (auto& kv : dead) kill(kv.second);
+    }
+
+private:
+    struct Rec {
+        Task tick;
+        std::atomic<bool>    cancelled{false};
+        std::atomic<QTimer*> timer{nullptr};   // written on the context thread, read anywhere
+    };
+
+    // Cancel first (the tick becomes a no-op immediately, on any thread), then
+    // let Qt tear the QTimer down on its own thread. deleteLater() is
+    // thread-safe and stops the timer as it destroys it.
+    static void kill(const std::shared_ptr<Rec>& rec)
+    {
+        rec->cancelled.store(true, std::memory_order_release);
+        if (QTimer* t = rec->timer.exchange(nullptr, std::memory_order_acq_rel)) t->deleteLater();
+    }
+
+    void forget(TimerHandle h)
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        recs_.erase(h);
+    }
+
+    Loop*    owner_ = nullptr;
+    QObject* context_ = nullptr;
+    std::atomic<TimerHandle> seq_{0};
+
+    std::mutex mtx_;
+    std::unordered_map<TimerHandle, std::shared_ptr<Rec>> recs_;
+};
+
 QtLoop::QtLoop(QEventLoop* loop, const std::string& name)
     : Loop(name)
     , loop_(loop)
+    , timers_(std::make_unique<QtTimers>(this, loop))
 {}
 
 QtLoop::~QtLoop() = default;
@@ -233,9 +368,20 @@ size_t QtLoop::processEvents()
     return 0;
 }
 
+Loop::TimerHandle QtLoop::addTimer(uint64_t ms, bool repeat, Task tick)
+{
+    return timers_->add(ms, repeat, std::move(tick));
+}
+
+bool QtLoop::removeTimer(TimerHandle handle)
+{
+    return timers_->remove(handle);
+}
+
 QtMainLoop::QtMainLoop(QCoreApplication* app, const std::string& name)
     : Loop(name)
     , app_(app ? app : QCoreApplication::instance())
+    , timers_(std::make_unique<QtTimers>(this, app_))
 {}
 
 QtMainLoop::~QtMainLoop() = default;
@@ -273,6 +419,16 @@ void QtMainLoop::quit(int exit_code)
 {
     Loop::quit(exit_code);
     QCoreApplication::exit(exit_code);
+}
+
+Loop::TimerHandle QtMainLoop::addTimer(uint64_t ms, bool repeat, Task tick)
+{
+    return timers_->add(ms, repeat, std::move(tick));
+}
+
+bool QtMainLoop::removeTimer(TimerHandle handle)
+{
+    return timers_->remove(handle);
 }
 
 class QtModule : public Module

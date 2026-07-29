@@ -10,6 +10,9 @@ class QEventLoop;
 
 namespace ve::qt {
 
+// QTimer-backed scheduler shared by both Qt loops (defined in qt_module.cpp).
+class QtTimers;
+
 class VE_API QtLoop : public Loop
 {
 public:
@@ -20,8 +23,12 @@ public:
     bool   isRunning() const override;
     size_t processEvents() override;
 
+    TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
+    bool        removeTimer(TimerHandle handle) override;
+
 private:
     QEventLoop* loop_ = nullptr;
+    std::unique_ptr<QtTimers> timers_;
 };
 
 class VE_API QtMainLoop : public Loop
@@ -37,8 +44,12 @@ public:
     int    exec() override;   // native QCoreApplication::exec()
     void   quit(int exit_code = 0) override;
 
+    TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
+    bool        removeTimer(TimerHandle handle) override;
+
 private:
     QCoreApplication* app_ = nullptr;
+    std::unique_ptr<QtTimers> timers_;
 };
 
 } // namespace ve::qt
