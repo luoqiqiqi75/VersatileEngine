@@ -10,7 +10,7 @@ class QEventLoop;
 
 namespace ve::qt {
 
-// QTimer-backed scheduler shared by both Qt loops (defined in qt_module.cpp).
+// QObject timerEvent scheduler shared by both Qt loops (defined in qt_module.cpp).
 class QtTimers;
 
 class VE_API QtLoop : public Loop

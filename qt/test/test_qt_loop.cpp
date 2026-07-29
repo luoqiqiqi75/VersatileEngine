@@ -10,7 +10,9 @@
 #include <QCoreApplication>
 #include <QThread>
 
+#include <array>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -92,7 +94,7 @@ VE_TEST(qt_loop_tick_runs_on_gui_thread) {
 
 // --- cross-thread add/remove ---
 //
-// QTimer must live on the loop's thread; add/remove marshal onto it. These
+// Qt timers must run on the loop's thread; add/remove marshal onto it. These
 // exercise the queued-create path and the remove-beats-create race.
 
 VE_TEST(qt_loop_add_timer_from_worker_thread) {
@@ -181,7 +183,7 @@ VE_TEST(qt_loop_timers_die_with_loop) {
         QtMainLoop lp(QCoreApplication::instance());
         lp.addTimer(2, true, [&] { ticks.fetch_add(1); });
         VE_ASSERT(VE_QT_WAIT([&] { return ticks.load() >= 2; }));
-    }   // ~QtMainLoop → ~QtTimers → clear()
+    }   // ~QtMainLoop → ~QtTimers → cancelAll()
 
     const int settled = ticks.load();
     VE_QT_SETTLE();
@@ -308,5 +310,96 @@ VE_TEST(qt_loop_slow_tick_does_not_burst) {
     VE_QT_SETTLE(100);
     lp.removeTimer(h);
 
-    VE_ASSERT(ticks.load() < 20);   // QTimer does not queue up missed shots
+    VE_ASSERT(ticks.load() < 20);   // Qt does not queue up missed timer shots
+}
+
+// --- timerEvent backend specifics ---
+//
+// All timers on a loop share one host QObject and are demultiplexed by Qt timer
+// id, so these check that ids stay distinct and that retiring one leaves the
+// others running.
+
+VE_TEST(qt_loop_many_timers_share_one_host) {
+    QtMainLoop lp(QCoreApplication::instance());
+
+    constexpr int N = 16;
+    std::array<std::atomic<int>, N> ticks{};
+    std::vector<Loop::TimerHandle> handles;
+
+    for (int i = 0; i < N; ++i)
+        handles.push_back(lp.addTimer(2 + i % 3, true, [&ticks, i] { ticks[i].fetch_add(1); }));
+
+    VE_ASSERT(VE_QT_WAIT([&] {
+        for (int i = 0; i < N; ++i) if (ticks[i].load() < 2) return false;
+        return true;
+    }, 4000));
+
+    // Every timer must have its own Qt id — a collision would double-dispatch.
+    for (int i = 0; i < N; ++i) VE_ASSERT(ticks[i].load() >= 2);
+
+    for (auto h : handles) VE_ASSERT(lp.removeTimer(h));
+}
+
+VE_TEST(qt_loop_single_shot_leaves_siblings_running) {
+    QtMainLoop lp(QCoreApplication::instance());
+
+    std::atomic<int> once{0};
+    std::atomic<int> repeating{0};
+
+    lp.addTimer(3, false, [&] { once.fetch_add(1); });
+    auto h = lp.addTimer(3, true, [&] { repeating.fetch_add(1); });
+
+    VE_ASSERT(VE_QT_WAIT([&] { return repeating.load() >= 5; }));
+    VE_ASSERT_EQ(once.load(), 1);   // retired without disturbing its sibling
+
+    lp.removeTimer(h);
+}
+
+VE_TEST(qt_loop_remove_retired_single_shot_is_false) {
+    QtMainLoop lp(QCoreApplication::instance());
+
+    std::atomic<int> ticks{0};
+    auto h = lp.addTimer(3, false, [&] { ticks.fetch_add(1); });
+
+    VE_ASSERT(VE_QT_WAIT([&] { return ticks.load() == 1; }));
+    VE_ASSERT(!lp.removeTimer(h));   // already retired itself
+}
+
+VE_TEST(qt_loop_single_shot_releases_tick_capture) {
+    QtMainLoop lp(QCoreApplication::instance());
+
+    auto payload = std::make_shared<int>(42);
+    std::weak_ptr<int> released = payload;
+    lp.addTimer(3, false, [payload = std::move(payload)] {});
+
+    // The callback record must leave both the host and handle registry when it
+    // fires; keeping it until another addTimer() would retain user resources.
+    VE_ASSERT(VE_QT_WAIT([&] { return released.expired(); }));
+}
+
+VE_TEST(qt_loop_repeated_arm_remove_reuses_host) {
+    QtMainLoop lp(QCoreApplication::instance());
+
+    // Arm every timer before removing it so this really churns the host's Qt
+    // timer-id table instead of only cancelling queued arm requests.
+    constexpr int N = 10;
+    for (int round = 0; round < 20; ++round) {
+        std::array<std::atomic<int>, N> ticks{};
+        std::vector<Loop::TimerHandle> handles;
+        for (int i = 0; i < N; ++i)
+            handles.push_back(lp.addTimer(1, true, [&ticks, i] { ticks[i].fetch_add(1); }));
+
+        VE_ASSERT(VE_QT_WAIT([&] {
+            for (int i = 0; i < N; ++i) if (ticks[i].load() == 0) return false;
+            return true;
+        }));
+
+        for (auto h : handles) VE_ASSERT(lp.removeTimer(h));
+        VE_QT_SETTLE(2);   // deliver the queued killTimer calls before the next batch
+    }
+
+    std::atomic<int> live{0};
+    auto h = lp.addTimer(2, true, [&] { live.fetch_add(1); });
+    VE_ASSERT(VE_QT_WAIT([&] { return live.load() >= 2; }));   // host still usable
+    lp.removeTimer(h);
 }
