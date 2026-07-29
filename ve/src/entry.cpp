@@ -299,10 +299,27 @@ bool setup(Node* options_n)
         return false;
     }
 
-    // 4. Overlay caller options — CLI wins over the file.
+    // 4. CLI plugins append after file plugins. Every plugin list element is
+    // anonymous (#0, #1, ...), so a regular tree copy would otherwise merge
+    // the CLI's first element onto the file's first element and silently
+    // replace it. Keep the documented load order instead: file entries first,
+    // then positional .so/.dll/.dylib arguments.
+    if (options_n) {
+        if (Node* cli_plugins = options_n->find("plugins")) {
+            Node* file_plugins = entry_n->at("plugins");
+            for (Node* spec : *cli_plugins) {
+                file_plugins->append("")->copy(spec, Node::COPY_STRICT);
+            }
+            // The list has already been merged above; exclude it from the
+            // ordinary CLI overlay below.
+            options_n->erase("plugins");
+        }
+    }
+
+    // 5. Overlay caller options — CLI wins over the file.
     entry_n->copy(options_n);
 
-    // 5. Logging is live from here on.
+    // 6. Logging is live from here on.
     applyLogSettings(entry_n);
 
     g.verbose = entry_n->get("verbose").toBool(false);
