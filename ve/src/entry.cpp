@@ -148,6 +148,7 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
     auto& g = G();
     g.argc = argc;
     g.argv = argv;
+    g.verbose = false;
 
     if (argc > 0 && argv[0]) {
         namespace fs = std::filesystem;
@@ -263,11 +264,14 @@ bool setup(Node* options_n)
     //    setup(nullptr) still picks up a local file.
     std::string config_file;
     bool verbose = false;
+    bool verbose_overridden = false;
     if (options_n) {
         config_file = options_n->get("config_file").toString();
+        verbose_overridden = options_n->find("verbose") != nullptr;
         verbose = options_n->get("verbose").toBool(false);
         g.app_name = options_n->get("app").toString(g.app_name);
     }
+    g.verbose = verbose;
 
     Node* entry_n = n("ve/entry");
 
@@ -281,12 +285,16 @@ bool setup(Node* options_n)
     if (!config_file.empty()) {
         std::string content = readFile(config_file);
         if (content.empty()) {
-            veLogW << "[ve/entry] Config file empty or missing: " << config_file;
+            if (verbose) veLogW << "[ve/entry] Config file empty or missing: " << config_file;
         } else if (!schema::toNode<schema::JsonS>(entry_n, content)) {
             veLogE << "[ve/entry] Config parse failed: " << config_file;
             return false;
-        } else if (verbose) {
-            veLogI << "[ve/entry] Config loaded: " << config_file;
+        } else {
+            if (!verbose_overridden) {
+                verbose = entry_n->get("verbose").toBool(false);
+                g.verbose = verbose;
+            }
+            if (verbose) veLogI << "[ve/entry] Config loaded: " << config_file;
         }
     }
 
@@ -332,7 +340,6 @@ bool setup(int argc, char** argv)
 {
     Node opts("options");
     if (!parseArgs(argc, argv, &opts)) {
-        veLogE << "[ve/entry] options parse failed!";
         return false;
     }
     return setup(&opts);
@@ -347,344 +354,240 @@ bool setup(const std::string& config_file)
 
 // --- init ------------------------------------------------------------------
 
-static void tryLoadOnePluginSpec(Node* spec_node)
-{
-    Node* path_node = spec_node->find("path");
-    if (!path_node) {
-        return;
-    }
-    std::string path = path_node->getString("");
-    if (path.empty()) {
-        return;
-    }
-
-    if (!spec_node->get("enabled").toBool(true)) {
-        return;
-    }
-
-    int min_api = spec_node->get("min_api").toInt(0);
-
-    if (!plugin::load(path)) {
-        veLogE << "[ve/entry] Plugin load failed: " << path;
-        return;
-    }
-
-    if (min_api > VE_MIN_API) {
-        std::string pname;
-        if (Node* name_node = spec_node->find("name")) {
-            pname = name_node->getString("");
-        }
-        if (pname.empty()) {
-            pname = path;
-        }
-        if (!version::check(pname, min_api)) {
-            veLogE << "[ve/entry] Plugin " << pname
-                   << " version check failed (min_api=" << min_api << ")";
-        }
-    }
-}
-
-static void loadPlugins()
-{
-    Node* plugins_root = n("ve/entry")->find("plugins");
-    if (!plugins_root) {
-        return;
-    }
-
-    if (plugins_root->find("path")) {
-        // "plugins": { "path": "...", "enabled": true, ... }
-        tryLoadOnePluginSpec(plugins_root);
-    } else {
-        // "plugins": [ { ... }, { ... } ] -> plugins/#0, plugins/#1, ...
-        for (Node* pn : plugins_root->children()) {
-            tryLoadOnePluginSpec(pn);
-        }
-    }
-}
-
-// Blacklist match: an entry "a.b" bans "a.b" and everything under it
-// ("a.b.c", "a.b.c.d", ...). No wildcard syntax.
-static bool inBlacklist(const std::string& key, const Vector<std::string>& black)
-{
-    for (const auto& b : black) {
-        if (b.empty()) continue;
-        if (key == b) return true;
-        if (key.size() > b.size() && key.compare(0, b.size(), b) == 0 && key[b.size()] == '.') {
-            return true;
-        }
-    }
-    return false;
-}
-
-// Compute the ordered list of module keys to instantiate. Applies the
-// blacklist, keeps ve.service.* opt-in (needs a matching config subtree), and
-// emits keys in hierarchical DFS pre-order with siblings sorted by base
-// priority (parent priority is not inherited — order is scoped to siblings).
-static Vector<std::string> selectModuleKeys()
-{
-    auto& factory = module::factory();
-
-    Vector<std::string> black;
-    if (Node* bn = n("ve/entry")->find("blacklist")) {
-        for (Node* c : bn->children()) black.push_back(c->getString(""));
-    }
-
-    Node* mods_root = n("ve/entry/modules");
-
-    struct Entry {
-        std::string key;
-        int         priority = 100;
-    };
-
-    // Map: parent key -> children entries (root uses empty parent key).
-    Hash<Vector<Entry>> tree;
-    Hash<int> known;   // membership: key -> 1
-    Vector<std::string> raw_keys = factory::keys("module");
-
-    // First pass: filter, then bucket by parent key.
-    for (const auto& key : raw_keys) {
-        if (inBlacklist(key, black)) continue;
-
-        // ve.service.* is opt-in: require a matching config subtree.
-        if (key.rfind("ve.service.", 0) == 0) {
-            if (!mods_root->find(keyToPath(key))) continue;
-        }
-
-        int priority = 100;
-        auto* nd = factory.node(key, VE_FACTORY_KEY_SEP);
-        if (nd) {
-            if (auto* pn = nd->find("priority")) priority = pn->getInt(100);
-        }
-
-        known[key] = 1;
-        tree[parentKey(key)].push_back(Entry{key, priority});
-    }
-
-    // Re-attach orphaned subtrees: nearest surviving ancestor becomes the parent.
-    // This lets a child whose parent is blacklisted still load standalone.
-    Hash<Vector<Entry>> tree2;
-    for (auto it = tree.begin(); it != tree.end(); ++it) {
-        std::string pk = it->first;
-        while (!pk.empty() && known.find(pk) == known.end()) {
-            pk = parentKey(pk);
-        }
-        auto& bucket = tree2[pk];
-        for (auto& e : it->second) bucket.push_back(std::move(e));
-    }
-
-    for (auto it = tree2.begin(); it != tree2.end(); ++it) {
-        std::stable_sort(it->second.begin(), it->second.end(),
-            [](const Entry& a, const Entry& b) { return a.priority < b.priority; });
-    }
-
-    Vector<std::string> ordered;
-    ordered.reserve(known.size());
-    std::function<void(const std::string&)> emit = [&](const std::string& pk) {
-        auto it = tree2.find(pk);
-        if (it == tree2.end()) return;
-        for (auto& e : it->second) {
-            ordered.push_back(e.key);
-            emit(e.key);
-        }
-    };
-    emit("");
-    return ordered;
-}
-
-// Pre-build empty module nodes in the chosen order so the underlying children
-// Vector reflects load order; then copy the corresponding config subtree in.
-static void buildModuleNodes(const Vector<std::string>& keys)
-{
-    Node* root = node::root();
-    Node* mods = n("ve/entry/modules");
-
-    for (const auto& key : keys) {
-        std::string path = keyToPath(key);
-        Node* mn = root->atPath(path);
-        if (Node* src = mods->find(path)) {
-            mn->copy(src);
-        }
-    }
-}
-
-// Populate slots by walking the (already ordered) module subtrees on the real
-// node tree. Skips subtrees that were never built (blacklisted / not selected).
-static void buildModuleGraph(Vector<ModuleSlot>& slots, const Vector<std::string>& keys)
-{
-    auto& factory = module::factory();
-    slots.reserve(keys.size());
-    for (const auto& key : keys) {
-        ModuleSlot slot;
-        slot.key = key;
-        if (auto* nd = factory.node(key, VE_FACTORY_KEY_SEP)) {
-            if (auto* pn = nd->find("priority")) slot.priority = pn->getInt(100);
-        }
-        slots.push_back(std::move(slot));
-    }
-}
-
-static void resolveDepends(Vector<ModuleSlot>& slots)
-{
-    Hash<int> key_to_idx;
-    for (int i = 0; i < (int)slots.size(); ++i) {
-        key_to_idx[slots[i].key] = i;
-    }
-
-    int n_slots = (int)slots.size();
-    Vector<Vector<int>> adj(n_slots);
-    Vector<int> indegree(n_slots, 0);
-
-    // Implicit parent -> child edges (child depends on nearest registered ancestor)
-    for (int i = 0; i < n_slots; ++i) {
-        std::string pk = parentKey(slots[i].key);
-        while (!pk.empty()) {
-            auto pit = key_to_idx.find(pk);
-            if (pit != key_to_idx.end()) {
-                adj[pit->second].push_back(i);
-                indegree[i]++;
-                break;
-            }
-            pk = parentKey(pk);
-        }
-    }
-
-    // Explicit depends edges from config
-    for (auto& slot : slots) {
-        Node* mn = node::root()->find(keyToPath(slot.key));
-        if (!mn) continue;
-        auto* deps_n = mn->find("depends");
-        if (!deps_n) continue;
-
-        auto it = key_to_idx.find(slot.key);
-        if (it == key_to_idx.end()) continue;
-        int to = it->second;
-
-        for (auto* dep : *deps_n) {
-            std::string dep_key = dep->getString();
-            auto dit = key_to_idx.find(dep_key);
-            if (dit == key_to_idx.end()) {
-                veLogW << "[ve/entry] Dependency not found: " << slot.key << " -> " << dep_key;
-                continue;
-            }
-            adj[dit->second].push_back(to);
-            indegree[to]++;
-        }
-    }
-
-    // Kahn's topo sort. Input order already encodes hierarchy + priority, so
-    // the ready-set tiebreaker is just input index — keeps subtrees contiguous
-    // and only lets explicit depends rearrange things.
-    auto cmp = [](int a, int b) { return a > b; };
-    std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
-
-    for (int i = 0; i < n_slots; ++i) {
-        if (indegree[i] == 0) pq.push(i);
-    }
-
-    Vector<int> order;
-    order.reserve(n_slots);
-    while (!pq.empty()) {
-        int u = pq.top(); pq.pop();
-        order.push_back(u);
-        for (int v : adj[u]) {
-            if (--indegree[v] == 0) pq.push(v);
-        }
-    }
-
-    if ((int)order.size() != n_slots) {
-        veLogE << "[ve/entry] Circular dependency detected in module graph!";
-        return;
-    }
-
-    Vector<ModuleSlot> sorted;
-    sorted.reserve(n_slots);
-    for (int idx : order) {
-        sorted.push_back(std::move(slots[idx]));
-    }
-    slots = std::move(sorted);
-}
-
 void init()
 {
     auto& g = G();
-    bool verbose = g.verbose;
+    const bool verbose = g.verbose;
+    Node* entry_n = n("ve/entry");
 
-    loadPlugins();
+    // Load configured plugins in declaration order.
+    if (Node* plugins = entry_n->find("plugins")) {
+        auto load_plugin = [verbose](Node* spec) {
+            Node* path_node = spec->find("path");
+            if (!path_node || !spec->get("enabled").toBool(true)) return;
 
-    // Select keys, then materialize their nodes in that exact order. Config
-    // subtrees are copied in as each node is created.
-    Vector<std::string> keys = selectModuleKeys();
-    buildModuleNodes(keys);
+            std::string path = path_node->getString();
+            if (path.empty() || !plugin::load(path, verbose)) return;
 
-    buildModuleGraph(g.modules, keys);
-    resolveDepends(g.modules);
+            int min_api = spec->get("min_api").toInt(0);
+            if (min_api <= VE_MIN_API) return;
 
-    auto& factory = module::factory();
+            std::string name = spec->get("name").toString();
+            if (name.empty()) name = path;
+            if (!version::check(name, min_api)) {
+                veLogE << "[ve/entry] Plugin " << name
+                       << " version check failed (min_api=" << min_api << ")";
+            }
+        };
 
-    for (auto& slot : g.modules) {
-        if (verbose) {
-            veLogI << "[ve/entry] Creating module: " << slot.key;
+        if (plugins->find("path")) {
+            load_plugin(plugins);
+        } else {
+            for (Node* spec : plugins->children()) load_plugin(spec);
         }
+    }
+
+    auto& module_factory = module::factory();
+    Node* modules_config = entry_n->at("modules");
+
+    Vector<std::string> blacklist;
+    if (Node* black = entry_n->find("blacklist")) {
+        for (Node* item : black->children()) blacklist.push_back(item->getString());
+    }
+
+    struct Candidate {
+        std::string key;
+        int priority = 100;
+    };
+
+    // Filter registered modules and bucket them by their registered parent.
+    Hash<Vector<Candidate>> module_tree;
+    Hash<int> selected;
+    for (const auto& key : factory::keys("module")) {
+        bool blocked = false;
+        for (const auto& item : blacklist) {
+            if (item.empty()) continue;
+            if (key == item ||
+                (key.size() > item.size() && key.compare(0, item.size(), item) == 0 && key[item.size()] == '.')) {
+                blocked = true;
+                break;
+            }
+        }
+        if (blocked) continue;
+
+        // Service modules are opt-in and need a matching config subtree.
+        if (key.rfind("ve.service.", 0) == 0 && !modules_config->find(keyToPath(key))) {
+            continue;
+        }
+
+        int priority = 100;
+        if (Node* factory_node = module_factory.node(key, VE_FACTORY_KEY_SEP)) {
+            priority = factory_node->get("priority").toInt(100);
+        }
+        selected[key] = 1;
+        module_tree[parentKey(key)].push_back(Candidate{key, priority});
+    }
+
+    // Attach orphaned subtrees to their nearest selected ancestor.
+    Hash<Vector<Candidate>> ordered_tree;
+    for (auto it = module_tree.begin(); it != module_tree.end(); ++it) {
+        std::string parent = it->first;
+        while (!parent.empty() && selected.find(parent) == selected.end()) {
+            parent = parentKey(parent);
+        }
+        auto& bucket = ordered_tree[parent];
+        for (auto& candidate : it->second) bucket.push_back(std::move(candidate));
+    }
+    for (auto it = ordered_tree.begin(); it != ordered_tree.end(); ++it) {
+        std::stable_sort(it->second.begin(), it->second.end(),
+            [](const Candidate& a, const Candidate& b) { return a.priority < b.priority; });
+    }
+
+    Vector<std::string> keys;
+    keys.reserve(selected.size());
+    std::function<void(const std::string&)> append_children = [&](const std::string& parent) {
+        auto it = ordered_tree.find(parent);
+        if (it == ordered_tree.end()) return;
+        for (const auto& candidate : it->second) {
+            keys.push_back(candidate.key);
+            append_children(candidate.key);
+        }
+    };
+    append_children("");
+
+    // Materialize nodes and slots in the selected hierarchy/priority order.
+    g.modules.clear();
+    g.modules.reserve(keys.size());
+    Node* root = node::root();
+    for (const auto& key : keys) {
+        std::string path = keyToPath(key);
+        Node* module_node = root->atPath(path);
+        if (Node* config = modules_config->find(path)) module_node->copy(config);
+
+        ModuleSlot slot;
+        slot.key = key;
+        if (Node* factory_node = module_factory.node(key, VE_FACTORY_KEY_SEP)) {
+            slot.priority = factory_node->get("priority").toInt(100);
+        }
+        g.modules.push_back(std::move(slot));
+    }
+
+    // Apply implicit parent dependencies and explicit configured dependencies.
+    Hash<int> key_to_index;
+    for (int i = 0; i < static_cast<int>(g.modules.size()); ++i) {
+        key_to_index[g.modules[i].key] = i;
+    }
+
+    const int module_count = static_cast<int>(g.modules.size());
+    Vector<Vector<int>> edges(module_count);
+    Vector<int> indegree(module_count, 0);
+    for (int i = 0; i < module_count; ++i) {
+        std::string parent = parentKey(g.modules[i].key);
+        while (!parent.empty()) {
+            auto parent_it = key_to_index.find(parent);
+            if (parent_it != key_to_index.end()) {
+                edges[parent_it->second].push_back(i);
+                ++indegree[i];
+                break;
+            }
+            parent = parentKey(parent);
+        }
+    }
+
+    for (int i = 0; i < module_count; ++i) {
+        Node* module_node = root->find(keyToPath(g.modules[i].key));
+        Node* dependencies = module_node ? module_node->find("depends") : nullptr;
+        if (!dependencies) continue;
+
+        for (Node* dependency : *dependencies) {
+            std::string dependency_key = dependency->getString();
+            auto dependency_it = key_to_index.find(dependency_key);
+            if (dependency_it == key_to_index.end()) {
+                if (verbose) {
+                    veLogW << "[ve/entry] Dependency not found: "
+                           << g.modules[i].key << " -> " << dependency_key;
+                }
+                continue;
+            }
+            edges[dependency_it->second].push_back(i);
+            ++indegree[i];
+        }
+    }
+
+    // Stable topological order: the ready queue uses the hierarchy/priority
+    // index as its tiebreaker, so dependencies only move what they must.
+    auto later_index = [](int a, int b) { return a > b; };
+    std::priority_queue<int, std::vector<int>, decltype(later_index)> ready(later_index);
+    for (int i = 0; i < module_count; ++i) {
+        if (indegree[i] == 0) ready.push(i);
+    }
+
+    Vector<int> order;
+    order.reserve(module_count);
+    while (!ready.empty()) {
+        int current = ready.top();
+        ready.pop();
+        order.push_back(current);
+        for (int next : edges[current]) {
+            if (--indegree[next] == 0) ready.push(next);
+        }
+    }
+
+    if (static_cast<int>(order.size()) == module_count) {
+        Vector<ModuleSlot> sorted;
+        sorted.reserve(module_count);
+        for (int index : order) sorted.push_back(std::move(g.modules[index]));
+        g.modules = std::move(sorted);
+    } else {
+        veLogE << "[ve/entry] Circular dependency detected in module graph!";
+    }
+
+    // Create modules, then drive their lifecycle directly.
+    for (auto& slot : g.modules) {
+        if (verbose) veLogI << "[ve/entry] Creating module: " << slot.key;
         try {
-            const auto& cfactory = factory;
-            auto* nd = cfactory.node(slot.key, VE_FACTORY_KEY_SEP);
-            slot.instance = (nd && nd->get().isCallable())
-                ? static_cast<Module*>(nd->get().invoke().toPointer())
+            const auto& const_factory = module_factory;
+            Node* factory_node = const_factory.node(slot.key, VE_FACTORY_KEY_SEP);
+            slot.instance = (factory_node && factory_node->get().isCallable())
+                ? static_cast<Module*>(factory_node->get().invoke().toPointer())
                 : nullptr;
-            // cache instance on the factory node
-            if (slot.instance && nd) {
-                nd->at("instance")->set(Var(static_cast<void*>(slot.instance)));
+            if (slot.instance && factory_node) {
+                factory_node->at("instance")->set(Var(static_cast<void*>(slot.instance)));
             }
         } catch (const std::exception& e) {
             veLogE << "[ve/entry] Module create failed (" << slot.key << "): " << e.what();
         }
-        if (slot.instance && verbose) {
-            veLogI << "[ve/entry] Module created: " << slot.key;
-        }
+        if (slot.instance && verbose) veLogI << "[ve/entry] Module created: " << slot.key;
     }
 
     g.state = INIT;
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
-        if (verbose) {
-            veLogI << "[ve/entry] INIT: " << slot.key;
-        }
+        if (verbose) veLogI << "[ve/entry] INIT: " << slot.key;
         slot.instance->exeState<Module::INIT>();
     }
-
-    if (verbose) {
-        veLogI << "[ve/entry] " << g.modules.size() << " modules initialized";
-    }
+    if (verbose) veLogI << "[ve/entry] " << g.modules.size() << " modules initialized";
 
     // prepare(): forward order (parents first, children last)
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
-        if (verbose) {
-            veLogI << "[ve/entry] PREPARE: " << slot.key;
-        }
+        if (verbose) veLogI << "[ve/entry] PREPARE: " << slot.key;
         slot.instance->exeState<Module::PREPARE>();
     }
 
     // ready(): reverse order (children first, parents last)
-    for (int i = (int)g.modules.size() - 1; i >= 0; --i) {
+    for (int i = static_cast<int>(g.modules.size()) - 1; i >= 0; --i) {
         auto& slot = g.modules[i];
         if (!slot.instance) continue;
-        if (verbose) {
-            veLogI << "[ve/entry] READY: " << slot.key;
-        }
+        if (verbose) veLogI << "[ve/entry] READY: " << slot.key;
         slot.instance->exeState<Module::READY>();
     }
 
     g.state = READY;
 
-    // Staging area done its job: config has been applied to module subtrees,
-    // settings captured on g / factory / module nodes. Drop it so downstream
-    // code sees a clean tree.
-    node::root()->erase("ve/entry");
-
-    if (verbose) {
-        veLogI << "[ve/entry] " << g.modules.size() << " modules ready";
-    }
+    // Configuration has been applied; remove the staging area.
+    root->erase("ve/entry");
+    if (verbose) veLogI << "[ve/entry] " << g.modules.size() << " modules ready";
 }
 
 // --- run -------------------------------------------------------------------
@@ -781,7 +684,7 @@ static std::string dirnameOfHostExe()
 }
 #endif
 
-bool load(const std::string& path)
+bool load(const std::string& path, bool verbose)
 {
     void* handle = nullptr;
 
@@ -827,11 +730,11 @@ bool load(const std::string& path)
     info.api_version = version::number(name);
 
     pluginList().push_back(std::move(info));
-    veLogI << "[ve/plugin] Loaded: " << path;
+    if (verbose) veLogI << "[ve/plugin] Loaded: " << path;
     return true;
 }
 
-bool unload(const std::string& name)
+bool unload(const std::string& name, bool verbose)
 {
     auto& list = pluginList();
     for (auto it = list.begin(); it != list.end(); ++it) {
@@ -843,7 +746,7 @@ bool unload(const std::string& name)
                 dlclose(it->handle);
 #endif
             }
-            veLogI << "[ve/plugin] Unloaded: " << name;
+            if (verbose) veLogI << "[ve/plugin] Unloaded: " << name;
             list.erase(it);
             return true;
         }

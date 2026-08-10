@@ -196,8 +196,8 @@ struct Info {
     void*       handle      = nullptr;
 };
 
-VE_API bool load(const std::string& path);
-VE_API bool unload(const std::string& name);
+VE_API bool load(const std::string& path, bool verbose = false);
+VE_API bool unload(const std::string& name, bool verbose = false);
 VE_API const Vector<Info>& loaded();
 
 } // namespace plugin
