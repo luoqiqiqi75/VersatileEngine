@@ -92,6 +92,26 @@ static std::vector<std::string> split(const std::string& line)
     return tokens;
 }
 
+// Full-JSON command mode deliberately reads from the untouched input line.
+// split() is still used for command discovery and ordinary CLI arguments, but
+// it removes quote delimiters and consumes backslashes, which would corrupt a
+// JSON body.  A body is eligible only when it starts immediately after the
+// resolved command words (and optional "async" prefix).
+static bool extractJsonBody(const std::string& line, size_t commandWordCount,
+                            std::string& body)
+{
+    const size_t start = line.find_first_of("{[");
+    if (start == std::string::npos) return false;
+
+    const auto prefixTokens = split(line.substr(0, start));
+    if (prefixTokens.size() != commandWordCount) return false;
+
+    body = line.substr(start);
+    while (!body.empty() && std::isspace(static_cast<unsigned char>(body.back())))
+        body.pop_back();
+    return !body.empty();
+}
+
 static std::vector<std::string> completeNodePath(Node* root, Node* cur, const std::string& token)
 {
     if (!root || !cur) return {};
@@ -1141,13 +1161,28 @@ std::string TerminalSession::execute(const std::string& line)
 
     bool isCmdCmd = !builtinNode && cmdNode;
 
-    auto fillCommand = [&](Node* in, Node* ctx) {
+    std::string jsonBody;
+    const size_t originalCommandWordCount = resolvedWordCount + (asyncMode ? 1 : 0);
+    const bool fullJsonMode = isCmdCmd
+        && extractJsonBody(line, originalCommandWordCount, jsonBody);
+
+    auto fillCommand = [&](Node* in, Node* ctx) -> Result {
         if (isCmdCmd) {
-            Strings tokens(args.begin() + resolvedWordCount, args.end());
-            command::bind(command::factory(), resolvedName, tokens, in);
+            std::string bindError;
+            bool bound = false;
+            if (fullJsonMode) {
+                bound = command::bindJson(jsonBody, in, &bindError);
+            } else {
+                Strings tokens(args.begin() + resolvedWordCount, args.end());
+                bound = command::bind(command::factory(), resolvedName, tokens, in, &bindError);
+            }
+            if (!bound) {
+                return Result::fail(bindError.empty() ? "invalid command arguments" : bindError);
+            }
         }
         prepareContext(ctx, args);
         ctx->set("_session", Var::ptr(static_cast<Session*>(this)));
+        return Result::ok();
     };
 
     bool color = useColor();
@@ -1158,7 +1193,11 @@ std::string TerminalSession::execute(const std::string& line)
     if (resolvedNode) {
         if (asyncMode) {
             Pipeline pipe;
-            fillCommand(pipe.inputNode(), pipe.contextNode());
+            Result bindResult = fillCommand(pipe.inputNode(), pipe.contextNode());
+            if (bindResult.isError()) {
+                _p->output += render(nullptr, bindResult);
+                return _p->output;
+            }
             pipe.add(Command(resolvedNode));
 
             auto asyncOut = _p->asyncOutput;
@@ -1179,7 +1218,11 @@ std::string TerminalSession::execute(const std::string& line)
         }
 
         Command cmdObj(resolvedNode);
-        fillCommand(cmdObj.inputNode(), cmdObj.contextNode());
+        Result bindResult = fillCommand(cmdObj.inputNode(), cmdObj.contextNode());
+        if (bindResult.isError()) {
+            _p->output += render(nullptr, bindResult);
+            return _p->output;
+        }
         cmdObj.run();
         updateCurrentFromOut(this->current, cmdObj.outputNode());
         _p->output += render(cmdObj.outputNode(), cmdObj.result());

@@ -322,6 +322,24 @@ schema::JsonS::toNode(command::factory().node(), std::string(res::read("ve/servi
 root so REPL token binding matches TCP/JSON clients. Only local `#/...` refs
 are supported (no remote URI).
 
+Terminal user commands accept either schema-driven CLI tokens or a complete
+JSON body. When the text immediately after the resolved command starts with
+`{` or `[`, the REPL imports that untouched remainder directly into the
+Command input node. Quotes, whitespace, nested objects/arrays, and JSON escape
+sequences are therefore preserved; do not wrap the body in shell quotes inside
+the interactive REPL:
+
+```text
+robot.configure {"device":{"name":"axis A","path":"C:\\robot"},"steps":[{"op":"home"},{"op":"move","values":[1,2,3]}]}
+```
+
+Malformed JSON returns `error: invalid JSON` and the command is not invoked.
+Ordinary token syntax remains unchanged:
+
+```text
+robot.configure --device axis-a --enabled
+```
+
 `describe <name>` then returns the command's `instruction` subtree over any interface.
 
 ### HTTP endpoints

@@ -18,7 +18,7 @@ namespace service {
 
 void registerReplCommands(Factory& f);
 
-class TerminalSession : public Session
+class VE_API TerminalSession : public Session
 {
 public:
     using AsyncOutputFn = std::function<void(const std::string&)>;

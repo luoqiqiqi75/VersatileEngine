@@ -1168,3 +1168,4 @@ AGENTS.md
 .cursor/
 .claude/
 *.d.ts.map
+.kiro/
