@@ -527,6 +527,7 @@ class QtModule : public Module
     QCoreApplication* app_ = nullptr;
     QtMainLoop* main_loop_ = nullptr;
     bool owns_app_ = false;
+    int argc_ = 0;
 
 public:
     QtModule() = default;
@@ -549,13 +550,13 @@ protected:
             app_ = QCoreApplication::instance();
         } else {
             auto [argc_v, argv_v] = entry::args();
-            // QApplication expects int& — copy to a local, its adjustments
-            // stay local since the process argv is not touched again.
-            int argc = argc_v;
+            // Q(Core|Gui|Application) retains the argc reference, so the
+            // backing integer must remain alive for the application's lifetime.
+            argc_ = argc_v;
             if (app_type == "widgets") {
-                app_ = new QApplication(argc, argv_v);
+                app_ = new QApplication(argc_, argv_v);
             } else {
-                app_ = new QGuiApplication(argc, argv_v);
+                app_ = new QGuiApplication(argc_, argv_v);
             }
             owns_app_ = true;
         }
