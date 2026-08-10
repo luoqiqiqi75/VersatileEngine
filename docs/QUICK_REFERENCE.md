@@ -315,6 +315,13 @@ JSON instead, the way VE core does (`ve/res/service/*.json`) and `ve/ros`
 schema::JsonS::toNode(command::factory().node(), std::string(res::read("ve/service/ros.json")));
 ```
 
+`input_schema` / `output_schema` may use local JSON Schema `$ref` of the form
+`#/definitions/<name>`. Definitions live as siblings under the factory root
+(e.g. `definitions/device_selector` next to `leo/...`). `command::bind`,
+`command::usage`, terminal `help`, and `describe` resolve them against that
+root so REPL token binding matches TCP/JSON clients. Only local `#/...` refs
+are supported (no remote URI).
+
 `describe <name>` then returns the command's `instruction` subtree over any interface.
 
 ### HTTP endpoints

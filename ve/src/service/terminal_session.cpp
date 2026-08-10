@@ -887,8 +887,10 @@ static Result help(Node* ctx, Node* in, Node* out)
 
         // Only emit Usage/Parameters when the instruction actually carries
         // structured info — a description-only entry stays a single line.
+        // Resolve local $ref (#/definitions/...) so help matches bind.
         std::string explicitUsage = instr->get("usage").toString();
-        Node* props = instr->find("input_schema/properties");
+        Node* schema = command::inputSchema(*sourceF, topic);
+        Node* props = schema ? schema->find("properties") : nullptr;
         bool hasProps = props && !props->children().empty();
 
         if (!explicitUsage.empty() || hasProps) {
@@ -898,7 +900,7 @@ static Result help(Node* ctx, Node* in, Node* out)
 
         if (hasProps) {
             std::unordered_set<std::string> req;
-            if (Node* r = instr->find("input_schema/required"))
+            if (Node* r = schema->find("required"))
                 for (Node* ch : r->children()) req.insert(ch->get().toString());
 
             bool hasParams = false;

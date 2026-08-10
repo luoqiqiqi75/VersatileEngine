@@ -205,6 +205,20 @@ VE_API bool bind(const Factory& f, const std::string& key, const Strings& tokens
 // Bind JSON body string to input node
 VE_API bool bindJson(const std::string& json, Node* in, std::string* err = nullptr);
 
+// Resolve local JSON Schema $ref (#/definitions/...).
+// Returns the definition node when ref is local and found; otherwise returns schema.
+// Concrete schemas that already expose properties win over a sibling $ref.
+VE_API Node* resolveSchema(Node* schema, Node* root, int depth = 8);
+
+// Effective input/output schema for a command (follows $ref against factory root)
+VE_API Node* inputSchema(const Factory& f, const std::string& key);
+inline Node* inputSchema(const std::string& key) { return inputSchema(factory(), key); }
+VE_API Node* outputSchema(const Factory& f, const std::string& key);
+inline Node* outputSchema(const std::string& key) { return outputSchema(factory(), key); }
+
+// In-place expand input_schema/output_schema $ref under node (e.g. describe copy)
+VE_API void resolveSchemas(Node* node, Node* root, int depth = 8);
+
 } // namespace command
 
 } // namespace ve

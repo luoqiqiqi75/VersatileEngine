@@ -495,3 +495,50 @@ VE_TEST(factory_bind_from_instruction)
 
     VE_ASSERT_EQ(command::usage(f, "_test_bind"), std::string("_test_bind <path> [count]"));
 }
+
+VE_TEST(factory_bind_resolves_local_ref)
+{
+    // instruction authors may keep JSON Schema $ref to #/definitions/*;
+    // terminal bind/usage must follow them against the factory root.
+    auto& f = command::factory();
+    Node* n = f.reg("_test_bind_ref",
+        Var::callable([](Node*, Node*, Node*) -> Result { return Result::ok(); }));
+    schema::JsonS::toNode(n->at("instruction"),
+        R"({"usage":"_test_bind_ref <name>",
+            "input_schema":{"$ref":"#/definitions/device_selector"}})");
+    schema::JsonS::toNode(f.node()->at("definitions/device_selector"),
+        R"({"type":"object",
+            "properties":{"name":{"type":"string"}},
+            "required":["name"],
+            "additionalProperties":false})");
+
+    {
+        Node in;
+        std::string err;
+        VE_ASSERT(command::bind(f, "_test_bind_ref", ve::Strings{"body"}, &in, &err));
+        VE_ASSERT_EQ(in.get("name").toString(), std::string("body"));
+    }
+    {
+        Node in;
+        VE_ASSERT(command::bind(f, "_test_bind_ref", ve::Strings{"--name", "body"}, &in, nullptr));
+        VE_ASSERT_EQ(in.get("name").toString(), std::string("body"));
+    }
+    {
+        Node in;
+        std::string err;
+        VE_ASSERT(!command::bind(f, "_test_bind_ref", ve::Strings{}, &in, &err));
+        VE_ASSERT(!err.empty());
+    }
+
+    Node* schema = command::inputSchema(f, "_test_bind_ref");
+    VE_ASSERT(schema != nullptr);
+    VE_ASSERT(schema->find("properties/name") != nullptr);
+
+    // resolveSchemas expands a describe-style copy in place
+    Node copy;
+    copy.copy(n->find("instruction"));
+    VE_ASSERT(copy.find("input_schema/$ref") != nullptr);
+    command::resolveSchemas(&copy, f.node());
+    VE_ASSERT(copy.find("input_schema/properties/name") != nullptr);
+    VE_ASSERT(copy.find("input_schema/$ref") == nullptr);
+}

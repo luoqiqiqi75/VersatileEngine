@@ -185,6 +185,10 @@ static Result describe(Node*, Node* params, Node* data)
 
     data->set("name", name);
     data->copy(n->find("instruction"));
+    // Expand local #/definitions $ref so clients see concrete schemas.
+    // Prefer the factory that actually owns the command node.
+    Node* root = (sf.node(name, VE_FACTORY_KEY_SEP) == n) ? sf.node() : cf.node();
+    command::resolveSchemas(data, root);
     return Result::ok();
 }
 

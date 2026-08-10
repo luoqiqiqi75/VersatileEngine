@@ -114,7 +114,8 @@ std::string usage(const Factory& f, const std::string& key)
     std::string u = d->get("usage").toString();
     if (!u.empty()) return u;
 
-    Node* schema = d->find("input_schema");
+    // Follow local $ref so usage matches terminal bind.
+    Node* schema = inputSchema(f, key);
     Node* props  = schema ? schema->find("properties") : nullptr;
     if (!props) return key;
 
@@ -134,8 +135,9 @@ bool bind(const Factory& f, const std::string& key, const Strings& tokens, Node*
 {
     if (!in) { if (err) *err = "no input node"; return false; }
 
-    Node* d = instruction(f, key);
-    Node* schema = d ? d->find("input_schema") : nullptr;
+    // inputSchema() resolves #/definitions/... against the factory root so
+    // instruction authors can keep JSON Schema $ref without breaking REPL bind.
+    Node* schema = inputSchema(f, key);
     Node* props  = schema ? schema->find("properties") : nullptr;
     if (!props) return true;
 
@@ -180,6 +182,65 @@ bool bindJson(const std::string& json, Node* in, std::string* err)
         return false;
     }
     return true;
+}
+
+Node* resolveSchema(Node* schema, Node* root, int depth)
+{
+    if (!schema) return nullptr;
+    if (depth <= 0) return schema;
+
+    // Prefer concrete schema when both exist (hot-patch / partial merge)
+    if (schema->find("properties")) return schema;
+
+    const std::string ref = schema->get("$ref").toString();
+    if (ref.empty()) return schema;
+
+    // Only local document refs: #/path/to/def
+    if (ref.size() < 2 || ref[0] != '#' || ref[1] != '/') return schema;
+    if (!root) return schema;
+
+    const std::string path = ref.substr(2); // definitions/foo
+    Node* target = root->find(path);
+    if (!target) return schema;
+
+    // One level of indirection only, or recurse with depth limit
+    return resolveSchema(target, root, depth - 1);
+}
+
+Node* inputSchema(const Factory& f, const std::string& key)
+{
+    Node* d = instruction(f, key);
+    if (!d) return nullptr;
+    Node* schema = d->find("input_schema");
+    if (!schema) return nullptr;
+    return resolveSchema(schema, f.node(), 8);
+}
+
+Node* outputSchema(const Factory& f, const std::string& key)
+{
+    Node* d = instruction(f, key);
+    if (!d) return nullptr;
+    Node* schema = d->find("output_schema");
+    if (!schema) return nullptr;
+    return resolveSchema(schema, f.node(), 8);
+}
+
+void resolveSchemas(Node* node, Node* root, int depth)
+{
+    if (!node || !root || depth <= 0) return;
+
+    // Expand only the schema slots used by command instructions. Do not walk
+    // into property trees (those may contain nested $ref for documentation).
+    auto expand = [&](const char* slot) {
+        Node* slot_n = node->find(slot);
+        if (!slot_n) return;
+        Node* resolved = resolveSchema(slot_n, root, depth);
+        if (!resolved || resolved == slot_n) return;
+        node->erase(slot);
+        node->at(slot)->copy(resolved);
+    };
+    expand("input_schema");
+    expand("output_schema");
 }
 
 } // namespace command
