@@ -47,8 +47,7 @@ static bool parse(const service::HttpRep& r, http::web_response& rep)
 static bool parse(const service::HttpResultRep& r, http::web_response& rep)
 {
     Node proto_n;
-    proto_n.set("code", r.first.code());
-    proto_n.set("message", r.first.message());
+    parse(r.first, proto_n);
     proto_n.at("data")->copy(r.second);
     http::status status = r.first.isAccepted() ? http::status::accepted : http::status::ok; // always ok
     return parse(service::HttpRep { status, schema::fromNode<schema::JsonS>(&proto_n, schema::JsonS::compact()) }, rep);

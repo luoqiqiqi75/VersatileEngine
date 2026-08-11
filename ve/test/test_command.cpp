@@ -542,3 +542,49 @@ VE_TEST(factory_bind_resolves_local_ref)
     VE_ASSERT(copy.find("input_schema/properties/name") != nullptr);
     VE_ASSERT(copy.find("input_schema/$ref") == nullptr);
 }
+
+VE_TEST(result_convert_to_node)
+{
+    Result source = Result::fail(-7, "bad request");
+    Node target("result");
+
+    VE_ASSERT(convert::parse(source, target));
+    VE_ASSERT_EQ(target.get("code").toInt(), -7);
+    VE_ASSERT_EQ(target.get("message").toString(), std::string("bad request"));
+
+    Node pointer_target("result_ptr");
+    VE_ASSERT(convert::parse(source, &pointer_target));
+    VE_ASSERT_EQ(pointer_target.get("code").toInt(), -7);
+    VE_ASSERT_EQ(pointer_target.get("message").toString(), std::string("bad request"));
+    VE_ASSERT(!convert::parse(source, static_cast<Node*>(nullptr)));
+}
+
+VE_TEST(result_convert_from_node)
+{
+    Node source("result");
+    source.set("code", 9);
+    source.set("message", "queued");
+
+    Result from_reference;
+    VE_ASSERT(convert::parse(source, from_reference));
+    VE_ASSERT_EQ(from_reference.code(), 9);
+    VE_ASSERT_EQ(from_reference.message(), std::string("queued"));
+
+    Result from_pointer;
+    VE_ASSERT(convert::parse(&source, from_pointer));
+    VE_ASSERT_EQ(from_pointer.code(), 9);
+    VE_ASSERT_EQ(from_pointer.message(), std::string("queued"));
+
+    const Node* null_source = nullptr;
+    VE_ASSERT(!convert::parse(null_source, from_pointer));
+}
+
+VE_TEST(result_convert_from_node_defaults_missing_fields)
+{
+    Node source("result");
+    Result target = Result::ok();
+
+    VE_ASSERT(convert::parse(source, target));
+    VE_ASSERT_EQ(target.code(), Result::FAILED);
+    VE_ASSERT_EQ(target.message(), std::string());
+}

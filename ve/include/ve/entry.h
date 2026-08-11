@@ -86,6 +86,9 @@
 //   -v / --verbose                verbose = true
 //   -t / --terminal               modules/ve/client/terminal/stdio/enabled
 //   -r [host:port] / --remote     modules/ve/client/terminal/tcp/*
+//                                 Runs only ve.core and ve.client modules, so
+//                                 connection failures do not wait for local
+//                                 application modules to initialize.
 //
 // -t and -r are mutually exclusive. Unrecognized flags are ignored, not
 // rejected: they stay in /ve/entry/argv for the application to parse, so

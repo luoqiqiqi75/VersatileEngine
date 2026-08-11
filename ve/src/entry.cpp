@@ -216,6 +216,10 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
         opts_n->at("modules/ve/client/terminal/stdio/enabled")->set(Var(true));
     }
     if (remote_terminal) {
+        // A CLI remote terminal is a thin client.  Remember that distinction
+        // explicitly so init() does not construct the application's drivers,
+        // inference engines, and servers before attempting the TCP connection.
+        opts_n->at("remote_client")->set(Var(true));
         Node* tcp = opts_n->at("modules/ve/client/terminal/tcp");
         tcp->at("enabled")->set(Var(true));
         tcp->at("config/host")->set(Var(remote_host));
@@ -389,6 +393,7 @@ void init()
 
     auto& module_factory = module::factory();
     Node* modules_config = entry_n->at("modules");
+    const bool remote_client = entry_n->get("remote_client").toBool(false);
 
     Vector<std::string> blacklist;
     if (Node* black = entry_n->find("blacklist")) {
@@ -404,6 +409,12 @@ void init()
     Hash<Vector<Candidate>> module_tree;
     Hash<int> selected;
     for (const auto& key : factory::keys("module")) {
+        if (remote_client) {
+            const bool is_core = key == "ve.core" || key.rfind("ve.core.", 0) == 0;
+            const bool is_client = key == "ve.client" || key.rfind("ve.client.", 0) == 0;
+            if (!is_core && !is_client) continue;
+        }
+
         bool blocked = false;
         for (const auto& item : blacklist) {
             if (item.empty()) continue;

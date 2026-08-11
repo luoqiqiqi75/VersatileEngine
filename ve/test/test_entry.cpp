@@ -156,6 +156,7 @@ VE_TEST(entry_cli_remote_terminal_with_endpoint) {
     VE_ASSERT(tcp->get("enabled").toBool(false));
     VE_ASSERT_EQ(tcp->get("config/host").toString(), std::string("10.0.0.5"));
     VE_ASSERT_EQ(tcp->get("config/port").toInt(0), 9000);
+    VE_ASSERT(n("ve/entry")->get("remote_client").toBool(false));
 }
 
 VE_TEST(entry_cli_terminal_flags_are_mutually_exclusive) {

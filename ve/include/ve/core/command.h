@@ -53,6 +53,41 @@ private:
     std::string      _message;
 };
 
+namespace convert
+{
+
+// Result <-> Node protocol: { code: int, message: string }.
+inline bool parse(const Result& from, Node& to)
+{
+    to.set("code", from.code());
+    to.set("message", from.message());
+    return true;
+}
+
+inline bool parse(const Result& from, Node* to)
+{
+    return to && parse(from, *to);
+}
+
+inline bool parse(const Node& from, Result& to)
+{
+    to = Result(from.get("code").toInt(Result::FAILED),
+                from.get("message").toString());
+    return true;
+}
+
+inline bool parse(const Node* from, Result& to)
+{
+    return from && parse(*from, to);
+}
+
+inline bool parse(Node* from, Result& to)
+{
+    return parse(static_cast<const Node*>(from), to);
+}
+
+} // namespace convert
+
 using Proc = std::function<Result(Node* ctx, Node* in, Node* out)>;
 
 namespace convert
