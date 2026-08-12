@@ -6,6 +6,7 @@
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
 #include "ve/core/log.h"
+#include "src/process_signal.h"
 
 #include <fstream>
 #include <iostream>
@@ -607,7 +608,21 @@ int run()
 {
     G().state = RUNNING;
     Loop* main_loop = loop::main();
-    return main_loop ? main_loop->exec() : 0;
+    if (!main_loop) return 0;
+
+    struct SignalWatcherScope {
+        ~SignalWatcherScope() { platform::stopProcessSignalWatcher(); }
+    } watcher;
+
+    // Process termination belongs to entry, not to a particular loop backend.
+    // Marshal quit through the active main loop so Qt and other thread-affine
+    // implementations receive it on their own thread.
+    platform::startProcessSignalWatcher([] {
+        if (Loop* main_loop = loop::main()) {
+            main_loop->post([main_loop] { main_loop->quit(0); });
+        }
+    });
+    return main_loop->exec();
 }
 
 void requestQuit(int exit_code)

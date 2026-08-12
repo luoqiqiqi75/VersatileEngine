@@ -7,11 +7,9 @@
 #include <asio/io_context.hpp>
 #include <asio/executor_work_guard.hpp>
 #include <asio/post.hpp>
-#include <asio/signal_set.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/strand.hpp>
 
-#include <csignal>
 #include <exception>
 #include <optional>
 
@@ -215,11 +213,6 @@ struct AsioLoop::Private
 
     int run(AsioLoop* self)
     {
-        asio::signal_set signals(io, SIGINT, SIGTERM);
-        signals.async_wait([self](const asio::error_code& ec, int) {
-            if (!ec) self->quit(0);
-        });
-
         Loop* previous = loop::current();
         loop::setCurrent(self);
         int code = 0;
