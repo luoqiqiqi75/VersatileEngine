@@ -447,11 +447,6 @@ void QtLoop::post(Task task)
     }, Qt::QueuedConnection);
 }
 
-bool QtLoop::isRunning() const
-{
-    return loop_ && loop_->isRunning();
-}
-
 size_t QtLoop::processEvents()
 {
     if (!loop_) return 0;
@@ -485,11 +480,6 @@ void QtMainLoop::post(Task task)
     }, Qt::QueuedConnection);
 }
 
-bool QtMainLoop::isRunning() const
-{
-    return app_ != nullptr;
-}
-
 size_t QtMainLoop::processEvents()
 {
     if (!app_) return 0;
@@ -500,9 +490,9 @@ size_t QtMainLoop::processEvents()
 int QtMainLoop::exec()
 {
     if (!app_) return 0;
-    if (_quit.exchange(false)) return _exit_code.load();   // quit() before exec()
+    if (_running.exchange(true)) return -1;
     int code = app_->exec();
-    _quit.store(false);
+    _running.store(false);
     return code;
 }
 

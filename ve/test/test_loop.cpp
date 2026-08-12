@@ -144,15 +144,77 @@ VE_TEST(loop_asio_direct_construct) {
     loop.stop();
 }
 
+VE_TEST(loop_asio_exec_blocks_and_runs_on_caller) {
+    AsioLoop loop("exec.caller");
+    std::atomic<bool> returned{false};
+    std::atomic<bool> handled{false};
+    std::thread::id exec_id, handler_id;
+    int code = 0;
+
+    loop.post([&] {
+        handler_id = std::this_thread::get_id();
+        VE_ASSERT(loop::current() == &loop);
+        handled.store(true, std::memory_order_release);
+    });
+    std::thread runner([&] {
+        exec_id = std::this_thread::get_id();
+        code = loop.exec();
+        returned.store(true);
+    });
+
+    VE_ASSERT(VE_WAIT([&] { return handled.load(std::memory_order_acquire); }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    VE_ASSERT(!returned.load());
+    loop.quit(23);
+    runner.join();
+    VE_ASSERT(handler_id == exec_id);
+    VE_ASSERT_EQ(code, 23);
+}
+
+VE_TEST(loop_asio_quit_before_exec_does_not_cancel_next_run) {
+    AsioLoop loop("exec.prequit");
+    std::atomic<bool> ran{false};
+    loop.quit(17);
+    loop.post([&] {
+        ran.store(true);
+        loop.quit(18);
+    });
+    VE_ASSERT_EQ(loop.exec(), 18);
+    VE_ASSERT(ran.load());
+    VE_ASSERT(!loop.isRunning());
+}
+
+VE_TEST(loop_asio_start_then_exec_rejected) {
+    AsioLoop loop("start.exec.conflict");
+    VE_ASSERT(loop.start());
+    VE_ASSERT_EQ(loop.exec(), -1);
+    VE_ASSERT(loop.stop());
+}
+
+VE_TEST(loop_asio_start_quit_then_stop_reaps_worker) {
+    AsioLoop loop("start.quit.stop");
+    VE_ASSERT(loop.start());
+    loop.quit();
+    VE_ASSERT(VE_WAIT([&] { return !loop.isRunning(); }));
+    VE_ASSERT(loop.stop());
+    VE_ASSERT(loop.start());
+    VE_ASSERT(loop.stop());
+}
+
+VE_TEST(loop_asio_exec_rejects_start_and_second_exec) {
+    AsioLoop loop("exec.conflict");
+    std::thread runner([&] { loop.exec(); });
+    VE_ASSERT(VE_WAIT([&] { return loop.isRunning(); }));
+    VE_ASSERT(!loop.start());
+    VE_ASSERT_EQ(loop.exec(), -1);
+    VE_ASSERT(loop.stop());
+    runner.join();
+}
+
 VE_TEST(loop_global_main_pointer) {
     Loop* m = loop::main();
     VE_ASSERT(m != nullptr);
-    VE_ASSERT(m->isRunning());
-
-    std::atomic<int> val{0};
-    m->post([&] { val.store(1); });
-
-    VE_ASSERT(VE_WAIT([&] { return val.load() == 1; }));
+    VE_ASSERT(!m->isRunning());
 }
 
 VE_TEST(loop_global_pool_pointer) {

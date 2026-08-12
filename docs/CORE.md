@@ -249,6 +249,16 @@ int code = ve::entry::run();
 ve::entry::deinit();
 ```
 
+For an `AsioLoop`, `start()` and `exec()` are two mutually exclusive ways to
+drive the same loop. `start()` creates a background worker and returns;
+`exec()` dispatches on and blocks its calling thread. The default headless
+`loop::main()` is only constructed during setup and is driven by
+`entry::run()` through `exec()`, so idle time blocks in Asio's native event
+wait and main-loop handlers retain main-thread affinity.
+`quit()` requests the active event loop to exit in either form. A worker
+created by `start()` is joined and reaped by `stop()` before it is started or
+used through `exec()` again.
+
 #### Startup config file
 
 `setup()` loads **one** file, `ve.json` in the working directory by default.

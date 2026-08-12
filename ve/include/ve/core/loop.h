@@ -36,7 +36,6 @@ public:
     // Block as the process main loop until quit(). Default: poll processEvents()
     // while isRunning(). Framework loops override exec() with the native one
     // (QApplication::exec etc.); quit() must unblock exec() from any thread.
-    // A quit() issued before exec() makes exec() return immediately.
     virtual int    exec();
     virtual void   quit(int exit_code = 0);
 
@@ -54,7 +53,7 @@ public:
     virtual bool        removeTimer(TimerHandle handle);
 
 protected:
-    std::atomic<bool> _quit{false};
+    std::atomic<bool> _running{false};
     std::atomic<int>  _exit_code{0};
 };
 
@@ -69,9 +68,9 @@ public:
     void   post(Task task) override;
     bool   start() override;
     bool   stop() override;
-    bool   isRunning() const override;
     size_t processEvents() override;
     int    exec() override;
+    void   quit(int exit_code = 0) override;
 
     TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
     bool        removeTimer(TimerHandle handle) override;
@@ -89,7 +88,6 @@ public:
     void   post(Task task) override;
     bool   start() override;
     bool   stop() override;
-    bool   isRunning() const override;
     size_t processEvents() override;
 
     TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;

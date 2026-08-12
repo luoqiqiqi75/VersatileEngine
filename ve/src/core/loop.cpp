@@ -34,7 +34,7 @@ void Loop::post(Task task)
 
 bool Loop::start() { return false; }
 bool Loop::stop() { return false; }
-bool Loop::isRunning() const { return false; }
+bool Loop::isRunning() const { return _running.load(std::memory_order_acquire); }
 size_t Loop::processEvents() { return 0; }
 
 Loop::TimerHandle Loop::addTimer(uint64_t, bool, Task) { return 0; }
@@ -42,17 +42,17 @@ bool Loop::removeTimer(TimerHandle) { return false; }
 
 int Loop::exec()
 {
-    while (isRunning() && !_quit.load(std::memory_order_acquire)) {
+    if (_running.exchange(true, std::memory_order_acq_rel)) return -1;
+    while (_running.load(std::memory_order_acquire)) {
         if (processEvents() == 0) std::this_thread::yield();
     }
-    _quit.store(false, std::memory_order_release);   // consumed; allow re-exec
     return _exit_code.load(std::memory_order_acquire);
 }
 
 void Loop::quit(int exit_code)
 {
     _exit_code.store(exit_code, std::memory_order_release);
-    _quit.store(true, std::memory_order_release);
+    _running.store(false, std::memory_order_release);
 }
 
 // ============================================================================
@@ -205,8 +205,6 @@ struct AsioLoop::Private
     asio::io_context io;
     std::optional<AsioWorkGuard> guard;
     std::thread worker;
-    std::atomic<bool> is_running{false};
-    std::mutex mtx;
     AsioTimers timers;
 
     explicit Private(asio::io_context::count_type n = 1)
@@ -214,6 +212,30 @@ struct AsioLoop::Private
         , guard(asio::make_work_guard(io))
         , timers(io)
     {}
+
+    int run(AsioLoop* self)
+    {
+        asio::signal_set signals(io, SIGINT, SIGTERM);
+        signals.async_wait([self](const asio::error_code& ec, int) {
+            if (!ec) self->quit(0);
+        });
+
+        Loop* previous = loop::current();
+        loop::setCurrent(self);
+        int code = 0;
+        try {
+            io.run();
+        } catch (const std::exception& e) {
+            veLogE << "AsioLoop handler threw:" << e.what();
+            code = -1;
+        } catch (...) {
+            veLogE << "AsioLoop handler threw";
+            code = -1;
+        }
+        loop::setCurrent(previous);
+        self->_running.store(false, std::memory_order_release);
+        return code;
+    }
 };
 
 AsioLoop::AsioLoop(const std::string& name) : Loop(name), _p(std::make_unique<Private>())
@@ -231,32 +253,29 @@ void AsioLoop::post(Task task)
 
 bool AsioLoop::start()
 {
-    std::lock_guard<std::mutex> lk(_p->mtx);
-    if (_p->is_running) return false;
+    if (_running.exchange(true, std::memory_order_acq_rel)) {
+        veLogE << "AsioLoop::start: loop is already running";
+        return false;
+    }
+    if (_p->worker.joinable()) {
+        _running.store(false, std::memory_order_release);
+        veLogE << "AsioLoop::start: previous worker requires stop()";
+        return false;
+    }
 
     _p->io.restart();
-    _p->guard.emplace(asio::make_work_guard(_p->io));
-    _p->is_running = true;
-
-    _p->worker = std::thread([st = _p.get(), self = this] {
-        loop::setCurrent(self);
-        st->io.run();
-    });
+    _p->worker = std::thread([this] { _p->run(this); });
     return true;
 }
 
 bool AsioLoop::stop()
 {
-    std::lock_guard<std::mutex> lk(_p->mtx);
-    if (!_p->is_running) return false;
-
+    const bool active = isRunning() || _p->worker.joinable();
+    if (!active) return false;
     _p->timers.clear();   // timers do not outlive the scheduler
-    _p->is_running = false;
-    _p->guard.reset();
     _p->io.stop();
-
     if (_p->worker.joinable()) _p->worker.join();
-    return true;
+    return active;
 }
 
 Loop::TimerHandle AsioLoop::addTimer(uint64_t ms, bool repeat, Task tick)
@@ -265,8 +284,6 @@ Loop::TimerHandle AsioLoop::addTimer(uint64_t ms, bool repeat, Task tick)
 }
 
 bool AsioLoop::removeTimer(TimerHandle handle) { return _p->timers.remove(handle); }
-
-bool AsioLoop::isRunning() const { return _p->is_running; }
 
 size_t AsioLoop::processEvents()
 {
@@ -278,18 +295,26 @@ size_t AsioLoop::processEvents()
 }
 
 int AsioLoop::exec()
-  {
-      asio::signal_set signals(_p->io, SIGINT, SIGTERM);
-      signals.async_wait([this](const asio::error_code& ec, int) {
-          if (!ec) quit(0);
-      });
+{
+    if (_running.exchange(true, std::memory_order_acq_rel)) {
+        veLogE << "AsioLoop::exec: loop is already running";
+        return -1;
+    }
+    if (_p->worker.joinable()) {
+        _running.store(false, std::memory_order_release);
+        veLogE << "AsioLoop::exec: previous worker requires stop()";
+        return -1;
+    }
+    _p->io.restart();
+    const int run_code = _p->run(this);
+    return run_code ? run_code : _exit_code.load(std::memory_order_acquire);
+}
 
-      while (isRunning() && !_quit.load(std::memory_order_acquire)) {
-          if (processEvents() == 0) std::this_thread::yield();
-      }
-      _quit.store(false, std::memory_order_release);
-      return _exit_code.load(std::memory_order_acquire);
-  }
+void AsioLoop::quit(int exit_code)
+{
+    Loop::quit(exit_code);
+    _p->io.stop();
+}
 
 struct AsioPoolLoop::Private
 {
@@ -297,7 +322,6 @@ struct AsioPoolLoop::Private
     std::optional<AsioWorkGuard> guard;
     std::vector<std::thread> workers;
     unsigned threads;
-    std::atomic<bool> is_running{false};
     std::mutex mtx;
     AsioTimers timers;
 
@@ -325,11 +349,10 @@ void AsioPoolLoop::post(Task task)
 bool AsioPoolLoop::start()
 {
     std::lock_guard<std::mutex> lk(_p->mtx);
-    if (_p->is_running) return false;
+    if (_running.exchange(true, std::memory_order_acq_rel)) return false;
 
     _p->io.restart();
     _p->guard.emplace(asio::make_work_guard(_p->io));
-    _p->is_running = true;
 
     _p->workers.reserve(_p->threads);
     for (unsigned i = 0; i < _p->threads; ++i)
@@ -343,10 +366,10 @@ bool AsioPoolLoop::start()
 bool AsioPoolLoop::stop()
 {
     std::lock_guard<std::mutex> lk(_p->mtx);
-    if (!_p->is_running) return false;
+    if (!isRunning()) return false;
 
     _p->timers.clear();
-    _p->is_running = false;
+    _running.store(false, std::memory_order_release);
     _p->guard.reset();
     _p->io.stop();
 
@@ -363,7 +386,6 @@ Loop::TimerHandle AsioPoolLoop::addTimer(uint64_t ms, bool repeat, Task tick)
 
 bool AsioPoolLoop::removeTimer(TimerHandle handle) { return _p->timers.remove(handle); }
 
-bool AsioPoolLoop::isRunning() const { return _p->is_running; }
 size_t AsioPoolLoop::processEvents()
 {
     Loop* prev = loop::current();
@@ -387,7 +409,6 @@ struct CoreLoops
         if (main) return main;
         if (!default_main) {
             default_main = new AsioLoop("main");
-            default_main->start();
         }
         return default_main;
     }

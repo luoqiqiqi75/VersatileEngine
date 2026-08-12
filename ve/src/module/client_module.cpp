@@ -17,12 +17,12 @@ public:
     TerminalClientLoop(std::function<int()> run, std::function<void()> stop)
         : Loop("terminal"), run_(std::move(run)), stop_(std::move(stop)) {}
 
-    bool isRunning() const override { return true; }
-
     int exec() override
     {
-        if (_quit.exchange(false)) return _exit_code.load();
-        return run_ ? run_() : 0;
+        if (_running.exchange(true)) return -1;
+        int code = run_ ? run_() : 0;
+        _running.store(false);
+        return code;
     }
 
     void quit(int exit_code) override

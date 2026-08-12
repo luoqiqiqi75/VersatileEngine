@@ -20,7 +20,6 @@ public:
     ~QtLoop() override;
 
     void   post(Task task) override;
-    bool   isRunning() const override;
     size_t processEvents() override;
 
     TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
@@ -38,7 +37,6 @@ public:
     ~QtMainLoop() override;
 
     void   post(Task task) override;
-    bool   isRunning() const override;
     size_t processEvents() override;
 
     int    exec() override;   // native QCoreApplication::exec()
