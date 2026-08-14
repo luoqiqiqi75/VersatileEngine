@@ -13,6 +13,7 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include <numeric>
 #include <vector>
 #include <array>
 #include <list>

@@ -15,6 +15,7 @@
 #endif
 
 #include <cmath>
+#include <numeric>
 
 namespace ve {
 
@@ -41,8 +42,8 @@ std::string _t_demangle(const char *type_name)
 }
 }
 
-Values::Unit Values::unit() const { return m_unit; }
-Values& Values::setUnit(Unit unit) { if (m_unit != SAME) m_unit = unit; return *this; }
+Values::Unit Values::unit() const { return unit_; }
+Values& Values::setUnit(Unit unit) { unit_ = unit; return *this; }
 
 Values& Values::add(double d)
 {
@@ -50,48 +51,40 @@ Values& Values::add(double d)
     return *this;
 }
 
-Values& Values::multiply(double d, Values::Unit new_unit)
+Values& Values::multiply(double d)
 {
     std::for_each(begin(), end(), [=] (double& it) { it *= d; });
-    return setUnit(new_unit);
+    return *this;
 }
 
-Values& Values::m2mm() { return multiply(1000.0, MM); }
-Values& Values::mm2m() { return multiply(0.001, M); }
-Values& Values::degree2rad() { return multiply(deg2rad, RAD); }
-Values& Values::rad2degree() { return multiply(rad2deg, DEGREE); }
+bool Values::isFinite() const
+{
+    return std::all_of(begin(), end(), [] (double value) { return std::isfinite(value); });
+}
 
 bool Values::smallerThan(const Values& other) const
 {
-    for (int i = 0; i < std::min(sizeAsInt(), other.sizeAsInt()); i++) {
-        if (at(i) >= other.at(i)) return false;
-    }
-    return true;
+    const auto count = std::min(size(), other.size());
+    return std::equal(begin(), begin() + count, other.begin(), std::less<>());
 }
 
 bool Values::greaterThan(const Values &other) const
 {
-    for (int i = 0; i < std::min(sizeAsInt(), other.sizeAsInt()); i++) {
-        if (at(i) <= other.at(i)) return false;
-    }
-    return true;
+    const auto count = std::min(size(), other.size());
+    return std::equal(begin(), begin() + count, other.begin(), std::greater<>());
 }
 
 Values& Values::operator+=(const Values& o)
 {
-    const int n = std::min(sizeAsInt(), o.sizeAsInt());
-    for (int i = 0; i < n; ++i) {
-        at(i) += o.at(i);
-    }
+    const auto count = std::min(size(), o.size());
+    std::transform(begin(), begin() + count, o.begin(), begin(), std::plus<>());
     return *this;
 }
 
 Values& Values::operator-=(const Values& o)
 {
-    const int n = std::min(sizeAsInt(), o.sizeAsInt());
-    for (int i = 0; i < n; ++i) {
-        at(i) -= o.at(i);
-    }
+    const auto count = std::min(size(), o.size());
+    std::transform(begin(), begin() + count, o.begin(), begin(), std::minus<>());
     return *this;
 }
 
@@ -103,20 +96,18 @@ Values& Values::append(const Values& o)
 
 double Values::sum() const
 {
-    double result = 0.0;
-    for (const auto& v : *this) {
-        result += v;
-    }
-    return result;
+    return std::accumulate(begin(), end(), 0.0);
 }
 
 double Values::norm() const
 {
-    double result = 0.0;
-    for (const auto& v : *this) {
-        result += v * v;
-    }
-    return std::sqrt(result);
+    return std::sqrt(std::inner_product(begin(), end(), begin(), 0.0));
+}
+
+double Values::dot(const Values& o) const
+{
+    const auto count = std::min(size(), o.size());
+    return std::inner_product(begin(), begin() + count, o.begin(), 0.0);
 }
 
 double Values::distance(const Values& o) const
@@ -127,6 +118,21 @@ double Values::distance(const Values& o) const
 bool Values::approximate(const Values& o, double epsilon) const
 {
     return distance(o) < epsilon;
+}
+
+Values& Values::normalize()
+{
+    const double length = norm();
+    if (length > 0.0) multiply(1.0 / length);
+    return *this;
+}
+
+Values& Values::clamp(double min, double max)
+{
+    std::for_each(begin(), end(), [=] (double& value) {
+        value = std::clamp(value, min, max);
+    });
+    return *this;
 }
 
 }

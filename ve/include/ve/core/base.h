@@ -542,24 +542,83 @@ class VE_API Values : public Doubles
 
 public:
     enum Unit : int {
-        NONE    = 0x0000,
-        M       = 0x0100,
-        MM      = 0x0101,
-        DEGREE  = 0x0200,
-        RAD     = 0x0201,
-        SAME    = 0xffff
+        NONE                = 0x0000,
+
+        // Length
+        M                   = 0x0100,
+        MM                  = 0x0101,
+        CM                  = 0x0102,
+        KM                  = 0x0103,
+
+        // Angle
+        DEGREE              = 0x0200,
+        RAD                 = 0x0201,
+
+        // Time
+        SECOND              = 0x0300,
+        MILLISECOND         = 0x0301,
+        MICROSECOND         = 0x0302,
+        NANOSECOND          = 0x0303,
+
+        // Linear velocity
+        M_PER_S             = 0x0400,
+        MM_PER_S            = 0x0401,
+        KM_PER_H            = 0x0402,
+
+        // Linear acceleration
+        M_PER_S2            = 0x0500,
+        MM_PER_S2           = 0x0501,
+        G_FORCE             = 0x0502,
+
+        // Angular velocity
+        RAD_PER_S           = 0x0600,
+        DEGREE_PER_S        = 0x0601,
+        RPM                 = 0x0602,
+
+        // Angular acceleration
+        RAD_PER_S2          = 0x0700,
+        DEGREE_PER_S2       = 0x0701,
+
+        // Frequency
+        HZ                  = 0x0800,
+        KHZ                 = 0x0801,
+        MHZ                 = 0x0802,
+
+        // Mass
+        KG                  = 0x0900,
+        GRAM                = 0x0901,
+
+        // Mechanics
+        NEWTON              = 0x0a00,
+        NEWTON_METER        = 0x0b00,
+        PASCAL              = 0x0c00,
+        KILOPASCAL          = 0x0c01,
+        JOULE               = 0x0d00,
+        WATT                = 0x0e00,
+
+        // Electrical
+        VOLT                = 0x0f00,
+        AMPERE              = 0x1000,
+
+        // Temperature
+        CELSIUS             = 0x1100,
+        KELVIN              = 0x1101,
+
+        // Dimensionless quantities
+        RATIO               = 0x1200,
+        PERCENT             = 0x1201
     };
 
     Unit unit() const;
     Values& setUnit(Unit unit);
 
     Values& add(double d);
-    Values& multiply(double d, Unit new_unit = SAME);
+    Values& multiply(double d);
 
-    Values& mm2m();
-    Values& m2mm();
-    Values& degree2rad();
-    Values& rad2degree();
+    template<Unit U> Values& addToUnit(double d) { return unit() == U ? *this : add(d).setUnit(U); }
+    template<Unit U> Values& multiplyToUnit(double d) { return unit() == U ? *this : multiply(d).setUnit(U); }
+
+    bool isFinite() const;
 
     bool smallerThan(const Values& other) const;
     bool greaterThan(const Values& other) const;
@@ -594,11 +653,63 @@ public:
     // Math utilities
     double sum() const;
     double norm() const;
+    double dot(const Values& o) const;
     double distance(const Values& o) const;
     bool approximate(const Values& o, double epsilon = 0.0001) const;
 
+    Values& normalize();
+    Values& clamp(double min, double max);
+
+public:
+    // Common optimistic conversions: a value already in the target unit is left unchanged.
+    Values& mm2m() { return multiplyToUnit<M>(0.001); }
+    Values& m2mm() { return multiplyToUnit<MM>(1000.0); }
+    Values& cm2m() { return multiplyToUnit<M>(0.01); }
+    Values& m2cm() { return multiplyToUnit<CM>(100.0); }
+    Values& km2m() { return multiplyToUnit<M>(1000.0); }
+    Values& m2km() { return multiplyToUnit<KM>(0.001); }
+
+    Values& degree2rad() { return multiplyToUnit<RAD>(0.017453292519943295); }
+    Values& rad2degree() { return multiplyToUnit<DEGREE>(57.29577951308232); }
+
+    Values& second2millisecond() { return multiplyToUnit<MILLISECOND>(1000.0); }
+    Values& millisecond2second() { return multiplyToUnit<SECOND>(0.001); }
+    Values& second2microsecond() { return multiplyToUnit<MICROSECOND>(1.0e6); }
+    Values& microsecond2second() { return multiplyToUnit<SECOND>(1.0e-6); }
+    Values& second2nanosecond() { return multiplyToUnit<NANOSECOND>(1.0e9); }
+    Values& nanosecond2second() { return multiplyToUnit<SECOND>(1.0e-9); }
+
+    Values& mps2mmps() { return multiplyToUnit<MM_PER_S>(1000.0); }
+    Values& mmps2mps() { return multiplyToUnit<M_PER_S>(0.001); }
+    Values& mps2kmph() { return multiplyToUnit<KM_PER_H>(3.6); }
+    Values& kmph2mps() { return multiplyToUnit<M_PER_S>(1.0 / 3.6); }
+    Values& mpss2mmpss() { return multiplyToUnit<MM_PER_S2>(1000.0); }
+    Values& mmpss2mpss() { return multiplyToUnit<M_PER_S2>(0.001); }
+    Values& mpss2gForce() { return multiplyToUnit<G_FORCE>(1.0 / 9.80665); }
+    Values& gForce2mpss() { return multiplyToUnit<M_PER_S2>(9.80665); }
+
+    Values& degreePerS2radPerS() { return multiplyToUnit<RAD_PER_S>(0.017453292519943295); }
+    Values& radPerS2degreePerS() { return multiplyToUnit<DEGREE_PER_S>(57.29577951308232); }
+    Values& rpm2radPerS() { return multiplyToUnit<RAD_PER_S>(0.10471975511965977); }
+    Values& radPerS2rpm() { return multiplyToUnit<RPM>(9.549296585513721); }
+    Values& degreePerS22radPerS2() { return multiplyToUnit<RAD_PER_S2>(0.017453292519943295); }
+    Values& radPerS22degreePerS2() { return multiplyToUnit<DEGREE_PER_S2>(57.29577951308232); }
+
+    Values& hz2khz() { return multiplyToUnit<KHZ>(0.001); }
+    Values& khz2hz() { return multiplyToUnit<HZ>(1000.0); }
+    Values& hz2mhz() { return multiplyToUnit<MHZ>(1.0e-6); }
+    Values& mhz2hz() { return multiplyToUnit<HZ>(1.0e6); }
+    Values& kg2gram() { return multiplyToUnit<GRAM>(1000.0); }
+    Values& gram2kg() { return multiplyToUnit<KG>(0.001); }
+    Values& pascal2kilopascal() { return multiplyToUnit<KILOPASCAL>(0.001); }
+    Values& kilopascal2pascal() { return multiplyToUnit<PASCAL>(1000.0); }
+    Values& ratio2percent() { return multiplyToUnit<PERCENT>(100.0); }
+    Values& percent2ratio() { return multiplyToUnit<RATIO>(0.01); }
+    Values& celsius2kelvin() { return addToUnit<KELVIN>(273.15); }
+    Values& kelvin2celsius() { return addToUnit<CELSIUS>(-273.15); }
+
 private:
-    Unit m_unit = NONE;
+    Unit unit_ = NONE;
 };
 
 template<typename T>
