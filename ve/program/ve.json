@@ -16,7 +16,9 @@
             "enabled": false,
             "config": {
               "host": "127.0.0.1",
-              "port": 10000
+              "port": 10000,
+              "connect_timeout_ms": 2000,
+              "disconnect_timeout_ms": 2000
             }
           }
         }

@@ -83,16 +83,10 @@ void ClientModule::prepare()
         if (entry::verbose()) veLogI << "[ve/client/terminal/stdio] stdio REPL enabled";
     } else if (remote_enabled) {
         Node* tcp = node()->at("terminal/tcp");
-        std::string host = tcp->at("config/host")->getString("127.0.0.1");
-        int port = tcp->at("config/port")->getInt(10000);
-        if (port <= 0 || port > 65535) {
-            port = 10000;
-        }
+        tcp_ = std::make_unique<service::TerminalTcpClient>(tcp->at("config"));
 
-        tcp_ = std::make_unique<service::TerminalTcpClient>(host, static_cast<uint16_t>(port));
-
-        tcp->at("runtime/host")->set(Var(host));
-        tcp->at("runtime/port")->set(Var(port));
+        tcp->at("runtime/host")->set(Var(tcp_->host()));
+        tcp->at("runtime/port")->set(Var(tcp_->port()));
         tcp->at("runtime/active")->set(Var(true));
         tcp->at("runtime/last_error")->set(Var(""));
 
@@ -114,7 +108,8 @@ void ClientModule::prepare()
         loop::setMain(client_loop_.get());
 
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
-        if (entry::verbose()) veLogI << "[ve/client/terminal/tcp] enabled -> " << host << ":" << port;
+        if (entry::verbose()) veLogI << "[ve/client/terminal/tcp] enabled -> "
+                                     << tcp_->host() << ":" << tcp_->port();
     } else {
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
         node()->at("terminal/tcp/runtime/active")->set(Var(false));

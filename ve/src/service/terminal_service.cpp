@@ -971,11 +971,22 @@ void TerminalStdioClient::requestStop()
 // TerminalTcpClient
 // ============================================================================
 
-TerminalTcpClient::TerminalTcpClient(const std::string& host, uint16_t port)
-    : _p(std::make_unique<Private>())
+TerminalTcpClient::TerminalTcpClient(const Node* config_n) : _p(std::make_unique<Private>())
 {
-    _p->host = host;
-    _p->port = port;
+    _p->host = config_n->get("host").toString("127.0.0.1");
+
+    int port = config_n->get("port").toInt(10000);
+    _p->port = static_cast<uint16_t>(port > 0 && port <= 65535 ? port : 10000);
+
+    // asio2 defaults both operations to 30 seconds.  Use the configured
+    // application limits so Winsock cannot spend its whole SYN retry window
+    // on an unreachable -r endpoint.
+    int connect_timeout_ms = config_n->get("connect_timeout_ms").toInt(2000);
+    int disconnect_timeout_ms = config_n->get("disconnect_timeout_ms").toInt(2000);
+    if (connect_timeout_ms <= 0) connect_timeout_ms = 2000;
+    if (disconnect_timeout_ms <= 0) disconnect_timeout_ms = 2000;
+    _p->client.set_connect_timeout(std::chrono::milliseconds(connect_timeout_ms));
+    _p->client.set_disconnect_timeout(std::chrono::milliseconds(disconnect_timeout_ms));
 }
 
 TerminalTcpClient::~TerminalTcpClient()

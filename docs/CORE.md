@@ -316,6 +316,11 @@ tree, so there is no second representation to keep in sync.
 `-t` and `-r` are mutually exclusive. Precedence is built-in defaults, then the
 config file, then the CLI.
 
+The remote terminal TCP client reads `host`, `port`, `connect_timeout_ms`, and
+`disconnect_timeout_ms` from `modules.ve.client.terminal.tcp.config`. Both
+timeouts default to 2000 ms in `ve.json`; non-positive values fall back to that
+default.
+
 **Unrecognized flags are ignored, not rejected.** They stay in `/ve/entry/argv`
 (also reachable via `entry::args()`) for the application to parse. An app with
 its own switches reads them there and writes the nodes it owns before calling

@@ -54,7 +54,7 @@ private:
 class VE_API TerminalTcpClient
 {
 public:
-    explicit TerminalTcpClient(const std::string& host, uint16_t port);
+    explicit TerminalTcpClient(const Node* config_n);
     ~TerminalTcpClient();
 
     // Connect to the remote terminal, forward local console input, and block
