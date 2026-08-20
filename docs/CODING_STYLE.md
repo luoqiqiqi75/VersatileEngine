@@ -13,6 +13,28 @@ It exists to keep future code aligned with the current architecture rather than 
 - Keep public APIs small and explicit.
 - Avoid temporary wrappers that only exist to smooth a migration step.
 
+## Compatibility Policy
+
+- Do not add legacy compatibility code: no compatibility overloads, aliases,
+  forwarding symbols, fallback branches, or wrappers for superseded APIs.
+- When an unused or unreleased API changes, update its callers and rebuild the
+  affected targets. Stale `.obj`, `.lib`, or generated build output is not a
+  reason to preserve the old API in source.
+- Binary compatibility work must be an explicit, separately reviewed product
+  requirement. Never introduce it opportunistically while fixing a build.
+
+## Includes
+
+- `ve/global.h` is the shared foundation for VE code and deliberately provides
+  the commonly used C++ standard-library headers.
+- Do not repeat standard-library includes already provided by `ve/global.h`
+  when a VE header in the file already brings it in.
+- Before adding an include, check `ve/global.h` and the file's existing VE
+  includes. Add a local include only for a dependency they do not provide,
+  such as a platform API, third-party library, or uncommon standard facility.
+- If a standard facility becomes common throughout VE, include it once in
+  `ve/global.h` instead of scattering the same include across source files.
+
 ## Layer Boundaries
 
 ### Core
