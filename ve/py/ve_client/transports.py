@@ -39,12 +39,14 @@ def _command_params(args: Optional[Dict]) -> Dict[str, Any]:
     """Build the v2.1 `params` object for a user command.
 
     Accepts a dict of named params, or a positional list/scalar wrapped under
-    `args`. Legacy envelope keys (`wait`, `id`) are dropped.
+    `args`. Named params are copied without filtering: fields such as `id` and
+    `wait` belong to the command input schema and are independent of envelope
+    metadata at the top level.
     """
     if args is None:
         return {}
     if isinstance(args, dict):
-        return {k: v for k, v in args.items() if k not in ("wait", "id")}
+        return dict(args)
     return {"args": args}
 
 
