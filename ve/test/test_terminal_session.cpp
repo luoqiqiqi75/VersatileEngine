@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <thread>
 
 using namespace ve;
 
@@ -99,4 +100,32 @@ VE_TEST(terminal_custom_command_accepts_full_complex_json_body)
         R"(_test terminal complex {"request":{"device":},"steps":[]})");
     VE_ASSERT_EQ(invalid, std::string("error: invalid JSON\n"));
     VE_ASSERT_EQ(capture->calls, 1);
+}
+
+VE_TEST(terminal_foreground_command_honors_registered_loop)
+{
+    AsioLoop command_loop("test.terminal.command");
+    command_loop.start();
+
+    const std::thread::id caller_thread = std::this_thread::get_id();
+    auto command_thread = std::make_shared<std::thread::id>();
+    Node* command_node = command::reg("_test.terminal.loop_affinity",
+        [command_thread](Node*, Node*, Node*) -> Result {
+            *command_thread = std::this_thread::get_id();
+            return Result::ok();
+        });
+    command_node->set("loop", Var::ptr(static_cast<Loop*>(&command_loop)));
+
+    Node root("root");
+    service::TerminalSession::Options options;
+    options.prompt_color = false;
+    service::TerminalSession session(&root, options);
+
+    const std::string output = session.execute("_test terminal loop_affinity");
+    VE_ASSERT(output.find("ok") != std::string::npos);
+    VE_ASSERT(*command_thread != std::thread::id{});
+    VE_ASSERT(*command_thread != caller_thread);
+
+    command_node->remove("loop");
+    command_loop.stop();
 }

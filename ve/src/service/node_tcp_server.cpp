@@ -17,10 +17,13 @@
 #endif
 
 #include <atomic>
+#include <exception>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ve {
 namespace service {
@@ -36,41 +39,43 @@ struct NodeTcpServer::Private
     uint16_t port = 12200;
 
     asio2::tcp_server server{serverRuntime().pool()};
+    ConnectionLoopCleanup loopCleanup{"node.tcp.cleanup"};
     std::mutex mtx;
     std::atomic<int> connCount{0};
 
     struct ConnState {
         std::string recvBuf;
         std::unique_ptr<Session> session;
+        std::unique_ptr<AsioLoop> loop;
+        std::atomic<bool> connected{true};
     };
-    std::unordered_map<std::size_t, ConnState> connections;
+    std::unordered_map<std::size_t, std::shared_ptr<ConnState>> connections;
 
-    std::unique_ptr<Session> makeSession(uint64_t sid)
+    template<typename SocketSession>
+    static void send(const std::weak_ptr<ConnState>& weak_state,
+                     std::weak_ptr<SocketSession> weak_socket, std::string reply)
     {
-        return std::make_unique<Session>(root, root, [this, sid](std::string msg) {
-            server.post([this, sid, msg = std::move(msg)]() {
-                server.foreach_session([&](auto& session_ptr) {
-                    if (static_cast<uint64_t>(session_ptr->hash_key()) == sid)
-                        session_ptr->async_send(msg + "\n");
-                });
+        if (reply.empty()) return;
+        if (auto socket = weak_socket.lock()) {
+            socket->post([weak_state, socket, reply = std::move(reply)]() mutable {
+                auto state = weak_state.lock();
+                if (!state || !state->connected.load(std::memory_order_acquire)
+                    || !socket->is_started()) return;
+                socket->async_send(reply);
             });
-        });
+        }
     }
 
-    template<typename SessionPtr>
-    void processLines(std::size_t connKey, SessionPtr& session_ptr)
+    template<typename SocketSession>
+    static void processLines(const std::shared_ptr<ConnState>& state,
+                             const std::weak_ptr<SocketSession>& weak_socket)
     {
-        ConnState* state = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            auto it = connections.find(connKey);
-            if (it != connections.end()) state = &it->second;
-        }
-        if (!state) return;
+        if (!state || !state->connected.load(std::memory_order_acquire)) return;
 
         auto& buf = state->recvBuf;
         std::string::size_type pos;
         while ((pos = buf.find('\n')) != std::string::npos) {
+            if (!state->connected.load(std::memory_order_acquire)) return;
             std::string line = buf.substr(0, pos);
             buf.erase(0, pos + 1);
             if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -81,7 +86,7 @@ struct NodeTcpServer::Private
                 Node err;
                 err.set("code", int64_t(ERR_INVALID));
                 err.set("message", std::string("invalid JSON"));
-                session_ptr->async_send(toJson(err) + "\n");
+                send(std::weak_ptr<ConnState>(state), weak_socket, toJson(err) + "\n");
                 continue;
             }
 
@@ -97,7 +102,8 @@ struct NodeTcpServer::Private
                         pipe.contextNode()->erase("batch");
                         pipe.contextNode()->set("code", int64_t(ERR_NOT_FOUND));
                         pipe.contextNode()->set("message", "unknown: " + ref.key);
-                        session_ptr->async_send(toJson(*pipe.contextNode()) + "\n");
+                        send(std::weak_ptr<ConnState>(state), weak_socket,
+                             toJson(*pipe.contextNode()) + "\n");
                         valid = false;
                         break;
                     }
@@ -110,17 +116,61 @@ struct NodeTcpServer::Private
                 if (!ref.factory) {
                     pipe.contextNode()->set("code", int64_t(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND));
                     pipe.contextNode()->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
-                    session_ptr->async_send(toJson(*pipe.contextNode()) + "\n");
+                    send(std::weak_ptr<ConnState>(state), weak_socket,
+                         toJson(*pipe.contextNode()) + "\n");
                     continue;
                 }
                 Command* c = pipe.add(command::create(*ref.factory, ref.key));
                 c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
             }
 
-            pipe.sync();
-            if (finalizeReply(pipe))
-                session_ptr->async_send(toJson(*pipe.contextNode()) + "\n");
+            auto completed = std::make_shared<std::promise<std::string>>();
+            auto reply = completed->get_future();
+            pipe.onFinished(nullptr, [completed](Pipeline& finished) {
+                try {
+                    completed->set_value(finalizeReply(finished)
+                        ? toJson(*finished.contextNode()) + "\n"
+                        : std::string{});
+                } catch (...) {
+                    completed->set_exception(std::current_exception());
+                }
+            });
+            pipe.async();
+            try {
+                send(std::weak_ptr<ConnState>(state), weak_socket, reply.get());
+            } catch (const std::exception& e) {
+                Node err;
+                err.set("code", int64_t(ERR_INVALID));
+                err.set("message", std::string("command response failed: ") + e.what());
+                send(std::weak_ptr<ConnState>(state), weak_socket, toJson(err) + "\n");
+            } catch (...) {
+                Node err;
+                err.set("code", int64_t(ERR_INVALID));
+                err.set("message", std::string("command response failed"));
+                send(std::weak_ptr<ConnState>(state), weak_socket, toJson(err) + "\n");
+            }
         }
+    }
+
+    void retire(std::shared_ptr<ConnState> state)
+    {
+        if (!state || !state->connected.exchange(false, std::memory_order_acq_rel)) return;
+        loopCleanup.retire(std::move(state));
+    }
+
+    void stopConnections(bool wait)
+    {
+        std::vector<std::shared_ptr<ConnState>> states;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            states.reserve(connections.size());
+            for (auto& [_, state] : connections) states.push_back(state);
+            connections.clear();
+        }
+        for (auto& state : states) retire(std::move(state));
+        if (!states.empty())
+            connCount.fetch_sub(static_cast<int>(states.size()), std::memory_order_relaxed);
+        if (wait) loopCleanup.drain();
     }
 };
 
@@ -140,22 +190,49 @@ bool NodeTcpServer::start()
     _p->server.bind_connect([this](auto& session_ptr) {
         session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
         auto key = session_ptr->hash_key();
+        auto state = std::make_shared<Private::ConnState>();
+        std::weak_ptr<typename std::decay_t<decltype(session_ptr)>::element_type> weak_session = session_ptr;
+        std::weak_ptr<Private::ConnState> weak_state = state;
+        state->session = std::make_unique<Session>(_p->root, _p->root,
+            [weak_state, weak_session](std::string msg) mutable {
+                if (auto session = weak_session.lock()) {
+                    session->post([weak_state, session, msg = std::move(msg)]() mutable {
+                        auto state = weak_state.lock();
+                        if (state && state->connected.load(std::memory_order_acquire)
+                            && session->is_started()) session->async_send(msg + "\n");
+                    });
+                }
+            });
+        state->loop = std::make_unique<AsioLoop>("node.tcp." + std::to_string(key));
+        if (!state->loop->start()) {
+            session_ptr->stop();
+            return;
+        }
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections[key].session = _p->makeSession(static_cast<uint64_t>(key));
+            _p->connections[key] = std::move(state);
+            _p->connCount.fetch_add(1, std::memory_order_relaxed);
         }
-        _p->connCount.fetch_add(1, std::memory_order_relaxed);
     });
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         auto key = session_ptr->hash_key();
+        std::shared_ptr<Private::ConnState> state;
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             auto it = _p->connections.find(key);
-            if (it != _p->connections.end())
-                it->second.recvBuf.append(data);
+            if (it != _p->connections.end()) state = it->second;
         }
-        _p->processLines(key, session_ptr);
+        if (!state) return;
+
+        std::weak_ptr<Private::ConnState> weak_state = state;
+        std::weak_ptr<typename std::decay_t<decltype(session_ptr)>::element_type> weak_session = session_ptr;
+        state->loop->post([weak_state, weak_session, chunk = std::string(data)]() mutable {
+            auto state = weak_state.lock();
+            if (!state || !state->connected.load(std::memory_order_acquire)) return;
+            state->recvBuf.append(chunk);
+            Private::processLines(state, weak_session);
+        });
     });
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
@@ -163,11 +240,19 @@ bool NodeTcpServer::start()
         const auto remoteAddress = session_ptr->remote_address();
         const auto remotePort = session_ptr->remote_port();
         auto key = session_ptr->hash_key();
+        std::shared_ptr<Private::ConnState> state;
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections.erase(key);
+            auto it = _p->connections.find(key);
+            if (it != _p->connections.end()) {
+                state = std::move(it->second);
+                _p->connections.erase(it);
+            }
         }
-        _p->connCount.fetch_sub(1, std::memory_order_relaxed);
+        if (state) {
+            _p->retire(std::move(state));
+            _p->connCount.fetch_sub(1, std::memory_order_relaxed);
+        }
         veLogDs("[node/tcp] client disconnected:", remoteAddress, ":", remotePort,
                 "reason:", error.value(), error.message());
     });
@@ -178,13 +263,8 @@ bool NodeTcpServer::start()
 
 void NodeTcpServer::stop(bool wait)
 {
-    if (!wait) {
-        _p->server.stop();
-        return;
-    }
     _p->server.stop();
-    std::lock_guard<std::mutex> lock(_p->mtx);
-    _p->connections.clear();
+    _p->stopConnections(wait);
 }
 
 bool NodeTcpServer::isRunning() const

@@ -20,6 +20,7 @@
 #include <fstream>
 #include <algorithm>
 #include <functional>
+#include <future>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -1103,7 +1104,6 @@ struct TerminalSession::Private
 {
     std::vector<std::string> hist;
     std::vector<Node*> orphan_pool;
-    std::string output;
     TerminalSession::AsyncOutputFn asyncOutput;
     TerminalSession::Options opts;
 
@@ -1130,7 +1130,6 @@ bool TerminalSession::useColor() const { return _p->opts.prompt_color; }
 
 std::string TerminalSession::execute(const std::string& line)
 {
-    _p->output.clear();
     if (line.empty()) return {};
 
     auto args = split(line);
@@ -1139,8 +1138,7 @@ std::string TerminalSession::execute(const std::string& line)
     _p->hist.push_back(line);
     std::string cmd = args[0];
 
-    if (cmd == "quit" || cmd == "exit")
-        return "\x04";
+    if (cmd == "quit" || cmd == "exit") return "\x04";
 
     bool asyncMode = false;
     if (cmd == "async" && args.size() > 1) {
@@ -1195,10 +1193,10 @@ std::string TerminalSession::execute(const std::string& line)
             Pipeline pipe;
             Result bindResult = fillCommand(pipe.inputNode(), pipe.contextNode());
             if (bindResult.isError()) {
-                _p->output += render(nullptr, bindResult);
-                return _p->output;
+                return render(nullptr, bindResult);
             }
-            pipe.add(Command(resolvedNode));
+            Command* command = pipe.add(Command(resolvedNode));
+            command->setContextNodes(pipe.contextNode(), pipe.inputNode(), pipe.outputNode());
 
             auto asyncOut = _p->asyncOutput;
             pipe.onFinished(nullptr, [asyncOut, resolvedName, isCmdCmd, color](Pipeline& pipe) {
@@ -1213,24 +1211,35 @@ std::string TerminalSession::execute(const std::string& line)
                 }
             });
             pipe.async();
-            _p->output += "accepted\n";
-            return _p->output;
+            return "accepted\n";
         }
 
-        Command cmdObj(resolvedNode);
-        Result bindResult = fillCommand(cmdObj.inputNode(), cmdObj.contextNode());
+        Command command(resolvedNode);
+        Result bindResult = fillCommand(command.inputNode(), command.contextNode());
         if (bindResult.isError()) {
-            _p->output += render(nullptr, bindResult);
-            return _p->output;
+            return render(nullptr, bindResult);
         }
-        cmdObj.run();
-        updateCurrentFromOut(this->current, cmdObj.outputNode());
-        _p->output += render(cmdObj.outputNode(), cmdObj.result());
-        return _p->output;
+
+        std::promise<Command> completed;
+        auto finished = completed.get_future();
+        auto finish = [&completed](Command& command) { completed.set_value(command); };
+
+        // Posting to the loop currently executing this session would deadlock
+        // while execute() waits. All other commands go through call() so their
+        // registered loop affinity is honored.
+        if (command.loop() && command.loop() == loop::current()) {
+            command.run();
+            finish(command);
+        } else {
+            command.call(finish);
+        }
+
+        Command finished_command = finished.get();
+        updateCurrentFromOut(this->current, finished_command.outputNode());
+        return render(finished_command.outputNode(), finished_command.result());
     }
 
-    _p->output += "unknown: " + cmd + "  (type 'help')\n";
-    return _p->output;
+    return "unknown: " + cmd + "  (type 'help')\n";
 }
 
 std::string TerminalSession::prompt() const

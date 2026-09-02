@@ -19,6 +19,13 @@
 #pragma warning(pop)
 #endif
 
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #ifdef _WIN32
 #  include <conio.h>
 #  include <windows.h>
@@ -212,6 +219,8 @@ static bool decodeEscapedTcpKey(TcpDecodeState& state, uint8_t ch, TerminalKeyEv
 struct ConnectionState {
     std::unique_ptr<TerminalSession> session;
     std::unique_ptr<TerminalLineEditor> editor;
+    std::unique_ptr<AsioLoop> loop;
+    std::atomic<bool> connected{true};
     TcpDecodeState decode;
     bool server_controls_input = false;
     bool use_ansi = true;  // false for AI mode
@@ -333,9 +342,47 @@ struct TerminalReplServer::Private
     bool     ownsRoot = false;
 
     asio2::tcp_server server{serverRuntime().pool()};
+    ConnectionLoopCleanup loopCleanup{"terminal.cleanup"};
     std::mutex mtx;
-    std::unordered_map<std::size_t, std::unique_ptr<ConnectionState>> connections;
+    std::unordered_map<std::size_t, std::shared_ptr<ConnectionState>> connections;
     std::atomic<int> connCount{0};
+
+    template<typename SocketSession>
+    static void send(const std::weak_ptr<ConnectionState>& weak_state,
+                     std::weak_ptr<SocketSession> weak_socket, std::string text,
+                     bool disconnect = false)
+    {
+        if (auto socket = weak_socket.lock()) {
+            socket->post([weak_state, socket, text = std::move(text), disconnect]() mutable {
+                auto state = weak_state.lock();
+                if (!state || !state->connected.load(std::memory_order_acquire)
+                    || !socket->is_started()) return;
+                if (!text.empty()) socket->async_send(text);
+                if (disconnect) socket->stop();
+            });
+        }
+    }
+
+    void retire(std::shared_ptr<ConnectionState> state)
+    {
+        if (!state || !state->connected.exchange(false, std::memory_order_acq_rel)) return;
+        loopCleanup.retire(std::move(state));
+    }
+
+    void stopConnections(bool wait)
+    {
+        std::vector<std::shared_ptr<ConnectionState>> states;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            states.reserve(connections.size());
+            for (auto& [_, state] : connections) states.push_back(state);
+            connections.clear();
+        }
+        for (auto& state : states) retire(std::move(state));
+        if (!states.empty())
+            connCount.fetch_sub(static_cast<int>(states.size()), std::memory_order_relaxed);
+        if (wait) loopCleanup.drain();
+    }
 };
 
 // ============================================================================
@@ -361,7 +408,8 @@ bool TerminalReplServer::start()
     _p->server.bind_connect([this](auto& session_ptr) {
         session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
         auto key = session_ptr->hash_key();
-        auto cs = std::make_unique<ConnectionState>();
+        auto cs = std::make_shared<ConnectionState>();
+        std::weak_ptr<typename std::decay_t<decltype(session_ptr)>::element_type> weak_session = session_ptr;
 
         TerminalSession::Options session_opts;
         session_opts.prompt_color = _p->opts.prompt_color;
@@ -376,6 +424,11 @@ bool TerminalReplServer::start()
             cs->session.get(),
             cs->server_controls_input ? TerminalLineEditor::Mode::CONTROLLED : TerminalLineEditor::Mode::COOKED
         );
+        cs->loop = std::make_unique<AsioLoop>("terminal." + std::to_string(key));
+        if (!cs->loop->start()) {
+            session_ptr->stop();
+            return;
+        }
 
         std::string welcome;
         if (_p->opts.banner) welcome += banner();
@@ -383,175 +436,191 @@ bool TerminalReplServer::start()
         welcome += cs->editor->renderedLine();
 
         // Wire async command output for this connection
-        cs->session->setAsyncOutput([this, key](const std::string& text) {
-            _p->server.post([this, key, text]() {
-                std::lock_guard<std::mutex> lock(_p->mtx);
-                auto it = _p->connections.find(key);
-                if (it == _p->connections.end()) return;
-                auto* cs = it->second.get();
+        std::weak_ptr<ConnectionState> weak_state = cs;
+        cs->session->setAsyncOutput([weak_state, weak_session](const std::string& text) {
+            auto cs = weak_state.lock();
+            if (!cs || !cs->connected.load(std::memory_order_acquire)) return;
+            cs->loop->post([weak_state, weak_session, text] {
+                auto cs = weak_state.lock();
+                if (!cs || !cs->connected.load(std::memory_order_acquire)) return;
+
                 std::string out;
                 if (cs->use_ansi) out += "\r\x1b[K";
                 out += toTcpText(text);
                 out += renderEditorLine(*cs->editor, false, cs->use_ansi);
-                _p->server.foreach_session([&](auto& sp) {
-                    if (sp->hash_key() == key)
-                        sp->async_send(out);
-                });
+                Private::send(weak_state, weak_session, std::move(out));
             });
         });
 
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             _p->connections[key] = std::move(cs);
+            _p->connCount.fetch_add(1, std::memory_order_relaxed);
         }
-        _p->connCount.fetch_add(1, std::memory_order_relaxed);
 
         session_ptr->async_send(welcome);
     });
 
     _p->server.bind_recv([this](auto& session_ptr, std::string_view data) {
         auto key = session_ptr->hash_key();
-        ConnectionState* cs = nullptr;
+        std::shared_ptr<ConnectionState> cs;
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
             auto it = _p->connections.find(key);
-            if (it != _p->connections.end()) cs = it->second.get();
+            if (it != _p->connections.end()) cs = it->second;
         }
         if (!cs) return;
 
-        auto flushResult = [&session_ptr, cs](const TerminalEditResult& result) -> bool {
-            if (!result.output.empty()) {
-                session_ptr->async_send(toTcpText(result.output));
-            }
-            if (result.disconnect) {
-                session_ptr->stop();
-                return true;
-            }
-            if (result.prompt_on_new_line) {
-                session_ptr->async_send(renderEditorLine(*cs->editor, true, cs->use_ansi));
-            } else if (result.redraw && cs->server_controls_input) {
-                session_ptr->async_send(renderEditorLine(*cs->editor, false, cs->use_ansi));
-            }
-            return false;
-        };
+        std::weak_ptr<ConnectionState> weak_state = cs;
+        std::weak_ptr<typename std::decay_t<decltype(session_ptr)>::element_type> weak_session = session_ptr;
+        cs->loop->post([weak_state, weak_session, input = std::string(data)]() mutable {
+            auto cs = weak_state.lock();
+            if (!cs || !cs->connected.load(std::memory_order_acquire)) return;
 
-        for (uint8_t ch : data) {
-            if (consumeTelnetByte(cs->decode, ch)) {
-                if (!cs->server_controls_input) {
-                    cs->server_controls_input = true;
-                    cs->editor->setMode(TerminalLineEditor::Mode::CONTROLLED);
+            auto flushResult = [weak_state, weak_session, cs](const TerminalEditResult& result) -> bool {
+                if (!result.output.empty()) {
+                    Private::send(weak_state, weak_session, toTcpText(result.output));
                 }
-                continue;
-            }
-            if (ch == '\n' && cs->decode.prev_cr) {
-                cs->decode.prev_cr = false;
-                continue;
-            }
-            cs->decode.prev_cr = (ch == '\r');
+                if (result.disconnect) {
+                    Private::send(weak_state, weak_session, {}, true);
+                    return true;
+                }
+                if (result.prompt_on_new_line) {
+                    Private::send(weak_state, weak_session,
+                                  renderEditorLine(*cs->editor, true, cs->use_ansi));
+                } else if (result.redraw && cs->server_controls_input) {
+                    Private::send(weak_state, weak_session,
+                                  renderEditorLine(*cs->editor, false, cs->use_ansi));
+                }
+                return false;
+            };
 
-            TerminalKeyEvent ev;
-            if (decodeEscapedTcpKey(cs->decode, ch, ev)) {
-                if (cs->server_controls_input && ev.key != TerminalKey::NONE) {
-                    if (flushResult(cs->editor->onKey(ev))) {
+            for (uint8_t ch : input) {
+                if (consumeTelnetByte(cs->decode, ch)) {
+                    if (!cs->server_controls_input) {
+                        cs->server_controls_input = true;
+                        cs->editor->setMode(TerminalLineEditor::Mode::CONTROLLED);
+                    }
+                    continue;
+                }
+                if (ch == '\n' && cs->decode.prev_cr) {
+                    cs->decode.prev_cr = false;
+                    continue;
+                }
+                cs->decode.prev_cr = (ch == '\r');
+
+                TerminalKeyEvent ev;
+                if (decodeEscapedTcpKey(cs->decode, ch, ev)) {
+                    if (cs->server_controls_input && ev.key != TerminalKey::NONE) {
+                        if (flushResult(cs->editor->onKey(ev))) {
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                if (!cs->decode.esc_seq.empty()) {
+                    continue;
+                }
+
+                if (ch == '\r' || ch == '\n') {
+                    if (flushResult(cs->editor->onKey({TerminalKey::ENTER}))) {
                         return;
                     }
-                }
-                continue;
-            }
-            if (!cs->decode.esc_seq.empty()) {
-                continue;
-            }
-
-            if (ch == '\r' || ch == '\n') {
-                if (flushResult(cs->editor->onKey({TerminalKey::ENTER}))) {
-                    return;
-                }
-            } else if (ch == 0x7F || ch == 0x08) {
-                if (flushResult(cs->editor->onKey({TerminalKey::BACKSPACE}))) {
-                    return;
-                }
-            } else if (ch == 0x03) {
-                if (flushResult(cs->editor->onKey({TerminalKey::CTRL_C}))) {
-                    return;
-                }
-            } else if (ch == 0x04) {
-                if (flushResult(cs->editor->onKey({TerminalKey::EOF_KEY}))) {
-                    return;
-                }
-            } else if (ch == 0x09) {
-                if (flushResult(cs->editor->onKey({TerminalKey::TAB}))) {
-                    return;
-                }
-            } else if (ch == 0x15) {
-                if (flushResult(cs->editor->onKey({TerminalKey::CTRL_U}))) {
-                    return;
-                }
-            } else if (ch >= 0x20 && ch < 0x7F) {
-                // ASCII single-byte character
-                if (cs->server_controls_input) {
-                    TerminalKeyEvent ev;
-                    ev.key = TerminalKey::CHARACTER;
-                    ev.ch = static_cast<char>(ch);
-                    ev.chars = std::string(1, ev.ch);
-                    if (flushResult(cs->editor->onKey(ev))) {
+                } else if (ch == 0x7F || ch == 0x08) {
+                    if (flushResult(cs->editor->onKey({TerminalKey::BACKSPACE}))) {
                         return;
                     }
-                } else {
-                    cs->editor->appendCooked(static_cast<char>(ch));
-                }
-            } else if (ch >= 0x80) {
-                // UTF-8 multi-byte character
-                if (cs->utf8_buf.empty()) {
-                    // Start of new UTF-8 sequence
-                    cs->utf8_buf.push_back(static_cast<char>(ch));
-                    if ((ch & 0xE0) == 0xC0) cs->utf8_expected = 2;
-                    else if ((ch & 0xF0) == 0xE0) cs->utf8_expected = 3;
-                    else if ((ch & 0xF8) == 0xF0) cs->utf8_expected = 4;
-                    else {
-                        // Invalid lead byte
-                        cs->utf8_buf.clear();
-                        cs->utf8_expected = 0;
+                } else if (ch == 0x03) {
+                    if (flushResult(cs->editor->onKey({TerminalKey::CTRL_C}))) {
+                        return;
                     }
-                } else {
-                    // Continuation byte
-                    if ((ch & 0xC0) == 0x80) {
-                        cs->utf8_buf.push_back(static_cast<char>(ch));
-                        if (cs->utf8_buf.size() >= cs->utf8_expected) {
-                            // Complete UTF-8 character
-                            if (cs->server_controls_input) {
-                                TerminalKeyEvent ev;
-                                ev.key = TerminalKey::CHARACTER;
-                                ev.chars = std::move(cs->utf8_buf);
-                                cs->utf8_buf.clear();
-                                cs->utf8_expected = 0;
-                                if (flushResult(cs->editor->onKey(ev))) {
-                                    return;
-                                }
-                            } else {
-                                for (char c : cs->utf8_buf) {
-                                    cs->editor->appendCooked(c);
-                                }
-                                cs->utf8_buf.clear();
-                                cs->utf8_expected = 0;
-                            }
+                } else if (ch == 0x04) {
+                    if (flushResult(cs->editor->onKey({TerminalKey::EOF_KEY}))) {
+                        return;
+                    }
+                } else if (ch == 0x09) {
+                    if (flushResult(cs->editor->onKey({TerminalKey::TAB}))) {
+                        return;
+                    }
+                } else if (ch == 0x15) {
+                    if (flushResult(cs->editor->onKey({TerminalKey::CTRL_U}))) {
+                        return;
+                    }
+                } else if (ch >= 0x20 && ch < 0x7F) {
+                    // ASCII single-byte character
+                    if (cs->server_controls_input) {
+                        TerminalKeyEvent ev;
+                        ev.key = TerminalKey::CHARACTER;
+                        ev.ch = static_cast<char>(ch);
+                        ev.chars = std::string(1, ev.ch);
+                        if (flushResult(cs->editor->onKey(ev))) {
+                            return;
                         }
                     } else {
-                        // Invalid continuation byte
-                        cs->utf8_buf.clear();
-                        cs->utf8_expected = 0;
+                        cs->editor->appendCooked(static_cast<char>(ch));
+                    }
+                } else if (ch >= 0x80) {
+                    // UTF-8 multi-byte character
+                    if (cs->utf8_buf.empty()) {
+                        // Start of new UTF-8 sequence
+                        cs->utf8_buf.push_back(static_cast<char>(ch));
+                        if ((ch & 0xE0) == 0xC0) cs->utf8_expected = 2;
+                        else if ((ch & 0xF0) == 0xE0) cs->utf8_expected = 3;
+                        else if ((ch & 0xF8) == 0xF0) cs->utf8_expected = 4;
+                        else {
+                            // Invalid lead byte
+                            cs->utf8_buf.clear();
+                            cs->utf8_expected = 0;
+                        }
+                    } else {
+                        // Continuation byte
+                        if ((ch & 0xC0) == 0x80) {
+                            cs->utf8_buf.push_back(static_cast<char>(ch));
+                            if (cs->utf8_buf.size() >= cs->utf8_expected) {
+                                // Complete UTF-8 character
+                                if (cs->server_controls_input) {
+                                    TerminalKeyEvent ev;
+                                    ev.key = TerminalKey::CHARACTER;
+                                    ev.chars = std::move(cs->utf8_buf);
+                                    cs->utf8_buf.clear();
+                                    cs->utf8_expected = 0;
+                                    if (flushResult(cs->editor->onKey(ev))) {
+                                        return;
+                                    }
+                                } else {
+                                    for (char c : cs->utf8_buf) {
+                                        cs->editor->appendCooked(c);
+                                    }
+                                    cs->utf8_buf.clear();
+                                    cs->utf8_expected = 0;
+                                }
+                            }
+                        } else {
+                            // Invalid continuation byte
+                            cs->utf8_buf.clear();
+                            cs->utf8_expected = 0;
+                        }
                     }
                 }
             }
-        }
+        });
     });
 
     _p->server.bind_disconnect([this](auto& session_ptr) {
         auto key = session_ptr->hash_key();
+        std::shared_ptr<ConnectionState> state;
         {
             std::lock_guard<std::mutex> lock(_p->mtx);
-            _p->connections.erase(key);
+            auto it = _p->connections.find(key);
+            if (it != _p->connections.end()) {
+                state = std::move(it->second);
+                _p->connections.erase(it);
+            }
         }
-        _p->connCount.fetch_sub(1, std::memory_order_relaxed);
+        if (state) {
+            _p->retire(std::move(state));
+            _p->connCount.fetch_sub(1, std::memory_order_relaxed);
+        }
     });
 
     ve::service::disableWindowsPortReuse(_p->server);
@@ -560,13 +629,8 @@ bool TerminalReplServer::start()
 
 void TerminalReplServer::stop(bool wait)
 {
-    if (!wait) {
-        _p->server.stop();
-        return;
-    }
     _p->server.stop();
-    std::lock_guard<std::mutex> lock(_p->mtx);
-    _p->connections.clear();
+    _p->stopConnections(wait);
 }
 
 bool TerminalReplServer::isRunning() const

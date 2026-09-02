@@ -13,6 +13,8 @@
 // and stopped/joined the pool.
 #pragma once
 
+#include "ve/core/loop.h"
+
 #ifdef _MSC_VER
 #pragma warning(push, 0)
 #endif
@@ -21,8 +23,12 @@
 #pragma warning(pop)
 #endif
 
+#include <future>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace ve {
@@ -96,6 +102,41 @@ private:
     std::mutex _mutex;
     std::vector<Resource> _resources;
     bool _shutdown = false;
+};
+
+// Joins per-connection loops away from asio2's shared transport workers.
+// The state type is expected to own its loop through a `loop` member.
+class ConnectionLoopCleanup
+{
+public:
+    explicit ConnectionLoopCleanup(std::string name) : _loop(std::move(name))
+    {
+        _loop.start();
+    }
+
+    ~ConnectionLoopCleanup()
+    {
+        drain();
+        _loop.stop();
+    }
+
+    template<typename State>
+    void retire(std::shared_ptr<State> state)
+    {
+        state->loop->quit();
+        _loop.post([state = std::move(state)] { state->loop->stop(); });
+    }
+
+    void drain()
+    {
+        auto done = std::make_shared<std::promise<void>>();
+        auto future = done->get_future();
+        _loop.post([done] { done->set_value(); });
+        future.wait();
+    }
+
+private:
+    AsioLoop _loop;
 };
 
 // Active runtime for built-in server wrappers. It is module-scoped and is
