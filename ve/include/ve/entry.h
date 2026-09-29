@@ -133,15 +133,6 @@ namespace entry {
 // instead of silently ignoring the parts it does not know.
 constexpr int VE_ENTRY_VERSION = 2;
 
-enum State : int {
-    NONE,
-    SETUP,
-    INIT,
-    READY,
-    RUNNING,
-    SHUTDOWN
-};
-
 // Parse argv into a fresh options node and hand off to setup(Node*).
 VE_API bool setup(int argc, char** argv);
 
@@ -157,20 +148,19 @@ VE_API bool setup(Node* options_n);
 // Load plugins, create modules, and complete initialization.
 VE_API void init();
 
-// Enter the main loop and block until quit is requested.
+// Enter native exec(), leaving dispatch available for deinit() after it returns.
 VE_API int  run();
 
-// Deinitialize modules in reverse order and release runtime state.
+// Deinitialize and destroy modules in reverse order, then stop the main loop.
 VE_API void deinit();
 
-// Request run() to return. Delegates to loop::main()->quit().
+// Request run() to return. The caller then deinitializes on the entry thread.
 VE_API void requestQuit(int exit_code = 0);
 
 // Convenience: setup + init + run + deinit
 VE_API int  exec(int argc, char** argv);
 
 // --- queries ---
-VE_API State state();
 
 // Original argv as passed to setup() — kept for frameworks (Qt, ROS) that
 // need to see the process argv, and for apps parsing their own flags. argc()
@@ -206,5 +196,3 @@ VE_API const Vector<Info>& loaded();
 } // namespace plugin
 
 } // namespace ve
-
-VE_API std::ostream& operator<<(std::ostream& os, ve::entry::State s);

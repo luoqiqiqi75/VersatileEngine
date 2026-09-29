@@ -329,6 +329,11 @@ Process startup should remain simple:
 3. Initialize modules.
 4. Enter the main loop.
 5. Deinitialize in reverse order.
+6. Destroy modules in reverse order, then stop the core main loop.
+
+Initialization and deinitialization run synchronously on the entry caller's
+thread. Native event-loop execution returns before deinitialization starts;
+remaining command work can still be dispatched during service cleanup.
 
 ## What To Avoid
 

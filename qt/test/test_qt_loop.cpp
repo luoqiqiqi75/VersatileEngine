@@ -21,6 +21,23 @@
 using namespace ve;
 using namespace ve::qt;
 
+VE_TEST(qt_main_quit_preserves_dispatch_until_stop) {
+    QtMainLoop main(QCoreApplication::instance());
+    Loop* previous = loop::main();
+    loop::setMain(&main);
+    main.post([&] { main.quit(19); });
+    VE_ASSERT_EQ(main.exec(), 19);
+    VE_ASSERT_EQ(QThread::currentThread()->loopLevel(), 0);
+    VE_ASSERT(main.isRunning());
+    bool dispatched = false;
+    main.post([&] { dispatched = true; });
+    main.processEvents();
+    VE_ASSERT(dispatched);
+    VE_ASSERT(main.stop());
+    VE_ASSERT(!main.isRunning());
+    loop::setMain(previous);
+}
+
 // --- Loop primitive ---
 
 VE_TEST(qt_loop_add_timer_repeat) {

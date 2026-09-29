@@ -41,6 +41,7 @@ public:
 
     int    exec() override;   // native QCoreApplication::exec()
     void   quit(int exit_code = 0) override;
+    bool   stop() override;
 
     TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override;
     bool        removeTimer(TimerHandle handle) override;

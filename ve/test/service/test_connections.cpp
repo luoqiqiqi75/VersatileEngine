@@ -409,10 +409,114 @@ uint16_t unusedPort()
     return socket.local_endpoint().port();
 }
 
+void checkEntryShutdown()
+{
+    Gate execution;
+    execution.reset();
+    ReleaseGate release{execution};
+    Loop* original_main = loop::main();
+    Loop* main_loop = nullptr;
+    bool shutdown_started = false;
+    bool late_deinit_dispatched = false;
+    bool running_in_destructor = false;
+    struct LifecycleProbe : Module {
+        Loop*& main;
+        bool& dispatched;
+        bool& running;
+        Gate& execution;
+        bool& shutdown;
+        LifecycleProbe(Loop*& m, bool& d, bool& r, Gate& e, bool& s)
+            : Module("ve.shutdown_test"), main(m), dispatched(d), running(r), execution(e), shutdown(s) {}
+        void deinit() override
+        {
+            shutdown = true;
+            main->post([this] {
+                dispatched = true;
+                execution.release();
+                entry::deinit();
+                entry::requestQuit(11);
+            });
+        }
+        ~LifecycleProbe() override { running = main->isRunning(); }
+    };
+    module::factory().reg("ve.shutdown_test", Var::callable([&]() -> Module* {
+        return new LifecycleProbe(main_loop, late_deinit_dispatched, running_in_destructor,
+                                  execution, shutdown_started);
+    }));
+    module::factory().node("ve.shutdown_test", '.')->set("priority", 60);
+
+    Node options;
+    options.set("config_file", "__ve_service_test_absent.json");
+    options.set("log/level", "error");
+    options.set("modules/ve/core/config/rescue/enabled", false);
+    options.set("modules/ve/client/terminal/stdio/enabled", false);
+    options.set("modules/ve/client/terminal/tcp/enabled", false);
+    const char* paths[] = {"node/ws", "node/tcp", "node/udp", "bin/tcp", "terminal/repl", "terminal/ai", "static"};
+    for (const char* path : paths) options.set("modules/ve/server/" + std::string(path) + "/enable", false);
+    const auto port = unusedPort();
+    options.set("modules/ve/server/node/http/enable", true);
+    options.set("modules/ve/server/node/http/config/port", port);
+    options.set("modules/ve/server/node/http/config/max_retry", 0);
+    entry::setup(&options);
+    entry::init();
+    main_loop = loop::main();
+    const std::string backend = main_loop->name();
+    const auto main_thread = std::this_thread::get_id();
+    bool on_main = false;
+    bool completed = false;
+    command::reg("_test.entry.slow", [&](Node*, Node*, Node*) {
+        execution.enter();
+        return Result::ok();
+    });
+    auto bound = command::reg("_test.entry.main", [&](Node*, Node*, Node*) {
+        on_main = loop::current() == main_loop && std::this_thread::get_id() == main_thread
+            && main_loop->isRunning() && shutdown_started;
+        return Result::ok();
+    });
+    bound->set("loop", Var::ptr(main_loop));
+    command::reg("_test.entry.finish", [&](Node*, Node*, Node*) {
+        completed = true;
+        return Result::ok();
+    });
+    auto requester = std::async(std::launch::async, [&] {
+        try {
+            Peer<asio2::http_client> peer(port);
+            peer.send(R"({"async":true,"batch":[{"cmd":"_test.entry.slow"},{"cmd":"_test.entry.main"},{"cmd":"_test.entry.finish"}]})");
+            peer.expect("accepted");
+            execution.waitStarted(1);
+            main_loop->quit(7);
+        } catch (...) {
+            execution.release();
+            entry::requestQuit(1);
+            throw;
+        }
+    });
+    const int code = entry::run();
+    entry::deinit();
+    requester.get();
+    bound->remove("loop");
+    require(code == 7, "nested quit changed the requested exit code");
+    require(on_main, "main-loop command lost affinity or did not run during shutdown");
+    require(completed, "async batch did not finish before module destruction");
+    require(late_deinit_dispatched, "main-loop provider released scheduling during deinit");
+    require(running_in_destructor, "main loop stopped before module destruction");
+    require(loop::main() == original_main, "main-loop provider did not restore the original main");
+    std::cout << "PASS " << backend << " entry shutdown with connection/main/connection async batch" << std::endl;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--entry-shutdown") {
+        try {
+            checkEntryShutdown();
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << "FAIL " << e.what() << std::endl;
+            return 1;
+        }
+    }
     if (argc == 2 && std::string(argv[1]) == "--async-shutdown") {
         try {
             checkAsyncBatchShutdown(true);

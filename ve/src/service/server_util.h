@@ -139,7 +139,14 @@ public:
         auto done = std::make_shared<std::promise<void>>();
         auto future = done->get_future();
         _loop.post([done] { done->set_value(); });
-        future.wait();
+        Loop* driver = loop::current();
+        if (driver && driver == loop::main()) {
+            while (future.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) {
+                driver->processEvents();
+            }
+        } else {
+            future.wait();
+        }
     }
 
 private:

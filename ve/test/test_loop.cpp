@@ -223,6 +223,33 @@ VE_TEST(loop_global_pool_pointer) {
     VE_ASSERT(p->isRunning());
 }
 
+VE_TEST(loop_main_quit_preserves_dispatch_until_stop) {
+    Loop* main = loop::main();
+    main->post([&] { main->quit(19); });
+    VE_ASSERT_EQ(main->exec(), 19);
+    VE_ASSERT(main->isRunning());
+    bool dispatched = false;
+    main->post([&] { dispatched = true; });
+    main->processEvents();
+    VE_ASSERT(dispatched);
+    VE_ASSERT(main->stop());
+    VE_ASSERT(!main->isRunning());
+}
+
+VE_TEST(loop_asio_installed_as_main_keeps_its_quit_behavior) {
+    AsioLoop main("custom.main");
+    Loop* previous = loop::main();
+    loop::setMain(&main);
+    main.post([&] { main.quit(21); });
+    VE_ASSERT_EQ(main.exec(), 21);
+    VE_ASSERT(!main.isRunning());
+    bool dispatched = false;
+    main.post([&] { dispatched = true; });
+    main.processEvents();
+    VE_ASSERT(!dispatched);
+    loop::setMain(previous);
+}
+
 VE_TEST(loop_set_main_borrowed_pointer) {
     TestLoop custom("custom.main");
     custom.start();

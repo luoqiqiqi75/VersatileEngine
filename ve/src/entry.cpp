@@ -38,13 +38,13 @@ struct ModuleSlot {
 };
 
 struct EntryState {
-    entry::State       state = entry::NONE;
     Vector<ModuleSlot> modules;
 
     int                argc = 0;
     char**             argv = nullptr;
     std::string        app_name;
     bool               verbose = false;
+    bool               deinitializing = false;
 };
 
 EntryState& G()
@@ -336,7 +336,6 @@ bool setup(Node* options_n)
     applyLogSettings(entry_n);
 
     g.verbose = entry_n->get("verbose").toBool(false);
-    g.state = SETUP;
     if (g.verbose) veLogI << "[ve/entry] setup complete";
     return true;
 }
@@ -362,6 +361,7 @@ bool setup(const std::string& config_file)
 void init()
 {
     auto& g = G();
+    g.deinitializing = false;
     const bool verbose = g.verbose;
     Node* entry_n = n("ve/entry");
 
@@ -572,7 +572,6 @@ void init()
         if (slot.instance && verbose) veLogI << "[ve/entry] Module created: " << slot.key;
     }
 
-    g.state = INIT;
     for (auto& slot : g.modules) {
         if (!slot.instance) continue;
         if (verbose) veLogI << "[ve/entry] INIT: " << slot.key;
@@ -595,8 +594,6 @@ void init()
         slot.instance->exeState<Module::READY>();
     }
 
-    g.state = READY;
-
     // Configuration has been applied; remove the staging area.
     root->erase("ve/entry");
     if (verbose) veLogI << "[ve/entry] " << g.modules.size() << " modules ready";
@@ -606,28 +603,33 @@ void init()
 
 int run()
 {
-    G().state = RUNNING;
     Loop* main_loop = loop::main();
     if (!main_loop) return 0;
 
-    struct SignalWatcherScope {
-        ~SignalWatcherScope() { platform::stopProcessSignalWatcher(); }
-    } watcher;
-
-    // Process termination belongs to entry, not to a particular loop backend.
-    // Marshal quit through the active main loop so Qt and other thread-affine
-    // implementations receive it on their own thread.
-    platform::startProcessSignalWatcher([] {
-        if (Loop* main_loop = loop::main()) {
-            main_loop->post([main_loop] { main_loop->quit(0); });
+    Loop* previous_loop = loop::current();
+    loop::setCurrent(main_loop);
+    struct RunScope {
+        Loop* previous;
+        ~RunScope()
+        {
+            platform::stopProcessSignalWatcher();
+            loop::setCurrent(previous);
         }
+    } scope{previous_loop};
+
+    platform::startProcessSignalWatcher([main_loop] {
+        main_loop->post([main_loop] { main_loop->quit(0); });
     });
     return main_loop->exec();
 }
 
 void requestQuit(int exit_code)
 {
-    if (Loop* main_loop = loop::main()) main_loop->quit(exit_code);
+    if (Loop* main_loop = loop::main()) {
+        main_loop->post([main_loop, exit_code] {
+            main_loop->quit(exit_code);
+        });
+    }
 }
 
 // --- deinit ----------------------------------------------------------------
@@ -635,6 +637,11 @@ void requestQuit(int exit_code)
 void deinit()
 {
     auto& g = G();
+    if (g.deinitializing) return;
+    g.deinitializing = true;
+    Loop* previous_loop = loop::current();
+    Loop* main_loop = loop::main();
+    loop::setCurrent(main_loop);
     bool verbose = g.verbose;
 
     for (int i = (int)g.modules.size() - 1; i >= 0; --i) {
@@ -653,7 +660,8 @@ void deinit()
     }
     g.modules.clear();
 
-    g.state = SHUTDOWN;
+    loop::main()->stop();
+    if (previous_loop != main_loop) loop::setCurrent(previous_loop);
 
     if (verbose) {
         veLogI << "[ve/entry] deinit complete";
@@ -672,8 +680,6 @@ int exec(int argc, char** argv)
 }
 
 // --- queries ---------------------------------------------------------------
-
-State state() { return G().state; }
 
 std::pair<int, char**> args() { return { G().argc, G().argv }; }
 const std::string& appName() { return G().app_name; }
@@ -788,20 +794,3 @@ const Vector<Info>& loaded()
 } // namespace plugin
 
 } // namespace ve
-
-// ============================================================================
-// operator<< for entry::State
-// ============================================================================
-
-std::ostream& operator<<(std::ostream& os, ve::entry::State s)
-{
-    switch (s) {
-        case ve::entry::NONE:     os << "NONE";     break;
-        case ve::entry::SETUP:    os << "SETUP";    break;
-        case ve::entry::INIT:     os << "INIT";     break;
-        case ve::entry::READY:    os << "READY";    break;
-        case ve::entry::RUNNING:  os << "RUNNING";  break;
-        case ve::entry::SHUTDOWN: os << "SHUTDOWN";  break;
-    }
-    return os;
-}

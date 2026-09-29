@@ -196,6 +196,76 @@ private:
     }
 };
 
+class AsioMainLoop : public Loop
+{
+    asio::io_context io_{1};
+    AsioWorkGuard guard_{asio::make_work_guard(io_)};
+    AsioTimers timers_{io_};
+    bool exec_exit_ = false;
+
+public:
+    AsioMainLoop() : Loop("main") {}
+    ~AsioMainLoop() override { stop(); }
+
+    void post(Task task) override
+    {
+        if (task) asio::post(io_, std::move(task));
+    }
+
+    int exec() override
+    {
+        if (_running.exchange(true, std::memory_order_acq_rel)) return -1;
+        io_.restart();
+        exec_exit_ = false;
+        Loop* previous = loop::current();
+        loop::setCurrent(this);
+        int code = 0;
+        try {
+            while (!exec_exit_ && isRunning()) io_.run_one();
+        } catch (const std::exception& e) {
+            veLogE << "AsioMainLoop handler threw:" << e.what();
+            code = -1;
+        } catch (...) {
+            veLogE << "AsioMainLoop handler threw";
+            code = -1;
+        }
+        loop::setCurrent(previous);
+        return code ? code : _exit_code.load(std::memory_order_acquire);
+    }
+
+    void quit(int exit_code = 0) override
+    {
+        post([this, exit_code] {
+            _exit_code.store(exit_code, std::memory_order_release);
+            exec_exit_ = true;
+        });
+    }
+
+    bool stop() override
+    {
+        if (!_running.exchange(false, std::memory_order_acq_rel)) return false;
+        timers_.clear();
+        io_.stop();
+        return true;
+    }
+
+    size_t processEvents() override
+    {
+        Loop* previous = loop::current();
+        loop::setCurrent(this);
+        const size_t count = io_.poll();
+        loop::setCurrent(previous);
+        return count;
+    }
+
+    TimerHandle addTimer(uint64_t ms, bool repeat, Task tick) override
+    {
+        return timers_.start(ms, repeat, std::move(tick));
+    }
+
+    bool removeTimer(TimerHandle handle) override { return timers_.remove(handle); }
+};
+
 } // namespace
 
 struct AsioLoop::Private
@@ -392,16 +462,22 @@ namespace {
 
 struct CoreLoops
 {
-    AsioLoop* default_main = nullptr;
+    AsioMainLoop* default_main = nullptr;
     AsioPoolLoop* default_pool = nullptr;
     Loop* main = nullptr;
     Loop* pool = nullptr;
+
+    ~CoreLoops()
+    {
+        delete default_pool;
+        delete default_main;
+    }
 
     Loop* mainLoop()
     {
         if (main) return main;
         if (!default_main) {
-            default_main = new AsioLoop("main");
+            default_main = new AsioMainLoop;
         }
         return default_main;
     }

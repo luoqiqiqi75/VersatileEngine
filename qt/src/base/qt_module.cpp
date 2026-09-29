@@ -491,15 +491,30 @@ int QtMainLoop::exec()
 {
     if (!app_) return 0;
     if (_running.exchange(true)) return -1;
-    int code = app_->exec();
-    _running.store(false);
+    const bool main_exec = this == loop::main();
+    const int code = app_->exec();
+    if (!main_exec) _running.store(false);
     return code;
 }
 
 void QtMainLoop::quit(int exit_code)
 {
-    Loop::quit(exit_code);
-    QCoreApplication::exit(exit_code);
+    if (this == loop::main()) {
+        post([this, exit_code] {
+            _exit_code.store(exit_code);
+            QCoreApplication::exit(exit_code);
+        });
+    } else {
+        Loop::quit(exit_code);
+        QCoreApplication::exit(exit_code);
+    }
+}
+
+bool QtMainLoop::stop()
+{
+    const bool active = _running.exchange(false);
+    if (active) QCoreApplication::exit(_exit_code.load());
+    return active;
 }
 
 Loop::TimerHandle QtMainLoop::addTimer(uint64_t ms, bool repeat, Task tick)
@@ -516,11 +531,21 @@ class QtModule : public Module
 {
     QCoreApplication* app_ = nullptr;
     QtMainLoop* main_loop_ = nullptr;
+    Loop* previous_main_loop_ = nullptr;
     bool owns_app_ = false;
     int argc_ = 0;
 
 public:
     QtModule() = default;
+
+    ~QtModule() override
+    {
+        if (!main_loop_) return;
+        loop::setMain(previous_main_loop_);
+        if (loop::current() == main_loop_) loop::setCurrent(previous_main_loop_);
+        delete main_loop_;
+        if (owns_app_) delete app_;
+    }
 
 protected:
     void init() override
@@ -552,6 +577,7 @@ protected:
         }
 
         main_loop_ = new QtMainLoop(app_);
+        previous_main_loop_ = loop::main();
         loop::setMain(main_loop_);
     }
 
@@ -628,18 +654,6 @@ protected:
 #endif
     }
 
-    void deinit() override
-    {
-        if (main_loop_) {
-            loop::setMain(nullptr);
-            delete main_loop_;
-            main_loop_ = nullptr;
-        }
-        if (owns_app_) {
-            delete app_;
-        }
-        app_ = nullptr;
-    }
 };
 
 } // namespace ve::qt

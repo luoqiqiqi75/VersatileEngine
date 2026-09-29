@@ -37,6 +37,7 @@ class ClientModule : public ve::Module
     std::unique_ptr<service::TerminalStdioClient> stdio_;
     std::unique_ptr<service::TerminalTcpClient> tcp_;
     std::unique_ptr<TerminalClientLoop> client_loop_;
+    Loop* previous_main_loop_ = nullptr;
 
 public:
     ClientModule() = default;
@@ -76,6 +77,7 @@ void ClientModule::prepare()
                 }
             }
         );
+        previous_main_loop_ = loop::main();
         loop::setMain(client_loop_.get());
         node()->at("terminal/stdio/runtime/stdio")->set(Var(true));
         node()->at("terminal/tcp/runtime/active")->set(Var(false));
@@ -105,6 +107,7 @@ void ClientModule::prepare()
                 }
             }
         );
+        previous_main_loop_ = loop::main();
         loop::setMain(client_loop_.get());
 
         node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
@@ -118,10 +121,6 @@ void ClientModule::prepare()
 
 void ClientModule::deinit()
 {
-    if (client_loop_) {
-        if (loop::main() == client_loop_.get()) loop::setMain(nullptr);
-        client_loop_.reset();
-    }
     if (stdio_) {
         stdio_->requestStop();
         stdio_.reset();
@@ -130,6 +129,11 @@ void ClientModule::deinit()
         node()->at("terminal/tcp/runtime/last_error")->set(Var(tcp_->lastError()));
         tcp_->requestStop();
         tcp_.reset();
+    }
+    if (client_loop_) {
+        loop::setMain(previous_main_loop_);
+        if (loop::current() == client_loop_.get()) loop::setCurrent(previous_main_loop_);
+        client_loop_.reset();
     }
     node()->at("terminal/stdio/runtime/stdio")->set(Var(false));
     node()->at("terminal/tcp/runtime/active")->set(Var(false));

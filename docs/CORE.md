@@ -252,12 +252,19 @@ ve::entry::deinit();
 For an `AsioLoop`, `start()` and `exec()` are two mutually exclusive ways to
 drive the same loop. `start()` creates a background worker and returns;
 `exec()` dispatches on and blocks its calling thread. The default headless
-`loop::main()` is only constructed during setup and is driven by
+`loop::main()` uses the internal `AsioMainLoop` implementation and is driven by
 `entry::run()` through `exec()`, so idle time blocks in Asio's native event
 wait and main-loop handlers retain main-thread affinity.
-`quit()` requests the active event loop to exit in either form. A worker
-created by `start()` is joined and reaped by `stop()` before it is started or
-used through `exec()` again.
+For `AsioMainLoop` and `QtMainLoop`, `quit()` returns from native `exec()` while preserving
+dispatch for shutdown. The caller then invokes `deinit()` on the same thread,
+outside the native event loop. Services wait for accepted async commands while
+processing remaining main-loop work. Modules deinitialize, then destruct, in
+reverse order; the restored core main loop stops last. Each loop provider
+restores the previous main pointer and deletes its own resources. Built-in core
+loops are deleted by `CoreLoops` at static destruction.
+
+For independent loops, `quit()` ends dispatch. A worker created by `start()` is
+joined and reaped by `stop()` before it is started or used through `exec()` again.
 
 #### Startup config file
 
