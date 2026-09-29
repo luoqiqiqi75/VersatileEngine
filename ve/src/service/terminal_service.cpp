@@ -228,6 +228,8 @@ struct ConnectionState {
     // UTF-8 multi-byte accumulator for TCP input
     std::string utf8_buf;
     size_t utf8_expected = 0;  // total bytes expected for current character
+
+    void waitAsync() { session->waitAsync(); }
 };
 
 // ============================================================================

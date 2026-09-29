@@ -105,7 +105,7 @@ private:
 };
 
 // Joins per-connection loops away from asio2's shared transport workers.
-// The state type is expected to own its loop through a `loop` member.
+// The state owns its loop and waits for its async requests through waitAsync().
 class ConnectionLoopCleanup
 {
 public:
@@ -123,8 +123,15 @@ public:
     template<typename State>
     void retire(std::shared_ptr<State> state)
     {
-        state->loop->quit();
-        _loop.post([state = std::move(state)] { state->loop->stop(); });
+        // Finish request registration on the connection thread before waiting.
+        auto done = std::make_shared<std::promise<void>>();
+        auto ready = done->get_future().share();
+        state->loop->post([done] { done->set_value(); });
+        _loop.post([state = std::move(state), ready] {
+            ready.wait();
+            state->waitAsync();
+            state->loop->stop();
+        });
     }
 
     void drain()
@@ -143,6 +150,8 @@ struct ExecutionConnection
 {
     std::unique_ptr<AsioLoop> loop;
     std::atomic<bool> connected{true};
+
+    void waitAsync() {}
 };
 
 // Transport callbacks only enqueue work. Each peer owns its execution thread,

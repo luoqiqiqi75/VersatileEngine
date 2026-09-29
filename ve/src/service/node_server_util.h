@@ -14,6 +14,8 @@ struct NodeConnection : ExecutionConnection
     std::shared_ptr<Session> session;
     std::string recvBuf;
     Bytes binBuf;
+
+    void waitAsync() { session->waitAsync(); }
 };
 
 template<typename Server>

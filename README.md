@@ -286,6 +286,8 @@ Commands without a registered loop run serially there; commands with a registere
 loop execute on that loop. For async submission, use
 `async <command> [args]` (or `a <command> [args]`) in either TCP or stdio REPL, or top-level `"async":true` in a
 native protocol request.
+Connection cleanup waits for existing async requests to finish before stopping
+the connection loop.
 
 ## Project Structure
 

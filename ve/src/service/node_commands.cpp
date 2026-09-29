@@ -305,7 +305,8 @@ Result executeNodeRequest(Pipeline pipe, const std::shared_ptr<Session>& session
     // HTTP has a single acknowledgement response. Its response callback must
     // not be retained by the background command after the handler returns.
     NodeReply result_reply = push_async_result ? reply : NodeReply{};
-    pipe.onFinished(nullptr, [session, result_reply](Pipeline& pipe) {
+    auto token = session->beginAsync();
+    pipe.onFinished(nullptr, [session, token, result_reply](Pipeline& pipe) {
         if (finalizeReply(pipe) && result_reply) result_reply(*pipe.contextNode());
     });
     Node accepted;

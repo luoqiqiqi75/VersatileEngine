@@ -3,8 +3,6 @@
 
 #include "ve/core/object.h"
 
-#include <functional>
-
 namespace ve {
 
 class Node;
@@ -31,6 +29,36 @@ struct Session : Object
 
     explicit Session(Node* r_n, Node* c_n, SendFn s = {})
         : Object("_session"), root(r_n), current(c_n), send(std::move(s)) {}
+
+    // Keep the token through the execution chain and its completion callbacks.
+    std::shared_ptr<void> beginAsync()
+    {
+        auto state = _async;
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            ++state->pending;
+        }
+        return std::shared_ptr<void>(state.get(), [state](void*) {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            --state->pending;
+            state->done.notify_all();
+        });
+    }
+
+    void waitAsync()
+    {
+        auto state = _async;
+        std::unique_lock<std::mutex> lock(state->mutex);
+        state->done.wait(lock, [state] { return state->pending == 0; });
+    }
+
+private:
+    struct AsyncState {
+        std::mutex mutex;
+        std::condition_variable done;
+        std::size_t pending = 0;
+    };
+    std::shared_ptr<AsyncState> _async = std::make_shared<AsyncState>();
 };
 
 VE_API void registerNodeCommands(Factory& f);

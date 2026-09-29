@@ -127,8 +127,11 @@ Built-in servers share an asio2 pool for transport I/O. Each connection owns an
 `AsioLoop` execution thread; UDP sessions own one per remote endpoint. Transport
 callbacks copy requests and enqueue work. Foreground commands stay serial within
 a connection, including waits for commands dispatched to a registered loop.
-Responses return through the transport executor. Disconnect retires the execution
-loop on a cleanup thread so joining a long command cannot block transport I/O.
+Responses return through the transport executor. Disconnect closes request intake
+and retires the connection on a cleanup thread. Cleanup waits for the current
+request to finish registering async work, then waits for all async execution
+chains and completion callbacks before stopping the connection loop. Transport
+workers remain available during this wait.
 
 Command loop registration determines execution affinity. Unbound commands execute
 on the connection loop. Explicit async requests acknowledge submission and queue

@@ -52,6 +52,11 @@ Async requests queue each command on its registered loop or the connection loop.
 Scheduling options are separate from command input. Commands sharing one loop
 execute serially on that loop.
 
+Disconnect and server shutdown stop accepting requests, then wait for existing
+async execution chains and completion callbacks before stopping the connection
+loop. This includes every step of an async batch. The wait runs on the cleanup
+thread while the connection loop continues processing existing work.
+
 WS, TCP, UDP and Bin TCP first return `{"id":7,"code":0,"accepted":true}`,
 then send the completed reply with the same `id`. HTTP returns only the initial
 acknowledgement with status 202. Transport async does not create a task store.
@@ -75,6 +80,9 @@ Run the connection isolation and async regression checks with:
 cmake --build build --target ve_service_test
 ./build/bin/ve_service_test
 ```
+
+Run only the async connection shutdown regressions with
+`./build/bin/ve_service_test --async-shutdown`.
 
 ---
 

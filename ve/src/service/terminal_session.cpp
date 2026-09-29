@@ -1108,13 +1108,6 @@ struct TerminalSession::Private
     TerminalSession::AsyncOutputFn asyncOutput;
     TerminalSession::Options opts;
 
-    struct AsyncState {
-        std::mutex mutex;
-        std::condition_variable done;
-        std::size_t pending = 0;
-    };
-    std::shared_ptr<AsyncState> async = std::make_shared<AsyncState>();
-
     ~Private() { for (auto* o : orphan_pool) delete o; }
 };
 
@@ -1126,13 +1119,6 @@ TerminalSession::TerminalSession(Node* root, const Options& opts)
 }
 
 TerminalSession::~TerminalSession() { waitAsync(); }
-
-void TerminalSession::waitAsync()
-{
-    auto state = _p->async;
-    std::unique_lock<std::mutex> lock(state->mutex);
-    state->done.wait(lock, [state] { return state->pending == 0; });
-}
 
 void TerminalSession::setAsyncOutput(AsyncOutputFn fn)
 {
@@ -1215,18 +1201,7 @@ std::string TerminalSession::execute(const std::string& line)
             if (!command->loop()) command->setLoop(loop::current());
 
             auto asyncOut = _p->asyncOutput;
-            // Command contexts borrow this session. Destruction waits for all
-            // registered-loop callbacks before releasing REPL state.
-            auto state = _p->async;
-            {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                ++state->pending;
-            }
-            auto token = std::shared_ptr<void>(state.get(), [state](void*) {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                --state->pending;
-                state->done.notify_all();
-            });
+            auto token = beginAsync();
             pipe.onFinished(nullptr, [token, asyncOut, resolvedName, isCmdCmd, color](Pipeline& pipe) {
                 std::string text = isCmdCmd
                     ? renderCmdResult(pipe.outputNode(), pipe.result(), color)

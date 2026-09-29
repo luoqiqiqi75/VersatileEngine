@@ -6,6 +6,9 @@
 #include <ve/service/bin_service.h>
 #include <asio2/asio2.hpp>
 
+#include "../../src/service/node_server_util.h"
+#include "../../src/service/terminal_session.h"
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -186,6 +189,108 @@ const std::string slow = R"({"cmd":"_test.service.slow","id":1})";
 const std::string get = R"({"op":"get","params":{"path":"probe"},"id":2})";
 const std::string background = R"({"cmd":"_test.service.bound","async":true,"id":3})";
 
+void checkAsyncBatchShutdown(bool push_result)
+{
+    Gate registration;
+    Gate execution;
+    registration.reset();
+    execution.reset();
+    AsioLoop worker("test.shutdown.worker");
+    worker.start();
+    Node root;
+    service::ConnectionLoops<service::NodeConnection> connections("test.shutdown.connection");
+    auto state = std::make_shared<service::NodeConnection>();
+    state->session = std::make_shared<service::Session>(&root, &root);
+    require(connections.add(1, state), "connection loop failed to start");
+    std::weak_ptr<service::NodeConnection> weak_state = state;
+    std::atomic<int> completed{0};
+    std::atomic<int> replies{0};
+    std::atomic<bool> wrong_loop{false};
+    const std::string prefix = push_result ? "_test.shutdown.reply" : "_test.shutdown.http";
+    auto bound = command::reg(prefix + ".bound", [&](Node*, Node*, Node*) {
+        execution.enter();
+        return Result::ok();
+    });
+    bound->set("loop", Var::ptr(static_cast<Loop*>(&worker)));
+    command::reg(prefix + ".default", [&](Node* ctx, Node*, Node*) {
+        if (loop::current() != state->loop.get()
+            || ctx->get("_session").as<service::Session*>() != state->session.get()) wrong_loop = true;
+        ++completed;
+        return Result::ok();
+    });
+    // Keep the public handle alive after completion; it must not delay shutdown.
+    Pipeline pipe;
+    pipe.contextNode()->set("async", true);
+    auto batch = pipe.contextNode()->at("batch");
+    batch->append()->set("cmd", prefix + ".bound");
+    batch->append()->set("cmd", prefix + ".default");
+    ReleaseGate release_registration{registration};
+    ReleaseGate release_execution{execution};
+    state->loop->post([&] {
+        // Disconnect while the current request has not registered its async work.
+        registration.enter();
+        service::executeNodeRequest(pipe, state->session, [&](const Node&) { ++replies; }, push_result);
+    });
+    registration.waitStarted(1);
+    connections.remove(1);
+    registration.release();
+    execution.waitStarted(1);
+    auto responsive = std::make_shared<std::promise<void>>();
+    auto response = responsive->get_future();
+    state->loop->post([responsive] { responsive->set_value(); });
+    require(response.wait_for(3s) == std::future_status::ready,
+            "connection loop stopped before the async batch finished");
+    execution.release();
+    connections.stop(true);
+    worker.stop();
+    bound->remove("loop");
+    state.reset();
+    require(completed.load() == 1, "remaining batch command did not finish");
+    require(replies.load() == (push_result ? 2 : 1), "async reply count changed");
+    require(!wrong_loop.load(), "remaining command lost its connection loop or session");
+    require(weak_state.expired(), "connection remained alive after async completion");
+    std::cout << "PASS async batch shutdown " << (push_result ? "with reply" : "HTTP acknowledgement") << std::endl;
+}
+
+void checkReplAsyncShutdown()
+{
+    struct ReplConnection : service::ExecutionConnection {
+        std::unique_ptr<service::TerminalSession> session;
+        void waitAsync() { session->waitAsync(); }
+    };
+    Gate registration;
+    registration.reset();
+    Node root;
+    service::ConnectionLoops<ReplConnection> connections("test.shutdown.repl");
+    auto state = std::make_shared<ReplConnection>();
+    state->session = std::make_unique<service::TerminalSession>(&root);
+    require(connections.add(1, state), "REPL connection loop failed to start");
+    std::weak_ptr<ReplConnection> weak_state = state;
+    std::atomic<int> completed{0};
+    std::atomic<int> outputs{0};
+    command::reg("_test.shutdown.repl", [&](Node*, Node*, Node*) {
+        ++completed;
+        return Result::ok();
+    });
+    state->session->setAsyncOutput([&](const std::string&) { ++outputs; });
+    ReleaseGate release_registration{registration};
+    state->loop->post([&] {
+        state->session->execute("async _test.shutdown.repl");
+        state->session->execute("a _test.shutdown.repl");
+        // Both async commands are queued behind this request handler.
+        registration.enter();
+    });
+    registration.waitStarted(1);
+    connections.remove(1);
+    registration.release();
+    connections.stop(true);
+    state.reset();
+    require(completed.load() == 2, "queued REPL async commands were discarded");
+    require(outputs.load() == 2, "REPL completion callbacks did not finish");
+    require(weak_state.expired(), "REPL connection remained alive after completion");
+    std::cout << "PASS queued REPL async shutdown" << std::endl;
+}
+
 template<typename Client, Wire Format = Wire::Json>
 void checkTransport(const char* name, uint16_t port, Gate& gate)
 {
@@ -306,8 +411,20 @@ uint16_t unusedPort()
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--async-shutdown") {
+        try {
+            checkAsyncBatchShutdown(true);
+            checkAsyncBatchShutdown(false);
+            checkReplAsyncShutdown();
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << "FAIL " << e.what() << std::endl;
+            return 1;
+        }
+    }
+
     Gate gate;
     AsioLoop command_loop("test.service.command");
     command_loop.start();
@@ -363,6 +480,9 @@ int main()
 
     int result = 0;
     try {
+        checkAsyncBatchShutdown(true);
+        checkAsyncBatchShutdown(false);
+        checkReplAsyncShutdown();
         checkTransport<asio2::http_client>("HTTP", ports[0], gate);
         checkTransport<asio2::ws_client>("WS", ports[1], gate);
         checkTransport<asio2::tcp_client>("TCP", ports[2], gate);
