@@ -123,6 +123,17 @@ Rules:
 
 The service layer exposes the node tree to operators, tools, and remote clients.
 
+Built-in servers share an asio2 pool for transport I/O. Each connection owns an
+`AsioLoop` execution thread; UDP sessions own one per remote endpoint. Transport
+callbacks copy requests and enqueue work. Foreground commands stay serial within
+a connection, including waits for commands dispatched to a registered loop.
+Responses return through the transport executor. Disconnect retires the execution
+loop on a cleanup thread so joining a long command cannot block transport I/O.
+
+Command loop registration determines execution affinity. Unbound commands execute
+on the connection loop. Explicit async requests acknowledge submission and queue
+commands on their execution loops. Commands on the same loop execute serially.
+
 It should provide:
 
 - transport handling

@@ -1056,6 +1056,7 @@ static Result help(Node* ctx, Node* in, Node* out)
     }
 
     text += c.dim + "Type 'help <command>' for details. Use --json for machine-readable output." + c.reset + "\n";
+    text += c.dim + "Use async <command> or a <command> to submit asynchronously." + c.reset + "\n";
     setTextOut(out, text);
     return Result::ok();
 }
@@ -1107,6 +1108,13 @@ struct TerminalSession::Private
     TerminalSession::AsyncOutputFn asyncOutput;
     TerminalSession::Options opts;
 
+    struct AsyncState {
+        std::mutex mutex;
+        std::condition_variable done;
+        std::size_t pending = 0;
+    };
+    std::shared_ptr<AsyncState> async = std::make_shared<AsyncState>();
+
     ~Private() { for (auto* o : orphan_pool) delete o; }
 };
 
@@ -1117,7 +1125,14 @@ TerminalSession::TerminalSession(Node* root, const Options& opts)
     _p->opts = opts;
 }
 
-TerminalSession::~TerminalSession() = default;
+TerminalSession::~TerminalSession() { waitAsync(); }
+
+void TerminalSession::waitAsync()
+{
+    auto state = _p->async;
+    std::unique_lock<std::mutex> lock(state->mutex);
+    state->done.wait(lock, [state] { return state->pending == 0; });
+}
 
 void TerminalSession::setAsyncOutput(AsyncOutputFn fn)
 {
@@ -1141,7 +1156,7 @@ std::string TerminalSession::execute(const std::string& line)
     if (cmd == "quit" || cmd == "exit") return "\x04";
 
     bool asyncMode = false;
-    if (cmd == "async" && args.size() > 1) {
+    if ((cmd == "async" || cmd == "a") && args.size() > 1) {
         asyncMode = true;
         args.erase(args.begin());
         cmd = args[0];
@@ -1197,9 +1212,22 @@ std::string TerminalSession::execute(const std::string& line)
             }
             Command* command = pipe.add(Command(resolvedNode));
             command->setContextNodes(pipe.contextNode(), pipe.inputNode(), pipe.outputNode());
+            if (!command->loop()) command->setLoop(loop::current());
 
             auto asyncOut = _p->asyncOutput;
-            pipe.onFinished(nullptr, [asyncOut, resolvedName, isCmdCmd, color](Pipeline& pipe) {
+            // Command contexts borrow this session. Destruction waits for all
+            // registered-loop callbacks before releasing REPL state.
+            auto state = _p->async;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                ++state->pending;
+            }
+            auto token = std::shared_ptr<void>(state.get(), [state](void*) {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                --state->pending;
+                state->done.notify_all();
+            });
+            pipe.onFinished(nullptr, [token, asyncOut, resolvedName, isCmdCmd, color](Pipeline& pipe) {
                 std::string text = isCmdCmd
                     ? renderCmdResult(pipe.outputNode(), pipe.result(), color)
                     : renderCommandOutput(pipe.outputNode(), pipe.result());

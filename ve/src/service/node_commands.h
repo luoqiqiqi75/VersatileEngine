@@ -10,6 +10,7 @@ namespace ve {
 class Node;
 class Factory;
 class Pipeline;
+struct Result;
 
 namespace service {
 
@@ -40,6 +41,12 @@ VE_API CmdRef resolveCmd(Node* ctx);
 // Mutate pipe.contextNode() into reply format (erase cmd/params, set code/message).
 // Returns true if reply should be sent; false = accepted.
 VE_API bool finalizeReply(Pipeline& pipe);
+
+using NodeReply = std::function<void(const Node&)>;
+// Executes an already parsed envelope. Foreground requests stay serial on the
+// caller's connection loop; async requests acknowledge and dispatch to VE loops.
+VE_API Result executeNodeRequest(Pipeline pipe, const std::shared_ptr<Session>& session,
+                                NodeReply reply, bool push_async_result = true);
 
 } // namespace service
 } // namespace ve

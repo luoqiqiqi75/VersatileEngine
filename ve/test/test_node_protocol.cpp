@@ -49,6 +49,116 @@ static bool runEnvelope(service::Session* session, Pipeline& pipe)
     return service::finalizeReply(pipe);
 }
 
+VE_TEST(node_async_batch_dispatches_registered_and_default_loops)
+{
+    AsioLoop connection("test.node.async.connection");
+    AsioLoop worker("test.node.async");
+    connection.start();
+    worker.start();
+    std::atomic<int> calls{0};
+    std::atomic<bool> wrong_loop{false};
+    auto bound = command::reg("_test.node.bound_async", [&](Node*, Node*, Node*) {
+        if (loop::current() != &worker) wrong_loop = true;
+        ++calls;
+        return Result::ok();
+    });
+    bound->set("loop", Var::ptr(static_cast<Loop*>(&worker)));
+    Node root;
+    root.set("value", 123);
+    auto session = std::make_shared<service::Session>(&root, &root);
+    std::atomic<int> acknowledgements{0};
+    std::promise<std::string> completed;
+    auto finished = completed.get_future();
+    connection.post([&] {
+        Pipeline pipe;
+        schema::JsonS::toNode(pipe.contextNode(), R"({"async":true,"batch":[
+            {"cmd":"_test.node.bound_async"},{"op":"get","params":{"path":"value"}}
+        ]})");
+        service::executeNodeRequest(pipe, session, [&](const Node& reply) {
+            if (reply.get("accepted").toBool(false)) {
+                ++acknowledgements;
+            } else {
+                if (loop::current() != &connection) wrong_loop = true;
+                completed.set_value(schema::fromNode<schema::JsonS>(&reply, schema::JsonS::compact()));
+            }
+        });
+    });
+    Node reply;
+    schema::JsonS::toNode(&reply, finished.get());
+    connection.stop();
+    worker.stop();
+    bound->remove("loop");
+    VE_ASSERT_EQ(reply.get("code").toInt(-1), 0);
+    VE_ASSERT_EQ(reply.find("data")->child(1)->get("value").toInt(), 123);
+    VE_ASSERT_EQ(acknowledgements.load(), 1);
+    VE_ASSERT_EQ(calls.load(), 1);
+    VE_ASSERT(!wrong_loop.load());
+}
+
+VE_TEST(node_async_option_is_separate_from_command_params)
+{
+    bool input_async = false;
+    command::reg("_test.node.async_param", [&](Node*, Node* in, Node* out) {
+        input_async = in->get("async").toBool(false);
+        out->set("value", in->get("value"));
+        return Result::ok();
+    });
+    Node root;
+    auto session = std::make_shared<service::Session>(&root, &root);
+    Pipeline pipe;
+    schema::JsonS::toNode(pipe.contextNode(),
+        R"({"cmd":"_test.node.async_param","async":false,"params":{"async":true,"value":123}})");
+    int value = 0;
+    service::executeNodeRequest(pipe, session, [&](const Node& reply) {
+        value = reply.get("data/value").toInt();
+    });
+    VE_ASSERT(input_async);
+    VE_ASSERT_EQ(value, 123);
+}
+
+VE_TEST(node_foreground_batch_preserves_each_command_loop)
+{
+    AsioLoop connection("test.node.connection");
+    AsioLoop worker("test.node.worker");
+    connection.start();
+    worker.start();
+    std::atomic<bool> wrong_loop{false};
+    auto bound = command::reg("_test.node.batch_bound", [&](Node*, Node*, Node* out) {
+        if (loop::current() != &worker) wrong_loop = true;
+        out->set("value", 1);
+        return Result::ok();
+    });
+    bound->set("loop", Var::ptr(static_cast<Loop*>(&worker)));
+    command::reg("_test.node.batch_unbound", [&](Node*, Node*, Node* out) {
+        if (loop::current() != &connection) wrong_loop = true;
+        out->set("value", 2);
+        return Result::ok();
+    });
+    Node root;
+    auto session = std::make_shared<service::Session>(&root, &root);
+    std::promise<std::string> completed;
+    auto finished = completed.get_future();
+    connection.post([&] {
+        Pipeline pipe;
+        schema::JsonS::toNode(pipe.contextNode(), R"({"batch":[
+            {"cmd":"_test.node.batch_bound"},{"cmd":"_test.node.batch_unbound"},
+            {"cmd":"_test.node.batch_bound"}
+        ]})");
+        service::executeNodeRequest(pipe, session, [&](const Node& reply) {
+            completed.set_value(schema::fromNode<schema::JsonS>(&reply, schema::JsonS::compact()));
+        });
+    });
+    Node reply;
+    schema::JsonS::toNode(&reply, finished.get());
+    connection.stop();
+    worker.stop();
+    bound->remove("loop");
+    VE_ASSERT(!wrong_loop.load());
+    VE_ASSERT_EQ(reply.get("code").toInt(-1), 0);
+    VE_ASSERT_EQ(reply.find("data")->count(), 3);
+    VE_ASSERT_EQ(reply.find("data")->child(1)->get("value").toInt(), 2);
+}
+
 VE_TEST(node_dispatch_get_set_and_children) {
     Node root("root");
     service::Session session(&root, &root);

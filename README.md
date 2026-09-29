@@ -281,6 +281,12 @@ ve> set /robot/state/power 0
 OK
 ```
 
+Every server connection has its own execution loop (UDP uses one per peer).
+Commands without a registered loop run serially there; commands with a registered
+loop execute on that loop. For async submission, use
+`async <command> [args]` (or `a <command> [args]`) in either TCP or stdio REPL, or top-level `"async":true` in a
+native protocol request.
+
 ## Project Structure
 
 ```

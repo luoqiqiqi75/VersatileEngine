@@ -129,3 +129,89 @@ VE_TEST(terminal_foreground_command_honors_registered_loop)
     command_node->remove("loop");
     command_loop.stop();
 }
+
+VE_TEST(terminal_async_unbound_command_executes)
+{
+    int calls = 0;
+    command::reg("_test.terminal.unbound_async", [&calls](Node*, Node*, Node*) {
+        ++calls;
+        return Result::ok();
+    });
+    Node root;
+    service::TerminalSession session(&root);
+    const auto output = session.execute("async _test.terminal.unbound_async");
+    VE_ASSERT_EQ(output, std::string("accepted\n"));
+    VE_ASSERT_EQ(calls, 1);
+}
+
+VE_TEST(terminal_async_syntax_and_json_preserve_input)
+{
+    AsioLoop worker("test.terminal.async");
+    worker.start();
+    std::promise<void> started;
+    std::promise<void> release;
+    auto released = release.get_future().share();
+    worker.post([&started, released] {
+        started.set_value();
+        released.wait();
+    });
+    started.get_future().wait();
+
+    std::atomic<int> calls{0};
+    std::atomic<bool> correct_input{true};
+    auto command_node = command::reg("_test.terminal.background", [&](Node*, Node* in, Node* out) {
+        if (in->get("text").toString() != "--async") correct_input = false;
+        ++calls;
+        out->set("finished", true);
+        return Result::ok();
+    });
+    command_node->set("loop", Var::ptr(static_cast<Loop*>(&worker)));
+    Node root;
+    service::TerminalSession::Options options;
+    options.prompt_color = false;
+    service::TerminalSession session(&root, options);
+    std::atomic<int> outputs{0};
+    session.setAsyncOutput([&](const std::string& text) {
+        if (text.find("finished") != std::string::npos) ++outputs;
+    });
+    const char* lines[] = {
+        R"(async _test terminal background {"text":"--async"})",
+        R"(a _test.terminal.background {"text":"--async"})"
+    };
+    for (const char* line : lines) VE_ASSERT_EQ(session.execute(line), std::string("accepted\n"));
+    VE_ASSERT_EQ(calls.load(), 0);
+    release.set_value();
+    session.waitAsync();
+    VE_ASSERT_EQ(calls.load(), 2);
+    VE_ASSERT_EQ(outputs.load(), 2);
+    VE_ASSERT(correct_input.load());
+    command_node->remove("loop");
+    worker.stop();
+}
+
+VE_TEST(terminal_async_prefix_keeps_named_command_params)
+{
+    AsioLoop worker("test.terminal.params");
+    worker.start();
+    std::atomic<int> calls{0};
+    std::atomic<bool> correct{true};
+    auto command_node = command::reg("_test.terminal.named", [&](Node*, Node* in, Node*) {
+        if (in->get("name").toString() != "abc" || in->get("value").toInt() != 123)
+            correct = false;
+        ++calls;
+        return Result::ok();
+    });
+    command_node->set("loop", Var::ptr(static_cast<Loop*>(&worker)));
+    schema::JsonS::toNode(command_node->at("instruction"), R"({"input_schema":{
+        "type":"object","properties":{"name":{"type":"string"},"value":{"type":"integer"}}
+    }})");
+    Node root;
+    service::TerminalSession session(&root);
+    VE_ASSERT_EQ(session.execute("async _test.terminal.named --name abc --value 123"), std::string("accepted\n"));
+    VE_ASSERT_EQ(session.execute("a _test.terminal.named --name abc --value 123"), std::string("accepted\n"));
+    session.waitAsync();
+    VE_ASSERT_EQ(calls.load(), 2);
+    VE_ASSERT(correct.load());
+    command_node->remove("loop");
+    worker.stop();
+}

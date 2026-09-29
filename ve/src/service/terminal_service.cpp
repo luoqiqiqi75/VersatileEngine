@@ -966,7 +966,10 @@ TerminalStdioClient::TerminalStdioClient(Node* root) : _p(std::make_unique<Priva
     _p->root = root ? root : ve::node::root();
 }
 
-TerminalStdioClient::~TerminalStdioClient() = default;
+TerminalStdioClient::~TerminalStdioClient()
+{
+    if (_p->session) _p->session->waitAsync();
+}
 
 int TerminalStdioClient::run()
 {

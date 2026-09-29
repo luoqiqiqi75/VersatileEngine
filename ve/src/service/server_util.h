@@ -139,6 +139,138 @@ private:
     AsioLoop _loop;
 };
 
+struct ExecutionConnection
+{
+    std::unique_ptr<AsioLoop> loop;
+    std::atomic<bool> connected{true};
+};
+
+// Transport callbacks only enqueue work. Each peer owns its execution thread,
+// and disconnect joins that thread on the cleanup loop.
+template<typename Socket>
+std::size_t connectionKey(const std::shared_ptr<Socket>& socket)
+{
+    return reinterpret_cast<std::size_t>(socket.get());
+}
+
+template<typename State>
+class ConnectionLoops
+{
+public:
+    explicit ConnectionLoops(std::string name)
+        : _name(std::move(name)), _cleanup(_name + ".cleanup") {}
+
+    ~ConnectionLoops() { stop(true); }
+
+    bool add(std::size_t key, std::shared_ptr<State> state)
+    {
+        state->loop = std::make_unique<AsioLoop>(_name + "." + std::to_string(key));
+        if (!state->loop->start()) return false;
+        std::lock_guard<std::mutex> lock(_mutex);
+        _states.emplace(key, std::move(state));
+        return true;
+    }
+
+    std::shared_ptr<State> get(std::size_t key)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _states.find(key);
+        return it == _states.end() ? nullptr : it->second;
+    }
+
+    void remove(std::size_t key)
+    {
+        std::shared_ptr<State> state;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            auto it = _states.find(key);
+            if (it == _states.end()) return;
+            state = std::move(it->second);
+            _states.erase(it);
+        }
+        retire(std::move(state));
+    }
+
+    void stop(bool wait)
+    {
+        std::unordered_map<std::size_t, std::shared_ptr<State>> states;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            states.swap(_states);
+        }
+        for (auto& item : states) retire(std::move(item.second));
+        if (wait) _cleanup.drain();
+    }
+
+    int count()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return static_cast<int>(_states.size());
+    }
+
+private:
+    void retire(std::shared_ptr<State> state)
+    {
+        state->connected.store(false, std::memory_order_release);
+        _cleanup.retire(std::move(state));
+    }
+
+    std::string _name;
+    ConnectionLoopCleanup _cleanup;
+    std::mutex _mutex;
+    std::unordered_map<std::size_t, std::shared_ptr<State>> _states;
+};
+
+template<typename State, typename Socket>
+void sendConnection(const std::weak_ptr<State>& weak_state,
+                    const std::weak_ptr<Socket>& weak_socket, std::string message)
+{
+    if (auto socket = weak_socket.lock()) {
+        socket->post([weak_state, socket, message = std::move(message)] {
+            auto state = weak_state.lock();
+            if (state && state->connected.load(std::memory_order_acquire)
+                && socket->is_started()) socket->async_send(message);
+        });
+    }
+}
+
+// Copy request/response data across threads; only the transport thread touches
+// asio2's response object and releases its deferred-send guard.
+template<typename State, typename Socket, typename Handler>
+void postHttpRequest(const std::shared_ptr<State>& state, std::shared_ptr<Socket> socket,
+                     http::web_request& request, http::web_response& response, Handler handler)
+{
+    if (!state) {
+        response.fill_text("connection closed", http::status::service_unavailable);
+        return;
+    }
+    // asio2's forwarding constructor copies only the HTTP message. Select the
+    // copy constructor to preserve the parsed request URL as well.
+    auto req = std::make_shared<http::web_request>(std::as_const(request));
+    auto rep = std::make_shared<http::web_response>();
+    rep->base() = response.base();
+    auto guard = response.defer();
+    std::weak_ptr<State> weak_state = state;
+    state->loop->post([weak_state, socket, req, rep, guard = std::move(guard),
+                       response_ptr = &response, handler = std::move(handler)]() mutable {
+        auto state = weak_state.lock();
+        if (state && state->connected.load(std::memory_order_acquire)) {
+            try {
+                handler(*req, *rep, state);
+            } catch (const std::exception& e) {
+                rep->fill_text(e.what(), http::status::internal_server_error);
+            } catch (...) {
+                rep->fill_text("request failed", http::status::internal_server_error);
+            }
+        }
+        socket->post([weak_state, socket, rep, response_ptr, guard = std::move(guard)] {
+            auto state = weak_state.lock();
+            if (state && state->connected.load(std::memory_order_acquire)
+                && socket->is_started()) response_ptr->base() = std::move(rep->base());
+        });
+    });
+}
+
 // Active runtime for built-in server wrappers. It is module-scoped and is
 // published before any wrapper is constructed.
 ServerRuntime& serverRuntime();

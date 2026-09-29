@@ -30,6 +30,52 @@ Always read `runtime/port` from the node tree if the configured base port might 
 | TerminalReplServer | TCP | 10000 | Text commands | No | Interactive debugging |
 | StaticServer | HTTP | 12400 | Static files + proxy | No | Frontend dist hosting |
 
+## Execution and async requests
+
+Each connection has an independent `AsioLoop` thread. UDP uses one execution
+loop per peer endpoint, including its idle-session lifetime. Static file reads
+and proxy requests also execute on the connection loop. Shared asio2 threads
+handle network I/O and enqueue requests.
+
+Commands without a registered loop execute serially on the connection loop.
+Commands with a registered loop execute there; foreground requests wait on the
+connection thread until completion, preserving request order. A separate
+connection can continue responding while a foreground command is running.
+
+Native JSON and binary envelopes accept top-level `"async":true`:
+
+```json
+{"cmd":"robot.move","id":7,"async":true,"params":{"target":42}}
+```
+
+Async requests queue each command on its registered loop or the connection loop.
+Scheduling options are separate from command input. Commands sharing one loop
+execute serially on that loop.
+
+WS, TCP, UDP and Bin TCP first return `{"id":7,"code":0,"accepted":true}`,
+then send the completed reply with the same `id`. HTTP returns only the initial
+acknowledgement with status 202. Transport async does not create a task store.
+It is independent of a command returning `Result::accept`, whose existing
+command-managed completion behavior is unchanged.
+
+The TCP and stdio REPL use a separate `async` or `a` command prefix. The
+remaining command name and arguments use the ordinary command parser:
+
+```text
+async robot.move --name abc --value 123
+a robot.move --name abc --value 123
+```
+
+They return `accepted` and print the command result on completion. Flags after
+the command name belong to command input.
+
+Run the connection isolation and async regression checks with:
+
+```bash
+cmake --build build --target ve_service_test
+./build/bin/ve_service_test
+```
+
 ---
 
 ## NodeHttpServer
@@ -106,7 +152,9 @@ Supported query parameters:
 Human-friendly command entry for browser/curl testing.
 
 - request body may be JSON array / object / scalar
-- `?async=1` runs asynchronously and returns `task_id`
+- `?async=1` submits a command asynchronously and returns HTTP
+  202 with `{"code":0,"accepted":true}`; the HTTP response does not include
+  the completed command result
 - `?context=<path>` sets the command current node before argument parsing
 
 Examples:
@@ -281,11 +329,12 @@ Example session:
 
 ## NodeUdpServer
 
-Port `12300`. Stateless JSON envelope, one datagram per request.
+Port `12300`. JSON envelope, one datagram per request. Each peer endpoint has
+its own execution loop until its session expires.
 
 - No subscribe support
-- No async result push
-- async commands (`Result::accept`) cannot push results back over UDP
+- Top-level `"async":true` supports an acknowledgement and a completed reply
+- Commands returning `Result::accept` provide no automatic completed reply
 
 Example:
 

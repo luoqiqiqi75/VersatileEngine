@@ -112,6 +112,8 @@ struct StaticServer::Private
 {
     uint16_t port = 12400;
     asio2::http_server server{serverRuntime().pool()};
+    ConnectionLoops<ExecutionConnection> connections{"static.http"};
+    std::mutex mountsMutex;
 
     struct ProxyRule {
         std::string prefix;
@@ -292,6 +294,7 @@ StaticServer::~StaticServer()
 void StaticServer::addMount(const std::string& prefix, const std::string& root,
                             const std::string& defaultFile, bool spaFallback)
 {
+    std::lock_guard<std::mutex> lock(_p->mountsMutex);
     Private::Mount m;
     m.prefix      = prefix;
     m.root        = root;
@@ -312,6 +315,7 @@ void StaticServer::addMountProxy(const std::string& mountPrefix,
                                  const std::string& proxyPrefix,
                                  const std::string& target)
 {
+    std::lock_guard<std::mutex> lock(_p->mountsMutex);
     for (auto& m : _p->mounts) {
         if (m.prefix != mountPrefix) continue;
         http::url u(target);
@@ -334,6 +338,7 @@ bool StaticServer::updateMountProxy(const std::string& mountPrefix,
                                     const std::string& proxyPrefix,
                                     const std::string& target)
 {
+    std::lock_guard<std::mutex> lock(_p->mountsMutex);
     for (auto& m : _p->mounts) {
         if (m.prefix != mountPrefix) continue;
         for (auto& rule : m.proxyRules) {
@@ -364,43 +369,57 @@ bool StaticServer::start()
 {
     // Cap the graceful-shutdown wait per session at 2s. Default is 30s, which
     // stalls deinit when a browser tab is holding a keep-alive connection.
-    _p->server.bind_connect([](auto& session_ptr) {
+    _p->server.bind_connect([this](auto& session_ptr) {
         session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
+        if (!_p->connections.add(connectionKey(session_ptr), std::make_shared<ExecutionConnection>()))
+            session_ptr->stop();
+    });
+    _p->server.bind_disconnect([this](auto& socket) {
+        _p->connections.remove(connectionKey(socket));
     });
 
     _p->server.bind_not_found(
-        [this](http::web_request& req, http::web_response& rep) {
-            std::string reqPath = std::string(req.path());
+        [this](std::shared_ptr<asio2::http_session>& socket, http::web_request& request, http::web_response& response) {
+            postHttpRequest(_p->connections.get(connectionKey(socket)), socket, request, response,
+                [this](http::web_request& req, http::web_response& rep, const auto&) {
+                    std::string reqPath = std::string(req.path());
 
-            Private::Mount* mount = _p->findMount(reqPath);
-            if (!mount) {
-                rep.fill_text("Not Found", http::status::not_found);
-                return;
-            }
+                    Private::Mount snapshot;
+                    {
+                        std::lock_guard<std::mutex> lock(_p->mountsMutex);
+                        auto mount = _p->findMount(reqPath);
+                        if (!mount) {
+                            rep.fill_text("Not Found", http::status::not_found);
+                            return;
+                        }
+                        snapshot = *mount;
+                    }
+                    auto mount = &snapshot;
 
-            // Compute path relative to mount prefix
-            std::string relPath = reqPath;
-            if (mount->prefix != "/" && !mount->prefix.empty()) {
-                relPath = reqPath.substr(mount->prefix.size());
-            }
+                    // Compute path relative to mount prefix
+                    std::string relPath = reqPath;
+                    if (mount->prefix != "/" && !mount->prefix.empty()) {
+                        relPath = reqPath.substr(mount->prefix.size());
+                    }
 
-            // 1. Proxy
-            if (_p->tryProxy(*mount, relPath, req, rep)) return;
-            // 2. Static file
-            if (_p->tryServeFile(*mount, relPath, rep)) return;
-            // 3. SPA fallback
-            if (mount->spaFallback) {
-                namespace fs = std::filesystem;
-                const fs::path full = (fs::path(mount->root) / mount->defaultFile).lexically_normal();
-                std::error_code ec;
-                if (fs::is_regular_file(full, ec)) {
-                    std::string content = readFileBytes(full);
-                    rep.fill_text(std::move(content), http::status::ok,
-                                  mimeForPath(mount->defaultFile));
-                    return;
-                }
-            }
-            rep.fill_text("Not Found", http::status::not_found);
+                    // 1. Proxy
+                    if (_p->tryProxy(*mount, relPath, req, rep)) return;
+                    // 2. Static file
+                    if (_p->tryServeFile(*mount, relPath, rep)) return;
+                    // 3. SPA fallback
+                    if (mount->spaFallback) {
+                        namespace fs = std::filesystem;
+                        const fs::path full = (fs::path(mount->root) / mount->defaultFile).lexically_normal();
+                        std::error_code ec;
+                        if (fs::is_regular_file(full, ec)) {
+                            std::string content = readFileBytes(full);
+                            rep.fill_text(std::move(content), http::status::ok,
+                                          mimeForPath(mount->defaultFile));
+                            return;
+                        }
+                    }
+                    rep.fill_text("Not Found", http::status::not_found);
+                });
         });
 
     ve::service::disableWindowsPortReuse(_p->server);
@@ -409,11 +428,8 @@ bool StaticServer::start()
 
 void StaticServer::stop(bool wait)
 {
-    if (!wait) {
-        _p->server.stop();
-        return;
-    }
     _p->server.stop();
+    _p->connections.stop(wait);
 }
 
 bool StaticServer::isRunning() const

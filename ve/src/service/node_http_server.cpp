@@ -1,4 +1,4 @@
-// node_http_service.cpp — ve::service::NodeHttpServer (single session)
+// node_http_server.cpp - ve::service::NodeHttpServer (per-connection execution)
 #include "ve/service/node_service.h"
 
 #include "ve/core/command.h"
@@ -6,7 +6,7 @@
 #include "ve/core/pipeline.h"
 
 #include "node_commands.h"
-#include "server_util.h"
+#include "node_server_util.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -65,7 +65,40 @@ struct NodeHttpServer::Private
     asio2::http_server server{serverRuntime().pool()};
 
     std::chrono::steady_clock::time_point startTime;
-    std::unique_ptr<Session> session;
+    ConnectionLoops<NodeConnection> connections{"node.http"};
+
+    template<typename Handler>
+    auto route(Handler handler)
+    {
+        return [this, handler](std::shared_ptr<asio2::http_session>& socket, http::web_request& req, http::web_response& rep) {
+            postHttpRequest(connections.get(connectionKey(socket)), socket, req, rep,
+                [handler](auto& req, auto& rep, const auto& state) {
+                    if constexpr (std::is_invocable_v<Handler, http::web_request&,
+                                  http::web_response&, const std::shared_ptr<NodeConnection>&>)
+                        handler(req, rep, state);
+                    else
+                        handler(req, rep);
+                });
+        };
+    }
+
+    template<http::verb Method, typename Handler>
+    void bind(const std::string& path, Handler handler)
+    {
+        server.bind<Method>(path, route(std::move(handler)));
+    }
+
+    static void execute(Pipeline pipe, const std::shared_ptr<Session>& session, http::web_response& rep)
+    {
+        const bool background = pipe.contextNode()->get("async").toBool(false);
+        Result result = executeNodeRequest(pipe, session, [&rep](const Node& node) {
+            rep.fill_json(schema::fromNode<schema::JsonS>(&node, schema::JsonS::compact()),
+                node.get("accepted").toBool(false) ? http::status::accepted : http::status::ok);
+        }, false);
+        if (!background && result.isAccepted())
+            convert::parse(HttpRep(http::status::accepted,
+                "{\"code\":" + std::to_string(result.code()) + "}"), rep);
+    }
 };
 
 NodeHttpServer::NodeHttpServer(const Node* config_n) : _p(std::make_unique<Private>())
@@ -81,18 +114,12 @@ NodeHttpServer::~NodeHttpServer()
 
 bool NodeHttpServer::start()
 {
-    _p->session = std::make_unique<Session>(_p->root, _p->root);
-
-    // Cap the graceful-shutdown wait per session at 2s. Default is 30s, which
-    // stalls deinit when a browser tab is holding a keep-alive connection.
-    _p->server.bind_connect([](auto& session_ptr) {
-        session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
-    });
+    bindNodeConnections(_p->server, _p->connections, _p->root, false);
 
     { // health protocol
         _p->startTime = std::chrono::steady_clock::now();
 
-        _p->server.bind<http::verb::get>("/health", [this] (http::web_request&, http::web_response& rep) {
+        _p->bind<http::verb::get>("/health", [this] (http::web_request&, http::web_response& rep) {
             auto elapsed = std::chrono::steady_clock::now() - _p->startTime;
             auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
             convert::parse(HttpRep(http::status::ok,
@@ -110,20 +137,20 @@ bool NodeHttpServer::start()
         };
 
         // export tree
-        _p->server.bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request&, http::web_response& rep) {
+        _p->bind<http::verb::get>("/at", [root_n = _p->root] (http::web_request&, http::web_response& rep) {
             convert::parse(HttpRep(http::status::ok, schema::fromNode<schema::JsonS>(root_n, schema::JsonS::compact())), rep);
         });
-        _p->server.bind<http::verb::get>("/at/*", [=] (http::web_request& req, http::web_response& rep) {
+        _p->bind<http::verb::get>("/at/*", [=] (http::web_request& req, http::web_response& rep) {
             if (const auto tar_n = tar_n_f(req, rep)) {
                 convert::parse(HttpRep(http::status::ok, schema::fromNode<schema::JsonS>(tar_n, schema::JsonS::compact())), rep);
             }
         });
 
         // import tree
-        // _p->server.bind<http::verb::put>("/at", [] (http::web_request& req, http::web_response& rep) {
+        // _p->bind<http::verb::put>("/at", [] (http::web_request& req, http::web_response& rep) {
         //     convert::parse(HttpResult(http::status::forbidden, "forbid to import whole node tree"), rep);
         // });
-        _p->server.bind<http::verb::put>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
+        _p->bind<http::verb::put>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
             if (const auto tar_n = tar_n_f(req, rep)) {
                 if (schema::toNode<schema::JsonS>(tar_n, req.body())) { // without deletion
                     convert::parse(HttpRep(), rep);
@@ -133,10 +160,10 @@ bool NodeHttpServer::start()
             }
         });
 
-        // _p->server.bind<http::verb::post>("/at", [] (http::web_request&, http::web_response& rep) {
+        // _p->bind<http::verb::post>("/at", [] (http::web_request&, http::web_response& rep) {
         //     convert::parse(HttpResult(http::status::forbidden, "forbid to import whole node tree"), rep);
         // });
-        _p->server.bind<http::verb::post>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
+        _p->bind<http::verb::post>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
             if (auto const tar_n = tar_n_f(req, rep)) {
                 if (schema::toNode<schema::JsonS>(tar_n, req.body(), Node::COPY_STRICT)) { // with deletion
                     convert::parse(HttpRep(), rep);
@@ -146,7 +173,7 @@ bool NodeHttpServer::start()
             }
         });
 
-        _p->server.bind<http::verb::delete_>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
+        _p->bind<http::verb::delete_>("/at/*", [tar_n_f] (http::web_request& req, http::web_response& rep) {
             if (auto const tar_n = tar_n_f(req, rep)) {
                 if (tar_n->parent()->remove(tar_n)) {
                     convert::parse(HttpRep(), rep);
@@ -158,79 +185,45 @@ bool NodeHttpServer::start()
     }
 
     { // cmd protocol
-        _p->server.bind<http::verb::post>("/cmd/*", [o = _p->session.get()] (http::web_request& req, http::web_response& rep) {
-            auto cmd_sv = req.path();
-            cmd_sv.remove_prefix(5); // /cmd/
-            std::string cmd_key(cmd_sv);
-            Command cmd = command::create(cmd_key);
-            if (!cmd.valid()) {
-                convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "unknown command")), rep);
-                return;
-            }
-
-            if (!cmd.input<schema::JsonS>(req.body())) {
+        _p->bind<http::verb::post>("/cmd/*", [](http::web_request& req, http::web_response& rep,
+                                             const std::shared_ptr<NodeConnection>& state) {
+            Pipeline pipe;
+            auto cmd = req.path();
+            cmd.remove_prefix(5);
+            pipe.contextNode()->set("cmd", std::string(cmd));
+            if (!schema::toNode<schema::JsonS>(pipe.contextNode()->at("params"), std::string(req.body()))) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "bad request")), rep);
                 return;
             }
-
-           //  if (queryBool(req.query(), "async", false)) {
-           //      cmd.call([guard = rep.defer(), rep_ptr = &rep] (Command& c) {
-           //          convert::parse(HttpResultRep(c.result(), c.outputNode()), *rep_ptr);
-           //      });
-           // } else {
-                cmd.run();
-                convert::parse(HttpResultRep(cmd.result(), cmd.outputNode()), rep);
-           // }
+            // Query options belong to the transport, never to command params.
+            std::string query(req.query());
+            bool background = false;
+            std::istringstream parts(query);
+            std::string part;
+            while (std::getline(parts, part, '&')) {
+                if (part == "async=1" || part == "async=true") background = true;
+            }
+            pipe.contextNode()->set("async", background);
+            Private::execute(pipe, state->session, rep);
         });
     }
 
     { // standard protocol with envelope
-        _p->server.bind<http::verb::post>("/ve", [this] (http::web_request& req, http::web_response& rep) {
+        _p->bind<http::verb::post>("/ve", [](http::web_request& req, http::web_response& rep,
+                                          const std::shared_ptr<NodeConnection>& state) {
             Pipeline pipe;
             if (!schema::toNode<schema::JsonS>(pipe.contextNode(), std::string(req.body()))) {
                 convert::parse(HttpResultRep(Result::fail(ERR_INVALID, "invalid JSON")), rep);
                 return;
             }
-
-            pipe.contextNode()->set("_session", Var::ptr(_p->session.get()));
-
-            Node* batch_n = pipe.contextNode()->find("batch");
-            if (batch_n) {
-                Node* out = pipe.contextNode()->at("data");
-                for (auto* item : batch_n->children()) {
-                    auto ref = resolveCmd(item);
-                    if (!ref.factory) {
-                        convert::parse(HttpResultRep(Result::fail(ERR_NOT_FOUND, "unknown: " + ref.key)), rep);
-                        return;
-                    }
-                    Command* c = pipe.add(command::create(*ref.factory, ref.key));
-                    c->setContextNodes(pipe.contextNode(), item->at("params"), out->append());
-                }
-            } else {
-                auto ref = resolveCmd(pipe.contextNode());
-                if (!ref.factory) {
-                    convert::parse(HttpResultRep(Result::fail(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND,
-                        ref.key.empty() ? "op or cmd required" : "unknown: " + ref.key)), rep);
-                    return;
-                }
-                Command* c = pipe.add(command::create(*ref.factory, ref.key));
-                c->setContextNodes(pipe.contextNode(), pipe.contextNode()->at("params"), pipe.contextNode()->at("data"));
-            }
-
-            pipe.sync();
-
-            if (pipe.result().isAccepted()) {
-                convert::parse(HttpRep(http::status::accepted, "{\"code\":" + std::to_string(pipe.result().code()) + "}"), rep);
-            } else {
-                convert::parse(HttpResultRep(pipe.result(), pipe.contextNode()->at("data")), rep);
-            }
+            Private::execute(pipe, state->session, rep);
         });
     }
 
     { // default
-        _p->server.bind_not_found([] (http::web_request&, http::web_response& rep) {
+        _p->server.bind_not_found(_p->route([] (http::web_request&, http::web_response& rep) {
             convert::parse(HttpRep(http::status::not_found, "not found"), rep);
-        });
+        }));
     }
 
     disableWindowsPortReuse(_p->server);
@@ -239,13 +232,8 @@ bool NodeHttpServer::start()
 
 void NodeHttpServer::stop(bool wait)
 {
-    if (!wait) {
-        // Runtime owns the wrapper until shared-pool shutdown completes.
-        _p->server.stop();
-        return;
-    }
     _p->server.stop();
-    _p->session.reset();
+    _p->connections.stop(wait);
 }
 
 bool NodeHttpServer::isRunning() const

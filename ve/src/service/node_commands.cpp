@@ -233,21 +233,88 @@ CmdRef resolveCmd(Node* ctx)
     return {nullptr, {}};
 }
 
-bool finalizeReply(Pipeline& pipe)
+static bool formatReply(Node* ctx, const Result& result)
 {
-    if (pipe.result().isAccepted()) return false;
-    Node* ctx = pipe.contextNode();
+    if (result.isAccepted()) return false;
     ctx->erase("op");
     ctx->erase("cmd");
     ctx->erase("batch");
     ctx->erase("params");
-    ctx->set("code", static_cast<std::int64_t>(pipe.result().code()));
-    if (pipe.result().isError()) {
+    ctx->erase("async");
+    ctx->set("code", static_cast<std::int64_t>(result.code()));
+    if (result.isError()) {
         ctx->erase("data");
-        if (!pipe.result().message().empty())
-            ctx->set("message", pipe.result().message());
+        if (!result.message().empty())
+            ctx->set("message", result.message());
     }
     return true;
+}
+
+bool finalizeReply(Pipeline& pipe)
+{
+    return formatReply(pipe.contextNode(), pipe.result());
+}
+
+Result executeNodeRequest(Pipeline pipe, const std::shared_ptr<Session>& session, NodeReply reply,
+                          bool push_async_result)
+{
+    Node* ctx = pipe.contextNode();
+    ctx->set("_session", Var::ptr(session.get()));
+    const bool background = ctx->get("async").toBool(false);
+    std::vector<Command> commands;
+    auto add = [&](Node* item, Node* out) {
+        auto ref = resolveCmd(item);
+        if (!ref.factory) {
+            ctx->erase("batch");
+            ctx->set("code", int64_t(ref.key.empty() ? ERR_INVALID : ERR_NOT_FOUND));
+            ctx->set("message", ref.key.empty() ? std::string("op or cmd required") : "unknown: " + ref.key);
+            reply(*ctx);
+            return false;
+        }
+        Command command = command::create(*ref.factory, ref.key);
+        command.setContextNodes(ctx, item->at("params"), out);
+        if (background && !command.loop()) command.setLoop(loop::current());
+        if (!background && command.loop() == loop::current()) command.setLoop(nullptr);
+        commands.push_back(std::move(command));
+        return true;
+    };
+    if (Node* batch = ctx->find("batch")) {
+        Node* out = ctx->at("data");
+        for (auto* item : batch->children())
+            if (!add(item, out->append())) return Result::fail(ctx->get("code").toInt(), ctx->get("message").toString());
+    } else if (!add(ctx, ctx->at("data"))) {
+        return Result::fail(ctx->get("code").toInt(), ctx->get("message").toString());
+    }
+
+    if (!background) {
+        Result result = Result::ok();
+        // Advance on the connection thread so an unbound batch step cannot
+        // inherit the registered loop of the preceding step.
+        for (auto& command : commands) {
+            std::promise<Result> completed;
+            auto finished = completed.get_future();
+            command.call([&completed](Command& command) { completed.set_value(command.result()); });
+            result = finished.get();
+            if (!result.isSuccess()) break;
+        }
+        if (formatReply(ctx, result)) reply(*ctx);
+        return result;
+    }
+
+    for (auto& command : commands) pipe.add(std::move(command));
+    // HTTP has a single acknowledgement response. Its response callback must
+    // not be retained by the background command after the handler returns.
+    NodeReply result_reply = push_async_result ? reply : NodeReply{};
+    pipe.onFinished(nullptr, [session, result_reply](Pipeline& pipe) {
+        if (finalizeReply(pipe) && result_reply) result_reply(*pipe.contextNode());
+    });
+    Node accepted;
+    if (auto id = ctx->find("id")) accepted.at("id")->copy(id);
+    accepted.set("code", 0);
+    accepted.set("accepted", true);
+    reply(accepted);
+    pipe.async();
+    return Result::accept();
 }
 
 } // namespace service

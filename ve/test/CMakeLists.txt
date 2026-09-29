@@ -6,6 +6,7 @@ message(STATUS "")
 message(STATUS "[ve_test]  core unit tests")
 
 file(GLOB_RECURSE _TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
+list(FILTER _TEST_SOURCES EXCLUDE REGEX "/service/")
 
 add_executable(ve_test ${_TEST_SOURCES})
 
@@ -17,6 +18,9 @@ if(VE_NODE_BENCH_LARGE)
 endif()
 
 target_link_libraries(ve_test PRIVATE VersatileEngine::ve)
+
+add_executable(ve_service_test service/test_connections.cpp ../src/asio_impl.cpp)
+target_link_libraries(ve_service_test PRIVATE VersatileEngine::ve ve_dep_asio2)
 
 if(UNIX AND NOT ANDROID)
     target_link_libraries(ve_test PRIVATE pthread dl)
