@@ -1,0 +1,142 @@
+{
+  "app": "ve",
+  "log": {
+    "level": "info",
+    "dir": "",
+    "async": false,
+    "queue_size": 8192,
+    "worker_threads": 1,
+    "overflow_policy": "block",
+    "flush_interval_seconds": 3,
+    "flush_level": "error",
+    "console": {
+      "enabled": true,
+      "level": "info",
+      "pattern": "%H:%M:%S.%e %^[%L] %v%$"
+    },
+    "file": {
+      "enabled": true,
+      "level": "info",
+      "pattern": "%L[%Y/%m/%d %H:%M:%S.%e] %v"
+    }
+  },
+  "version": 2,
+  "verbose": false,
+  "blacklist": [],
+  "plugins": [],
+  "modules": {
+    "ve": {
+      "core": {
+        "config": {
+          "rescue": {
+            "enabled": true
+          }
+        }
+      },
+      "client": {
+        "terminal": {
+          "stdio": {
+            "enabled": false
+          },
+          "tcp": {
+            "enabled": false,
+            "config": {
+              "host": "127.0.0.1",
+              "port": 10000,
+              "connect_timeout_ms": 2000,
+              "disconnect_timeout_ms": 2000
+            }
+          }
+        }
+      },
+      "server": {
+        "file_io": {
+          "data_root": "./data"
+        },
+        "terminal": {
+          "repl": {
+            "enable": true,
+            "config": {
+              "port": 10000,
+              "max_retry": -1,
+              "root": "/",
+              "banner": true,
+              "title": true,
+              "prompt_color": true,
+              "use_current": false,
+              "prompt_path_color": "\u001b[36m",
+              "prompt_symbol_color": "\u001b[32m",
+              "tcp": {
+                "server_line_echo": false
+              }
+            }
+          },
+          "ai": {
+            "enable": true,
+            "config": {
+              "port": 10100,
+              "max_retry": -1,
+              "root": "/",
+              "banner": false,
+              "title": false,
+              "prompt_color": false,
+              "use_current": false
+            }
+          }
+        },
+        "bin": {
+          "tcp": {
+            "enable": true,
+            "config": {
+              "port": 11000,
+              "max_retry": -1,
+              "root": "/"
+            }
+          }
+        },
+        "node": {
+          "http": {
+            "enable": true,
+            "config": {
+              "port": 12000,
+              "max_retry": -1,
+              "root": "/"
+            }
+          },
+          "ws": {
+            "enable": true,
+            "config": {
+              "port": 12100,
+              "max_retry": -1,
+              "root": "/"
+            }
+          },
+          "tcp": {
+            "enable": true,
+            "config": {
+              "port": 12200,
+              "max_retry": -1,
+              "root": "/"
+            }
+          },
+          "udp": {
+            "enable": true,
+            "config": {
+              "port": 12300,
+              "max_retry": -1,
+              "root": "/"
+            }
+          }
+        },
+        "static": {
+          "enable": false,
+          "config": {
+            "port": 12400,
+            "max_retry": -1,
+            "mounts": []
+          }
+        }
+      }
+    }
+  }
+}

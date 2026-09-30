@@ -208,39 +208,61 @@ Becomes:
 
 ## Setup Configuration
 
-### Single JSON file
+Load one startup JSON file (default: `ve.json` in the working directory):
+
 ```bash
-./ve.exe config.json
+./ve ve.json
+./ve -c ve.json
 ```
 
-### Directory (recursive)
-```bash
-./ve.exe config_dir/
-```
+## Thread Pool and Logging Configuration
 
-Directory structure maps to node tree:
-- `config_dir/robot.json` → `/robot` node
-- `config_dir/sensors/camera.json` → `/sensors/camera` node
-
-## Logging Configuration
-
-Default log directory: `./log/` (falls back to platform-specific if creation fails)
+Use top-level settings, applied during `entry::setup()`:
 
 ```json
 {
-  "ve": {
-    "core": {
-      "config": {
-        "log": {
-          "level": "info",           // debug/info/warning/error
-          "app": "myapp",             // App name (default: from argv[0])
-          "dir": ""                   // Override (empty = use default)
-        }
-      }
-    }
+  "app": "myapp",
+  "log": {
+    "level": "info",
+    "dir": "./log",
+    "async": true,
+    "queue_size": 8192,
+    "worker_threads": 1,
+    "overflow_policy": "block",
+    "flush_interval_seconds": 3,
+    "flush_level": "error",
+    "console": { "enabled": true, "level": "warn" },
+    "file": { "enabled": true }
   }
 }
 ```
+
+`ve.json` only needs settings you want to change. The repository's `ve_full.json`
+is the complete built-in default reference; it is not loaded automatically.
+Copy individual fields from it into your application config as needed.
+Builds and installs do not deploy these JSON files; without `ve.json`, VE uses
+the code defaults.
+
+The default task pool uses CPU count × 2. Set the `VE_LOOP_POOL_THREADS`
+compile-time macro through CMake to override it:
+
+```bash
+cmake -S . -B build -DVE_LOOP_POOL_THREADS=8
+```
+
+An explicit `AsioPoolLoop(name, count)` overrides automatic sizing; replace
+`loop::pool()` with a user-owned loop through `loop::setPool()`.
+Logging stays synchronous unless `async` is true. `block` preserves messages
+and waits when full; `overrun_oldest` overwrites old queued messages. A single
+logging worker preserves queue order. Each output inherits `level` unless it
+specifies its own threshold. `flush_interval_seconds: 0` disables periodic
+flushing. Replacing the configuration or normal process exit drains asynchronous
+logs through the internal resource owner's destructor. `entry::deinit()` ends
+modules and leaves logging available.
+For C++ configuration, call `ve::log::configure(Node*)` with the same root
+`app`/`log` structure before producers start. Each call applies a complete
+snapshot; omitted settings use defaults. The Node need only live for the call.
+See [CORE.md](CORE.md#thread-pool-and-logging) for all settings.
 
 ## Command System
 

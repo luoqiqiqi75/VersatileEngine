@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// log.cpp — ve::logDispatch implementation (pure C++17 + spdlog, no Qt)
+// log.cpp - spdlog configuration and dispatch
 // ----------------------------------------------------------------------------
 // Copyright (c) 2023-present Thilo and VersatileEngine contributors.
 // Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
@@ -7,18 +7,19 @@
 // ----------------------------------------------------------------------------
 
 #include "ve/core/log.h"
+#include "ve/core/node.h"
 
 #include <ctime>
-#include <iostream>
 #include <iomanip>
-#include <sstream>
 #include <filesystem>
+#include <limits>
+#include <cctype>
+#include <cstdlib>
 
 #ifdef _WIN32
-#include <shlobj.h>   // SHGetKnownFolderPath
+#include <shlobj.h>
 #pragma comment(lib, "shell32.lib")
 #else
-#include <cstdlib>    // getenv
 #include <unistd.h>
 #include <pwd.h>
 #endif
@@ -28,103 +29,68 @@
 #endif
 
 #include "spdlog/spdlog.h"
+#include "spdlog/async.h"
+#include "spdlog/details/periodic_worker.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "spdlog/sinks/basic_file_sink.h"
 
 namespace {
 
 namespace fs = std::filesystem;
+struct LogState
+{
+    std::shared_ptr<spdlog::details::thread_pool> pool;
+    std::shared_ptr<spdlog::logger> console, file, combined;
+    std::unique_ptr<spdlog::details::periodic_worker> flusher;
 
-constexpr const char* ve_console_log_name    = "FConsole";
-constexpr const char* ve_console_log_pattern = "%H:%M:%S.%e %^[%L] %v%$";
+    ~LogState()
+    {
+        // Stop enqueueing, drain/join the pool, then flush the sinks directly.
+        flusher.reset();
+        pool.reset();
+        if (combined) {
+            for (auto& sink : combined->sinks()) {
+                try { sink->flush(); }
+                catch (const std::exception& e) { std::cerr << "[ve/log] " << e.what() << '\n'; }
+            }
+        }
+    }
+};
+LogState g;
 
-constexpr const char* ve_file_log_name    = "FFile";
-constexpr const char* ve_file_log_pattern = "%L[%Y/%m/%d %H:%M:%S.%e] %v";
-
-constexpr int ve_log_flush_dt = 3;
-
-// --- App name / directory overrides ---
-static std::string ve_app_name = "VersatileEngine";
-static std::string ve_log_dir_override;     // set by ve::log::setLogDir()
-static std::string ve_current_log_path;     // filled when file logger is created
-
-// --- Minimum active level cache (atomic, cheap to read) ---
-static std::atomic<int> ve_min_active_level{static_cast<int>(ve::LogLevel::Debug)};
-
-// --- LogLevel <-> spdlog level mapping ---
-
-spdlog::level::level_enum ve_to_spdlog(ve::LogLevel l)
+static constexpr spdlog::level::level_enum _level(ve::LogLevel l)
 {
     switch (l) {
-        case ve::LogLevel::Debug:  return spdlog::level::debug;
-        case ve::LogLevel::Info:   return spdlog::level::info;
+        case ve::LogLevel::Debug: return spdlog::level::debug;
+        case ve::LogLevel::Info: return spdlog::level::info;
         case ve::LogLevel::Waring: return spdlog::level::warn;
-        case ve::LogLevel::Error:  return spdlog::level::err;
-        case ve::LogLevel::Sudo:   return spdlog::level::critical;
-        case ve::LogLevel::Ignore: return spdlog::level::off;
-        default: return spdlog::level::trace;
+        case ve::LogLevel::Error: return spdlog::level::err;
+        case ve::LogLevel::Sudo: return spdlog::level::critical;
+        default: return spdlog::level::off;
     }
 }
 
-int ve_from_spdlog(spdlog::level::level_enum sl)
+static std::string _log_dir(ve::Node* n)
 {
-    switch (sl) {
-        case spdlog::level::trace:
-        case spdlog::level::debug:    return static_cast<int>(ve::LogLevel::Debug);
-        case spdlog::level::info:     return static_cast<int>(ve::LogLevel::Info);
-        case spdlog::level::warn:     return static_cast<int>(ve::LogLevel::Waring);
-        case spdlog::level::err:      return static_cast<int>(ve::LogLevel::Error);
-        case spdlog::level::critical: return static_cast<int>(ve::LogLevel::Sudo);
-        case spdlog::level::off:      return static_cast<int>(ve::LogLevel::Sudo) + 1;
-        default: return 0;
-    }
-}
-
-// --- Loggers ---
-
-std::shared_ptr<spdlog::logger> ve_global_console_logger;
-std::shared_ptr<spdlog::logger> ve_global_file_logger;
-bool ve_file_logger_inited = false;
-
-void ve_update_min_level()
-{
-    int cl = ve_global_console_logger
-             ? ve_from_spdlog(ve_global_console_logger->level())
-             : static_cast<int>(ve::LogLevel::Sudo) + 1;
-    int fl = ve_global_file_logger
-             ? ve_from_spdlog(ve_global_file_logger->level())
-             : static_cast<int>(ve::LogLevel::Sudo) + 1;
-    ve_min_active_level.store(std::min(cl, fl), std::memory_order_relaxed);
-}
-
-// --- Platform-specific: get writable AppData / log directory ---
-std::string ve_get_log_dir()
-{
-    if (!ve_log_dir_override.empty()) return ve_log_dir_override;
-
-    // Try working directory first: ./log/
-    std::string cwd_log = "log";
+    auto dir = n->get("log/dir").toString();
+    if (!dir.empty()) return dir;
     std::error_code ec;
-    fs::create_directories(cwd_log, ec);
-    if (!ec) return cwd_log;
-
-    // Fallback to platform-specific directory
+    fs::create_directories("log", ec);
+    if (!ec) return "log";
+    auto app = n->get("app").toString("VersatileEngine");
 #ifdef _WIN32
-    // %LOCALAPPDATA%/<AppName>/log/
     PWSTR wpath = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &wpath))) {
-        std::wstring ws(wpath);
+        fs::path base(wpath);
         CoTaskMemFree(wpath);
-        fs::path p = fs::path(ws) / ve_app_name / "log";
-        return p.string();
+        return (base / app / "log").string();
     }
     return "log";
 #else
-    // $XDG_DATA_HOME or ~/.local/share
     const char* xdg = std::getenv("XDG_DATA_HOME");
     fs::path base;
     if (xdg && *xdg) {
-        base = fs::path(xdg);
+        base = xdg;
     } else {
         const char* home = std::getenv("HOME");
         if (!home) {
@@ -133,176 +99,172 @@ std::string ve_get_log_dir()
         }
         base = fs::path(home) / ".local" / "share";
     }
-    return (base / ve_app_name / "log").string();
+    return (base / app / "log").string();
 #endif
 }
 
-std::string ve_get_log_path()
+static std::string _log_path(ve::Node* n)
 {
-    std::string log_dir = ve_get_log_dir();
+    fs::path dir(_log_dir(n));
     std::error_code ec;
-    fs::create_directories(log_dir, ec);
+    fs::create_directories(dir, ec);
     if (ec) {
-        std::cerr << "[ve/log] Failed to create log directory: " << log_dir
-                  << " (" << ec.message() << ")" << std::endl;
-        return "";
+        std::cerr << "[ve/log] Cannot create log directory: " << dir << " (" << ec.message() << ")\n";
+        return {};
     }
-
-    auto t  = std::time(nullptr);
-    auto lt = std::localtime(&t);
-    std::ostringstream ss;
-    ss << log_dir;
-    if (!log_dir.empty() && log_dir.back() != '/' && log_dir.back() != '\\')
-        ss << '/';
-    ss << std::put_time(lt, "%Y-%m-%d_%H-%M-%S") << ".txt";
-    return ss.str();
+    auto t = std::time(nullptr);
+    std::tm lt = *std::localtime(&t);
+    std::ostringstream name;
+    name << std::put_time(&lt, "%Y-%m-%d_%H-%M-%S") << ".txt";
+    return (dir / name.str()).string();
 }
 
-auto ve_create_console_logger()
+static bool _log_level(const ve::Var& v, spdlog::level::level_enum& l)
 {
-    auto cl = spdlog::stdout_color_mt(ve_console_log_name);
-    cl->set_pattern(ve_console_log_pattern);
-    cl->set_level(spdlog::level::trace);
-    return cl;
+    if (v.isNull()) return true;
+    auto s = v.toString();
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (s == "d" || s == "debug" || s == "trace") l = spdlog::level::debug;
+    else if (s == "i" || s == "info" || s.empty()) l = spdlog::level::info;
+    else if (s == "w" || s == "warn" || s == "warning" || s == "waring") l = spdlog::level::warn;
+    else if (s == "e" || s == "err" || s == "error") l = spdlog::level::err;
+    else if (s == "s" || s == "sudo" || s == "critical") l = spdlog::level::critical;
+    else if (s == "off" || s == "ignore") l = spdlog::level::off;
+    else { std::cerr << "[ve/log] Unknown log level: " << s << '\n'; return false; }
+    return true;
 }
 
-auto ve_create_file_logger()
+template<bool Console = true, bool File = true> static spdlog::logger* _logger()
 {
-    auto path = ve_get_log_path();
-    if (path.empty()) return std::shared_ptr<spdlog::logger>{};
-    ve_current_log_path = path;
-    auto fl = spdlog::basic_logger_mt(ve_file_log_name, path);
-    fl->set_pattern(ve_file_log_pattern);
-    fl->set_level(spdlog::level::info);
-    return fl;
+    if (!g.combined) {
+        ve::Node defaults;
+        ve::log::configure(&defaults);
+    }
+    if constexpr (Console && File) return g.combined.get();
+    else if constexpr (Console) return g.console.get();
+    else return g.file.get();
 }
 
-void ve_ensure_file_logger()
+} // namespace
+
+template<bool Console, bool File> bool ve::internal::logEnabled(LogLevel level)
 {
-    if (ve_file_logger_inited) return;
-    ve_global_file_logger = spdlog::get(ve_file_log_name);
-    if (!ve_global_file_logger) ve_global_file_logger = ve_create_file_logger();
-    if (ve_global_file_logger) spdlog::flush_every(std::chrono::seconds(ve_log_flush_dt));
-    ve_file_logger_inited = true;
+    auto* logger = _logger<Console, File>();
+    return logger && logger->should_log(_level(level));
 }
 
-} // anonymous namespace
+template VE_API bool ve::internal::logEnabled<true, true>(LogLevel);
+template VE_API bool ve::internal::logEnabled<true, false>(LogLevel);
+template VE_API bool ve::internal::logEnabled<false, true>(LogLevel);
 
-// --- Init ---
-
-bool ve_global_logger_inited = false;
-
-void ve_init_logger()
+template<ve::LogLevel L, bool Console, bool File>
+void ve::internal::logWrite(const std::string_view& sv)
 {
-    if (ve_global_logger_inited) return;
-    ve_global_logger_inited = true;
-
-    ve_global_console_logger = spdlog::get(ve_console_log_name);
-    if (!ve_global_console_logger) ve_global_console_logger = ve_create_console_logger();
-
-    ve_ensure_file_logger();
-    ve_update_min_level();
+    auto* logger = _logger<Console, File>();
+    if (logger) logger->log(_level(L), spdlog::string_view_t(sv.data(), sv.size()));
 }
 
-VE_AUTO_RUN(ve_init_logger())
-
-// --- logMinActiveLevel ---
-
-VE_API int ve::logMinActiveLevel()
-{
-    return ve_min_active_level.load(std::memory_order_relaxed);
-}
-
-// --- logOnSink explicit instantiations ---
-
-template<> VE_API void ve::logOnSink<ve::LogSink::Console, ve::LogLevel::Debug>(const std::string_view& sv)  { ve_global_console_logger->debug(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::File,    ve::LogLevel::Debug>(const std::string_view& sv)  { ve_ensure_file_logger(); if (ve_global_file_logger) ve_global_file_logger->debug(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::Console, ve::LogLevel::Info>(const std::string_view& sv)   { ve_global_console_logger->info(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::File,    ve::LogLevel::Info>(const std::string_view& sv)   { ve_ensure_file_logger(); if (ve_global_file_logger) ve_global_file_logger->info(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::Console, ve::LogLevel::Waring>(const std::string_view& sv) { ve_global_console_logger->warn(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::File,    ve::LogLevel::Waring>(const std::string_view& sv) { ve_ensure_file_logger(); if (ve_global_file_logger) ve_global_file_logger->warn(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::Console, ve::LogLevel::Error>(const std::string_view& sv)  { ve_global_console_logger->error(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::File,    ve::LogLevel::Error>(const std::string_view& sv)  { ve_ensure_file_logger(); if (ve_global_file_logger) ve_global_file_logger->error(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::Console, ve::LogLevel::Sudo>(const std::string_view& sv)   { ve_global_console_logger->critical(sv); }
-template<> VE_API void ve::logOnSink<ve::LogSink::File,    ve::LogLevel::Sudo>(const std::string_view& sv)   { ve_ensure_file_logger(); if (ve_global_file_logger) ve_global_file_logger->critical(sv); }
-
-// --- ve::log namespace ---
+template VE_API void ve::internal::logWrite<ve::LogLevel::Debug, true, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Debug, true, false>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Debug, false, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Info, true, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Info, true, false>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Info, false, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Waring, true, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Waring, true, false>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Waring, false, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Error, true, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Error, true, false>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Error, false, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Sudo, true, true>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Sudo, true, false>(const std::string_view&);
+template VE_API void ve::internal::logWrite<ve::LogLevel::Sudo, false, true>(const std::string_view&);
 
 namespace ve::log {
 
-// --- globalLoggerName ---
-
-template<> VE_API const char* globalLoggerName<ve::LogSink::Console>() { return ve_console_log_name; }
-template<> VE_API const char* globalLoggerName<ve::LogSink::File>()    { return ve_file_log_name; }
-
-// --- enable / disable ---
-
-template<> VE_API void enable<ve::LogSink::Console>()  { ve_global_console_logger->set_level(spdlog::level::trace); ve_update_min_level(); }
-template<> VE_API void enable<ve::LogSink::File>()     { ve_ensure_file_logger(); if (ve_global_file_logger) { ve_global_file_logger->set_level(spdlog::level::trace); ve_update_min_level(); } }
-template<> VE_API void disable<ve::LogSink::Console>() { ve_global_console_logger->set_level(spdlog::level::off); ve_update_min_level(); }
-template<> VE_API void disable<ve::LogSink::File>()    { if (ve_global_file_logger) { ve_global_file_logger->set_level(spdlog::level::off); ve_update_min_level(); } }
-
-// --- configure (call before first log) ---
-
-VE_API void setAppName(const std::string& name) { ve_app_name = name; }
-VE_API void setLogDir(const std::string& dir)   { ve_log_dir_override = dir; }
-
-// --- setLevel ---
-
-VE_API void setLevel(LogLevel level)
+VE_API bool configure(Node* n)
 {
-    auto sl = ve_to_spdlog(level);
-    if (ve_global_console_logger) ve_global_console_logger->set_level(sl);
-    ve_ensure_file_logger();
-    if (ve_global_file_logger) ve_global_file_logger->set_level(sl);
-    ve_update_min_level();
+    if (!n) return false;
+    auto level = spdlog::level::info;
+    auto flush = spdlog::level::err;
+    if (!_log_level(n->get("log/level"), level)) return false;
+    auto cl = level, fl = level;
+    if (!_log_level(n->get("log/console/level"), cl) ||
+        !_log_level(n->get("log/file/level"), fl) ||
+        !_log_level(n->get("log/flush_level"), flush)) return false;
+    bool ce = n->get("log/console/enabled").toBool(true);
+    bool fe = n->get("log/file/enabled").toBool(true);
+    auto queue = n->get("log/queue_size").toInt64(8192);
+    auto workers = n->get("log/worker_threads").toInt64(1);
+    auto interval = n->get("log/flush_interval_seconds").toInt64(3);
+    if (queue <= 0 || (uint64_t)queue >= std::numeric_limits<size_t>::max()) {
+        std::cerr << "[ve/log] log/queue_size is out of range\n";
+        return false;
+    }
+    if (workers <= 0 || workers > 1000) {
+        std::cerr << "[ve/log] log/worker_threads must be in 1..1000\n";
+        return false;
+    }
+    if (interval < 0 || interval > std::numeric_limits<int>::max()) {
+        std::cerr << "[ve/log] log/flush_interval_seconds is out of range\n";
+        return false;
+    }
+    auto policy = n->get("log/overflow_policy").toString("block");
+    if (policy != "block" && policy != "overrun_oldest") {
+        std::cerr << "[ve/log] log/overflow_policy must be block or overrun_oldest\n";
+        return false;
+    }
+    try {
+        LogState next;
+        Vector<spdlog::sink_ptr> sinks;
+        if (n->get("log/async").toBool(false) && (ce || fe))
+            next.pool = std::make_shared<spdlog::details::thread_pool>((size_t)queue, (size_t)workers);
+        auto make = [&](const char* name, const Vector<spdlog::sink_ptr>& ss, spdlog::level::level_enum l) {
+            std::shared_ptr<spdlog::logger> r;
+            if (next.pool) r = std::make_shared<spdlog::async_logger>(name, ss.begin(), ss.end(), next.pool,
+                policy == "block" ? spdlog::async_overflow_policy::block : spdlog::async_overflow_policy::overrun_oldest);
+            else r = std::make_shared<spdlog::logger>(name, ss.begin(), ss.end());
+            r->set_level(l);
+            r->flush_on(flush);
+            return r;
+        };
+        if (ce) {
+            auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+            sink->set_pattern(n->get("log/console/pattern").toString("%H:%M:%S.%e %^[%L] %v%$"));
+            sink->set_level(cl);
+            sinks.push_back(sink);
+            next.console = make("FConsole", {sink}, cl);
+        }
+        if (fe) {
+            auto path = _log_path(n);
+            if (path.empty()) return false;
+            auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path);
+            sink->set_pattern(n->get("log/file/pattern").toString("%L[%Y/%m/%d %H:%M:%S.%e] %v"));
+            sink->set_level(fl);
+            sinks.push_back(sink);
+            next.file = make("FFile", {sink}, fl);
+        }
+        next.combined = make("ve", sinks, std::min(ce ? cl : spdlog::level::off, fe ? fl : spdlog::level::off));
+        if (interval > 0 && !sinks.empty()) next.flusher = std::make_unique<spdlog::details::periodic_worker>(
+            [logger = next.combined] { logger->flush(); }, std::chrono::seconds(interval));
+        g.pool.swap(next.pool);
+        g.console.swap(next.console);
+        g.file.swap(next.file);
+        g.combined.swap(next.combined);
+        g.flusher.swap(next.flusher);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[ve/log] " << e.what() << '\n';
+        return false;
+    }
 }
 
-template<> VE_API void setLevel<ve::LogSink::Console>(LogLevel level)
-{
-    if (ve_global_console_logger) ve_global_console_logger->set_level(ve_to_spdlog(level));
-    ve_update_min_level();
-}
-
-template<> VE_API void setLevel<ve::LogSink::File>(LogLevel level)
-{
-    ve_ensure_file_logger();
-    if (ve_global_file_logger) ve_global_file_logger->set_level(ve_to_spdlog(level));
-    ve_update_min_level();
-}
-
-// --- setPattern ---
-
-template<> VE_API void setPattern<ve::LogSink::Console>(const std::string& pattern)
-{
-    if (ve_global_console_logger) ve_global_console_logger->set_pattern(pattern);
-}
-
-template<> VE_API void setPattern<ve::LogSink::File>(const std::string& pattern)
-{
-    ve_ensure_file_logger();
-    if (ve_global_file_logger) ve_global_file_logger->set_pattern(pattern);
-}
-
-// --- flush ---
-
-VE_API void setFlushInterval(int seconds)
-{
-    spdlog::flush_every(std::chrono::seconds(seconds));
-}
-
-VE_API void flush()
-{
-    if (ve_global_console_logger) ve_global_console_logger->flush();
-    if (ve_global_file_logger) ve_global_file_logger->flush();
-}
-
-// --- query ---
+VE_API void flush() { if (auto* logger = _logger()) logger->flush(); }
 
 VE_API std::string getLogFilePath()
 {
-    ve_ensure_file_logger();
-    return ve_current_log_path;
+    _logger();
+    return g.file ? std::static_pointer_cast<spdlog::sinks::basic_file_sink_mt>(g.file->sinks().front())->filename() : std::string{};
 }
 
-}
+} // namespace ve::log

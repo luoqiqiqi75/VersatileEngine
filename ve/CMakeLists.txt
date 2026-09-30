@@ -38,6 +38,14 @@ ve_collect_resources(${VE_CORE_LIBRARY} ${CMAKE_CURRENT_SOURCE_DIR} PREFIX ve)
 
 target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE VE_LIBRARY)
 
+set(VE_LOOP_POOL_THREADS "${VE_LOOP_POOL_THREADS}" CACHE STRING "Default task-pool workers; empty uses CPU count * 2")
+if(NOT "${VE_LOOP_POOL_THREADS}" STREQUAL "")
+    if(NOT VE_LOOP_POOL_THREADS MATCHES "^[1-9][0-9]*$" OR VE_LOOP_POOL_THREADS GREATER 2147483647)
+        message(FATAL_ERROR "VE_LOOP_POOL_THREADS must be a positive integer within int range")
+    endif()
+    target_compile_definitions(${VE_CORE_LIBRARY} PRIVATE VE_LOOP_POOL_THREADS=${VE_LOOP_POOL_THREADS})
+endif()
+
 # PUBLIC includes — consumers get ve/global.h, ve/core/base.h, etc.
 target_include_directories(${VE_CORE_LIBRARY} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

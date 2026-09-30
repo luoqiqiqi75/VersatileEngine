@@ -82,7 +82,9 @@ private:
 class VE_API AsioPoolLoop : public Loop
 {
 public:
-    explicit AsioPoolLoop(const std::string& name = "", unsigned threads = 4);
+    // threads == 0 uses VE_LOOP_POOL_THREADS if defined, otherwise twice the
+    // hardware concurrency (2 workers if the CPU count is unavailable).
+    explicit AsioPoolLoop(const std::string& name = "", unsigned threads = 0);
     ~AsioPoolLoop() override;
 
     void   post(Task task) override;
@@ -100,6 +102,7 @@ private:
 namespace loop {
 
 // Built-in core loops. setMain/setPool borrow the pointer and never delete it.
+// Configure providers before starting tasks; restore them after tasks stop.
 VE_API Loop* main();
 VE_API Loop* pool();
 VE_API void  setMain(Loop* loop);

@@ -11,7 +11,7 @@
 # Why mangled-name globs instead of `extern "C++" { ve::*; }`:
 #   GNU ld matches `extern "C++"` against the *demangled* form, which for free
 #   function templates includes the return type prefix, e.g.:
-#     "void ve::logOnSink<...>(...)"
+#     "void ve::internal::logWrite<...>(...)"
 #   That string does not start with "ve::", so `ve::*` silently misses them
 #   and they get hidden. Matching mangled names sidesteps the issue entirely.
 # =============================================================================

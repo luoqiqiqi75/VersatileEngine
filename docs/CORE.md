@@ -276,7 +276,7 @@ meaning — `leo.json` and `ve.json` behave identically.
 ```json
 {
   "app":       "leo",
-  "log":       { "level": "info", "dir": "" },
+  "log":       { "level": "info", "dir": "", "async": false },
   "version":   2,
   "blacklist": [ "ve.service.x" ],
   "plugins":   [ { "path": "veqt.dll", "enabled": true, "min_api": 0 } ],
@@ -293,7 +293,7 @@ The reserved top-level keys are the only ones VE interprets:
 | Key | Meaning |
 | --- | --- |
 | `app` | Log app name |
-| `log` | `level` (`d`/`i`/`w`/`e`) and `dir`; applied during `setup()` |
+| `log` | Levels, sinks, directory, asynchronous queue and flush settings; applied during `setup()` |
 | `version` | Minimum VE version this config needs; `setup()` fails if it exceeds `VE_ENTRY_VERSION` |
 | `blacklist` | Module keys to skip. `"a.b"` also skips `a.b.*` |
 | `plugins` | Loaded in order at the top of `init()` |
@@ -305,6 +305,130 @@ Everything a module reads lives under `modules`, keyed by node path:
 Subtrees matching no loaded module are dropped. Because module config is nested
 under `modules`, a module can be named anything without colliding with a
 reserved key.
+
+#### Thread pool and logging
+
+Keep only the settings you want to change in `ve.json`. The repository's
+[ve_full.json](../ve/program/ve_full.json) lists the built-in defaults for log,
+core, client and server settings, including connection timeouts, port retry
+limits and terminal options. It is a reference file and is never merged into
+the startup configuration automatically. Missing settings use code defaults;
+copy individual settings from the reference when you need an override.
+Building and installing VE does not copy either JSON file next to the
+executable. With no `ve.json`, startup uses only code defaults.
+For example, disabling an HTTP listener only needs `"http": {"enable": false}`;
+there is no need to repeat that listener's port, root or retry defaults.
+Empty mount/plugin lists are defaults; see the browser configuration and
+service documentation for concrete static mount and plugin examples.
+
+The task pool is configured at compile time. Without a macro, `loop::pool()`
+and `AsioPoolLoop` with an omitted/zero thread count use twice
+`std::thread::hardware_concurrency()` (2 workers if the CPU count is unknown).
+Define the positive integer macro `VE_LOOP_POOL_THREADS` when compiling
+libve to override that count. CMake can set it directly:
+
+```bash
+cmake -S . -B build -DVE_LOOP_POOL_THREADS=8
+# Return to automatic sizing:
+cmake -S . -B build -DVE_LOOP_POOL_THREADS=
+```
+
+This count is not a JSON setting. An explicit `AsioPoolLoop(name, count)` uses
+that count, and user-owned pools continue to be supplied with `loop::setPool()`.
+Logging has its own optional queue and worker count:
+
+```json
+{
+  "log": {
+    "level": "info",
+    "dir": "./log",
+    "async": true,
+    "queue_size": 8192,
+    "worker_threads": 1,
+    "overflow_policy": "block",
+    "flush_interval_seconds": 3,
+    "flush_level": "error",
+    "console": { "enabled": true, "level": "warn" },
+    "file": { "enabled": true, "pattern": "%L[%Y/%m/%d %H:%M:%S.%e] %v" }
+  }
+}
+```
+
+| Log setting | Default | Behavior |
+| --- | --- | --- |
+| `level` | `info` | `debug`, `info`, `warn`/`warning`, `error`, `critical`/`sudo`, `off`/`ignore`; `d/i/w/e/s` also work |
+| `dir` | `./log`, with a platform fallback | Applied before creating the log file |
+| `async` | `false` | Move sink formatting and I/O to a dedicated bounded queue; message stream formatting stays on the caller |
+| `queue_size` | `8192` | Positive number of queued messages |
+| `worker_threads` | `1` | Logging workers (1..1000), independent of the task pool; more than one can reorder output |
+| `overflow_policy` | `block` | Wait for queue space; `overrun_oldest` overwrites the oldest queued message and can lose logs |
+| `flush_interval_seconds` | `3` | Periodic flushing; `0` disables it |
+| `flush_level` | `error` | Flush on this severity or higher; `off` disables this trigger |
+| `console.enabled`, `file.enabled` | `true` | Enable each output; disabled file output creates no log directory/file |
+| `console.level`, `file.level` | Inherit `level` | Independent output thresholds |
+| `console.pattern`, `file.pattern` | Existing console/file formats | spdlog format patterns |
+
+`entry::setup()` applies these settings through `log::configure(Node*)`.
+This is the only logging configuration API; pass a root Node containing
+`app` and `log`, as in the JSON above:
+
+```cpp
+ve::Node config;
+config.set("log/async", true);
+config.set("log/dir", "./log");
+bool ok = ve::log::configure(&config);
+```
+
+Each call replaces the complete snapshot: missing fields return to the defaults
+above, rather than retaining earlier settings. VE reads the Node during the call
+and does not retain it. Failed configuration leaves the current loggers intact.
+Settings use `Node::get()` and the standard `Var` conversions with defaults.
+Invalid numeric ranges or named levels/policies make `configure()` and `setup()` return `false`
+with an error on stderr; configuration validation does not throw.
+Configure before log producers start or after they stop. VE adds no
+configuration mutex or shared-pointer synchronization to each log message;
+spdlog still synchronizes shared output sinks and its asynchronous queue.
+Console and file output share one dispatch (one enqueue in async mode); each
+sink applies its own level and pattern.
+VE owns its loggers directly. Its header-only spdlog registry is separate from
+application registries, so application-side `spdlog::get()` cannot retrieve
+VE's loggers by name. Configure them through JSON or `log::configure()`.
+
+The early stream filter uses spdlog's `should_log()` without a separate VE level
+cache. Filtered messages skip stream insertion and string allocation. Expressions
+passed to `operator<<` are still evaluated by C++. With asynchronous logging,
+`log::flush()` queues a flush request. The internal resource owner's destructor
+stops periodic flushing, drains the worker pool and flushes sinks when the
+configuration is replaced or the process exits normally. `entry::deinit()`
+stops modules and leaves logging available. To release log resources earlier,
+apply a configuration with both outputs disabled after producers stop.
+Abrupt termination can still lose buffered logs.
+
+For a local file-only comparison, build and run `ve_log_bench`. It reports both
+producer time and time through final draining, plus dropped message counts:
+
+```bash
+cmake --build build --target ve_log_bench
+./build/bin/ve_log_bench
+```
+
+Local Release measurements (three runs, median producer time; 256-byte payload,
+file output under the temporary directory, console and periodic/severity flush
+disabled):
+
+| Mode | 1 producer, 50,000 messages | 4 producers, 200,000 messages |
+| --- | --- | --- |
+| Filtered | 3.45 ms | 3.58 ms |
+| Synchronous | 19.22 ms | 133.15 ms |
+| Async `block` | 29.57 ms | 255.20 ms |
+| Async `overrun_oldest` | 24.71 ms, 7,621 messages dropped | 81.53 ms, 139,957 messages dropped |
+
+The fast local file sink is cheaper synchronously in this workload. Async
+logging moves output I/O off the caller but adds queue and scheduling costs;
+`block` can still stall the caller under sustained load. The faster producer
+time with `overrun_oldest` under contention comes with substantial data loss.
+Keep the synchronous default and enable async for workloads that benefit from
+moving slow output I/O to the background; measure with their actual sinks.
 
 #### CLI flags
 
@@ -325,8 +449,8 @@ config file, then the CLI.
 
 The remote terminal TCP client reads `host`, `port`, `connect_timeout_ms`, and
 `disconnect_timeout_ms` from `modules.ve.client.terminal.tcp.config`. Both
-timeouts default to 2000 ms in `ve.json`; non-positive values fall back to that
-default.
+timeouts default to 2000 ms in code and are listed in `ve_full.json`;
+non-positive values fall back to that default.
 
 **Unrecognized flags are ignored, not rejected.** They stay in `/ve/entry/argv`
 (also reachable via `entry::args()`) for the application to parse. An app with

@@ -11,6 +11,7 @@
 #include <asio/strand.hpp>
 
 #include <exception>
+#include <limits>
 #include <optional>
 
 namespace ve {
@@ -60,6 +61,18 @@ void Loop::quit(int exit_code)
 using AsioWorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
 
 namespace {
+
+static unsigned _pool_threads()
+{
+#ifdef VE_LOOP_POOL_THREADS
+    static_assert(VE_LOOP_POOL_THREADS > 0, "VE_LOOP_POOL_THREADS must be positive");
+    static_assert(VE_LOOP_POOL_THREADS <= std::numeric_limits<int>::max(),
+                  "VE_LOOP_POOL_THREADS must fit within int range");
+    return VE_LOOP_POOL_THREADS;
+#else
+    return std::max(1u, std::thread::hardware_concurrency()) * 2;
+#endif
+}
 
 // Timer backend shared by both asio loops. Owns nothing but the schedule —
 // tick ownership and signal emission belong to Object.
@@ -389,9 +402,9 @@ struct AsioPoolLoop::Private
     AsioTimers timers;
 
     Private(unsigned n)
-        : io(static_cast<int>(n ? n : 1))
+        : io(static_cast<int>(n ? n : _pool_threads()))
         , guard(asio::make_work_guard(io))
-        , threads(n ? n : 1)
+        , threads(n ? n : _pool_threads())
         , timers(io)
     {}
 };
@@ -486,7 +499,7 @@ struct CoreLoops
     {
         if (pool) return pool;
         if (!default_pool) {
-            default_pool = new AsioPoolLoop("pool", 4);
+            default_pool = new AsioPoolLoop("pool");
             default_pool->start();
         }
         return default_pool;

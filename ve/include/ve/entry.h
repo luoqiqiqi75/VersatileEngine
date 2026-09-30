@@ -25,7 +25,7 @@
 // Lifecycle:
 //   setup()  loads ONE startup config file into /ve/entry, then overlays the
 //            caller's options node on top so CLI always wins. Nothing outside
-//            /ve/entry is written.
+//            /ve/entry is written. Applies log settings.
 //   init()   loads plugins, filters factory keys by the blacklist, materializes
 //            selected module nodes in hierarchical DFS order (siblings sorted
 //            by base priority), copies each module's subtree from
@@ -36,10 +36,11 @@
 // Startup config file (default "ve.json" in cwd; override with -c / --config).
 // A missing file is not an error — every setting has a built-in default. The
 // file name carries no meaning: leo.json and ve.json behave identically.
+// ve_full.json documents built-in defaults and is not loaded automatically.
 //
 //   {
 //     "app":       "leo",                          // log app name
-//     "log":       { "level": "info", "dir": "" }, // level: d|i|w|e
+//     "log":       { "level": "info", "dir": "", "async": false },
 //     "version":   2,                              // minimum VE version required
 //     "blacklist": [ "ve.service.x" ],             // module keys to skip
 //     "plugins":   [ { "path": "veqt.dll", "enabled": true, "min_api": 0 } ],
@@ -60,7 +61,9 @@
 // /ve/entry after setup():
 //
 //   app        string   Log app name.
-//   log        node     level / dir. Applied during setup() so the entry
+//   log        node     level / dir / async / queue_size / worker_threads /
+//                       overflow_policy / flush_interval_seconds / flush_level /
+//                       console / file. Applied during setup() so the entry
 //                       pipeline's own logs honor it.
 //   version    int      Minimum VE version this config requires. setup() fails
 //                       if it exceeds VE_ENTRY_VERSION.

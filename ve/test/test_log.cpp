@@ -29,8 +29,8 @@ VE_TEST(log_line_no_crash) {
     ve::log::line<>();
 }
 
-VE_TEST(log_setAppName_no_crash) {
-    ve::log::setAppName("ve_test");
+VE_TEST(log_configure_rejects_null) {
+    VE_ASSERT(!ve::log::configure(nullptr));
 }
 
 VE_TEST(log_ignore_level_compiles) {

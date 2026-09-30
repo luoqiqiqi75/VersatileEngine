@@ -10,14 +10,6 @@ add_executable(${VE_PROGRAM_TARGET} main.cpp)
 set_target_properties(${VE_PROGRAM_TARGET} PROPERTIES OUTPUT_NAME ve)
 target_link_libraries(${VE_PROGRAM_TARGET} PRIVATE VersatileEngine::ve)
 
-add_custom_command(
-    TARGET ${VE_PROGRAM_TARGET} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_CURRENT_SOURCE_DIR}/ve.json
-        $<TARGET_FILE_DIR:${VE_PROGRAM_TARGET}>/ve.json
-    COMMENT "Copy default ve.json next to ve binary"
-)
-
 if(VE_INSTALL)
     install(TARGETS ${VE_PROGRAM_TARGET} RUNTIME DESTINATION bin)
 endif()

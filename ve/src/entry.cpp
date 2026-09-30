@@ -229,31 +229,13 @@ bool parseArgs(int argc, char** argv, Node* opts_n)
     return true;
 }
 
-// Apply /ve/entry/log + app during setup, so the entry pipeline's own logs
-// already honor the config. This is the only place log settings are applied.
-void applyLogSettings(Node* entry_n)
+// Startup settings are applied after the file/caller overlay, before modules.
+bool applyRuntimeSettings(Node* entry_n)
 {
     std::string app = entry_n->get("app").toString();
-    if (!app.empty()) {
-        G().app_name = app;
-    }
-    if (!G().app_name.empty()) {
-        log::setAppName(G().app_name);
-    }
-
-    std::string level = entry_n->get("log/level").toString("info");
-    if (level.empty()) level = "info";
-    switch (level[0]) {
-        case 'd': log::setLevel(LogLevel::Debug);  break;
-        case 'w': log::setLevel(LogLevel::Waring); break;
-        case 'e': log::setLevel(LogLevel::Error);  break;
-        default:  log::setLevel(LogLevel::Info);   break;
-    }
-
-    std::string dir = entry_n->get("log/dir").toString();
-    if (!dir.empty()) {
-        log::setLogDir(dir);
-    }
+    if (!app.empty()) G().app_name = app;
+    else if (!G().app_name.empty()) entry_n->set("app", G().app_name);
+    return log::configure(entry_n);
 }
 
 } // anon
@@ -268,6 +250,8 @@ bool setup(Node* options_n)
     //    config file is, and whether to narrate. Default to "ve.json" so a bare
     //    setup(nullptr) still picks up a local file.
     std::string config_file;
+    bool config_loaded = false;
+    bool config_missing = false;
     bool verbose = false;
     bool verbose_overridden = false;
     if (options_n) {
@@ -290,16 +274,16 @@ bool setup(Node* options_n)
     if (!config_file.empty()) {
         std::string content = readFile(config_file);
         if (content.empty()) {
-            if (verbose) veLogW << "[ve/entry] Config file empty or missing: " << config_file;
+            config_missing = true;
         } else if (!schema::toNode<schema::JsonS>(entry_n, content)) {
             veLogE << "[ve/entry] Config parse failed: " << config_file;
             return false;
         } else {
+            config_loaded = true;
             if (!verbose_overridden) {
                 verbose = entry_n->get("verbose").toBool(false);
                 g.verbose = verbose;
             }
-            if (verbose) veLogI << "[ve/entry] Config loaded: " << config_file;
         }
     }
 
@@ -332,11 +316,15 @@ bool setup(Node* options_n)
     // 5. Overlay caller options — CLI wins over the file.
     entry_n->copy(options_n);
 
-    // 6. Logging is live from here on.
-    applyLogSettings(entry_n);
+    // 6. Apply log settings before module resources are created.
+    if (!applyRuntimeSettings(entry_n)) return false;
 
     g.verbose = entry_n->get("verbose").toBool(false);
-    if (g.verbose) veLogI << "[ve/entry] setup complete";
+    if (g.verbose) {
+        if (config_missing) veLogW << "[ve/entry] Config file empty or missing: " << config_file;
+        if (config_loaded) veLogI << "[ve/entry] Config loaded: " << config_file;
+        veLogI << "[ve/entry] setup complete";
+    }
     return true;
 }
 

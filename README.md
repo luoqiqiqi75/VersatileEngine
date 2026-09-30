@@ -258,7 +258,13 @@ int main(int argc, char* argv[]) {
 directory by default, overridable with `-c <path>`. It holds only what VE needs
 to boot (`app`, `log`, `version`, `blacklist`, `plugins`) plus a `modules`
 subtree that VE copies onto the node tree. See
-[CORE.md](docs/CORE.md#veentry) for the format.
+[CORE.md](docs/CORE.md#veentry) for the format. Keep only needed overrides in
+`ve.json`; [ve_full.json](ve/program/ve_full.json) lists the built-in defaults
+for reference and is not loaded automatically. The default task pool uses CPU
+count × 2; set the `VE_LOOP_POOL_THREADS` compile-time macro through CMake
+with `-DVE_LOOP_POOL_THREADS=8` to override it. JSON files are repository
+examples; building and installing VE does not copy them next to the executable.
+A process without `ve.json` uses the code defaults.
 
 ### Terminal REPL
 

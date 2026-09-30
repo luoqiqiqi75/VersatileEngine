@@ -12,6 +12,8 @@ It exists to keep future code aligned with the current architecture rather than 
 - Put framework-specific code in adapters, not in core headers.
 - Keep public APIs small and explicit.
 - Avoid temporary wrappers that only exist to smooth a migration step.
+- Do not use `throw` for VE errors. Return `bool` or `Result` and report failures
+  explicitly; catch third-party exceptions at the library boundary.
 
 ## Compatibility Policy
 

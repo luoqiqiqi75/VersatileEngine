@@ -1,60 +1,8 @@
 {
   "app": "ve",
-  "log": { "level": "info" },
+  "log": {
+    "level": "info"
+  },
   "version": 2,
-  "blacklist": [],
-  "plugins": [],
-
-  "modules": {
-    "ve": {
-      "client": {
-        "terminal": {
-          "stdio": {
-            "enabled": false
-          },
-          "tcp": {
-            "enabled": false,
-            "config": {
-              "host": "127.0.0.1",
-              "port": 10000,
-              "connect_timeout_ms": 2000,
-              "disconnect_timeout_ms": 2000
-            }
-          }
-        }
-      },
-      "server": {
-        "node": {
-          "http": {
-            "enable": true,
-            "config": { "port": 12000 }
-          },
-          "ws": {
-            "enable": true,
-            "config": { "port": 12100 }
-          },
-          "tcp": {
-            "enable": true,
-            "config": { "port": 12200 }
-          },
-          "udp": {
-            "enable": true,
-            "config": { "port": 12300 }
-          }
-        },
-        "terminal": {
-          "repl": {
-            "enable": true,
-            "config": { "port": 10000 }
-          }
-        },
-        "bin": {
-          "tcp": {
-            "enable": true,
-            "config": { "port": 11000 }
-          }
-        }
-      }
-    }
-  }
+  "plugins": []
 }
