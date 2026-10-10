@@ -70,6 +70,7 @@
         "properties": {
           "path":    { "type": "string", "description": "target path; created if absent" },
           "tree":    { "type": "object", "description": "tree to merge in" },
+          "flags":   { "type": "integer", "description": "Node::CopyFlag bitmask: insert=1, remove=2, update=4, replace=8; overrides boolean options (default 9)" },
           "insert":  { "type": "boolean", "description": "add keys missing in the target (default true)" },
           "replace": { "type": "boolean", "description": "overwrite non-null values (default true)" },
           "remove":  { "type": "boolean", "description": "drop keys absent in the tree (default false)" },

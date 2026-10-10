@@ -64,6 +64,7 @@ static Result import_(Node* ctx, Node* params, Node* data)
               | (params->get("replace").toBool(true)  ? Node::COPY_REPLACE : 0)
               | (params->get("remove").toBool(false)  ? Node::COPY_REMOVE  : 0)
               | (params->get("update").toBool(false)  ? Node::COPY_UPDATE  : 0);
+    if (params->find("flags")) flags = params->get("flags").toInt(flags);
     Node* target = r->at(params->get("path").toString());
     target->copy(tree, flags);
     data->set("path", target->path(r));

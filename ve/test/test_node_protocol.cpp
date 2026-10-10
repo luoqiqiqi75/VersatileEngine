@@ -288,6 +288,64 @@ VE_TEST(node_dispatch_import) {
     VE_ASSERT_EQ(root.get("b/y").toInt(), 20);
 }
 
+VE_TEST(node_dispatch_import_flags) {
+    for (int flags = 0; flags < 16; ++flags) {
+        Node root("root");
+        root.set("b/existing", 1);
+        root.set("b/stale", 2);
+        Node* target = root.find("b");
+        target->set(7);
+        int changes = 0;
+        target->onChanged(&root, [&] { ++changes; });
+        service::Session session(&root, &root);
+
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "import");
+        Node* params = pipe.contextNode()->at("params");
+        params->set("path", "b");
+        params->set("flags", flags);
+        params->set("insert", !(flags & Node::COPY_INSERT));
+        params->set("replace", !(flags & Node::COPY_REPLACE));
+        params->set("remove", !(flags & Node::COPY_REMOVE));
+        params->set("update", !(flags & Node::COPY_UPDATE));
+        Node* tree = params->at("tree");
+        tree->set(7);
+        tree->set("existing", 10);
+        tree->set("added", 20);
+        runEnvelope(&session, pipe);
+
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+        VE_ASSERT_EQ(root.get("b/existing").toInt(), (flags & Node::COPY_REPLACE) ? 10 : 1);
+        VE_ASSERT_EQ(root.find("b/added") != nullptr, (flags & Node::COPY_INSERT) != 0);
+        VE_ASSERT_EQ(root.find("b/stale") == nullptr, (flags & Node::COPY_REMOVE) != 0);
+        VE_ASSERT_EQ(changes, (flags & Node::COPY_REPLACE) && !(flags & Node::COPY_UPDATE) ? 1 : 0);
+    }
+}
+
+VE_TEST(node_dispatch_import_boolean_options) {
+    Node root("root");
+    root.set("b/existing", 1);
+    root.set("b/stale", 2);
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "import");
+    Node* params = pipe.contextNode()->at("params");
+    params->set("path", "b");
+    params->set("insert", false);
+    params->set("replace", false);
+    params->set("remove", true);
+    params->set("update", true);
+    params->at("tree")->set("existing", 10);
+    params->at("tree")->set("added", 20);
+    runEnvelope(&session, pipe);
+
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    VE_ASSERT_EQ(root.get("b/existing").toInt(), 1);
+    VE_ASSERT(root.find("b/added") == nullptr);
+    VE_ASSERT(root.find("b/stale") == nullptr);
+}
+
 VE_TEST(node_dispatch_watch_with_session_pushes) {
     Node root("root");
     root.set("watch/me", 1);

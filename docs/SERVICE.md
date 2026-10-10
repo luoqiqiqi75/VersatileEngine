@@ -221,6 +221,12 @@ Common operations (all arguments go in `params`):
 | `subscribe` | `path`, `depth?`, `once?`, `immediate?` | Stateful transports only |
 | `unsubscribe` | `path` | Stateful transports only |
 
+`import.flags` uses `Node::CopyFlag` bits: insert `1`, remove `2`, update `4`,
+replace `8`. When present, it takes precedence over the legacy boolean options
+`insert`, `replace`, `remove`, and `update`. Without `flags`, those options default
+to `true`, `true`, `false`, and `false`, respectively (mask `9`). An explicit `0`
+disables all four bits; update suppresses change signals for unchanged values.
+
 User commands use the `cmd` field instead of an `op`; batch uses the top-level
 `batch` array (each item is its own `op`/`cmd` request).
 
