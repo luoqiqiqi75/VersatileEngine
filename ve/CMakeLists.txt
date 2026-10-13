@@ -22,6 +22,14 @@ endif()
 
 file(GLOB_RECURSE _PLAT_SOURCES CONFIGURE_DEPENDS ${_PLAT_DIR}/*.h ${_PLAT_DIR}/*.cpp)
 
+# macOS gates ucontext on X/Open visibility and hides dlfcn.h's Dl_info when
+# strict POSIX visibility is selected. Keep both feature macros scoped here.
+if(APPLE)
+    set_source_files_properties(${_PLAT_DIR}/rescue.cpp PROPERTIES
+        COMPILE_DEFINITIONS "_XOPEN_SOURCE=700;_DARWIN_C_SOURCE=1"
+    )
+endif()
+
 # --- Library target ---
 ve_resolve_library_target_name(VE_CORE_LIBRARY ve)
 set(VE_CORE_LIBRARY ${VE_CORE_LIBRARY} PARENT_SCOPE)
