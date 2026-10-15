@@ -197,7 +197,7 @@ VE_API bool configure(Node* n)
     auto queue = n->get("log/queue_size").toInt64(8192);
     auto workers = n->get("log/worker_threads").toInt64(1);
     auto interval = n->get("log/flush_interval_seconds").toInt64(3);
-    if (queue <= 0 || (uint64_t)queue >= std::numeric_limits<size_t>::max()) {
+    if (queue <= 0) {
         std::cerr << "[ve/log] log/queue_size is out of range\n";
         return false;
     }
@@ -205,7 +205,7 @@ VE_API bool configure(Node* n)
         std::cerr << "[ve/log] log/worker_threads must be in 1..1000\n";
         return false;
     }
-    if (interval < 0 || interval > std::numeric_limits<int>::max()) {
+    if (interval < 0) {
         std::cerr << "[ve/log] log/flush_interval_seconds is out of range\n";
         return false;
     }

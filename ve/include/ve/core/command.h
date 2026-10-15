@@ -6,6 +6,9 @@
 #include "node.h"
 #include "var.h"
 
+#include <limits>
+#include <ostream>
+
 namespace ve {
 
 struct Result
@@ -31,6 +34,7 @@ struct Result
 
     void setCode(int c) { _code = c; }
     template<typename E> std::enable_if_t<std::is_enum_v<E>> setCode(E ec) { setCode(static_cast<int>(ec)); }
+    Result& operator+=(const Result& other);
 
     bool isSuccess() const { return code() == SUCCESS; }
     bool isError() const { return code() < 0; }
@@ -52,6 +56,44 @@ private:
     std::atomic<int> _code{FAILED};
     std::string      _message;
 };
+
+inline Result operator+(const Result& lhs, const Result& rhs)
+{
+    const bool err = lhs.isError() || rhs.isError();
+    const long long lhs_code = lhs.code();
+    const long long rhs_code = rhs.code();
+    const long long sum = (lhs_code < 0 ? -lhs_code : lhs_code)
+        + (rhs_code < 0 ? -rhs_code : rhs_code);
+    int code;
+    if (err) {
+        const long long max_error_code = static_cast<long long>(std::numeric_limits<int>::max()) + 1;
+        code = sum >= max_error_code ? std::numeric_limits<int>::min() : -static_cast<int>(sum);
+    } else {
+        code = sum > std::numeric_limits<int>::max()
+            ? std::numeric_limits<int>::max() : static_cast<int>(sum);
+    }
+    std::string message = lhs.message();
+    if (!rhs.message().empty()) {
+        if (!message.empty()) message += ',';
+        message += rhs.message();
+    }
+    return {code, std::move(message)};
+}
+
+inline Result& Result::operator+=(const Result& other)
+{
+    *this = *this + other;
+    return *this;
+}
+
+inline std::ostream& operator<<(std::ostream& os, const Result& result)
+{
+    const int code = result.code();
+    const char* status = code < 0 ? "failed" : (code > 0 ? "accepted" : "success");
+    os << "Result{" << status << ", code=" << code;
+    if (!result.message().empty()) os << ", message=\n" << result.message();
+    return os << '}';
+}
 
 namespace convert
 {
