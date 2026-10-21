@@ -188,7 +188,9 @@ VE_API bool configure(Node* n)
     auto level = spdlog::level::info;
     auto flush = spdlog::level::err;
     if (!_log_level(n->get("log/level"), level)) return false;
-    auto cl = level, fl = level;
+    // Console output defaults to debug so development diagnostics are visible;
+    // file output continues to inherit the general log level.
+    auto cl = spdlog::level::debug, fl = level;
     if (!_log_level(n->get("log/console/level"), cl) ||
         !_log_level(n->get("log/file/level"), fl) ||
         !_log_level(n->get("log/flush_level"), flush)) return false;

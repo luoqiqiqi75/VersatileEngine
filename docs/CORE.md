@@ -365,7 +365,8 @@ Logging has its own optional queue and worker count:
 | `flush_interval_seconds` | `3` | Periodic flushing; `0` disables it |
 | `flush_level` | `error` | Flush on this severity or higher; `off` disables this trigger |
 | `console.enabled`, `file.enabled` | `true` | Enable each output; disabled file output creates no log directory/file |
-| `console.level`, `file.level` | Inherit `level` | Independent output thresholds |
+| `console.level` | `debug` | Console threshold; independent from file output |
+| `file.level` | Inherit `level` (`info` by default) | File output threshold |
 | `console.pattern`, `file.pattern` | Existing console/file formats | spdlog format patterns |
 
 `entry::setup()` applies these settings through `log::configure(Node*)`.

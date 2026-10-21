@@ -11,7 +11,7 @@
     "flush_level": "error",
     "console": {
       "enabled": true,
-      "level": "info",
+      "level": "debug",
       "pattern": "%H:%M:%S.%e %^[%L] %v%$"
     },
     "file": {
