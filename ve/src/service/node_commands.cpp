@@ -115,7 +115,12 @@ static Result trigger(Node* ctx, Node* params, Node*)
     std::string path = params->get("path").toString();
     Node* target = r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
-    target->trigger<Node::NODE_CHANGED>();
+    Var value;
+    {
+        Node::LockT lock(target->mutex());
+        value = target->get();
+    }
+    target->trigger<Node::NODE_CHANGED>(value, value);
     return Result::ok();
 }
 
@@ -129,11 +134,14 @@ static Result subscribe(Node* ctx, Node* params, Node* data)
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
     int depth = params->get("depth").toInt(-1);
 
-    auto emit = [s, r, target, depth]() {
+    auto emit = [s, r, target, depth](const Var& new_v, const Var&) {
         Node event;
         event.set("event", "node.changed");
         event.set("path", target->path(r));
-        event.at("data")->copy(target, Node::COPY_DEFAULT, depth);
+        if (depth == 0 || target->empty())
+            event.at("data")->set(new_v);
+        else
+            event.at("data")->copy(target, Node::COPY_DEFAULT, depth);
         s->send(toJson(event));
     };
 

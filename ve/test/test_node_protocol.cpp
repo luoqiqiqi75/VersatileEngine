@@ -8,6 +8,7 @@
 #include <ve/core/schema.h>
 #include <ve/core/pipeline.h>
 #include <ve/core/res.h>
+#include <ve/core/impl/json.h>
 
 using namespace ve;
 
@@ -386,6 +387,113 @@ VE_TEST(node_dispatch_watch_with_session_pushes) {
 
     root.find("watch/me")->set(9);
     VE_ASSERT(lastPush.empty());
+}
+
+VE_TEST(node_subscribe_uses_signal_value_for_shallow_or_leaf) {
+    for (int depth : {-1, 0, 1}) {
+        for (bool has_children : {false, true}) {
+            for (bool once : {false, true}) {
+                Node root("root");
+                Node* target = root.at("watched");
+                if (has_children) target->set("child", 42);
+
+                // Change the live value before the subscriber receives this set's payload.
+                target->onChanged(&root, [target]() {
+                    target->silent(true);
+                    target->set("later");
+                    target->silent(false);
+                });
+
+                std::vector<std::string> pushes;
+                service::Session session(&root, &root, [&](std::string msg) {
+                    pushes.push_back(std::move(msg));
+                });
+                Pipeline pipe;
+                pipe.contextNode()->set("op", "subscribe");
+                Node* params = pipe.contextNode()->at("params");
+                params->set("path", "watched");
+                params->set("depth", depth);
+                params->set("once", once);
+                runEnvelope(&session, pipe);
+                VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+
+                target->set("snapshot");
+                VE_ASSERT_EQ(target->getString(), std::string("later"));
+                VE_ASSERT_EQ(pushes.size(), size_t(1));
+                Node event;
+                schema::toNode<schema::JsonS>(&event, pushes.at(0));
+                VE_ASSERT_EQ(event.get("event").toString(), std::string("node.changed"));
+                VE_ASSERT_EQ(event.get("path").toString(), std::string("watched"));
+                Node* data = event.find("data");
+                VE_ASSERT(data != nullptr);
+                if (!data) continue;
+                const bool value_only = depth == 0 || !has_children;
+                VE_ASSERT_EQ(data->getString(), std::string(value_only ? "snapshot" : "later"));
+                VE_ASSERT_EQ(data->count(), value_only ? 0 : 1);
+                if (!value_only) VE_ASSERT_EQ(data->get("child").toInt(), 42);
+
+                target->set("next");
+                VE_ASSERT_EQ(pushes.size(), once ? size_t(1) : size_t(2));
+            }
+        }
+    }
+}
+
+VE_TEST(node_subscribe_preserves_signal_value_types) {
+    for (const Var& value : {Var{}, Var(Var::ListV{1, "item"}),
+                             Var(Var::DictV{{"key", "value"}})}) {
+        Node root("root");
+        Node* target = root.at("watched");
+        target->set("initial");
+        target->onChanged(&root, [target]() {
+            target->silent(true);
+            target->set("later");
+            target->silent(false);
+        });
+        std::string push;
+        service::Session session(&root, &root, [&](std::string msg) {
+            push = std::move(msg);
+        });
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "subscribe");
+        pipe.contextNode()->at("params")->set("path", "watched");
+        runEnvelope(&session, pipe);
+
+        target->set(value);
+        Var event = impl::json::parse(push);
+        VE_ASSERT(event.isDict());
+        VE_ASSERT(event.toDict().has("data"));
+        VE_ASSERT(event.toDict()["data"] == value);
+    }
+}
+
+VE_TEST(node_subscribe_manual_trigger_keeps_current_value) {
+    Node root("root");
+    root.set("watched", 42);
+    Var new_v, old_v;
+    root.find("watched")->onChanged(&root, [&](const Var& nv, const Var& ov) {
+        new_v = nv;
+        old_v = ov;
+    });
+    std::string push;
+    service::Session session(&root, &root, [&](std::string msg) {
+        push = std::move(msg);
+    });
+    Pipeline subscribe;
+    subscribe.contextNode()->set("op", "subscribe");
+    subscribe.contextNode()->at("params")->set("path", "watched");
+    runEnvelope(&session, subscribe);
+
+    Pipeline trigger;
+    trigger.contextNode()->set("op", "trigger");
+    trigger.contextNode()->at("params")->set("path", "watched");
+    runEnvelope(&session, trigger);
+    VE_ASSERT_EQ(trigger.contextNode()->get("code").toInt(-1), 0);
+    Node event;
+    schema::toNode<schema::JsonS>(&event, push);
+    VE_ASSERT_EQ(event.get("data").toInt(), 42);
+    VE_ASSERT_EQ(new_v.toInt(), 42);
+    VE_ASSERT_EQ(old_v.toInt(), 42);
 }
 
 VE_TEST(node_session_disconnect_isolated_from_subscriber) {

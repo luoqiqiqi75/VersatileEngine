@@ -530,7 +530,12 @@ static Result set(Node* ctx, Node* in, Node* out)
             t = resolveNode(s->root, s->current, f.pos(0));
             if (!t) return Result::fail("not found: " + f.pos(0));
         } else return Result::fail("usage: set [path] --trigger");
-        t->trigger<Node::NODE_CHANGED>();
+        Var value;
+        {
+            Node::LockT lock(t->mutex());
+            value = t->get();
+        }
+        t->trigger<Node::NODE_CHANGED>(value, value);
         if (t->isWatching()) t->activate(Node::NODE_CHANGED, t);
         setTextOut(out, "triggered: " + c.cyan + nodeSummary(t) + c.reset + "\n");
         return Result::ok();
