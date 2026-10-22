@@ -115,11 +115,7 @@ static Result trigger(Node* ctx, Node* params, Node*)
     std::string path = params->get("path").toString();
     Node* target = r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
-    Var value;
-    {
-        Node::LockT lock(target->mutex());
-        value = target->get();
-    }
+    Var value = target->get();
     target->trigger<Node::NODE_CHANGED>(value, value);
     return Result::ok();
 }
