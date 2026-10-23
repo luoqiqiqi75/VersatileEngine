@@ -28,7 +28,12 @@
 #include <future>
 #include <any>
 #include <charconv>
+#include <chrono>
+#include <cstdint>
+#include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 #if (!defined(VE_STATIC_LIBRARY) && (defined(_WIN32) || defined(_WIN64))) // shared as default
 #ifdef VE_LIBRARY
@@ -44,6 +49,23 @@
 #endif
 #else
 #define VE_API
+#endif
+
+// --- compiler hints ---
+#if defined(__GNUC__)
+#define VE_FORCE_INLINE __attribute__((always_inline)) inline
+#elif defined(_MSC_VER)
+#define VE_FORCE_INLINE __forceinline
+#else
+#define VE_FORCE_INLINE inline
+#endif
+
+#if defined(__GNUC__)
+#define VE_LIKELY(x) __builtin_expect(!!(x), 1)
+#define VE_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define VE_LIKELY(x) (x)
+#define VE_UNLIKELY(x) (x)
 #endif
 
 #define VE_DEF_STR(X) PRIVATE_VE_DEF_STR_IMPL(X)

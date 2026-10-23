@@ -2,7 +2,6 @@
 #include "ve_test.h"
 #include "ve/core/node.h"
 #include "ve/core/convert.h"
-#include <atomic>
 
 using namespace ve;
 
@@ -238,13 +237,12 @@ VE_TEST(node_global_n_find_without_create) {
     VE_ASSERT(ve::node::root()->find("test_n_no_create/missing") == nullptr);
 }
 
-// The tree and configuration remain fixed while threads access only the value.
-VE_TEST(node_value_concurrent_strings_and_type_changes) {
+VE_TEST(node_value_concurrent_reads)
+{
     Node node;
-    const std::string short_text(17, 'a');
-    const std::string long_text(8192, 'b');
-    const Var values[] = {Var(short_text), Var(long_text), Var(42), Var{}};
-    node.set(values[0]);
+    const std::string text(8192, 'x');
+    const Var value(text);
+    node.set(value);
     std::atomic<bool> start{false};
     std::atomic<int> ready{0};
     std::atomic<int> errors{0};
@@ -252,29 +250,37 @@ VE_TEST(node_value_concurrent_strings_and_type_changes) {
     for (int t = 0; t < 6; ++t) {
         threads.emplace_back([&, t] {
             ready.fetch_add(1);
-            while (!start.load()) std::this_thread::yield();
+            while (!start.load()) { std::this_thread::yield(); }
             for (int i = 0; i < 10000; ++i) {
-                if (t >= 4) {
-                    if (i & 1) node.set(Var(values[(i + t) % 4]));
-                    else node.set(values[(i + t) % 4]);
-                    continue;
-                }
                 const Var snapshot = node.get();
-                if (snapshot != values[0] && snapshot != values[1]
-                    && snapshot != values[2] && !snapshot.isNull()) ++errors;
-                const auto text = t & 1 ? node.getString("empty")
-                                       : node.getAs<std::string>("empty");
-                if (text != short_text && text != long_text && text != "42" && text != "empty") ++errors;
-                // Parsing either text fails, while INT and NONE return 42 and -1.
-                const int number = node.getInt();
-                if (number != 42 && number != -1) ++errors;
+                if (snapshot != value) ++errors;
+                const auto result = t & 1 ? node.getString() : node.getAs<std::string>();
+                if (result != text || node.getInt() != -1) ++errors;
             }
         });
     }
-    while (ready.load() != 6) std::this_thread::yield();
+    while (ready.load() != 6) { std::this_thread::yield(); }
     start.store(true);
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads) { thread.join(); }
     VE_ASSERT_EQ(errors.load(), 0);
+}
+
+VE_TEST(node_value_scalar_and_heap_roundtrip)
+{
+    Node node;
+    int pointee = 42;
+    const Var values[] = {Var{}, Var(true), Var(false),
+        Var(INT64_C(9007199254740993)), Var(INT64_C(-9007199254740993)),
+        Var(1.25), Var(-2.5), Var("text"), Var(Bytes{1, 2, 3}),
+        Var(Var::ListV{Var("item")}), Var(static_cast<void*>(&pointee))};
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        for (const auto& value : values) {
+            node.set(value);
+            VE_ASSERT(node.get() == value);
+            node.set(Var(value));
+            VE_ASSERT(node.get() == value);
+        }
+    }
 }
 
 VE_TEST(node_value_signal_reentrant_read_and_write) {

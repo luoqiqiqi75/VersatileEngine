@@ -3,16 +3,8 @@
 // --mixed enables concurrent readers/writers and requires synchronized values.
 // --notify leaves signals enabled (no subscribers); default isolates value cost.
 #include "ve/core/node.h"
-#include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <cstdint>
-#include <cstdlib>
 #include <iomanip>
-#include <iostream>
 #include <shared_mutex>
-#include <thread>
-#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -79,15 +71,15 @@ void bench(const char* operation, int bytes, int readers, int writers, Fn operat
 #endif
                 uint64_t sum = 0;
                 ready.fetch_add(1, std::memory_order_release);
-                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
-                for (int i = 0; i < iterations; ++i) sum += operation_fn(t, i);
+                while (!start.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+                for (int i = 0; i < iterations; ++i) { sum += operation_fn(t, i); }
                 checksum.fetch_add(sum, std::memory_order_relaxed);
             });
         }
-        while (ready.load(std::memory_order_acquire) != workers) std::this_thread::yield();
+        while (ready.load(std::memory_order_acquire) != workers) { std::this_thread::yield(); }
         const auto begin = Clock::now();
         start.store(true, std::memory_order_release);
-        for (auto& thread : threads) thread.join();
+        for (auto& thread : threads) { thread.join(); }
         const double ns = std::chrono::duration<double, std::nano>(Clock::now() - begin).count();
         if (repeat >= 0) samples.push_back(ns / (iterations * workers));
     }
@@ -106,15 +98,22 @@ int main(int argc, char** argv)
         notify |= std::string(argv[i]) == "--notify";
     }
     std::cerr << "shared_mutex_bytes=" << sizeof(std::shared_mutex) << ",cpu_masks=";
-    for (auto cpu : preferred_cpus()) std::cerr << std::hex << cpu << ';';
+    for (auto cpu : preferred_cpus()) { std::cerr << std::hex << cpu << ';'; }
     std::cerr << std::dec << '\n';
     std::cout << "operation,bytes,readers,writers,median_ns_per_op,million_ops_per_second\n";
     ve::Node number;
     number.silent(!notify);
     number.set(42);
+    ve::Node boolean, real;
+    boolean.silent(!notify);
+    real.silent(!notify);
+    boolean.set(true);
+    real.set(1.5);
     std::shared_mutex mutex;
     for (int readers : {1, 4, 8}) {
         bench("getInt", 0, readers, 0, [&](int, int) { return number.getInt(); });
+        bench("getBool", 0, readers, 0, [&](int, int) { return boolean.getBool(); });
+        bench("getDouble", 0, readers, 0, [&](int, int) { return real.getDouble() == 1.5; });
         bench("shared_lock.only", 0, readers, 0, [&](int, int) {
             std::shared_lock lock(mutex);
             return uint64_t(1);
@@ -133,6 +132,13 @@ int main(int argc, char** argv)
     bench("update.unchanged", 0, 0, 1, [&](int, int) {
         return number.update(integer) ? uint64_t(1) : uint64_t(0);
     });
+    if (mixed) {
+        bench("int.get.set.concurrent", 0, 4, 1, [&](int t, int i) {
+            if (t < 4) return static_cast<uint64_t>(number.getInt());
+            number.set(ve::Var(42 + (i & 1)));
+            return uint64_t(1);
+        });
+    }
     const std::vector<ve::Var> types = {ve::Var(), ve::Var(true), ve::Var(42), ve::Var(1.5),
         ve::Var("text"), ve::Var(ve::Bytes{}), ve::Var(ve::Var::ListV{}),
         ve::Var(ve::Var::DictV{}), ve::Var(static_cast<void*>(nullptr)),
@@ -188,5 +194,13 @@ int main(int argc, char** argv)
             });
         }
     }
+    std::mutex mtx;
+    for (int workers : {1, 4, 8}) {
+        bench("mutex.only", 0, workers, 0, [&](int, int) {
+            std::lock_guard<std::mutex> lk(mtx);
+            return uint64_t(1);
+        });
+    }
+    std::cerr << "mutex_bytes=" << sizeof(std::mutex) << '\n';
     std::cerr << "checksum=" << checksum.load(std::memory_order_relaxed) << '\n';
 }

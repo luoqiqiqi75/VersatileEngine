@@ -7,7 +7,6 @@
 // ----------------------------------------------------------------------------
 #pragma once
 
-#include "base.h"
 #include "convert.h"
 
 namespace ve {

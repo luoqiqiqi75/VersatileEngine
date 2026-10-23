@@ -1,8 +1,6 @@
 // node.cpp — ve::Node
 #include "ve/core/node.h"
-#include "ve/core/var.h"
 #include "ve/core/log.h"
-#include <shared_mutex>
 
 namespace ve {
 
@@ -29,8 +27,6 @@ struct Node::Private
 
     Children*   children = nullptr;
     Var         value;
-
-    mutable std::shared_mutex value_mutex;
 
     Children* ensureChildren()
     {
@@ -748,34 +744,22 @@ void Node::silentAll(bool on)
 // Node — value operations
 // ============================================================================
 
-Var Node::value() const {
-    std::shared_lock lk(_p->value_mutex);
-    return _p->value;
-}
+Var Node::value() const { return _p->value; }
 
 Node* Node::set(const Var& v)
 {
-    Var nv(v);  // copy outside lock
-    {
-        std::unique_lock lk(_p->value_mutex);
-        _p->value.swap(nv);  // swap only 16 bytes, very fast
-    }
-    // nv now holds old value, trigger signals outside lock
-    trigger<NODE_CHANGED>(v, nv);
+    Var old(v);
+    _p->value.swap(old);
+    trigger<NODE_CHANGED>(v, old);
     if (isWatching()) activate(NODE_CHANGED, this);
     return this;
 }
 
 Node* Node::set(Var&& v)
 {
-    Var nv(std::move(v));  // move outside lock
-    const Var sig(nv);     // snapshot for signal
-    {
-        std::unique_lock lk(_p->value_mutex);
-        _p->value.swap(nv);  // swap only 16 bytes, very fast
-    }
-    // nv now holds old value, trigger signals outside lock
-    trigger<NODE_CHANGED>(sig, nv);
+    Var old(std::move(v));
+    _p->value.swap(old);
+    trigger<NODE_CHANGED>(_p->value, old);
     if (isWatching()) activate(NODE_CHANGED, this);
     return this;
 }

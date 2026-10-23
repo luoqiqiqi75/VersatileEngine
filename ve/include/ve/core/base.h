@@ -738,8 +738,4 @@ private:
 
 using Task = std::function<void()>;
 
-// Result — defined in var.h (requires full Var type).
-// Layout: { int code; std::string message; Var data; }
-// See var.h for the full definition + factory methods.
-
 }

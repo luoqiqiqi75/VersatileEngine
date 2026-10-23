@@ -3,13 +3,7 @@
 // immutable source; the source itself is never concurrently changed.
 // Optional arguments select one operation and byte size for isolated runs.
 #include "ve/core/var.h"
-#include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <iomanip>
-#include <iostream>
-#include <thread>
-#include <vector>
 
 namespace {
 std::atomic<uint64_t> checksum{0};
@@ -30,15 +24,15 @@ void bench(const char* operation, int bytes, int workers, int iterations, Fn fn)
             threads.emplace_back([&] {
                 uint64_t sum = 0;
                 ++ready;
-                while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
-                for (int i = 0; i < iterations; ++i) sum += fn(i);
+                while (!start.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+                for (int i = 0; i < iterations; ++i) { sum += fn(i); }
                 checksum.fetch_add(sum, std::memory_order_relaxed);
             });
         }
-        while (ready.load() != workers) std::this_thread::yield();
+        while (ready.load() != workers) { std::this_thread::yield(); }
         const auto begin = std::chrono::steady_clock::now();
         start.store(true, std::memory_order_release);
-        for (auto& thread : threads) thread.join();
+        for (auto& thread : threads) { thread.join(); }
         const double ns = std::chrono::duration<double, std::nano>(
             std::chrono::steady_clock::now() - begin).count();
         if (repeat >= 0) samples.push_back(ns / (iterations * workers));
@@ -59,6 +53,17 @@ int main(int argc, char** argv)
     bench("int.copy", 0, 1, 100000, [&](int) {
         ve::Var copy(number);
         return copy.type();
+    });
+    const ve::Var other_number(43);
+    ve::Var assigned_number(number);
+    bench("int.assign.same_type", 0, 1, 100000, [&](int i) {
+        assigned_number = (i & 1) ? number : other_number;
+        return assigned_number.type();
+    });
+    ve::Var swapped_number(other_number);
+    bench("int.swap", 0, 1, 100000, [&](int) {
+        assigned_number.swap(swapped_number);
+        return assigned_number.type();
     });
     for (int bytes : {8, 256, 4096, 65536}) {
         const int iterations = bytes >= 65536 ? 10000 : 100000;
@@ -86,6 +91,25 @@ int main(int argc, char** argv)
         bench("string.construct", bytes, 1, iterations, [&](int) {
             ve::Var copy(text);
             return copy.type();
+        });
+        ve::Var assigned(string);
+        const ve::Var other_string(std::string(bytes, 'y'));
+        bench("string.assign.same_storage", bytes, 1, iterations, [&](int) {
+            assigned = string;
+            return assigned.type();
+        });
+        bench("string.assign.same_type", bytes, 1, iterations, [&](int i) {
+            assigned = (i & 1) ? string : other_string;
+            return assigned.type();
+        });
+        bench("assign.type_change", bytes, 1, iterations, [&](int i) {
+            assigned = (i & 1) ? string : number;
+            return assigned.type();
+        });
+        ve::Var swapped(other_string);
+        bench("string.swap", bytes, 1, iterations, [&](int) {
+            assigned.swap(swapped);
+            return assigned.type();
         });
     }
     ve::Var::ListV list(16, ve::Var(std::string(1024, 'x')));

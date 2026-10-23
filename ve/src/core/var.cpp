@@ -9,8 +9,6 @@
 
 #include <iomanip>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
 namespace ve {
 
@@ -54,16 +52,30 @@ Var::Var(CallableV fn) : _type(CALLABLE) { _storage._callable = new CallableV(st
 Var::Var(const Var& other) : _type(other._type) { copyFrom(other); }
 Var::Var(Var&& other) noexcept : _type(other._type) { moveFrom(std::move(other)); }
 
-Var& Var::operator=(const Var& other) {
+Var& Var::operator=(const Var& other)
+{
     if (this == &other) return *this;
+    if (VE_LIKELY(_type == other._type)) {
+        switch (_type) {
+            case STRING: if (_storage._str == other._storage._str) return *this; break;
+            case BIN:    if (_storage._bin == other._storage._bin) return *this; break;
+            case LIST: case DICT: case CALLABLE: case CUSTOM: break;
+            default: _storage = other._storage; return *this;
+        }
+    }
     destroy();
     _type = other._type;
     copyFrom(other);
     return *this;
 }
 
-Var& Var::operator=(Var&& other) noexcept {
+Var& Var::operator=(Var&& other) noexcept
+{
     if (this == &other) return *this;
+    if (VE_LIKELY(_type == other._type) && (_type <= DOUBLE || _type == POINTER)) {
+        moveFrom(std::move(other));
+        return *this;
+    }
     destroy();
     _type = other._type;
     moveFrom(std::move(other));

@@ -31,32 +31,10 @@
 
 #include "ve/global.h"
 
-#include <cstdint>
 #include <cmath>
-#include <string>
-#include <type_traits>
-#include <utility>
 
 #ifdef _MSC_VER
 #include <intrin.h>
-#endif
-
-// Force inline macros
-#if defined(__GNUC__)
-#define VE_FORCE_INLINE __attribute__((always_inline)) inline
-#elif defined(_MSC_VER)
-#define VE_FORCE_INLINE __forceinline
-#else
-#define VE_FORCE_INLINE inline
-#endif
-
-// Likely/unlikely hints
-#if defined(__GNUC__)
-#define VE_LIKELY(x) __builtin_expect(!!(x), 1)
-#define VE_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define VE_LIKELY(x) x
-#define VE_UNLIKELY(x) x
 #endif
 
 namespace ve::impl {

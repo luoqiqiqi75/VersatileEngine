@@ -5,7 +5,6 @@
 #include "ve_test.h"
 #include "ve/core/var.h"
 #include "ve/core/convert.h"
-#include <atomic>
 
 using namespace ve;
 
@@ -377,6 +376,34 @@ VE_TEST(var_copy_assignment) {
     VE_ASSERT_EQ(v2.toInt(), 42);
 }
 
+VE_TEST(var_assignment_same_type_and_shared_type_changes)
+{
+    const Var values[] = {Var{}, Var(true), Var(42), Var(1.25), Var("text"),
+        Var(Bytes{1, 2, 3}), Var(Var::ListV{Var("item")}), Var(static_cast<void*>(nullptr))};
+    for (const auto& initial : values) {
+        for (const auto& source : values) {
+            Var destination(initial);
+            destination = source;
+            VE_ASSERT(destination == source);
+            destination = source;
+            VE_ASSERT(destination == source);
+            Var moved(source);
+            destination = std::move(moved);
+            VE_ASSERT(destination == source);
+            VE_ASSERT(moved.isNull());
+        }
+    }
+    Var source(std::string(4096, 'x'));
+    Var retained(source);
+    for (int i = 0; i < 100; ++i) { retained = source; }
+    source.fromInt(42);
+    VE_ASSERT_EQ(retained.toString(), std::string(4096, 'x'));
+    Var replacement("replacement");
+    retained = replacement;
+    replacement.fromInt(42);
+    VE_ASSERT_EQ(retained.toString(), "replacement");
+}
+
 VE_TEST(var_move_assignment) {
     Var v1(42);
     Var v2;
@@ -444,7 +471,7 @@ VE_TEST(var_container_copy_preserves_mutable_reference_semantics) {
     *custom_ref = "changed";
     VE_ASSERT_EQ(*custom_copy.customPtr<std::string>(), "original");
 
-    Var callable(Var::CallableV([count = 0](const Var&) mutable { return Var(++count); }));
+    Var callable{Var::CallableV([count = 0](const Var&) mutable { return Var(++count); })};
     Var callable_copy(callable);
     VE_ASSERT_EQ(callable.invoke().toInt(), 1);
     VE_ASSERT_EQ(callable_copy.invoke().toInt(), 1);
@@ -461,7 +488,7 @@ VE_TEST(var_immutable_copies_concurrent_retain_release) {
         threads.emplace_back([&] {
             const Var held_string(string_source), held_bin(bin_source);
             ++ready;
-            while (!start.load()) std::this_thread::yield();
+            while (!start.load()) { std::this_thread::yield(); }
             for (int i = 0; i < 20000; ++i) {
                 Var string_copy(held_string), bin_copy(held_bin);
                 if ((i % 64) == 0) {
@@ -472,11 +499,11 @@ VE_TEST(var_immutable_copies_concurrent_retain_release) {
             }
         });
     }
-    while (ready.load() != 8) std::this_thread::yield();
+    while (ready.load() != 8) { std::this_thread::yield(); }
     string_source.fromInt(0);
     bin_source.fromInt(0);
     start.store(true);
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads) { thread.join(); }
     VE_ASSERT_EQ(errors.load(), 0);
 }
 
