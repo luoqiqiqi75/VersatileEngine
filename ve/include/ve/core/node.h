@@ -344,7 +344,7 @@ public:
     template<typename... Args> void then(Args&&... args) { once<NODE_CHANGED>(std::forward<Args>(args)...); }
 
 protected:
-    [[nodiscard]] const Var& value() const;
+    [[nodiscard]] Var value() const;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

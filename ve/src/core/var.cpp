@@ -6,14 +6,30 @@
 // See LICENSE file in the project root for full license information.
 // ----------------------------------------------------------------------------
 #include "ve/core/var.h"
-#include <sstream>
+
 #include <iomanip>
-#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 namespace ve {
+
+// Only values with no public mutable access use shared storage. Copies of a
+// live Var may retain this data concurrently; changing that Var still needs
+// external synchronization.
+template<typename T>
+struct Var::SharedData {
+    std::atomic<size_t> refs{1};
+    const T value;
+
+    template<typename U>
+    explicit SharedData(U&& v) : value(std::forward<U>(v)) {}
+
+    void retain() noexcept { refs.fetch_add(1, std::memory_order_relaxed); }
+    void release() noexcept {
+        if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete this;
+    }
+};
 
 // construction
 
@@ -22,11 +38,11 @@ Var::Var(bool v) : _type(BOOL), _storage{} { _storage._bool = v; }
 Var::Var(int v) : _type(INT) { _storage._int = static_cast<int64_t>(v); }
 Var::Var(std::int64_t v) : _type(INT) { _storage._int = v; }
 Var::Var(double v) : _type(DOUBLE) { _storage._double = v; }
-Var::Var(const char* v) : _type(STRING) { _storage._str = new std::string(v); }
-Var::Var(const std::string& v) : _type(STRING) { _storage._str = new std::string(v); }
-Var::Var(std::string&& v) : _type(STRING) { _storage._str = new std::string(std::move(v)); }
-Var::Var(const Bytes& v) : _type(BIN) { _storage._bin = new Bytes(v); }
-Var::Var(Bytes&& v) : _type(BIN) { _storage._bin = new Bytes(std::move(v)); }
+Var::Var(const char* v) : _type(STRING) { _storage._str = new SharedData<std::string>(v); }
+Var::Var(const std::string& v) : _type(STRING) { _storage._str = new SharedData<std::string>(v); }
+Var::Var(std::string&& v) : _type(STRING) { _storage._str = new SharedData<std::string>(std::move(v)); }
+Var::Var(const Bytes& v) : _type(BIN) { _storage._bin = new SharedData<Bytes>(v); }
+Var::Var(Bytes&& v) : _type(BIN) { _storage._bin = new SharedData<Bytes>(std::move(v)); }
 Var::Var(void* ptr) : _type(POINTER) { _storage._pointer = ptr; }
 
 Var::Var(const ListV& v) : _type(LIST) { _storage._list = new ListV(v); }
@@ -58,24 +74,6 @@ Var::~Var() {
     destroy();
 }
 
-// ref<> specializations
-
-template<> std::string& Var::ref<Var::STRING, std::string>() { return *_storage._str; }
-template<> const std::string& Var::ref<Var::STRING, std::string>() const { return *_storage._str; }
-template<> Bytes& Var::ref<Var::BIN, Bytes>() { return *_storage._bin; }
-template<> const Bytes& Var::ref<Var::BIN, Bytes>() const { return *_storage._bin; }
-
-template<> Var::ListV& Var::ref<Var::LIST, Var::ListV>() { return *_storage._list; }
-template<> const Var::ListV& Var::ref<Var::LIST, Var::ListV>() const { return *_storage._list; }
-template<> Var::DictV& Var::ref<Var::DICT, Var::DictV>() { return *_storage._dict; }
-template<> const Var::DictV& Var::ref<Var::DICT, Var::DictV>() const { return *_storage._dict; }
-
-template<> Var::CallableV& Var::ref<Var::CALLABLE, Var::CallableV>() { return *_storage._callable; }
-template<> const Var::CallableV& Var::ref<Var::CALLABLE, Var::CallableV>() const { return *_storage._callable; }
-
-template<> Var::CustomV& Var::ref<Var::CUSTOM, Var::CustomV>() { return _storage._custom->value; }
-template<> const Var::CustomV& Var::ref<Var::CUSTOM, Var::CustomV>() const { return _storage._custom->value; }
-
 // Custom type query
 
 const std::type_info& Var::customType() const {
@@ -105,7 +103,7 @@ bool Var::toBool(bool def) const {
     } else if (_type == DOUBLE) {
         return _storage._double != 0.0;
     } else if (_type == STRING) {
-        const auto& s = *_storage._str;
+        const auto& s = _storage._str->value;
         return s == "true" || s == "1" || !s.empty();
     }
     return def;
@@ -120,7 +118,7 @@ int Var::toInt(int def) const {
         return static_cast<int>(_storage._double);
     } else if (_type == STRING) {
         try {
-            return std::stoi(*_storage._str);
+            return std::stoi(_storage._str->value);
         } catch (...) {
             return def;
         }
@@ -137,7 +135,7 @@ std::int64_t Var::toInt64(std::int64_t def) const {
         return static_cast<std::int64_t>(_storage._double);
     } else if (_type == STRING) {
         try {
-            return std::stoll(*_storage._str);
+            return std::stoll(_storage._str->value);
         } catch (...) {
             return def;
         }
@@ -154,7 +152,7 @@ double Var::toDouble(double def) const {
         return _storage._bool ? 1.0 : 0.0;
     } else if (_type == STRING) {
         try {
-            return std::stod(*_storage._str);
+            return std::stod(_storage._str->value);
         } catch (...) {
             return def;
         }
@@ -164,7 +162,7 @@ double Var::toDouble(double def) const {
 
 std::string Var::toString(const std::string& def) const {
     if (_type == STRING) {
-        return *_storage._str;
+        return _storage._str->value;
     } else if (_type == INT) {
         return std::to_string(_storage._int);
     } else if (_type == DOUBLE) {
@@ -183,7 +181,7 @@ std::string Var::toString(const std::string& def) const {
     } else if (_type == NONE) {
         return def;
     } else if (_type == BIN) {
-        const auto& bytes = *_storage._bin;
+        const auto& bytes = _storage._bin->value;
         std::ostringstream oss;
         for (uint8_t b : bytes) {
             oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(b);
@@ -231,9 +229,9 @@ std::string Var::toString(const std::string& def) const {
 
 Bytes Var::toBin() const {
     if (_type == BIN) {
-        return *_storage._bin;
+        return _storage._bin->value;
     } else if (_type == STRING) {
-        const std::string& s = *_storage._str;
+        const std::string& s = _storage._str->value;
         return Bytes(s.begin(), s.end());
     } else if (_type == CUSTOM && _storage._custom && _storage._custom->to_bin) {
         return _storage._custom->to_bin(_storage._custom->value);
@@ -299,35 +297,35 @@ Var& Var::fromDouble(double v) {
 Var& Var::fromString(const char* v) {
     destroy();
     _type = STRING;
-    _storage._str = new std::string(v);
+    _storage._str = new SharedData<std::string>(v);
     return *this;
 }
 
 Var& Var::fromString(const std::string& v) {
     destroy();
     _type = STRING;
-    _storage._str = new std::string(v);
+    _storage._str = new SharedData<std::string>(v);
     return *this;
 }
 
 Var& Var::fromString(std::string&& v) {
     destroy();
     _type = STRING;
-    _storage._str = new std::string(std::move(v));
+    _storage._str = new SharedData<std::string>(std::move(v));
     return *this;
 }
 
 Var& Var::fromBin(const Bytes& v) {
     destroy();
     _type = BIN;
-    _storage._bin = new Bytes(v);
+    _storage._bin = new SharedData<Bytes>(v);
     return *this;
 }
 
 Var& Var::fromBin(Bytes&& v) {
     destroy();
     _type = BIN;
-    _storage._bin = new Bytes(std::move(v));
+    _storage._bin = new SharedData<Bytes>(std::move(v));
     return *this;
 }
 
@@ -405,9 +403,9 @@ bool Var::operator==(const Var& other) const {
         case DOUBLE:
             return _storage._double == other._storage._double;
         case STRING:
-            return *_storage._str == *other._storage._str;
+            return _storage._str->value == other._storage._str->value;
         case BIN:
-            return *_storage._bin == *other._storage._bin;
+            return _storage._bin->value == other._storage._bin->value;
         case LIST:
             return *_storage._list == *other._storage._list;
         case DICT: {
@@ -444,8 +442,8 @@ std::ostream& operator<<(std::ostream& os, const Var& v) {
 
 void Var::copyFrom(const Var& other) {
     switch (_type) {
-        case STRING:  _storage._str    = new std::string(*other._storage._str); break;
-        case BIN:     _storage._bin    = new Bytes(*other._storage._bin);       break;
+        case STRING:  _storage._str = other._storage._str; _storage._str->retain(); break;
+        case BIN:     _storage._bin = other._storage._bin; _storage._bin->retain(); break;
         case LIST:    _storage._list   = new ListV(*other._storage._list);      break;
         case DICT:    _storage._dict     = new DictV(*other._storage._dict);      break;
         case CALLABLE:_storage._callable = new CallableV(*other._storage._callable); break;
@@ -455,22 +453,15 @@ void Var::copyFrom(const Var& other) {
 }
 
 void Var::moveFrom(Var&& other) {
-    switch (_type) {
-        case STRING:  _storage._str    = other._storage._str;    other._storage._str    = nullptr; break;
-        case BIN:     _storage._bin    = other._storage._bin;    other._storage._bin    = nullptr; break;
-        case LIST:    _storage._list   = other._storage._list;   other._storage._list   = nullptr; break;
-        case DICT:    _storage._dict     = other._storage._dict;     other._storage._dict     = nullptr; break;
-        case CALLABLE:_storage._callable = other._storage._callable; other._storage._callable = nullptr; break;
-        case CUSTOM:  _storage._custom   = other._storage._custom;   other._storage._custom   = nullptr; break;
-        default:      _storage = other._storage; break;
-    }
+    _storage = other._storage;
     other._type = NONE;
+    other._storage._int = 0;
 }
 
 void Var::destroy() {
     switch (_type) {
-        case STRING:  delete _storage._str;    break;
-        case BIN:     delete _storage._bin;    break;
+        case STRING:  _storage._str->release(); break;
+        case BIN:     _storage._bin->release(); break;
         case LIST:    delete _storage._list;   break;
         case DICT:     delete _storage._dict;     break;
         case CALLABLE: delete _storage._callable; break;

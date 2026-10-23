@@ -107,8 +107,7 @@ public:
             else
                 { _type = DOUBLE; _storage._double = static_cast<double>(v); }
         } else if constexpr (basic::Meta<T>::is_string) {
-            _type = STRING;
-            _storage._str = new std::string(v);
+            *this = Var(std::string(v));
         } else if constexpr (basic::Meta<T>::is_callable) {
             *this = Var::callable(v);
         } else {
@@ -279,8 +278,7 @@ public:
     friend std::ostream& operator<<(std::ostream& os, const Var& v);
 
 private:
-    template<Type E, typename V> V& ref();
-    template<Type E, typename V> const V& ref() const;
+    template<typename T> struct SharedData;
 
     void copyFrom(const Var& other);
     void moveFrom(Var&& other);
@@ -299,12 +297,13 @@ private:
         int64_t         _int;
         double          _double;
         void*           _pointer;
-        std::string*    _str;
-        Bytes*          _bin;
         ListV*          _list;
         DictV*          _dict;
         CallableV*      _callable;
         CustomStorage*  _custom;
+
+        SharedData<std::string>* _str;
+        SharedData<Bytes>*       _bin;
     } _storage;
 };
 

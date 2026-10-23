@@ -2,6 +2,7 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/log.h"
+#include <shared_mutex>
 
 namespace ve {
 
@@ -28,6 +29,8 @@ struct Node::Private
 
     Children*   children = nullptr;
     Var         value;
+
+    mutable std::shared_mutex value_mutex;
 
     Children* ensureChildren()
     {
@@ -745,8 +748,8 @@ void Node::silentAll(bool on)
 // Node — value operations
 // ============================================================================
 
-const Var& Node::value() const {
-    // No lock for read - accept stale read risk
+Var Node::value() const {
+    std::shared_lock lk(_p->value_mutex);
     return _p->value;
 }
 
@@ -754,7 +757,7 @@ Node* Node::set(const Var& v)
 {
     Var nv(v);  // copy outside lock
     {
-        LockT lk(mutex());  // use Object's mutex
+        std::unique_lock lk(_p->value_mutex);
         _p->value.swap(nv);  // swap only 16 bytes, very fast
     }
     // nv now holds old value, trigger signals outside lock
@@ -768,7 +771,7 @@ Node* Node::set(Var&& v)
     Var nv(std::move(v));  // move outside lock
     const Var sig(nv);     // snapshot for signal
     {
-        LockT lk(mutex());  // use Object's mutex
+        std::unique_lock lk(_p->value_mutex);
         _p->value.swap(nv);  // swap only 16 bytes, very fast
     }
     // nv now holds old value, trigger signals outside lock

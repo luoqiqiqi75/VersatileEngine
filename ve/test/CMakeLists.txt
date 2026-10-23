@@ -32,6 +32,12 @@ endif()
 add_executable(ve_log_bench EXCLUDE_FROM_ALL runtime/bench_log.cpp)
 target_link_libraries(ve_log_bench PRIVATE VersatileEngine::ve)
 
+add_executable(ve_node_value_bench EXCLUDE_FROM_ALL runtime/bench_node_value.cpp)
+target_link_libraries(ve_node_value_bench PRIVATE VersatileEngine::ve)
+
+add_executable(ve_var_copy_bench EXCLUDE_FROM_ALL runtime/bench_var_copy.cpp)
+target_link_libraries(ve_var_copy_bench PRIVATE VersatileEngine::ve)
+
 add_executable(ve_service_test service/test_connections.cpp ../src/asio_impl.cpp)
 target_link_libraries(ve_service_test PRIVATE VersatileEngine::ve ve_dep_asio2)
 
@@ -39,6 +45,8 @@ if(UNIX AND NOT ANDROID)
     target_link_libraries(ve_test PRIVATE pthread dl)
     target_link_libraries(ve_runtime_config_test PRIVATE pthread)
     target_link_libraries(ve_log_bench PRIVATE pthread)
+    target_link_libraries(ve_node_value_bench PRIVATE pthread)
+    target_link_libraries(ve_var_copy_bench PRIVATE pthread)
 elseif(ANDROID)
     target_link_libraries(ve_test PRIVATE dl)
 endif()

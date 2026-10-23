@@ -5,6 +5,7 @@
 #include "ve_test.h"
 #include "ve/core/var.h"
 #include "ve/core/convert.h"
+#include <atomic>
 
 using namespace ve;
 
@@ -382,6 +383,101 @@ VE_TEST(var_move_assignment) {
     v2 = std::move(v1);
     VE_ASSERT(v1.isNull());
     VE_ASSERT_EQ(v2.toInt(), 42);
+}
+
+VE_TEST(var_string_copy_lifetime_and_independence) {
+    const std::string text(4096, 'x');
+    Var original(text);
+    Var copy(original);
+    Var assigned;
+    assigned = copy;
+    original.fromString("replacement");
+    copy.fromInt(42);
+    Var moved(std::move(assigned));
+    VE_ASSERT(assigned.isNull());
+    VE_ASSERT_EQ(moved.toString(), text);
+    auto output = moved.toString();
+    output[0] = 'y';
+    VE_ASSERT_EQ(moved.toString(), text);
+    moved = moved;
+    moved = std::move(moved);
+    VE_ASSERT_EQ(moved.toString(), text);
+    if (sizeof(void*) == 8) VE_ASSERT_EQ(sizeof(Var), size_t(16));
+}
+
+VE_TEST(var_bin_copy_lifetime_and_independence) {
+    Bytes input(4096, uint8_t(42));
+    Var original(input);
+    input[0] = 7;
+    Var copy(original);
+    original.fromInt(1);
+    auto output = copy.toBin();
+    VE_ASSERT_EQ(output.size(), size_t(4096));
+    VE_ASSERT_EQ(output.front(), uint8_t(42));
+    output[0] = 9;
+    const auto preserved = copy.toBin();
+    VE_ASSERT_EQ(preserved.front(), uint8_t(42));
+    Var moved;
+    moved = std::move(copy);
+    VE_ASSERT(copy.isNull());
+    VE_ASSERT_EQ(moved.toBin().size(), size_t(4096));
+}
+
+VE_TEST(var_container_copy_preserves_mutable_reference_semantics) {
+    Var list(Var::ListV{Var("original")});
+    auto& list_ref = list.toList();
+    Var list_copy(list);
+    list_ref[0].fromString("changed");
+    VE_ASSERT_EQ(list_copy[0].toString(), "original");
+
+    Var::DictV values;
+    values["key"] = "original";
+    Var dict(values);
+    auto& dict_ref = dict.toDict();
+    Var dict_copy(dict);
+    dict_ref["key"].fromString("changed");
+    VE_ASSERT_EQ(dict_copy.toDict()["key"].toString(), "original");
+
+    Var custom = Var::custom(std::string("original"));
+    auto* custom_ref = custom.customPtr<std::string>();
+    Var custom_copy(custom);
+    *custom_ref = "changed";
+    VE_ASSERT_EQ(*custom_copy.customPtr<std::string>(), "original");
+
+    Var callable(Var::CallableV([count = 0](const Var&) mutable { return Var(++count); }));
+    Var callable_copy(callable);
+    VE_ASSERT_EQ(callable.invoke().toInt(), 1);
+    VE_ASSERT_EQ(callable_copy.invoke().toInt(), 1);
+}
+
+VE_TEST(var_immutable_copies_concurrent_retain_release) {
+    const std::string text(8192, 'x');
+    const Bytes bytes(8192, uint8_t(42));
+    Var string_source(text), bin_source(bytes);
+    std::atomic<int> ready{0}, errors{0};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 8; ++t) {
+        threads.emplace_back([&] {
+            const Var held_string(string_source), held_bin(bin_source);
+            ++ready;
+            while (!start.load()) std::this_thread::yield();
+            for (int i = 0; i < 20000; ++i) {
+                Var string_copy(held_string), bin_copy(held_bin);
+                if ((i % 64) == 0) {
+                    if (string_copy.toString() != text || bin_copy.toBin() != bytes) ++errors;
+                }
+                string_copy.fromInt(i);
+                bin_copy.fromString("replacement");
+            }
+        });
+    }
+    while (ready.load() != 8) std::this_thread::yield();
+    string_source.fromInt(0);
+    bin_source.fromInt(0);
+    start.store(true);
+    for (auto& thread : threads) thread.join();
+    VE_ASSERT_EQ(errors.load(), 0);
 }
 
 // ========== 链式调用测试 ==========

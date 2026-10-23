@@ -2,8 +2,21 @@
 #include "ve_test.h"
 #include "ve/core/node.h"
 #include "ve/core/convert.h"
+#include <atomic>
 
 using namespace ve;
+
+namespace {
+struct ReentrantStringValue { Node* node; };
+}
+
+template<> struct ve::Convert<ReentrantStringValue> {
+    static std::string toString(const ReentrantStringValue& value) {
+        value.node->set("converted");
+        return "custom";
+    }
+    static Bytes toBin(const ReentrantStringValue&) { return {}; }
+};
 
 // ============================================================================
 // Node value / set / get (non-null means has value)
@@ -223,6 +236,84 @@ VE_TEST(node_global_n_find_without_create) {
     VE_ASSERT(ve::node::root()->find("test_n_no_create/missing") == nullptr);
     VE_ASSERT(ve::n("test_n_no_create/missing", false) == nullptr);
     VE_ASSERT(ve::node::root()->find("test_n_no_create/missing") == nullptr);
+}
+
+// The tree and configuration remain fixed while threads access only the value.
+VE_TEST(node_value_concurrent_strings_and_type_changes) {
+    Node node;
+    const std::string short_text(17, 'a');
+    const std::string long_text(8192, 'b');
+    const Var values[] = {Var(short_text), Var(long_text), Var(42), Var{}};
+    node.set(values[0]);
+    std::atomic<bool> start{false};
+    std::atomic<int> ready{0};
+    std::atomic<int> errors{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 6; ++t) {
+        threads.emplace_back([&, t] {
+            ready.fetch_add(1);
+            while (!start.load()) std::this_thread::yield();
+            for (int i = 0; i < 10000; ++i) {
+                if (t >= 4) {
+                    if (i & 1) node.set(Var(values[(i + t) % 4]));
+                    else node.set(values[(i + t) % 4]);
+                    continue;
+                }
+                const Var snapshot = node.get();
+                if (snapshot != values[0] && snapshot != values[1]
+                    && snapshot != values[2] && !snapshot.isNull()) ++errors;
+                const auto text = t & 1 ? node.getString("empty")
+                                       : node.getAs<std::string>("empty");
+                if (text != short_text && text != long_text && text != "42" && text != "empty") ++errors;
+                // Parsing either text fails, while INT and NONE return 42 and -1.
+                const int number = node.getInt();
+                if (number != 42 && number != -1) ++errors;
+            }
+        });
+    }
+    while (ready.load() != 6) std::this_thread::yield();
+    start.store(true);
+    for (auto& thread : threads) thread.join();
+    VE_ASSERT_EQ(errors.load(), 0);
+}
+
+VE_TEST(node_value_signal_reentrant_read_and_write) {
+    Node node;
+    int signals = 0;
+    node.onChanged(&node, [&](const Var& next, const Var& old) {
+        ++signals;
+        VE_ASSERT(node.get() == next);
+        if (next == Var("first")) {
+            VE_ASSERT(old.isNull());
+            VE_ASSERT(node.update("second"));
+            VE_ASSERT_EQ(next.toString(), "first");
+        } else {
+            VE_ASSERT_EQ(next.toString(), "second");
+            VE_ASSERT_EQ(old.toString(), "first");
+        }
+    });
+    node.set(Var("first"));
+    VE_ASSERT_EQ(signals, 2);
+    VE_ASSERT_EQ(node.getString(), "second");
+}
+
+VE_TEST(node_value_update_missing_null_does_not_create) {
+    Node root;
+    VE_ASSERT(!root.update(0, Var{}));
+    VE_ASSERT(!root.update("value", 0, Var{}));
+    VE_ASSERT(!root.update("path/value", Var{}));
+    VE_ASSERT_EQ(root.count(), 0);
+}
+
+VE_TEST(node_value_string_conversion_reentrant) {
+    Node node;
+    const Var custom = Var::custom(ReentrantStringValue{&node});
+    node.set(custom);
+    VE_ASSERT_EQ(node.getString(), "custom");
+    VE_ASSERT_EQ(node.getString(), "converted");
+    node.set(Var::ListV{custom});
+    VE_ASSERT_EQ(node.getAs<std::string>(), "[custom]");
+    VE_ASSERT_EQ(node.getString(), "converted");
 }
 
 VE_TEST(node_global_n_update) {
