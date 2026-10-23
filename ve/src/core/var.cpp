@@ -9,8 +9,51 @@
 
 #include <iomanip>
 #include <cstdio>
+#include <thread>
+
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <intrin.h>
+#endif
 
 namespace ve {
+
+static_assert(sizeof(Var) == 16, "Var must stay 16 bytes (_seq lives in padding)");
+static_assert(std::atomic<std::uint8_t>::is_always_lock_free, "Var::_seq must be lock-free");
+
+template<typename T>
+static VE_FORCE_INLINE T _racyLoad(const T& src) noexcept
+{
+#if defined(__GNUC__)
+    T out;
+    __atomic_load(&src, &out, __ATOMIC_RELAXED);
+    return out;
+#else
+    return src;
+#endif
+}
+
+template<typename T>
+static VE_FORCE_INLINE void _racyStore(T& dst, T v) noexcept
+{
+#if defined(__GNUC__)
+    __atomic_store(&dst, &v, __ATOMIC_RELAXED);
+#else
+    dst = v;
+#endif
+}
+
+static VE_FORCE_INLINE void _cpuRelax() noexcept
+{
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    _mm_pause();
+#elif defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ __volatile__("yield");
+#endif
+}
+
+static VE_FORCE_INLINE bool _isHeap(Var::Type t) noexcept { return t >= Var::STRING && t != Var::POINTER; }
 
 // Only values with no public mutable access use shared storage. Copies of a
 // live Var may retain this data concurrently; changing that Var still needs
@@ -415,9 +458,9 @@ bool Var::operator==(const Var& other) const {
         case DOUBLE:
             return _storage._double == other._storage._double;
         case STRING:
-            return _storage._str->value == other._storage._str->value;
+            return _storage._str == other._storage._str || _storage._str->value == other._storage._str->value;
         case BIN:
-            return _storage._bin->value == other._storage._bin->value;
+            return _storage._bin == other._storage._bin || _storage._bin->value == other._storage._bin->value;
         case LIST:
             return *_storage._list == *other._storage._list;
         case DICT: {
@@ -488,6 +531,61 @@ void Var::destroy() {
 void Var::swap(Var& other) noexcept {
     std::swap(_type, other._type);
     std::swap(_storage, other._storage);
+}
+
+// ============================================================================
+// concurrent
+// ============================================================================
+
+std::uint8_t Var::lockConcurrent() const noexcept
+{
+    std::uint8_t s = _seq.load(std::memory_order_relaxed);
+    for (unsigned spins = 0;; ++spins) {
+        if (!(s & 1) && _seq.compare_exchange_weak(s, std::uint8_t(s | 1),
+                std::memory_order_acquire, std::memory_order_relaxed))
+            return s;
+        if (spins < 64) _cpuRelax();
+        else std::this_thread::yield();
+        s = _seq.load(std::memory_order_relaxed);
+    }
+}
+
+Var Var::loadConcurrent() const
+{
+    const std::uint8_t s1 = _seq.load(std::memory_order_acquire);
+    if (VE_LIKELY(!(s1 & 1))) {
+        const Type t = _racyLoad(_type);
+        if (VE_LIKELY(!_isHeap(t))) {
+            const Storage st = _racyLoad(_storage);
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (VE_LIKELY(_seq.load(std::memory_order_relaxed) == s1)) {
+                Var r;
+                r._type = t;
+                r._storage = st;
+                return r;
+            }
+        }
+    }
+    struct Unlock {
+        const Var* v; std::uint8_t s;
+        ~Unlock() { v->_seq.store(s, std::memory_order_release); }
+    } lk{this, lockConcurrent()};
+    return Var(*this);
+}
+
+Var Var::exchangeConcurrent(Var&& v) noexcept
+{
+    Var old;
+    const std::uint8_t s = lockConcurrent();
+    std::atomic_thread_fence(std::memory_order_release);
+    old._type = _type;
+    old._storage = _storage;
+    _racyStore(_type, v._type);
+    _racyStore(_storage, v._storage);
+    _seq.store(std::uint8_t(s + 2), std::memory_order_release);
+    v._type = NONE;
+    v._storage._int = 0;
+    return old;
 }
 
 } // namespace ve

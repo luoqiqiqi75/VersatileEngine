@@ -9,7 +9,11 @@
 
 #include "convert.h"
 
+#include <atomic>
+
 namespace ve {
+
+class Node;
 
 class VE_API Var
 {
@@ -277,11 +281,17 @@ public:
     friend std::ostream& operator<<(std::ostream& os, const Var& v);
 
 private:
+    friend class Node;
+
     template<typename T> struct SharedData;
 
     void copyFrom(const Var& other);
     void moveFrom(Var&& other);
     void destroy();
+
+    Var loadConcurrent() const;
+    Var exchangeConcurrent(Var&& v) noexcept;
+    std::uint8_t lockConcurrent() const noexcept;
 
     template<typename F>
     static CallableV wrapCallable(F&& fn);
@@ -290,6 +300,7 @@ private:
     static CallableV wrapCallableIndexed(F&& fn, std::index_sequence<I...>);
 
     Type _type;
+    mutable std::atomic<std::uint8_t> _seq{0};   // bit0 lock, rest version
 
     union Storage {
         bool            _bool;

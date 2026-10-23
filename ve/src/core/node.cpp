@@ -744,22 +744,23 @@ void Node::silentAll(bool on)
 // Node — value operations
 // ============================================================================
 
-Var Node::value() const { return _p->value; }
+Var Node::value() const { return _p->value.loadConcurrent(); }
 
 Node* Node::set(const Var& v)
 {
-    Var old(v);
-    _p->value.swap(old);
-    trigger<NODE_CHANGED>(v, old);
+    Var old = _p->value.exchangeConcurrent(Var(v));
+    trigger<NODE_CHANGED>(v, std::move(old));
     if (isWatching()) activate(NODE_CHANGED, this);
     return this;
 }
 
 Node* Node::set(Var&& v)
 {
-    Var old(std::move(v));
-    _p->value.swap(old);
-    trigger<NODE_CHANGED>(_p->value, old);
+    const bool notify = !isSilent() && hasConnection(NODE_CHANGED);
+    Var cur;
+    if (notify) cur = v;
+    Var old = _p->value.exchangeConcurrent(std::move(v));
+    if (notify) trigger(NODE_CHANGED, Var(Var::ListV{std::move(cur), std::move(old)}));
     if (isWatching()) activate(NODE_CHANGED, this);
     return this;
 }

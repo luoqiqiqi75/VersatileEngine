@@ -175,11 +175,14 @@ int main(int argc, char** argv)
             node.set(payload);
             return uint64_t(1);
         });
+        bench("update.same_storage", bytes, 0, 1, [&](int, int) {
+            return node.update(payload) ? uint64_t(1) : uint64_t(0);
+        });
         bench("set.move", bytes, 0, 1, [&](int, int) {
             node.set(ve::Var(std::string(bytes, 'x')));
             return uint64_t(1);
         });
-        bench("update.unchanged", bytes, 0, 1, [&](int, int) {
+        bench("update.same_content", bytes, 0, 1, [&](int, int) {
             return node.update(payload) ? uint64_t(1) : uint64_t(0);
         });
         bench("get.set.serial", bytes, 1, 0, [&](int, int) {

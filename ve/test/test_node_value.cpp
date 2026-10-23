@@ -265,6 +265,42 @@ VE_TEST(node_value_concurrent_reads)
     VE_ASSERT_EQ(errors.load(), 0);
 }
 
+VE_TEST(node_value_concurrent_get_set_mixed_types)
+{
+    Node node;
+    const std::string text(256, 'x');
+    const Var values[] = {Var(42), Var(text), Var(1.5), Var(Bytes{1, 2, 3, 4}),
+        Var(true), Var(Var::ListV{Var("item"), Var(2)}), Var{}};
+    constexpr int count = sizeof(values) / sizeof(values[0]);
+    node.set(values[0]);
+    std::atomic<bool> start{false};
+    std::atomic<int> ready{0};
+    std::atomic<int> errors{0};
+    constexpr int readers = 4, writers = 2;
+    std::vector<std::thread> threads;
+    for (int t = 0; t < readers + writers; ++t) {
+        threads.emplace_back([&, t] {
+            ready.fetch_add(1);
+            while (!start.load()) { std::this_thread::yield(); }
+            for (int i = 0; i < 20000; ++i) {
+                if (t >= readers) {
+                    const Var& v = values[(i + t) % count];
+                    if (i & 1) node.set(v); else node.set(Var(v));
+                    continue;
+                }
+                const Var snapshot = node.get();
+                bool known = false;
+                for (const auto& v : values) { known |= snapshot == v; }
+                if (!known) ++errors;
+            }
+        });
+    }
+    while (ready.load() != readers + writers) { std::this_thread::yield(); }
+    start.store(true);
+    for (auto& thread : threads) { thread.join(); }
+    VE_ASSERT_EQ(errors.load(), 0);
+}
+
 VE_TEST(node_value_scalar_and_heap_roundtrip)
 {
     Node node;
