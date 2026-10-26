@@ -522,6 +522,8 @@ What may be called from several threads without your own locking:
 - **Signals** — `connect` / `disconnect` / `trigger` are thread-safe. Slots run
   on the triggering thread, or on the `Loop` given to `connect()`.
   `NODE_CHANGED` fires on the thread that called `set()` / `update()`.
+  `silent()` / `watch()` may also be toggled from any thread; an emission
+  already in flight may still deliver once.
 - **`Var` copies** — copies of one `Var` can be read and destroyed on different
   threads (string and binary share immutable storage). Mutating one `Var`
   object from several threads still needs external synchronization; a node's

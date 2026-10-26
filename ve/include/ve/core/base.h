@@ -327,6 +327,13 @@ namespace flags {
 inline bool get(int flags, int f) { return (flags & f) == f; }
 inline int set(int& flags, int f, bool on_off) { return flags = on_off ? flags | f : flags & ~f; }
 
+inline bool get(const std::atomic_int& flags, int f) { return get(flags.load(std::memory_order_relaxed), f); }
+inline int set(std::atomic_int& flags, int f, bool on_off)
+{
+    return on_off ? flags.fetch_or(f, std::memory_order_relaxed) | f
+                  : flags.fetch_and(~f, std::memory_order_relaxed) & ~f;
+}
+
 }
 
 // container mixin: inherits constructors + adds converting ctors
@@ -730,7 +737,7 @@ public:
     const std::string& name() const { return _name; }
 
 protected:
-    int _flags = 0;
+    std::atomic_int _flags{0};   // read on hot paths from any thread
 
 private:
     std::string _name;

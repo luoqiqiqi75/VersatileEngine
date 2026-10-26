@@ -120,11 +120,13 @@ VE_TEST(runtime_pool_uses_compile_time_default_and_accepts_user_replacement) {
     std::atomic<int> done{0};
     for (unsigned i = 0; i < expected; ++i) {
         pool->post([&] {
-            std::unique_lock<std::mutex> lock(mutex);
-            workers.insert(std::this_thread::get_id());
-            cv.notify_all();
-            cv.wait(lock, [&] { return release; });
-            ++done;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                workers.insert(std::this_thread::get_id());
+                cv.notify_all();
+                cv.wait(lock, [&] { return release; });
+            }
+            ++done;   // last touch of the test's stack: after the unlock
         });
     }
     {

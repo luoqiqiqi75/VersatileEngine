@@ -8,15 +8,18 @@ message(STATUS "[ve_test]  core unit tests")
 file(GLOB_RECURSE _TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 list(FILTER _TEST_SOURCES EXCLUDE REGEX "/service/")
 list(FILTER _TEST_SOURCES EXCLUDE REGEX "/runtime/")
+if(VE_SANITIZE_THREAD)
+    # 100k/1M-node benches are pointless and very slow under tsan
+    list(FILTER _TEST_SOURCES EXCLUDE REGEX "/test_node_bench\\.cpp$")
+    message(STATUS "test_node_bench.cpp skipped under ThreadSanitizer")
+endif()
 
 add_executable(ve_test ${_TEST_SOURCES})
 
 target_include_directories(ve_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(VE_NODE_BENCH_LARGE "Enable extra-large JSON roundtrip benchmarks in ve_test (slow)" ON)
-if(VE_NODE_BENCH_LARGE AND VE_SANITIZE_THREAD)
-    message(STATUS "VE_NODE_BENCH_LARGE skipped under ThreadSanitizer")
-elseif(VE_NODE_BENCH_LARGE)
+if(VE_NODE_BENCH_LARGE)
     target_compile_definitions(ve_test PRIVATE VE_NODE_BENCH_LARGE=1)
 endif()
 

@@ -138,7 +138,7 @@ cmake --build build_test --target ve_test --config Debug
 | `VE_BUILD_DDS` | ON | Build `ros/` -> `libvedds` (needs FastDDS) |
 | `VE_BUILD_RTT` | ON | Build `rtt/` -> `libvertt` (pure C++) |
 | `VE_INSTALL` | OFF | Install VE library, headers and CMake config |
-| `VE_SANITIZE_THREAD` | OFF | Build libve and tests with ThreadSanitizer (GCC/Clang only) |
+| `VE_SANITIZE_THREAD` | OFF | Build libve and tests with ThreadSanitizer (GCC/Clang only); skips `test_node_bench.cpp`. If TSan aborts with "unexpected memory mapping", run under `setarch $(uname -m) -R` |
 
 Local per-developer overrides go in `cmake/_local.cmake` (gitignored):
 
