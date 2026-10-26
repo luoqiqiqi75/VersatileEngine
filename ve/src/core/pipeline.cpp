@@ -50,6 +50,7 @@ void Pipeline::Private::execute(std::shared_ptr<Private> self)
             self->execute(self);
         });
     } else { // stop
+        if (state == STOPPING && result.isSuccess()) result.setCode(CANCELED); // stopped without a failing step
         pipe_n->trigger<FINISHED>();
         pipe_n->disconnectAll(); // must reconnect if restart
         commands.clear();
@@ -109,8 +110,7 @@ void Pipeline::onFinished(Object* observer, Callback cb, Loop* loop) { on<FINISH
 void Pipeline::cancel() const
 {
     int s = Private::RUNNING;
-    if (_p->state.compare_exchange_strong(s, Private::STOPPING))
-        _p->result.setCode(CANCELED);
+    _p->state.compare_exchange_strong(s, Private::STOPPING); // result set by the stop branch
 }
 
 void Pipeline::async() const
