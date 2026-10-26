@@ -18,7 +18,7 @@
 namespace ve {
 
 static_assert(sizeof(Var) == 16, "Var must stay 16 bytes (_seq lives in padding)");
-static_assert(std::atomic<std::uint8_t>::is_always_lock_free, "Var::_seq must be lock-free");
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free, "Var::_seq must be lock-free");
 
 template<typename T>
 static VE_FORCE_INLINE T _racyLoad(const T& src) noexcept
@@ -537,11 +537,11 @@ void Var::swap(Var& other) noexcept {
 // concurrent
 // ============================================================================
 
-std::uint8_t Var::lockConcurrent() const noexcept
+std::uint32_t Var::lockConcurrent() const noexcept
 {
-    std::uint8_t s = _seq.load(std::memory_order_relaxed);
+    std::uint32_t s = _seq.load(std::memory_order_relaxed);
     for (unsigned spins = 0;; ++spins) {
-        if (!(s & 1) && _seq.compare_exchange_weak(s, std::uint8_t(s | 1),
+        if (!(s & 1) && _seq.compare_exchange_weak(s, std::uint32_t(s | 1),
                 std::memory_order_acquire, std::memory_order_relaxed))
             return s;
         if (spins < 64) _cpuRelax();
@@ -552,7 +552,7 @@ std::uint8_t Var::lockConcurrent() const noexcept
 
 Var Var::loadConcurrent() const
 {
-    const std::uint8_t s1 = _seq.load(std::memory_order_acquire);
+    const std::uint32_t s1 = _seq.load(std::memory_order_acquire);
     if (VE_LIKELY(!(s1 & 1))) {
         const Type t = _racyLoad(_type);
         if (VE_LIKELY(!_isHeap(t))) {
@@ -567,7 +567,7 @@ Var Var::loadConcurrent() const
         }
     }
     struct Unlock {
-        const Var* v; std::uint8_t s;
+        const Var* v; std::uint32_t s;
         ~Unlock() { v->_seq.store(s, std::memory_order_release); }
     } lk{this, lockConcurrent()};
     return Var(*this);
@@ -576,13 +576,13 @@ Var Var::loadConcurrent() const
 Var Var::exchangeConcurrent(Var&& v) noexcept
 {
     Var old;
-    const std::uint8_t s = lockConcurrent();
+    const std::uint32_t s = lockConcurrent();
     std::atomic_thread_fence(std::memory_order_release);
     old._type = _type;
     old._storage = _storage;
     _racyStore(_type, v._type);
     _racyStore(_storage, v._storage);
-    _seq.store(std::uint8_t(s + 2), std::memory_order_release);
+    _seq.store(std::uint32_t(s + 2), std::memory_order_release);
     v._type = NONE;
     v._storage._int = 0;
     return old;

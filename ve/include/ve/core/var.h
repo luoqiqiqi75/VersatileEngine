@@ -291,7 +291,7 @@ private:
 
     Var loadConcurrent() const;
     Var exchangeConcurrent(Var&& v) noexcept;
-    std::uint8_t lockConcurrent() const noexcept;
+    std::uint32_t lockConcurrent() const noexcept;
 
     template<typename F>
     static CallableV wrapCallable(F&& fn);
@@ -300,7 +300,7 @@ private:
     static CallableV wrapCallableIndexed(F&& fn, std::index_sequence<I...>);
 
     Type _type;
-    mutable std::atomic<std::uint8_t> _seq{0};   // bit0 lock, rest version
+    mutable std::atomic<std::uint32_t> _seq{0};  // bit0 lock, rest version; in padding after _type
 
     union Storage {
         bool            _bool;
