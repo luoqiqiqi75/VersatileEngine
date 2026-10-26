@@ -573,19 +573,37 @@ Var Var::loadConcurrent() const
     return Var(*this);
 }
 
-Var Var::exchangeConcurrent(Var&& v) noexcept
+// Lock held as s: install v, v gets the old value, unlock with s + 2.
+void Var::swapLocked(Var& v, std::uint32_t s) noexcept
 {
-    Var old;
-    const std::uint32_t s = lockConcurrent();
     std::atomic_thread_fence(std::memory_order_release);
-    old._type = _type;
-    old._storage = _storage;
+    const Type t = _type;
+    const Storage st = _storage;
     _racyStore(_type, v._type);
     _racyStore(_storage, v._storage);
-    _seq.store(std::uint32_t(s + 2), std::memory_order_release);
-    v._type = NONE;
-    v._storage._int = 0;
+    _seq.store(s + 2, std::memory_order_release);
+    v._type = t;
+    v._storage = st;
+}
+
+Var Var::exchangeConcurrent(Var&& v) noexcept
+{
+    Var old(std::move(v));
+    swapLocked(old, lockConcurrent());
     return old;
+}
+
+// Compare-and-swap under one lock: false leaves both untouched,
+// true installs v and leaves the old value in v.
+bool Var::updateConcurrent(Var& v) noexcept
+{
+    const std::uint32_t s = lockConcurrent();
+    if (*this == v) {
+        _seq.store(s, std::memory_order_release);
+        return false;
+    }
+    swapLocked(v, s);
+    return true;
 }
 
 } // namespace ve

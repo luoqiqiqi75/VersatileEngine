@@ -301,6 +301,35 @@ VE_TEST(node_value_concurrent_get_set_mixed_types)
     VE_ASSERT_EQ(errors.load(), 0);
 }
 
+VE_TEST(node_value_concurrent_update_fires_once)
+{
+    // Persistent threads released together each round, so updates really race.
+    constexpr int threads_n = 6, rounds = 2000;
+    const std::string text(64, 'u');
+    Node node;
+    std::atomic<int> fired{0}, changed{0}, go{0}, done{0}, bad{0};
+    node.connect(Node::NODE_CHANGED, &node, [&](const Var&, const Var&) { fired.fetch_add(1); });
+    std::vector<std::thread> threads;
+    for (int t = 0; t < threads_n; ++t) {
+        threads.emplace_back([&, t] {
+            for (int r = 1; r <= rounds; ++r) {
+                while (go.load() < r) { std::this_thread::yield(); }
+                if (node.update(t & 1 ? Var(text) : Var(std::string(text)))) changed.fetch_add(1);
+                done.fetch_add(1);
+            }
+        });
+    }
+    for (int r = 1; r <= rounds; ++r) {
+        node.set(Var());
+        fired.store(0); changed.store(0); done.store(0);
+        go.store(r);
+        while (done.load() < threads_n) { std::this_thread::yield(); }
+        if (changed.load() != 1 || fired.load() != 1 || node.getString() != text) bad.fetch_add(1);
+    }
+    for (auto& thread : threads) { thread.join(); }
+    VE_ASSERT_EQ(bad.load(), 0);
+}
+
 VE_TEST(node_value_scalar_and_heap_roundtrip)
 {
     Node node;

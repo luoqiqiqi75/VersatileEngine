@@ -767,8 +767,10 @@ Node* Node::set(Var&& v)
 
 bool Node::update(const Var& v)
 {
-    if (value() == v) return false;
-    set(v);
+    Var old(v);
+    if (!_p->value.updateConcurrent(old)) return false;
+    trigger<NODE_CHANGED>(v, std::move(old));
+    if (isWatching()) activate(NODE_CHANGED, this);
     return true;
 }
 

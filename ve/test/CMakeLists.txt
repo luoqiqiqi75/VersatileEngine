@@ -14,7 +14,9 @@ add_executable(ve_test ${_TEST_SOURCES})
 target_include_directories(ve_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(VE_NODE_BENCH_LARGE "Enable extra-large JSON roundtrip benchmarks in ve_test (slow)" ON)
-if(VE_NODE_BENCH_LARGE)
+if(VE_NODE_BENCH_LARGE AND VE_SANITIZE_THREAD)
+    message(STATUS "VE_NODE_BENCH_LARGE skipped under ThreadSanitizer")
+elseif(VE_NODE_BENCH_LARGE)
     target_compile_definitions(ve_test PRIVATE VE_NODE_BENCH_LARGE=1)
 endif()
 

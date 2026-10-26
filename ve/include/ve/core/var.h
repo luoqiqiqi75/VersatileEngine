@@ -291,7 +291,9 @@ private:
 
     Var loadConcurrent() const;
     Var exchangeConcurrent(Var&& v) noexcept;
+    bool updateConcurrent(Var& v) noexcept;
     std::uint32_t lockConcurrent() const noexcept;
+    void swapLocked(Var& v, std::uint32_t s) noexcept;
 
     template<typename F>
     static CallableV wrapCallable(F&& fn);

@@ -416,16 +416,21 @@ VE_TEST(object_timer_destroy_owner_while_ticking) {
     Object obs("obs");
     std::atomic<int> ticks{0};
 
-    // Each owner ticks fast with a slow slot, so destruction below is very
-    // likely to land while a tick is mid-flight on a pool thread.
+    // Each owner ticks fast with a slow slot; destroy right after the first
+    // tick is counted, so destruction lands while that tick is mid-flight.
+    // Waiting on the tick (not a fixed sleep) keeps it stable on coarse
+    // Windows timers.
     for (int round = 0; round < 20; ++round) {
         Object src("src");
+        const int before = ticks.load();
         auto id = src.startTimer(1, true, &pool);
         src.connect(id, &obs, [&]() {
             ticks.fetch_add(1);
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         });
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (ticks.load() == before && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
     }   // ~Object drains the in-flight tick each round
 
     VE_ASSERT(ticks.load() > 0);

@@ -89,6 +89,17 @@ else ()
     endif()
 endif ()
 
+# --- ThreadSanitizer (GCC/Clang only; instruments libve and tests alike) ---
+option(VE_SANITIZE_THREAD "Build everything with -fsanitize=thread" OFF)
+if(VE_SANITIZE_THREAD)
+    if(MSVC)
+        message(FATAL_ERROR "VE_SANITIZE_THREAD requires GCC or Clang")
+    endif()
+    add_compile_options(-fsanitize=thread -g -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+    message(STATUS "ThreadSanitizer enabled")
+endif()
+
 # --- Build options ---
 if(NOT DEFINED BUILD_SHARED_LIBS)
     if(IOS)
