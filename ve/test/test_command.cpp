@@ -422,6 +422,60 @@ VE_TEST(pipeline_slow_command_sync)
     worker.stop();
 }
 
+// Counts how often sync() pumps it; an idle wait must not spin.
+struct CountingLoop : Loop
+{
+    std::atomic<size_t> calls{0};
+    size_t processEvents() override { calls.fetch_add(1); return 0; }
+};
+
+VE_TEST(pipeline_sync_idle_does_not_spin)
+{
+    auto* slow_n = regSlowCommand();
+
+    AsioLoop worker("slow.idle.worker");
+    worker.start();
+    CountingLoop cur;
+
+    Pipeline p;
+    p.inputNode()->set(1);
+    Command cmd(slow_n);
+    cmd.setLoop(&worker);
+    p.add(cmd)->setContextNodes(p.contextNode(), p.inputNode(), p.outputNode());
+
+    p.sync(&cur);   // 50 ms step: ~1 pump per ms when idle, not a busy loop
+
+    VE_ASSERT(p.result().isSuccess());
+    VE_ASSERT_EQ(p.outputNode()->getInt(), 101);
+    VE_ASSERT(cur.calls.load() < 1000);
+    worker.stop();
+}
+
+VE_TEST(pipeline_sync_cancel_waits_inflight_step)
+{
+    AsioLoop worker("cancel.inflight.worker");
+    worker.start();
+
+    std::atomic<bool> step_done{false};
+    Pipeline p;
+    p.addProc([&](Node*, Node*, Node*) -> Result {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        step_done.store(true);
+        return Result::ok();
+    }, &worker);
+
+    std::thread canceller([p] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        p.cancel();
+    });
+    p.sync();
+    canceller.join();
+
+    VE_ASSERT(step_done.load());                    // sync returned only after the step finished
+    VE_ASSERT_EQ(p.result().code(), (int)Pipeline::CANCELED);
+    worker.stop();
+}
+
 VE_TEST(pipeline_slow_command_async)
 {
     auto* slow_n = regSlowCommand();

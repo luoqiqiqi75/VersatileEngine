@@ -3,7 +3,8 @@
 #include "ve/core/pipeline.h"
 
 #include <atomic>
-#include <thread>
+#include <chrono>
+#include <future>
 
 #include "ve/core/log.h"
 
@@ -17,7 +18,13 @@ struct Pipeline::Private
 
     Node* pipe_n = nullptr;
 
-    std::atomic_bool running = false;
+    // IDLE -> RUNNING (async) -> STOPPING (error/cancel) -> IDLE (after cleanup)
+    enum State : int { IDLE, RUNNING, STOPPING };
+    std::atomic<int> state = IDLE;
+
+    // per run; fulfilled after the state returns to IDLE
+    std::promise<void> finish;
+    std::shared_future<void> finished;
 
     List<Command> commands;
 
@@ -32,22 +39,23 @@ public:
 
 void Pipeline::Private::execute(std::shared_ptr<Private> self)
 {
-    if (running && result.isSuccess() && !commands.empty()) { // continue
+    if (state == RUNNING && !commands.empty()) { // continue
         const Command exec_c = commands.front();
         commands.pop_front();
         exec_c.call([self] (Command& c) {
             Result r = c.result();
-            if (self->running && !r.isSuccess()) {
-                self->result = std::move(r); // save result if still running
-                self->running = false;
-            }
+            int s = RUNNING;
+            if (!r.isSuccess() && self->state.compare_exchange_strong(s, STOPPING))
+                self->result = std::move(r); // first stop reason wins
             self->execute(self);
         });
     } else { // stop
         pipe_n->trigger<FINISHED>();
-        running = false;
         pipe_n->disconnectAll(); // must reconnect if restart
         commands.clear();
+        auto done = std::move(finish);
+        state = IDLE;
+        done.set_value();
     }
 }
 
@@ -74,7 +82,7 @@ const Result& Pipeline::result() const { return _p->result; }
 
 Command* Pipeline::add(Command command)
 {
-    if (_p->running) {
+    if (_p->state != Private::IDLE) {
         veLogW << "<ve::pipeline> commands cannot change while running";
         return nullptr;
     }
@@ -85,7 +93,7 @@ Command* Pipeline::add(Command command)
 
 Command* Pipeline::addProc(Proc proc, Loop* loop)
 {
-    if (_p->running) {
+    if (_p->state != Private::IDLE) {
         veLogW << "<ve::pipeline> commands cannot change while running";
         return nullptr;
     }
@@ -100,17 +108,20 @@ void Pipeline::onFinished(Object* observer, Callback cb, Loop* loop) { on<FINISH
 
 void Pipeline::cancel() const
 {
-    _p->result.setCode(CANCELED);
-    _p->running = false;
+    int s = Private::RUNNING;
+    if (_p->state.compare_exchange_strong(s, Private::STOPPING))
+        _p->result.setCode(CANCELED);
 }
 
 void Pipeline::async() const
 {
-    if (_p->running) {
+    int s = Private::IDLE;
+    if (!_p->state.compare_exchange_strong(s, Private::RUNNING)) {
         veLogE << "<ve::pipeline> already running";
         return;
     }
-    _p->running = true;
+    _p->finish = std::promise<void>();
+    _p->finished = _p->finish.get_future().share();
     _p->result = Result::ok();
     _p->pipe_n->trigger<STARTED>();
     _p->execute(_p);
@@ -120,9 +131,11 @@ void Pipeline::sync(Loop* cur_l) const
 {
     if (!cur_l) cur_l = loop::current();   // the loop driving this thread, if any
     async();
-    while (_p->running) {
-        if (cur_l) cur_l->processEvents(); // keep pumping so loop-bound steps can hop back
-        std::this_thread::yield();
+    const auto finished = _p->finished;
+    if (!cur_l) return finished.wait();
+    // keep pumping so steps bound to this loop can run; sleep only when idle
+    while (finished.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        if (!cur_l->processEvents()) finished.wait_for(std::chrono::milliseconds(1));
     }
 }
 
