@@ -57,7 +57,7 @@ static VE_FORCE_INLINE bool _isHeap(Var::Type t) noexcept { return t >= Var::STR
 
 // Only values with no public mutable access use shared storage. Copies of a
 // live Var may retain this data concurrently; changing that Var still needs
-// external synchronization.
+// external synchronization, unless done via the *Concurrent members (Node value).
 template<typename T>
 struct Var::SharedData {
     std::atomic<size_t> refs{1};

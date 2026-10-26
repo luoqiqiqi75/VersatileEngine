@@ -506,6 +506,31 @@ Use `COPY_STRICT` when the destination should mirror the source.
 Use `COPY_DEFAULT` when the destination may carry local extra state.
 Drop `COPY_REPLACE` to only fill in destination values that are still null.
 
+## Concurrency
+
+What may be called from several threads without your own locking:
+
+- **`Node` value** — `get()` / `set()` / `update()` on the same node are safe.
+  Scalar reads (bool, int, double, pointer) are lock-free; other types are
+  copied under a short per-value spin lock. `update()` compares and replaces
+  atomically: concurrent `update()`s with the same value change it once and
+  fire `NODE_CHANGED` once.
+- **`Node` children** — child queries and structural edits on one node
+  (`child`, `count`, `children`, `insert`, `take`, `clear`, ...) serialize on
+  `mutex()`. Returned `Node*` are not kept alive: don't remove a node another
+  thread still uses.
+- **Signals** — `connect` / `disconnect` / `trigger` are thread-safe. Slots run
+  on the triggering thread, or on the `Loop` given to `connect()`.
+  `NODE_CHANGED` fires on the thread that called `set()` / `update()`.
+- **`Var` copies** — copies of one `Var` can be read and destroyed on different
+  threads (string and binary share immutable storage). Mutating one `Var`
+  object from several threads still needs external synchronization; a node's
+  value is the exception above.
+- **`Pipeline`** — `async()`, `sync()`, `cancel()` may come from any thread.
+  `add()` / `addProc()` only work while idle. `sync()` returns after the run
+  finished and cleaned up; after `cancel()` it still waits for the in-flight
+  step.
+
 ## Service Defaults
 
 The default VE runtime services are designed around the core tree:
