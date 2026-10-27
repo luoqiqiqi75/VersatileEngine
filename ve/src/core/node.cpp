@@ -744,7 +744,8 @@ void Node::silentAll(bool on)
 // Node — value operations
 // ============================================================================
 
-Var Node::value() const { return _p->value.loadConcurrent(); }
+Var Node::fullValue() const { return _p->value.loadConcurrent(); }
+Var Node::scalarValue() const { return _p->value.loadConcurrent(true); }
 
 Node* Node::set(const Var& v)
 {

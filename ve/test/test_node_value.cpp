@@ -74,6 +74,18 @@ VE_TEST(node_value_get_default) {
     VE_ASSERT_EQ(n.getString(), "");
 }
 
+VE_TEST(node_value_get_typed_container) {
+    Node n("test");
+    n.set(Var(Var::ListV{1, 2, 3}));
+    VE_ASSERT_EQ(n.getInt(7), 7);
+    VE_ASSERT_EQ(n.getInt64(8), 8);
+    VE_ASSERT_NEAR(n.getDouble(1.5), 1.5, 0.001);
+    VE_ASSERT_EQ(n.getBool(true), true);
+    VE_ASSERT_EQ(n.getString(), "[1, 2, 3]");
+    n.set(Var("5"));
+    VE_ASSERT_EQ(n.getInt(), 5);
+}
+
 VE_TEST(node_value_getAs_template) {
     Node n("test");
     n.set(Var(42));

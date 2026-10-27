@@ -44,7 +44,7 @@ public:
     };
 
     // --- value ---
-    Var get() const { return value(); }
+    Var get() const { return fullValue(); }
 
     Node* set(const Var& v);
     Node* set(Var&& v);
@@ -225,13 +225,13 @@ public:
 
 public:
     // get usage
-    template<typename T> T getAs(const T& def = T{}) const { return value().to<T>(def); }
+    template<typename T> T getAs(const T& def = T{}) const { return fullValue().to<T>(def); }
 
-    bool        getBool(bool def = false) const { return value().toBool(def); }
-    int         getInt(int def = -1) const { return value().toInt(def); }
-    int64_t     getInt64(int64_t def = -1) const { return value().toInt64(def); }
-    double      getDouble(double def = 0.0) const { return value().toDouble(def); }
-    std::string getString(const std::string& def = "") const { return value().toString(def); }
+    bool        getBool(bool def = false) const { return scalarValue().toBool(def); }
+    int         getInt(int def = -1) const { return scalarValue().toInt(def); }
+    int64_t     getInt64(int64_t def = -1) const { return scalarValue().toInt64(def); }
+    double      getDouble(double def = 0.0) const { return scalarValue().toDouble(def); }
+    std::string getString(const std::string& def = "") const { return fullValue().toString(def); }
 
     // sibling usage
     Node* sibling(int offset) const { auto* p = parent(); if (!p) return nullptr; int i = p->indexOf(this) + offset; return (i >= 0) ? p->child(i) : nullptr; }
@@ -250,9 +250,9 @@ public:
     Node* at(const std::string& path) { return atPath(path); }
 
     // subpath usage
-    Var get(int index) const { if (auto n = child(index)) return n->value(); return Var {}; }
-    Var get(const std::string& name, int overlap) const { if (auto n = child(name, overlap)) return n->value(); return Var {}; }
-    Var get(const std::string& path) const { if (auto n = find(path)) return n->value(); return Var {}; }
+    Var get(int index) const { if (auto n = child(index)) return n->fullValue(); return Var {}; }
+    Var get(const std::string& name, int overlap) const { if (auto n = child(name, overlap)) return n->fullValue(); return Var {}; }
+    Var get(const std::string& path) const { if (auto n = find(path)) return n->fullValue(); return Var {}; }
 
     template<typename T> Node* set(int index, T&& t) { at(index)->set(std::forward<T>(t)); return this; }
     template<typename T> Node* set(const std::string& name, int overlap, T&& t) { at(name, overlap)->set(std::forward<T>(t)); return this; }
@@ -344,7 +344,8 @@ public:
     template<typename... Args> void then(Args&&... args) { once<NODE_CHANGED>(std::forward<Args>(args)...); }
 
 protected:
-    [[nodiscard]] Var value() const;
+    [[nodiscard]] Var fullValue() const;
+    [[nodiscard]] Var scalarValue() const;
 
 private:
     VE_DECLARE_UNIQUE_PRIVATE

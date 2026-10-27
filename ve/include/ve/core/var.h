@@ -289,7 +289,7 @@ private:
     void moveFrom(Var&& other);
     void destroy();
 
-    Var loadConcurrent() const;
+    Var loadConcurrent(bool scalar = false) const;
     Var exchangeConcurrent(Var&& v) noexcept;
     bool updateConcurrent(Var& v) noexcept;
     std::uint32_t lockConcurrent() const noexcept;

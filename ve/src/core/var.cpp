@@ -550,7 +550,7 @@ std::uint32_t Var::lockConcurrent() const noexcept
     }
 }
 
-Var Var::loadConcurrent() const
+Var Var::loadConcurrent(bool scalar) const
 {
     const std::uint32_t s1 = _seq.load(std::memory_order_acquire);
     if (VE_LIKELY(!(s1 & 1))) {
@@ -570,6 +570,7 @@ Var Var::loadConcurrent() const
         const Var* v; std::uint32_t s;
         ~Unlock() { v->_seq.store(s, std::memory_order_release); }
     } lk{this, lockConcurrent()};
+    if (scalar && _type >= LIST && _type != POINTER) return Var(); // scalar: containers load as NONE
     return Var(*this);
 }
 
