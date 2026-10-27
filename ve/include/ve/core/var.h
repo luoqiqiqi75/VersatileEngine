@@ -15,6 +15,23 @@ namespace ve {
 
 class Node;
 
+namespace detail {
+
+// Relaxed load of a seqlock-guarded field; validity is decided by the seq recheck.
+template<typename T>
+VE_FORCE_INLINE T _racyLoad(const T& src) noexcept
+{
+#if defined(__GNUC__)
+    T out;
+    __atomic_load(&src, &out, __ATOMIC_RELAXED);
+    return out;
+#else
+    return src;
+#endif
+}
+
+} // namespace detail
+
 class VE_API Var
 {
 public:
@@ -289,7 +306,29 @@ private:
     void moveFrom(Var&& other);
     void destroy();
 
-    Var loadConcurrent(bool scalar = false) const;
+    Var loadConcurrent() const;
+
+    // Scalar T read: matching type is lock-free and inline, else full load + toX(def).
+    template<typename T>
+    T loadConcurrent(T def) const {
+        static_assert(std::is_arithmetic_v<T>);
+        constexpr Type want = std::is_same_v<T, bool> ? BOOL : std::is_integral_v<T> ? INT : DOUBLE;
+        const std::uint32_t s1 = _seq.load(std::memory_order_acquire);
+        if (VE_LIKELY(!(s1 & 1) && detail::_racyLoad(_type) == want)) {
+            const Storage st = detail::_racyLoad(_storage);
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (VE_LIKELY(_seq.load(std::memory_order_relaxed) == s1)) {
+                if constexpr (want == BOOL) return st._bool;
+                else if constexpr (want == INT) return static_cast<T>(st._int);
+                else return static_cast<T>(st._double);
+            }
+        }
+        const Var v = loadConcurrent();
+        if constexpr (want == BOOL) return v.toBool(def);
+        else if constexpr (std::is_same_v<T, int>) return v.toInt(def);
+        else if constexpr (want == INT) return static_cast<T>(v.toInt64(def));
+        else return static_cast<T>(v.toDouble(def));
+    }
     Var exchangeConcurrent(Var&& v) noexcept;
     bool updateConcurrent(Var& v) noexcept;
     std::uint32_t lockConcurrent() const noexcept;

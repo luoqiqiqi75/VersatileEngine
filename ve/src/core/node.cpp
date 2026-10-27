@@ -744,8 +744,13 @@ void Node::silentAll(bool on)
 // Node — value operations
 // ============================================================================
 
-Var Node::fullValue() const { return _p->value.loadConcurrent(); }
-Var Node::scalarValue() const { return _p->value.loadConcurrent(true); }
+Var Node::value() const { return _p->value.loadConcurrent(); }
+
+bool Node::getBool(bool def) const { return _p->value.loadConcurrent(def); }
+int Node::getInt(int def) const { return _p->value.loadConcurrent(def); }
+int64_t Node::getInt64(int64_t def) const { return _p->value.loadConcurrent(def); }
+double Node::getDouble(double def) const { return _p->value.loadConcurrent(def); }
+std::string Node::getString(const std::string& def) const  { return value().toString(def); }
 
 Node* Node::set(const Var& v)
 {

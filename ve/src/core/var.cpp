@@ -20,17 +20,7 @@ namespace ve {
 static_assert(sizeof(Var) == 16, "Var must stay 16 bytes (_seq lives in padding)");
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free, "Var::_seq must be lock-free");
 
-template<typename T>
-static VE_FORCE_INLINE T _racyLoad(const T& src) noexcept
-{
-#if defined(__GNUC__)
-    T out;
-    __atomic_load(&src, &out, __ATOMIC_RELAXED);
-    return out;
-#else
-    return src;
-#endif
-}
+using detail::_racyLoad;
 
 template<typename T>
 static VE_FORCE_INLINE void _racyStore(T& dst, T v) noexcept
@@ -550,7 +540,7 @@ std::uint32_t Var::lockConcurrent() const noexcept
     }
 }
 
-Var Var::loadConcurrent(bool scalar) const
+Var Var::loadConcurrent() const
 {
     const std::uint32_t s1 = _seq.load(std::memory_order_acquire);
     if (VE_LIKELY(!(s1 & 1))) {
@@ -570,7 +560,6 @@ Var Var::loadConcurrent(bool scalar) const
         const Var* v; std::uint32_t s;
         ~Unlock() { v->_seq.store(s, std::memory_order_release); }
     } lk{this, lockConcurrent()};
-    if (scalar && _type >= LIST && _type != POINTER) return Var(); // scalar: containers load as NONE
     return Var(*this);
 }
 
