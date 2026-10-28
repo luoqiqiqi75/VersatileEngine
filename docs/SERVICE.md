@@ -34,8 +34,9 @@ Always read `runtime/port` from the node tree if the configured base port might 
 
 Each connection has an independent `AsioLoop` thread. UDP uses one execution
 loop per peer endpoint, including its idle-session lifetime. Static file reads
-and proxy requests also execute on the connection loop. Shared asio2 threads
-handle network I/O and enqueue requests.
+also execute on the connection loop. Static proxy requests stream asynchronously
+on the transport workers. Shared asio2 threads handle network I/O and enqueue
+other requests.
 
 Commands without a registered loop execute serially on the connection loop.
 Commands with a registered loop execute there; foreground requests wait on the
@@ -415,6 +416,7 @@ Port `12400`. Static file hosting with reverse proxy support. Disabled by defaul
         "enable": true,
         "config": {
           "port": 12400,
+          "max_request_body_bytes": 67108864,
           "mounts": [
             {
               "prefix": "/",
@@ -424,7 +426,8 @@ Port `12400`. Static file hosting with reverse proxy support. Disabled by defaul
               "proxy": [
                 {
                   "prefix": "/api",
-                  "target": "http://127.0.0.1:8080/v1"
+                  "target": "http://127.0.0.1:8080/v1",
+                  "timeout_ms": 120000
                 },
                 {
                   "prefix": "/ws",
@@ -447,7 +450,7 @@ Mounts are matched by longest prefix first. `"/"` is the root fallback.
 | Field | Default | Description |
 |-------|---------|-------------|
 | `prefix` | `"/"` | URL prefix to match |
-| `root` | (required) | Local directory for static files |
+| `root` | `""` | Local directory for static files; may be empty for a proxy-only mount |
 | `default_file` | `"index.html"` | Default file when path is empty |
 | `spa_fallback` | `false` | Serve `default_file` for unmatched paths (SPA routing) |
 
@@ -459,6 +462,7 @@ Each mount can have proxy rules. Proxy is checked before static files.
 |-------|-------------|
 | `prefix` | URL prefix relative to the mount (e.g. `"/api"`) |
 | `target` | Upstream URL including base path (e.g. `"http://127.0.0.1:8080/v1"`) |
+| `timeout_ms` | Total proxy deadline in milliseconds, including DNS, connect/TLS, upload and response. Default `30000`; minimum `1` |
 
 Request path transformation:
 
@@ -468,6 +472,73 @@ Upstream: GET {targetPath}/users?id=1 -> http://targetHost:targetPort{targetPath
 ```
 
 Headers are forwarded with hop-by-hop headers stripped. HTTPS proxy requires `ASIO2_ENABLE_SSL` at build time.
+
+### Upload limits and streaming
+
+`static.config.max_request_body_bytes` sets the maximum decoded request body size
+in bytes, for both Content-Length and chunked requests. The default is `67108864`
+(64 MiB); `0` allows only empty bodies. This limit also applies to non-proxy
+requests on the static server. It does not change the Node HTTP server.
+
+`StaticServer` takes a `const Node*` configuration node, like the other VE servers.
+It reads `port`, `max_request_body_bytes`, `mounts` and each proxy's `timeout_ms`
+from that node; these settings do not need separate C++ setters or overloads.
+
+Proxy requests and responses use a reusable 64 KiB transfer buffer per exchange,
+plus bounded HTTP parsing buffers. Forwarding starts after the request headers;
+the full upload is never cached in memory. Content-Length, chunked uploads,
+`Expect: 100-continue`, binary bodies and multipart boundaries are supported.
+The upstream Host includes its port. Connection-nominated hop-by-hop headers
+are removed; HTTP trailers and WebSocket upgrades are not forwarded.
+
+An oversized request receives `413 Payload Too Large` and the connection closes.
+Upstream connection/protocol failures return `502 Bad Gateway`. A proxy deadline
+returns `504 Gateway Timeout` if response headers have not been sent; after that,
+the connection closes. Each rule can increase `timeout_ms` for upgrade processing;
+the transport idle timeout accommodates that deadline. Body limits and deadlines
+are read at startup; changing them requires restarting the service.
+
+For example, an upgrade route can use a 256 MiB body limit and five-minute deadline:
+
+```json
+{
+  "enable": true,
+  "config": {
+    "port": 12400,
+    "max_request_body_bytes": 268435456,
+    "mounts": [{
+      "prefix": "/",
+      "root": "./dist",
+      "proxy": [{
+        "prefix": "/upgrade",
+        "target": "http://127.0.0.1:8080/upgrade",
+        "timeout_ms": 300000
+      }]
+    }]
+  }
+}
+```
+
+Place this object at `modules.ve.server.static` in the startup configuration.
+Send the same upgrade package and headers to the Python endpoint and the proxy
+URL, and compare the upstream's received byte count/checksum. Set the body limit
+above the complete multipart request size when uploading with `curl -F`.
+
+The socket regression suite is built with `VE_BUILD_TEST=ON`:
+
+```bash
+cmake --build <build-dir> --target ve_static_proxy_test ve_service_test
+<build-dir>/bin/ve_static_proxy_test
+<build-dir>/bin/ve_static_proxy_test --long-timeout
+<build-dir>/bin/ve_service_test
+```
+
+The proxy suite compares direct and proxied 2 MiB binary uploads (Content-Length
+and chunked), checks that upstream bytes arrive before upload completion, and
+covers 413, configurable deadlines/504, keep-alive, large/chunked/EOF responses,
+HEAD, static files, live target updates and shutdown during active transfers.
+`--long-timeout` additionally verifies a 31-second upstream response with a
+35-second configured deadline.
 
 ### Dynamic proxy target
 

@@ -46,6 +46,9 @@ target_link_libraries(ve_var_copy_bench PRIVATE VersatileEngine::ve)
 add_executable(ve_service_test service/test_connections.cpp ../src/asio_impl.cpp)
 target_link_libraries(ve_service_test PRIVATE VersatileEngine::ve ve_dep_asio2)
 
+add_executable(ve_static_proxy_test service/test_static_proxy.cpp ../src/asio_impl.cpp)
+target_link_libraries(ve_static_proxy_test PRIVATE VersatileEngine::ve ve_dep_asio2)
+
 if(UNIX AND NOT ANDROID)
     target_link_libraries(ve_test PRIVATE pthread dl)
     target_link_libraries(ve_runtime_config_test PRIVATE pthread)

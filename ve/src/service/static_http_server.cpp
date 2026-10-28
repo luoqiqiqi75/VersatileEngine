@@ -1,17 +1,15 @@
 // static_http_server.cpp — ve::service::StaticServer
 #include "ve/service/static_service.h"
 #include "ve/core/log.h"
+#include "ve/core/node.h"
 #include "server_util.h"
+#include "static_http_session.h"
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
 #endif
 #include <asio2/http/http_server.hpp>
-#include <asio2/http/http_client.hpp>
 #include <asio2/http/detail/http_url.hpp>
-#if defined(ASIO2_ENABLE_SSL) || defined(ASIO2_USE_SSL)
-#include <asio2/http/https_client.hpp>
-#endif
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
@@ -111,7 +109,8 @@ static std::string readFileBytes(const std::filesystem::path& filepath)
 struct StaticServer::Private
 {
     uint16_t port = 12400;
-    asio2::http_server server{serverRuntime().pool()};
+    asio2::http_server_t<detail::StaticHttpSession> server{serverRuntime().pool()};
+    uint64_t maxRequestBodyBytes = 64ull * 1024 * 1024;
     ConnectionLoops<ExecutionConnection> connections{"static.http"};
     std::mutex mountsMutex;
 
@@ -121,6 +120,7 @@ struct StaticServer::Private
         std::string targetPort;
         std::string targetPath;
         bool        isHttps = false;
+        uint32_t    timeoutMs = 30000;
     };
 
     struct Mount {
@@ -134,8 +134,9 @@ struct StaticServer::Private
     std::vector<Mount> mounts; // sorted by prefix length descending (longest first)
 
     Mount* findMount(const std::string& reqPath);
-    bool tryProxy(const Mount& mount, const std::string& relPath,
-                  http::web_request& req, http::web_response& rep);
+    void addMountProxy(const std::string& mountPrefix, const std::string& proxyPrefix,
+                       const std::string& target, uint32_t timeoutMs);
+    std::optional<detail::StaticProxyTarget> resolveProxy(std::string_view target);
     bool tryServeFile(const Mount& mount, const std::string& relPath,
                       http::web_response& rep);
 };
@@ -157,12 +158,17 @@ StaticServer::Private::Mount* StaticServer::Private::findMount(const std::string
     return nullptr;
 }
 
-bool StaticServer::Private::tryProxy(const Mount& mount, const std::string& relPath,
-                                     http::web_request& req, http::web_response& rep)
+std::optional<detail::StaticProxyTarget> StaticServer::Private::resolveProxy(std::string_view target)
 {
-    std::string reqTarget = std::string(req.target());
-
-    for (const auto& rule : mount.proxyRules) {
+    std::string reqTarget(target);
+    std::string reqPath = reqTarget.substr(0, reqTarget.find_first_of("?#"));
+    std::lock_guard<std::mutex> lock(mountsMutex);
+    auto mount = findMount(reqPath);
+    if (!mount) return std::nullopt;
+    std::string relPath = reqPath;
+    if (mount->prefix != "/" && !mount->prefix.empty())
+        relPath = reqPath.substr(mount->prefix.size());
+    for (const auto& rule : mount->proxyRules) {
         if (relPath.size() < rule.prefix.size()) continue;
         if (relPath.substr(0, rule.prefix.size()) != rule.prefix) continue;
         if (relPath.size() > rule.prefix.size() && relPath[rule.prefix.size()] != '/') continue;
@@ -170,71 +176,15 @@ bool StaticServer::Private::tryProxy(const Mount& mount, const std::string& relP
         if (rule.targetHost.empty()) continue;
 
         // Build upstream target: strip mount prefix from original target, then apply proxy
-        std::string afterMount = reqTarget.substr(mount.prefix == "/" ? 0 : mount.prefix.size());
+        std::string afterMount = reqTarget.substr(mount->prefix == "/" ? 0 : mount->prefix.size());
         std::string remaining = afterMount.substr(rule.prefix.size());
         std::string upstreamTarget = rule.targetPath + remaining;
         if (upstreamTarget.empty() || upstreamTarget[0] != '/') upstreamTarget = "/" + upstreamTarget;
 
-        http::web_request upstream;
-        upstream.method(req.method());
-        upstream.target(upstreamTarget);
-        upstream.version(11);
-
-        static const std::vector<std::string> hopByHop = {
-            "host", "connection", "keep-alive", "transfer-encoding",
-            "te", "trailer", "upgrade", "proxy-authorization"
-        };
-        for (auto const& field : req.base()) {
-            std::string nameLower(field.name_string());
-            for (auto& c : nameLower) { c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
-            bool skip = false;
-            for (const auto& h : hopByHop) { if (nameLower == h) { skip = true; break; } }
-            if (!skip) upstream.set(field.name_string(), field.value());
-        }
-        upstream.set(http::field::host, rule.targetHost);
-        upstream.body() = std::string(req.body());
-        upstream.prepare_payload();
-
-        auto timeout = std::chrono::seconds(30);
-        http::web_response upstream_resp;
-
-        if (rule.isHttps) {
-#if defined(ASIO2_ENABLE_SSL) || defined(ASIO2_USE_SSL)
-            upstream_resp = asio2::https_client::execute(
-                rule.targetHost, rule.targetPort, upstream, timeout);
-#else
-            veLogWs("[static proxy] HTTPS proxy not compiled in:", rule.prefix);
-            rep.fill_text("HTTPS proxy not supported in this build", http::status::not_implemented);
-            return true;
-#endif
-        } else {
-            upstream_resp = asio2::http_client::execute(
-                rule.targetHost, rule.targetPort, upstream, timeout);
-        }
-
-        if (asio2::get_last_error()) {
-            veLogWs("[static proxy] upstream error:", rule.prefix, "->",
-                    rule.targetHost, ":", asio2::last_error_msg());
-            rep.fill_text("Proxy upstream error: " + asio2::last_error_msg(),
-                          http::status::bad_gateway);
-            return true;
-        }
-
-        rep.result(upstream_resp.result());
-        for (auto const& field : upstream_resp.base()) {
-            std::string nameLower(field.name_string());
-            for (auto& c : nameLower) { c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
-            if (nameLower == "connection" || nameLower == "keep-alive" ||
-                nameLower == "transfer-encoding" || nameLower == "te" ||
-                nameLower == "trailer" || nameLower == "upgrade")
-                continue;
-            rep.set(field.name_string(), field.value());
-        }
-        rep.body() = upstream_resp.body();
-        rep.prepare_payload();
-        return true;
+        return detail::StaticProxyTarget{rule.targetHost, rule.targetPort, upstreamTarget,
+                                        rule.isHttps, std::chrono::milliseconds(rule.timeoutMs)};
     }
-    return false;
+    return std::nullopt;
 }
 
 bool StaticServer::Private::tryServeFile(const Mount& mount, const std::string& relPath,
@@ -280,10 +230,30 @@ bool StaticServer::Private::tryServeFile(const Mount& mount, const std::string& 
 // StaticServer
 // ============================================================================
 
-StaticServer::StaticServer(uint16_t port)
+StaticServer::StaticServer(const Node* config_n)
     : _p(std::make_unique<Private>())
 {
-    _p->port = port;
+    _p->port = static_cast<uint16_t>(config_n->get("port").toInt(12400));
+    const auto maxBody = config_n->get("max_request_body_bytes").toInt64(64ll * 1024 * 1024);
+    _p->maxRequestBodyBytes = static_cast<uint64_t>((std::max)(int64_t{0}, maxBody));
+    if (const Node* mounts = config_n->find("mounts")) {
+        for (const Node* mount : mounts->children()) {
+            const auto prefix = mount->get("prefix").toString("/");
+            addMount(prefix, mount->get("root").toString(),
+                     mount->get("default_file").toString("index.html"),
+                     mount->get("spa_fallback").toBool(false));
+            if (const Node* proxy = mount->find("proxy")) {
+                for (const Node* rule : proxy->children()) {
+                    const auto proxyPrefix = rule->get("prefix").toString();
+                    const auto target = rule->get("target").toString();
+                    if (proxyPrefix.empty() || target.empty()) continue;
+                    const int timeoutMs = rule->get("timeout_ms").toInt(30000);
+                    _p->addMountProxy(prefix, proxyPrefix, target,
+                                     static_cast<uint32_t>((std::max)(1, timeoutMs)));
+                }
+            }
+        }
+    }
 }
 
 StaticServer::~StaticServer()
@@ -315,8 +285,15 @@ void StaticServer::addMountProxy(const std::string& mountPrefix,
                                  const std::string& proxyPrefix,
                                  const std::string& target)
 {
-    std::lock_guard<std::mutex> lock(_p->mountsMutex);
-    for (auto& m : _p->mounts) {
+    _p->addMountProxy(mountPrefix, proxyPrefix, target, 30000);
+}
+
+void StaticServer::Private::addMountProxy(const std::string& mountPrefix,
+                                         const std::string& proxyPrefix,
+                                         const std::string& target, uint32_t timeoutMs)
+{
+    std::lock_guard<std::mutex> lock(mountsMutex);
+    for (auto& m : mounts) {
         if (m.prefix != mountPrefix) continue;
         http::url u(target);
         Private::ProxyRule rule;
@@ -325,7 +302,8 @@ void StaticServer::addMountProxy(const std::string& mountPrefix,
         rule.targetPort = std::string(u.port());
         rule.targetPath = std::string(u.path());
         rule.isHttps    = asio2::iequals(u.schema(), "https");
-        while (rule.targetPath.size() > 1 && rule.targetPath.back() == '/')
+        rule.timeoutMs  = (std::max)(uint32_t{1}, timeoutMs);
+        while (!rule.targetPath.empty() && rule.targetPath.back() == '/')
             rule.targetPath.pop_back();
         veLogDs("[static proxy] mount", mountPrefix, ":", proxyPrefix, "->", target);
         m.proxyRules.push_back(std::move(rule));
@@ -354,7 +332,7 @@ bool StaticServer::updateMountProxy(const std::string& mountPrefix,
                 rule.targetPort = std::string(u.port());
                 rule.targetPath = std::string(u.path());
                 rule.isHttps    = asio2::iequals(u.schema(), "https");
-                while (rule.targetPath.size() > 1 && rule.targetPath.back() == '/')
+                while (!rule.targetPath.empty() && rule.targetPath.back() == '/')
                     rule.targetPath.pop_back();
             }
             veLogDs("[static proxy] target updated:", proxyPrefix, "->", target);
@@ -371,6 +349,8 @@ bool StaticServer::start()
     // stalls deinit when a browser tab is holding a keep-alive connection.
     _p->server.bind_connect([this](auto& session_ptr) {
         session_ptr->set_disconnect_timeout(std::chrono::seconds(2));
+        session_ptr->maxRequestBodyBytes = _p->maxRequestBodyBytes;
+        session_ptr->resolveProxy = [this](std::string_view target) { return _p->resolveProxy(target); };
         if (!_p->connections.add(connectionKey(session_ptr), std::make_shared<ExecutionConnection>()))
             session_ptr->stop();
     });
@@ -379,7 +359,7 @@ bool StaticServer::start()
     });
 
     _p->server.bind_not_found(
-        [this](std::shared_ptr<asio2::http_session>& socket, http::web_request& request, http::web_response& response) {
+        [this](std::shared_ptr<detail::StaticHttpSession>& socket, http::web_request& request, http::web_response& response) {
             postHttpRequest(_p->connections.get(connectionKey(socket)), socket, request, response,
                 [this](http::web_request& req, http::web_response& rep, const auto&) {
                     std::string reqPath = std::string(req.path());
@@ -402,12 +382,11 @@ bool StaticServer::start()
                         relPath = reqPath.substr(mount->prefix.size());
                     }
 
-                    // 1. Proxy
-                    if (_p->tryProxy(*mount, relPath, req, rep)) return;
-                    // 2. Static file
+                    // Proxy requests are handled before reading their bodies.
+                    // 1. Static file
                     if (_p->tryServeFile(*mount, relPath, rep)) return;
-                    // 3. SPA fallback
-                    if (mount->spaFallback) {
+                    // 2. SPA fallback
+                    if (mount->spaFallback && !mount->root.empty()) {
                         namespace fs = std::filesystem;
                         const fs::path full = (fs::path(mount->root) / mount->defaultFile).lexically_normal();
                         std::error_code ec;

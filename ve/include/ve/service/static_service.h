@@ -2,16 +2,18 @@
 #pragma once
 
 #include "ve/global.h"
-#include <cstdint>
 #include <string>
 
 namespace ve {
+
+class Node;
+
 namespace service {
 
 class VE_API StaticServer
 {
 public:
-    explicit StaticServer(uint16_t port);
+    explicit StaticServer(const Node* config_n);
     ~StaticServer();
 
     void addMount(const std::string& prefix, const std::string& root,

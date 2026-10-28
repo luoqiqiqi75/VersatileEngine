@@ -113,30 +113,9 @@ template<> void openServer(std::shared_ptr<ve::service::StaticServer>& server,
         endPort = port + 9;
     }
 
-    Node* mounts_node = n->find("config/mounts");
-
     for (int p = port; p <= endPort; ++p) {
-        server = service::serverRuntime().make<service::StaticServer>(static_cast<uint16_t>(p));
-        if (mounts_node) {
-            for (Node* mount : mounts_node->children()) {
-                std::string prefix      = mount->get("prefix").toString("/");
-                std::string root        = mount->get("root").toString();
-                std::string default_file = mount->get("default_file").toString("index.html");
-                bool spa_fallback       = mount->get("spa_fallback").toBool(false);
-                if (!root.empty()) {
-                    server->addMount(prefix, root, default_file, spa_fallback);
-                }
-                Node* proxy_node = mount->find("proxy");
-                if (proxy_node) {
-                    for (Node* rule : proxy_node->children()) {
-                        std::string pfx = rule->get("prefix").toString();
-                        std::string tgt = rule->get("target").toString();
-                        if (!pfx.empty() && !tgt.empty())
-                            server->addMountProxy(prefix, pfx, tgt);
-                    }
-                }
-            }
-        }
+        n->set("config/port", p);
+        server = service::serverRuntime().make<service::StaticServer>(n->at("config"));
         if (server->start()) {
             n->set("runtime/port", p);
             n->set("runtime/listening", true);
