@@ -78,7 +78,7 @@ curl -X POST http://127.0.0.1:12000/cmd/search \
 
 curl -X POST "http://127.0.0.1:12000/cmd/save?context=ve/server&async=1" \
   -H "Content-Type: application/json" \
-  -d '{"args":["json","node","-f","server.json"]}'
+  -d '{"file":"server.json","path":"/ve/server/node"}'
 ```
 
 ### `/ve`
@@ -152,7 +152,7 @@ const tree = await ve.get('ve/server');
 const port = await ve.val('ve/server/node/http/runtime/port');
 const commands = await ve.cmds();
 
-await ve.run('save', ['json', '/ve', '-f', 've.json']);
+await ve.run('save', ['ve.json', '/ve']);
 ```
 
 ### 3. `VeHttpClient`
@@ -190,7 +190,7 @@ WebSocket 协议和 `/ve` 使用同一套 envelope，只是 transport 换成了 
 
 ```json
 {"op":"node.get","path":"ve/server","id":1}
-{"op":"command.run","name":"save","args":["json","/ve"],"wait":false,"id":2}
+{"op":"command.run","name":"save","args":["ve.json","/ve"],"wait":false,"id":2}
 {"op":"subscribe","path":"ve/server/node/http/runtime/port","id":3}
 ```
 
@@ -222,7 +222,7 @@ const stop = ws.watch('ve/server/node/http/runtime', (path, value) => {
 });
 
 // 执行命令
-await ws.run('save', ['json', '/ve']);
+await ws.run('save', ['ve.json', '/ve']);
 ```
 
 `VeWsClient` 提供的方法：
@@ -276,7 +276,7 @@ await client.connect();
 const port = await client.get('ve/server/node/http/runtime/port');
 await client.set('test/value', 42);
 
-const run = await client.command('save', ['json', '/ve'], true);
+const run = await client.command('save', ['ve.json', '/ve'], true);
 
 const unsub = await client.subscribe('ve/server/node/http/runtime/port', (path, value) => {
   console.log(path, value);

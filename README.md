@@ -404,11 +404,11 @@ Benchmarks run on Intel i7-12700K, Windows 11, MSVC 2022 Release build. See `ve/
 
 | Format | Command | Description |
 |--------|---------|-------------|
-| `json` | `save json /path` | Schema-oriented JSON |
-| `xml` | `save xml /path` | pugixml-based XML |
-| `md` | `save md /path` | Markdown (headings → Node hierarchy) |
-| `bin` | `save bin /path` | CBS-compatible binary |
-| `var` | `save var /path` | Var tree as JSON |
+| `json` | `schema json /path` | Schema-oriented JSON |
+| `xml` | `schema xml /path` | pugixml-based XML |
+| `md` | `schema md /path` | Markdown (headings → Node hierarchy) |
+| `bin` | `schema bin /path` | CBS-compatible binary |
+| `var` | `schema var /path` | Var tree as JSON |
 
 Port rule: **first three digits** = service family (fixed); **last two** increment on bind failure. See [docs/SERVICE.md](docs/SERVICE.md) (*Port numbering*).
 

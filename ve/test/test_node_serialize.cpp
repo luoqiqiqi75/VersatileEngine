@@ -346,3 +346,23 @@ VE_TEST(node_serialize_var_roundtrip_default) {
     VE_ASSERT(schema::toNode<schema::VarS>(&dst, var, Node::COPY_DEFAULT));
     VE_ASSERT(nodeStructEqual(&src, &dst));
 }
+
+// ============================================================================
+// Runtime format registry
+// ============================================================================
+
+VE_TEST(node_serialize_registry_roundtrip) {
+    Node src("r");
+    buildJsonTree(src);
+
+    for (const char* fmt : {"json", "bin"}) {
+        auto data = schema::schemaFromNode(fmt, &src);
+        VE_ASSERT(!data.empty());
+        Node dst("r");
+        VE_ASSERT(schema::schemaToNode(fmt, &dst, data));
+        VE_ASSERT(nodeStructEqual(&src, &dst));
+    }
+
+    auto bytes = schema::fromNode<schema::BinS>(&src);
+    VE_ASSERT_EQ(schema::schemaFromNode("bin", &src), std::string(bytes.begin(), bytes.end()));
+}

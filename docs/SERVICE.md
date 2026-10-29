@@ -175,7 +175,7 @@ curl -X POST http://localhost:12000/cmd/search \
 
 curl -X POST "http://localhost:12000/cmd/save?context=ve/server&async=1" \
   -H "Content-Type: application/json" \
-  -d '{"args":["json","node","-f","server.json"]}'
+  -d '{"file":"server.json","path":"/ve/server/node"}'
 ```
 
 ### `POST /ve`
@@ -634,66 +634,60 @@ VE provides `save` and `load` commands for persisting Node trees to files. These
 | `bin` | `.bin` | Binary export (CBS-compatible, preserves full tree) | High-performance IPC, snapshots |
 | `var` | `.json` | Var-based export (JSON-stringified Var tree) | Internal serialization |
 
-### save Command
+### save / load Commands
 
-Export Node tree to file or return as string.
+`save` and `load` are file shortcuts for the serialization formats used by `schema`. Both use the same argument order and defaults, with the file first:
 
-**Syntax**:
-```bash
-save <format> [path] [-f file]
+```text
+save [file] [path] [format]
+load [file] [path] [format]
+
+save [--file <file>] [--path <path>] [--format <format>]
+load [--file <file>] [--path <path>] [--format <format>]
 ```
 
-**Parameters**:
-- `<format>` - Output format: `json`, `xml`, `md`, `bin`, `var`
-- `[path]` - Node path to export (default: current context or root)
-- `-f <file>` - File path relative to `data_root` (default: `./data/`)
+| Argument | Meaning | Default |
+|----------|---------|---------|
+| `file` / `--file` | File to write or read | `<target node name>.<format>`; `root.<format>` for an unnamed node |
+| `path` / `--path` | Node to export or import into | Session's current node, falling back to its root; required when no session is present |
+| `format` / `--format` | Schema serialization format | Explicit format wins; otherwise the supplied file's extension; otherwise `json` |
 
-**Examples**:
+Relative node paths start at the current node, and `/` starts at the session root. Without a session, explicit node paths start at the global root. `load` creates missing target nodes. `save` requires an existing source node and creates missing file parent directories. `load` requires an existing input file.
 
-```bash
-# Terminal
-save json /config                    # Return JSON string
-save json /config -f config.json     # Save to ./data/config.json
-save md /docs/plan -f plan.md        # Export as Markdown
+Relative file paths use the server process working directory. `~/` expands to the server user's home directory (`HOME` on Linux, `USERPROFILE` on Windows). Extensions are matched without case sensitivity. An unregistered format produces an error; it does not fall back to JSON. The default filename follows the format: `save --format bin` writes `<name>.bin`.
 
-# HTTP
-curl -X POST http://localhost:12000/cmd/save \
-  -d '["json", "/config", "-f", "config.json"]'
-
-# WebSocket (veservice.js)
-veService.command("save", {format:"json", path:"/config", file:"config.json"});
+```text
+# With current node /config:
+save                                         # config.json, JSON
+load                                         # config.json into current node
+save ~/backups/config.xml                    # XML; creates ~/backups
+load ~/backups/config.xml                     # XML into current node
+save snapshot.bin /config                    # Raw binary from extension
+load snapshot.bin /restored                   # Raw binary into /restored
+save plan.md /docs/plan                       # Markdown from extension
+load plan.md /docs/plan                       # Markdown from extension
+save --path /config --file config.data --format json
+load --path /config --file config.data --format json
 ```
 
-### load Command
+Both commands return `file`, `path`, `format`, and `size` (bytes written/read). For example:
 
-Import Node tree from file or inline data.
-
-**Syntax**:
-```bash
-load <format> [path] [-f file] [-i data]
+```json
+{"file":"config.json","path":"config","format":"json","size":42}
 ```
 
-**Parameters**:
-- `<format>` - Input format: `json`, `xml`, `md`, `bin`
-- `[path]` - Target node path (default: current context or root)
-- `-f <file>` - File path relative to `data_root`
-- `-i <data>` - Inline data string
-
-**Examples**:
-
 ```bash
-# Terminal
-load json /config -f config.json           # Load from file
-load json /config -i '{"key":"value"}'     # Inline import
-load md /docs/plan -f plan.md              # Import Markdown doc
+# HTTP; file and format may also be omitted with the same defaults
+curl -X POST http://localhost:12000/ve \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"save","params":{"path":"/config","file":"~/config.json"}}'
 
-# HTTP
-curl -X POST http://localhost:12000/cmd/load \
-  -d '["json", "/config", "-f", "config.json"]'
-
-# WebSocket
-veService.command("load", {format:"json", path:"/config", file:"config.json"});
+curl -X POST http://localhost:12000/ve \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"load","params":{"path":"/config","file":"~/config.json"}}'
 ```
+
+Use `schema <format> [path]` to print serialized data, or `schema <format> [path] -i <data>` for inline imports.
 
 ### Markdown Schema (MdS)
 
@@ -732,7 +726,7 @@ Deep content
 
 ```bash
 # 1. Import documentation
-load md /docs/http-plan -f http-service-enhancement.md
+load http-service-enhancement.md /docs/http-plan
 
 # 2. Search by heading
 search "Feature" /docs/http-plan

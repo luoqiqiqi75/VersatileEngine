@@ -12,7 +12,7 @@
 
 using namespace ve;
 
-VE_SETUP(search) {
+VE_SETUP(service_commands) {
     auto& f = factory::at("cmd");
     schema::JsonS::toNode(f.node(), std::string(res::read("ve/service/cmd.json")));
     service::registerCmdCommands(f);

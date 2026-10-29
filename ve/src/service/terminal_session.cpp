@@ -8,7 +8,6 @@
 #include "ve/core/command.h"
 #include "ve/core/pipeline.h"
 #include "ve/core/impl/json.h"
-#include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"
 #include "ve/core/impl/md.h"
 #include "ve/core/schema.h"
@@ -723,7 +722,7 @@ static Result schema(Node* ctx, Node* in, Node* out)
     if (isImport) {
         std::string content;
         if (!file.empty()) {
-            std::ifstream ifs(file, format == "bin" ? std::ios::binary : std::ios::in);
+            std::ifstream ifs(file, std::ios::binary);
             if (!ifs.is_open()) return Result::fail("cannot read: " + file);
             content.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
         } else if (!importContent.empty()) {
@@ -740,31 +739,21 @@ static Result schema(Node* ctx, Node* in, Node* out)
     std::string result = schema::schemaFromNode(format, t);
     if (result.empty()) return Result::fail("unknown format: " + format);
 
-    if (format == "bin") {
-        if (!file.empty()) {
-            auto bytes = impl::bin::exportTree(t);
-            std::ofstream ofs(file, std::ios::binary);
-            if (!ofs.is_open()) return Result::fail("cannot write: " + file);
-            ofs.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-            setTextOut(out, "saved to " + file + " (" + std::to_string(bytes.size()) + " bytes)\n");
-            return Result::ok();
-        }
-        std::ostringstream oss;
-        for (size_t i = 0; i < result.size(); i += 2) {
-            if (i > 0 && (i/2) % 16 == 0) oss << "\n";
-            else if (i > 0) oss << " ";
-            oss << result.substr(i, 2);
-        }
-        oss << "\n(" << std::dec << (result.size()/2) << " bytes)\n";
-        setTextOut(out, oss.str());
-        return Result::ok();
-    }
-
     if (!file.empty()) {
-        std::ofstream ofs(file);
+        std::ofstream ofs(file, std::ios::binary);
         if (!ofs.is_open()) return Result::fail("cannot write: " + file);
-        ofs << result;
-        setTextOut(out, "saved to " + file + "\n");
+        ofs.write(result.data(), static_cast<std::streamsize>(result.size()));
+        setTextOut(out, "saved to " + file + " (" + std::to_string(result.size()) + " bytes)\n");
+    } else if (format == "bin") {
+        // terminal shows raw bytes as a hex dump
+        std::ostringstream oss;
+        oss << std::hex << std::setfill('0');
+        for (size_t i = 0; i < result.size(); ++i) {
+            if (i > 0) oss << (i % 16 == 0 ? "\n" : " ");
+            oss << std::setw(2) << static_cast<int>(static_cast<uint8_t>(result[i]));
+        }
+        oss << "\n(" << std::dec << result.size() << " bytes)\n";
+        setTextOut(out, oss.str());
     } else {
         setTextOut(out, result);
     }

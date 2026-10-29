@@ -118,10 +118,11 @@ A temporary `Node` with **no parent and no subscribers** carries near-zero react
 
 ```bash
 # Terminal
-save json /config                    # Print to screen
-save json /config -f config.json     # Save to ./data/config.json
-save bin /data -f data.bin           # Binary format
-save var /config                     # Var format (JSON-stringified)
+save                                        # <current node name>.json
+save ~/config.json                          # Save current node
+save config.json /config                    # Save an explicit subtree
+save snapshot.bin /data                     # Raw binary from extension
+schema var /config                          # Print Var format (JSON-stringified)
 
 # HTTP
 curl -X POST http://localhost:12000/ve \
@@ -140,8 +141,11 @@ veService.command("save", {
 
 ```bash
 # Terminal
-load json /config -f config.json           # From file
-load json /config -i '{"key":"value"}'     # Inline data
+load                                        # <current node name>.json
+load ~/config.json                          # Load into current node
+load config.json /config                    # Load into an explicit subtree
+load snapshot.bin /data                     # Raw binary from extension
+schema json /config -i '{"key":"value"}'    # Inline data
 
 # HTTP
 curl -X POST http://localhost:12000/ve \
@@ -156,9 +160,13 @@ veService.command("load", {
 });
 ```
 
-**Supported formats**: `json`, `xml`, `md`, `bin`, `var`, or custom (via schema registry)
+**Syntax**: Both commands use `[file] [path] [format]` and accept `--path`, `--file`, and `--format`, which can be mixed with positional arguments.
 
-**File paths**: Relative to `./data/` by default (configurable via `ve/server/file_io/data_root`)
+**Node paths**: Default to the session's current node or root; required without a session. Relative paths start at the current node; `/` starts at the session root (global root without a session). `load` creates missing target nodes.
+
+**File paths**: Default to `<target node name>.<format>` (`root.<format>` for unnamed nodes). Relative paths use the server process working directory. `save` creates missing parent directories. `~/` expands to the server user's home directory (`HOME` on Linux, `USERPROFILE` on Windows).
+
+**Formats**: Explicit format wins; otherwise a supplied file's extension selects the registered schema format (`json`, `xml`, `md`, `bin`, or custom); otherwise `json`. Both commands return `file`, `path`, `format`, and `size`.
 
 ### Markdown Format (md)
 
@@ -166,10 +174,10 @@ Markdown format provides AI-friendly document storage with hierarchical retrieva
 
 ```bash
 # Import documentation
-load md /docs/plan -f plan.md
+load plan.md /docs/plan
 
 # Export as Markdown
-save md /docs/plan -f plan.md
+save plan.md /docs/plan
 
 # Search by heading (default: contains match on node names)
 search "Feature" /docs/plan

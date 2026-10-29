@@ -2,9 +2,10 @@
 #include "node_commands.h"
 #include "ve/core/command.h"
 #include "ve/core/schema.h"
-#include "ve/core/impl/bin.h"
 
 #include <fstream>
+#include <filesystem>
+#include <cstdlib>
 
 namespace ve {
 namespace service {
@@ -150,69 +151,105 @@ static void collect(Node* start, const SearchOpts& o, std::vector<std::string>& 
 
 namespace cmd {
 
-static std::string detectFormat(const std::string& file)
+// "~/x" -> server user's home; other paths unchanged
+static std::string expandHomePath(const std::string& file)
 {
-    auto dot = file.rfind('.');
-    if (dot == std::string::npos) return "json";
-    auto ext = file.substr(dot + 1);
-    if (ext == "bin") return "bin";
-    if (ext == "xml") return "xml";
-    return "json";
+    if (file.empty() || file[0] != '~') return file;
+    if (file.size() > 1 && file[1] != '/') return file;
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    return home && *home ? std::string(home) + file.substr(1) : file;
+}
+
+// format: explicit > file extension > json; file: explicit or <name>.<format>
+static Result fileFormat(Node* in, const std::string& name, std::string& file, std::string& format)
+{
+    file = expandHomePath(in->get("file").toString());
+    format = in->get("format").toString();
+    if (format.empty() && !file.empty()) {
+        auto ext = std::filesystem::path(file).extension().string();
+        if (ext.size() > 1) format = ext.substr(1);
+        for (auto& c : format) { c = lc(c); }
+    }
+    if (format.empty()) format = "json";
+    if (!schema::hasSchemaFormat(format)) return Result::fail(ERR_INVALID, "unknown format: " + format);
+    if (file.empty()) file = (name.empty() ? "root" : name) + "." + format;
+    return Result::ok();
+}
+
+static void fileOutput(Node* out, const std::string& file, const std::string& path,
+                       const std::string& format, std::size_t size)
+{
+    out->set("file", file);
+    out->set("path", path);
+    out->set("format", format);
+    out->set("size", static_cast<int64_t>(size));
 }
 
 static Result save(Node* ctx, Node* in, Node* out)
 {
     auto* s = ctx->get("_session").as<Session*>();
-    std::string path   = in->get("path").toString();
-    std::string file   = in->get("file").toString();
-    std::string format = in->get("format").toString();
-    if (path.empty() || file.empty())
-        return Result::fail("path and file required");
-    Node* target = s->root->find(path);
-    if (!target) return Result::fail("not found: " + path);
-    if (format.empty()) format = detectFormat(file);
+    std::string path = in->get("path").toString();
+    if (!s && path.empty()) return Result::fail(ERR_INVALID, "path required without session");
+    Node* root = s ? s->root : node::root();
+    Node* target = (s ? s->current : root)->find(path);
+    if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
 
-    if (format == "bin") {
-        auto bytes = impl::bin::exportTree(target);
-        std::ofstream ofs(file, std::ios::binary);
-        if (!ofs) return Result::fail("cannot write: " + file);
-        ofs.write(reinterpret_cast<const char*>(bytes.data()),
-                  static_cast<std::streamsize>(bytes.size()));
-        out->set("file", file);
-        out->set("size", static_cast<int64_t>(bytes.size()));
-    } else {
-        std::string data = schema::schemaFromNode(format, target);
-        if (data.empty()) return Result::fail("unknown format: " + format);
-        std::ofstream ofs(file);
-        if (!ofs) return Result::fail("cannot write: " + file);
-        ofs << data;
-        out->set("file", file);
-        out->set("size", static_cast<int64_t>(data.size()));
-    }
+    std::string file, format;
+    if (auto r = fileFormat(in, target->name(), file, format); r.isError()) return r;
+    const std::string data = schema::schemaFromNode(format, target);
+
+    auto parent = std::filesystem::path(file).parent_path();
+    std::error_code ec;
+    if (!parent.empty()) std::filesystem::create_directories(parent, ec);
+    if (ec) return Result::fail("cannot create directory: " + parent.string() + ": " + ec.message());
+    std::ofstream ofs(file, std::ios::binary);
+    if (!ofs) return Result::fail("cannot write: " + file);
+    ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
+    ofs.close();
+    if (!ofs) return Result::fail("cannot write: " + file);
+    fileOutput(out, file, target->path(root), format, data.size());
     return Result::ok();
 }
 
 static Result load(Node* ctx, Node* in, Node* out)
 {
     auto* s = ctx->get("_session").as<Session*>();
-    std::string file   = in->get("file").toString();
-    std::string path   = in->get("path").toString();
-    std::string format = in->get("format").toString();
-    if (file.empty() || path.empty())
-        return Result::fail("file and path required");
-    if (format.empty()) format = detectFormat(file);
+    std::string path = in->get("path").toString();
+    if (!s && path.empty()) return Result::fail(ERR_INVALID, "path required without session");
+    Node* root = s ? s->root : node::root();
+    Node* base = s ? s->current : root;
+    Node* target = base->find(path);
 
-    bool binary = (format == "bin");
-    std::ifstream ifs(file, binary ? std::ios::binary : std::ios::in);
+    // target may not exist yet: default file name comes from the last path key
+    std::string name;
+    if (target) {
+        name = target->name();
+    } else {
+        std::string_view key;
+        int index;
+        if (!Node::parseKey(std::string_view(path).substr(path.rfind('/') + 1), key, index))
+            return Result::fail(ERR_INVALID, "invalid path: " + path);
+        name = key;
+    }
+    std::string file, format;
+    if (auto r = fileFormat(in, name, file, format); r.isError()) return r;
+
+    std::ifstream ifs(file, std::ios::binary);
     if (!ifs) return Result::fail("cannot read: " + file);
     std::string data((std::istreambuf_iterator<char>(ifs)),
                       std::istreambuf_iterator<char>());
+    if (ifs.bad()) return Result::fail("cannot read: " + file);
 
-    Node* target = s->root->at(path);
+    if (!target) target = base->at(path);
+    if (!target) return Result::fail(ERR_INVALID, "invalid path: " + path);
     if (!schema::schemaToNode(format, target, data))
         return Result::fail("import failed (" + format + ")");
 
-    out->set("path", target->path(s->root));
+    fileOutput(out, file, target->path(root), format, data.size());
     return Result::ok();
 }
 

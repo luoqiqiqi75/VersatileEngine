@@ -1,21 +1,23 @@
 {
   "save": {
     "instruction": {
-      "description": "Save a subtree to file.",
-      "usage": "save <path> <file> [format]",
+      "description": "Save a subtree to file, creating parent directories as needed. Uses the same serialization formats as schema.",
+      "usage": "save [file] [path] [format] | save [--file <file>] [--path <path>] [--format <format>]",
       "input_schema": {
         "type": "object",
         "properties": {
-          "path":   { "type": "string", "description": "subtree root path" },
-          "file":   { "type": "string", "description": "output file path" },
-          "format": { "type": "string", "description": "json|bin|xml (default: auto from extension)" }
+          "file":   { "type": "string", "description": "output file (default: <node name>.<format>; unnamed node: root.<format>); supports ~/; creates parent directories" },
+          "path":   { "type": "string", "description": "node path (default: session current node or root; required without session); relative to current node, / starts at root" },
+          "format": { "type": "string", "description": "schema format: explicit > file extension > json" }
         },
-        "required": ["path", "file"]
+        "required": []
       },
       "output_schema": {
         "type": "object",
         "properties": {
           "file": { "type": "string", "description": "written file path" },
+          "path": { "type": "string", "description": "exported node path relative to session or global root" },
+          "format": { "type": "string", "description": "serialization format used" },
           "size": { "type": "integer", "description": "bytes written" }
         }
       }
@@ -24,21 +26,24 @@
 
   "load": {
     "instruction": {
-      "description": "Load a file into a subtree.",
-      "usage": "load <file> <path> [format]",
+      "description": "Load a file into a subtree, creating missing target nodes. Uses the same defaults and serialization formats as save.",
+      "usage": "load [file] [path] [format] | load [--file <file>] [--path <path>] [--format <format>]",
       "input_schema": {
         "type": "object",
         "properties": {
-          "file":   { "type": "string", "description": "input file path" },
-          "path":   { "type": "string", "description": "target node path (created if absent)" },
-          "format": { "type": "string", "description": "json|bin|xml (default: auto from extension)" }
+          "file":   { "type": "string", "description": "input file (default: <node name>.<format>; unnamed node: root.<format>); supports ~/" },
+          "path":   { "type": "string", "description": "target node path, created if absent (default: session current node or root; required without session); relative to current node, / starts at root" },
+          "format": { "type": "string", "description": "schema format: explicit > file extension > json" }
         },
-        "required": ["file", "path"]
+        "required": []
       },
       "output_schema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "imported node path" }
+          "file": { "type": "string", "description": "read file path" },
+          "path": { "type": "string", "description": "imported node path relative to session or global root" },
+          "format": { "type": "string", "description": "serialization format used" },
+          "size": { "type": "integer", "description": "bytes read" }
         }
       }
     }

@@ -7,8 +7,6 @@
 #include "ve/core/impl/bin.h"
 #include "ve/core/impl/xml.h"
 #include "ve/core/impl/md.h"
-#include <sstream>
-#include <iomanip>
 
 namespace ve {
 
@@ -335,19 +333,13 @@ static struct BuiltinFormatRegistrar {
             [](const Node* n) { return impl::md::exportTree(n); },
             [](Node* n, const std::string& d) { return impl::md::importTree(n, d); }
         });
-        // bin (special case - binary data, wrap as hex string for registry)
+        // bin: raw bytes in std::string both ways
         registerSchemaFormat("bin", {
             [](const Node* n) {
                 auto bytes = impl::bin::exportTree(n);
-                // Return hex string for text-based registry
-                std::ostringstream oss;
-                for (auto b : bytes) {
-                    oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(b);
-                }
-                return oss.str();
+                return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             },
             [](Node* n, const std::string& d) {
-                // Assume raw binary string (not hex)
                 return impl::bin::importTree(n, reinterpret_cast<const uint8_t*>(d.data()), d.size());
             }
         });
