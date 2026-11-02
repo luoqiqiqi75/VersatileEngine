@@ -3,7 +3,10 @@
 #include "ve/core/node.h"
 #include "ve/core/var.h"
 #include "ve/core/schema.h"
+#include "ve/core/impl/json.h"
 #include "ve/core/impl/xml.h"
+
+#include <limits>
 
 using namespace ve;
 
@@ -51,6 +54,134 @@ void buildFullTree(Node& root)
 // ============================================================================
 // Json roundtrip
 // ============================================================================
+
+VE_TEST(node_serialize_json_double_shortest_roundtrip) {
+    VE_ASSERT_EQ(impl::json::stringify(0.1), "0.1");
+    VE_ASSERT_EQ(impl::json::stringify(12.34), "12.34");
+    VE_ASSERT_EQ(impl::json::stringify(1e-20), "1e-20");
+    VE_ASSERT_EQ(impl::json::stringify(0.1 + 0.2), "0.30000000000000004");
+
+    for (double value : {0.1, -0.1, 0.1 + 0.2, 0.1 + 0.2 - 0.3,
+                         std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest(),
+                         std::numeric_limits<double>::min(), std::numeric_limits<double>::denorm_min(),
+                         std::nextafter(1.0, 2.0), std::nextafter(1.0, 0.0)}) {
+        Node src("r"), dst("r");
+        src.append("value")->set(value);
+        auto json = schema::fromNode<schema::JsonS>(&src, schema::JsonS::compact());
+        VE_ASSERT(schema::toNode<schema::JsonS>(&dst, json));
+        VE_ASSERT_EQ(dst.get("value").toDouble(), value);
+    }
+}
+
+VE_TEST(node_serialize_json_decimal_places) {
+    auto options = schema::JsonS::compact();
+    options.decimal_places = 2;
+    for (auto sample : {std::pair<double, const char*>{12.340000000000002, "12.34"},
+                       {12.339999999999998, "12.34"}, {1.236, "1.24"}, {-1.236, "-1.24"},
+                       {0.1 + 0.2, "0.3"}, {100.0, "100"}, {0.0001, "0"}, {-0.0001, "0"}}) {
+        Node src("r");
+        src.set(sample.first);
+        VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), sample.second);
+        VE_ASSERT_EQ(src.get().toDouble(), sample.first);
+    }
+    Node src("r");
+    src.set(1234.75);
+    options.decimal_places = 0;
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "1235");
+    src.set(-1234.25);
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "-1234");
+    options.decimal_places = 1;
+    src.set(1.25);
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "1.2");
+    src.set(1.75);
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "1.8");
+    src.set(std::numeric_limits<int64_t>::max());
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "9223372036854775807");
+}
+
+VE_TEST(node_serialize_json_numeric_options_recurse) {
+    Node src("r"), dst("r");
+    src.set(0.1 + 0.2);
+    src.append("list")->set(Var::ListV{12.340000000000002, Var::DictV{{"tiny", -0.015}}});
+    src.append("tree")->append()->set(12.339999999999998);
+    auto options = schema::JsonS::compact();
+    options.decimal_places = 2;
+    options.zero_epsilon = 0.02;
+    auto json = schema::fromNode<schema::JsonS>(&src, options);
+    VE_ASSERT(json.find("\"_value\": 0.3") != std::string::npos);
+    VE_ASSERT(json.find("[12.34,{\"tiny\":0}]") != std::string::npos);
+    VE_ASSERT(json.find("\"tree\": [12.34]") != std::string::npos);
+    VE_ASSERT(schema::toNode<schema::JsonS>(&dst, json));
+    VE_ASSERT_EQ(dst.get().toDouble(), 0.3);
+    VE_ASSERT_EQ(src.get().toDouble(), 0.1 + 0.2);
+    VE_ASSERT_EQ(src.get("list").toList()[1].toDict().value("tiny").toDouble(), -0.015);
+}
+
+VE_TEST(node_serialize_json_zero_epsilon) {
+    auto options = schema::JsonS::compact();
+    options.zero_epsilon = 1e-12;
+    for (double value : {0.1 + 0.2 - 0.3, 1e-12, -1e-12}) {
+        Node src("r");
+        src.set(value);
+        VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "0");
+        VE_ASSERT_EQ(src.get().toDouble(), value);
+    }
+    Node src("r");
+    src.set(2e-12);
+    VE_ASSERT_NE(schema::fromNode<schema::JsonS>(&src, options), "0");
+    src.set(1e-20);
+    for (double epsilon : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::quiet_NaN()}) {
+        options.zero_epsilon = epsilon;
+        VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "1e-20");
+    }
+}
+
+VE_TEST(node_serialize_json_decimal_places_extremes) {
+    auto options = schema::JsonS::compact();
+    options.decimal_places = std::numeric_limits<int>::max();
+    for (double value : {std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest(),
+                         std::numeric_limits<double>::denorm_min()}) {
+        Node src("r");
+        src.set(value);
+        auto json = schema::fromNode<schema::JsonS>(&src, options);
+        double parsed = 0.0;
+        auto result = std::from_chars(json.data(), json.data() + json.size(), parsed);
+        VE_ASSERT(result.ec == std::errc{});
+        VE_ASSERT(result.ptr == json.data() + json.size());
+        VE_ASSERT_EQ(parsed, value);
+    }
+}
+
+VE_TEST(node_serialize_json_decimal_places_large_values) {
+    auto options = schema::JsonS::compact();
+    options.decimal_places = 3;
+    Node src("r");
+    src.set(1e300);
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "1e+300");
+    src.set(-1e20);
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "-1e+20");
+    src.set(123456789012.3456);
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "123456789012.346");
+}
+
+VE_TEST(node_serialize_json_nonfinite_and_negative_zero) {
+    auto options = schema::JsonS::compact();
+    options.decimal_places = 2;
+    options.zero_epsilon = 1.0;
+    for (double value : {std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+                         std::numeric_limits<double>::quiet_NaN()}) {
+        Node src("r");
+        src.set(value);
+        VE_ASSERT_EQ(impl::json::stringify(value), "null");
+        VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "null");
+    }
+    VE_ASSERT_EQ(impl::json::stringify(-0.0), "-0");
+    Node src("r");
+    src.set(-0.0);
+    options.zero_epsilon = 0.0;
+    VE_ASSERT_EQ(schema::fromNode<schema::JsonS>(&src, options), "0");
+}
 
 VE_TEST(node_serialize_json_roundtrip_default) {
     Node src("r");

@@ -34,6 +34,8 @@ struct ExportOpts
     std::string newline     = "\n";  // between lines; "" = single-line output
     std::string tail        = "\n";  // appended once after the document
     int         max_depth   = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
+    int         decimal_places = -1; // <0 = shortest roundtrip; otherwise fractional digits (capped at 324), trim zeros; abs>=1e15 stays shortest
+    double      zero_epsilon = 0.0;  // finite >0: abs(double) <= epsilon exports as 0, before rounding
 };
 
 VE_API std::string exportTree(const Node* node, const ExportOpts& opts = {});

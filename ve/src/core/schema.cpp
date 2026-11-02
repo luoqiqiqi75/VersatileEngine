@@ -43,6 +43,8 @@ std::string JsonS::fromNode(const Node* node, const JsonS::ExportOptions& option
     o.newline     = options.newline;
     o.tail        = options.tail;
     o.max_depth   = options.max_depth;
+    o.decimal_places = options.decimal_places;
+    o.zero_epsilon = options.zero_epsilon;
     return impl::json::exportTree(node, o);
 }
 

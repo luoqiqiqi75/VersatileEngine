@@ -40,21 +40,44 @@ static void escape(const std::string& s, std::string& out)
     }
 }
 
-static void varToJson(const Var& v, std::string& out)
+static void doubleToJson(double d, std::string& out, const JsonOpts& options)
+{
+    if (!std::isfinite(d)) { out += "null"; return; }
+    if (std::isfinite(options.zero_epsilon) && options.zero_epsilon > 0.0
+        && std::abs(d) <= options.zero_epsilon) {
+        out += '0';
+        return;
+    }
+
+    // Fixed notation would expand large values (1e300 -> 300+ digits) while their
+    // fractional digits carry no information; keep shortest output for them.
+    // Fixed output is then at most sign + 16 integer digits + '.' + 324 fractional digits.
+    char buf[384];
+    const int places = std::abs(d) < 1e15 ? std::min(options.decimal_places, 324) : -1;
+    auto result = places < 0
+        ? std::to_chars(buf, buf + sizeof(buf), d)
+        : std::to_chars(buf, buf + sizeof(buf), d, std::chars_format::fixed, places);
+    if (result.ec != std::errc{}) { out += "null"; return; }
+
+    char* end = result.ptr;
+    if (places > 0) {
+        while (end > buf && end[-1] == '0') { --end; }
+        if (end > buf && end[-1] == '.') --end;
+    }
+    if (places >= 0 && end - buf == 2 && buf[0] == '-' && buf[1] == '0') {
+        out += '0';
+        return;
+    }
+    out.append(buf, end - buf);
+}
+
+static void varToJson(const Var& v, std::string& out, const JsonOpts& options)
 {
     switch (v.type()) {
         case Var::NONE:    out += "null"; break;
         case Var::BOOL:    out += v.toBool() ? "true" : "false"; break;
         case Var::INT:     out += std::to_string(v.toInt64()); break;
-        case Var::DOUBLE: {
-            double d = v.toDouble();
-            if (std::isnan(d))       { out += "null"; break; }
-            if (std::isinf(d))       { out += "null"; break; }
-            char buf[32];
-            int n = snprintf(buf, sizeof(buf), "%.17g", d);
-            out.append(buf, n);
-            break;
-        }
+        case Var::DOUBLE:  doubleToJson(v.toDouble(), out, options); break;
         case Var::STRING:
             out += '"';
             escape(v.toString(), out);
@@ -72,7 +95,7 @@ static void varToJson(const Var& v, std::string& out)
             out += '[';
             for (size_t i = 0; i < list.size(); ++i) {
                 if (i) out += ',';
-                varToJson(list[i], out);
+                varToJson(list[i], out, options);
             }
             out += ']';
             break;
@@ -87,7 +110,7 @@ static void varToJson(const Var& v, std::string& out)
                 out += '"';
                 escape(kv.first, out);
                 out += "\":";
-                varToJson(kv.second, out);
+                varToJson(kv.second, out, options);
             }
             out += '}';
             break;
@@ -132,7 +155,7 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& o
 
     auto emitValue = [&]() {
         if (!node->get().isNull()) {
-            varToJson(node->get(), out);
+            varToJson(node->get(), out, options);
         } else {
             out += "null";
         }
@@ -189,7 +212,7 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& o
 
     if (hasVal) {
         out += pad1 + "\"_value\": ";
-        varToJson(node->get(), out);
+        varToJson(node->get(), out, options);
         if (++fieldIdx < totalFields) out += ",";
         out += nl;
     }
@@ -226,7 +249,7 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& o
 std::string stringify(const Var& v)
 {
     std::string out;
-    varToJson(v, out);
+    varToJson(v, out, JsonOpts{});
     return out;
 }
 

@@ -204,6 +204,34 @@ Important behavior:
   `COPY_UPDATE`, `COPY_REPLACE`, plus the presets `COPY_DEFAULT`
   (insert + replace) and `COPY_STRICT` (default + remove)
 
+JSON doubles use the shortest decimal representation that recovers the original
+double by default (for example, `0.1` instead of `0.10000000000000001`). Real
+arithmetic residuals and small nonzero values remain unchanged. NaN and infinity
+export as `null`.
+
+`JsonS::ExportOptions` provides optional, lossy numeric formatting:
+
+- `decimal_places = -1`: any negative value keeps shortest roundtrip output;
+  a nonnegative value rounds to that many fractional decimal places using fixed
+  notation, with trailing fractional zeros removed. Values above 324 are clamped
+  to 324. Rounding follows `std::to_chars` (nearest, ties to even). Values with
+  `abs(value) >= 1e15` keep shortest roundtrip output so large magnitudes do
+  not expand into hundreds of fixed digits (`1e300` stays `1e+300`).
+- `zero_epsilon = 0.0`: disabled by default. A finite positive value exports
+  doubles with `abs(value) <= zero_epsilon` as `0`, before decimal rounding.
+  Negative and nonfinite thresholds are ignored.
+
+```cpp
+auto options = schema::JsonS::compact();
+options.decimal_places = 2;
+options.zero_epsilon = 1e-12;
+auto json = schema::fromNode<schema::JsonS>(node, options);
+```
+
+These options apply throughout the exported tree, including values inside Var
+lists and dictionaries. They leave integers and stored node values unchanged.
+Rounded negative zero exports as `0`.
+
 ### `ve::Module`
 
 `ve::Module` is the lifecycle unit for application features.
