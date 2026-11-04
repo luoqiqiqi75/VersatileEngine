@@ -11,6 +11,7 @@ It exists to keep future code aligned with the current architecture rather than 
 - Keep the `ve/` core pure C++17.
 - Put framework-specific code in adapters, not in core headers.
 - Keep public APIs small and explicit.
+- Write public documentation, including README files and code examples, in English.
 - Avoid temporary wrappers that only exist to smooth a migration step.
 - Do not use `throw` for VE errors. Return `bool` or `Result` and report failures
   explicitly; catch third-party exceptions at the library boundary.

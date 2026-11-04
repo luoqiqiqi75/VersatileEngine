@@ -8,6 +8,9 @@ var VEService = function(wsUrl) {
     this.requestIdCounter = 0;
     this.isConnected = false;
     this.timeout = 3000;
+    this.connectTimeout = 5000;
+    this._connectPromise = null;
+    this._closeTransport = null;
     this._reconnectTimer = null;
     this._reconnectDelay = 1000;
     this._maxReconnectDelay = 8000;
@@ -28,87 +31,103 @@ var VEService = function(wsUrl) {
     this.connect = function() {
         var self = this;
 
-        if (this.isConnected) {
-            console.warn("[veService] already connected.");
-            return Promise.resolve();
+        if (this.transport && this.isConnected && this.transport.readyState === WebSocket.OPEN) return Promise.resolve();
+        if (this._connectPromise) return this._connectPromise;
+        if (this._closeTransport) {
+            this._closeTransport(new Error("WebSocket connection closed"));
+            return this.connect();
         }
 
-        if (!("WebSocket" in window)) {
-            console.error("[veService] WebSocket unsupported!");
-            return Promise.reject(new Error("WebSocket unsupported"));
-        }
+        var retry = this._reconnectTimer !== null;
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+        this._autoReconnect = true;
+        if (typeof WebSocket === "undefined") return Promise.reject(new Error("WebSocket unsupported"));
 
-        return new Promise(function(resolve, reject) {
-            try {
-                self.transport = new WebSocket(self.address);
+        var resolveConnect, rejectConnect;
+        var promise = new Promise(function(resolve, reject) { resolveConnect = resolve; rejectConnect = reject; });
+        var transport = null;
+        var timer = null;
+        this._connectPromise = promise;
 
-                self.transport.onopen = function() {
-                    self.isConnected = true;
-                    self._reconnectDelay = 1000;
-                    console.log("[veService] connected to " + self.address);
-                    self._resubscribe();
-                    self._notifyConnection(true);
-                    resolve();
-                };
-
-                self.transport.onmessage = function(evt) {
-                    self._handleMessage(evt.data);
-                };
-
-                self.transport.onerror = function(error) {
-                    console.error("[veService] WebSocket error:", error);
-                    reject(new Error("WebSocket connection error"));
-                };
-
-                self.transport.onclose = function() {
-                    var wasConnected = self.isConnected;
-                    self.isConnected = false;
-                    self.pendingRequests.forEach(function(pending) {
-                        pending.reject(new Error("WebSocket connection closed"));
-                    });
-                    self.pendingRequests.clear();
-                    self.transport = null;
-                    if (wasConnected) {
-                        self._notifyConnection(false);
-                    }
-                    if (wasConnected && self._autoReconnect) {
-                        self._scheduleReconnect();
-                    }
-                };
-            } catch (error) {
-                console.error("[veService] connect failed:", error);
-                reject(error);
+        function close(error) {
+            clearTimeout(timer);
+            rejectConnect(error);
+            if (self._closeTransport !== close) return;
+            var wasConnected = self.isConnected;
+            self._connectPromise = null;
+            self._closeTransport = null;
+            self.transport = null;
+            self.isConnected = false;
+            self.pendingRequests.forEach(function(pending) { pending.reject(error); });
+            self.pendingRequests.clear();
+            if (transport) transport.close();
+            if (self._autoReconnect && (wasConnected || retry)) {
+                if (!wasConnected) self._reconnectDelay = Math.min(self._reconnectDelay * 2, self._maxReconnectDelay);
+                self._scheduleReconnect();
             }
-        });
+            if (wasConnected) self._notifyConnection(false);
+        }
+        this._closeTransport = close;
+
+        try {
+            transport = new WebSocket(this.address);
+            this.transport = transport;
+            timer = setTimeout(function() {
+                console.warn("[veService] connection timeout: " + self.address);
+                close(new Error("WebSocket connection timeout"));
+            }, this.connectTimeout);
+
+            transport.onopen = function() {
+                if (self.transport !== transport) { transport.close(); return; }
+                clearTimeout(timer);
+                self._connectPromise = null;
+                self.isConnected = true;
+                self._reconnectDelay = 1000;
+                console.log("[veService] connected to " + self.address);
+                resolveConnect();
+                self._resubscribe();
+                self._notifyConnection(true);
+            };
+
+            transport.onmessage = function(evt) {
+                if (self.transport === transport) self._handleMessage(evt.data);
+            };
+            transport.onerror = function(error) {
+                if (self.transport !== transport) return;
+                console.error("[veService] WebSocket error:", error);
+                close(new Error("WebSocket connection error"));
+            };
+            transport.onclose = function(evt) {
+                if (self.transport !== transport) return;
+                console.warn("[veService] connection closed: " + self.address,
+                    { code: evt.code, reason: evt.reason, wasClean: evt.wasClean });
+                close(new Error("WebSocket connection closed"));
+            };
+        } catch (error) {
+            console.error("[veService] connect failed:", error);
+            close(error);
+        }
+        return promise;
     };
 
     this.disconnect = function() {
         this._autoReconnect = false;
-        if (this._reconnectTimer) {
+        if (this._reconnectTimer !== null) {
             clearTimeout(this._reconnectTimer);
             this._reconnectTimer = null;
         }
-        if (this.transport) {
-            this.transport.close();
-            this.transport = null;
-        }
-        this.isConnected = false;
-        this.pendingRequests.clear();
         this.subscriptions.clear();
+        if (this._closeTransport) this._closeTransport(new Error("WebSocket disconnected"));
     };
 
     this._scheduleReconnect = function() {
         var self = this;
-        if (this._reconnectTimer) { return; }
+        if (!this._autoReconnect || this._reconnectTimer !== null || this.transport) return;
         console.log("[veService] reconnecting in " + this._reconnectDelay + "ms...");
         this._reconnectTimer = setTimeout(function() {
-            self._reconnectTimer = null;
-            self.connect().catch(function() {
-                self._reconnectDelay = Math.min(self._reconnectDelay * 2, self._maxReconnectDelay);
-                if (self._autoReconnect) {
-                    self._scheduleReconnect();
-                }
-            });
+            // connect() consumes the retry timer, including an explicit retry.
+            self.connect().catch(function() {});
         }, this._reconnectDelay);
     };
 
@@ -184,7 +203,8 @@ var VEService = function(wsUrl) {
     // ===== Low-level transport =====
 
     this.send = function(message) {
-        if (!this.transport || !this.isConnected) {
+        var transport = this.transport;
+        if (!transport || !this.isConnected || transport.readyState !== WebSocket.OPEN) {
             return Promise.reject(new Error("WebSocket not connected"));
         }
 
@@ -206,7 +226,7 @@ var VEService = function(wsUrl) {
             });
 
             try {
-                self.transport.send(JSON.stringify(message));
+                transport.send(JSON.stringify(message));
             } catch (error) {
                 self.pendingRequests.delete(id);
                 clearTimeout(timer);

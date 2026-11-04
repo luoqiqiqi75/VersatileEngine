@@ -1,25 +1,25 @@
-# VE JavaScript / TypeScript 客户端
+# VE JavaScript / TypeScript Clients
 
-本目录包含 VE 运行时的 JS / TS 客户端与相关工具。核心原则只有一句：
+This directory contains JavaScript / TypeScript clients and tools for the VE runtime.
 
-**HTTP / WS / BinTcp 只是不同 transport，主语义都围绕同一套 VE 协议。**
+**HTTP / WS / BinTcp are different transports for the same VE protocol semantics.**
 
 ---
 
-## 包一览
+## Packages
 
-| 路径 | 说明 |
+| Path | Description |
 |------|------|
-| `ve-sdk/` | TypeScript SDK：`VeHttpClient`、`VeWsClient`、`VeBinTcpClient` |
-| `veservice.js` | 浏览器直接用的 WebSocket 客户端 |
-| `ve-mcp/` | Cursor MCP 适配器，内部通过 `POST /ve` 调用 VE |
-| `ve-app/` | React 管理端 |
+| `ve-sdk/` | TypeScript SDK: `VeHttpClient`, `VeWsClient`, `VeBinTcpClient` |
+| `veservice.js` | Standalone WebSocket client for browsers |
+| `ve-mcp/` | Cursor MCP adapter that calls VE through `POST /ve` |
+| `ve-app/` | React administration interface |
 
 ---
 
-## HTTP 面
+## HTTP Endpoints
 
-NodeHttpServer 现在有四类入口：
+NodeHttpServer exposes the following endpoints:
 
 - `GET /health`
 - `GET/POST/PUT/DELETE /at/<path>`
@@ -27,21 +27,21 @@ NodeHttpServer 现在有四类入口：
 - `POST /ve`
 - `POST /jsonrpc`
 
-职责划分：
+Endpoint responsibilities:
 
-- `/at/<path>`：便于浏览器 / curl 直接读写 schema JSON
-- `/cmd/<name>`：便于浏览器 / curl 直接运行 command
-- `/ve`：VE 原生协议主入口
-- `/jsonrpc`：给不用 VE 原生协议的标准客户端
+- `/at/<path>`: read and write schema JSON directly from a browser or curl
+- `/cmd/<name>`: run commands directly from a browser or curl
+- `/ve`: main endpoint for the native VE protocol
+- `/jsonrpc`: endpoint for standard JSON-RPC clients
 
 ### `/at/<path>`
 
-- `GET /at/<path>`：导出节点或子树
-- `POST /at/<path>`：设置值，或通过 `?trigger=1` 触发
-- `PUT /at/<path>`：把 raw JSON 导入为子树
-- `DELETE /at/<path>`：删除节点
+- `GET /at/<path>`: export a node or subtree
+- `POST /at/<path>`: set a value, or trigger a signal with `?trigger=1`
+- `PUT /at/<path>`: import raw JSON as a subtree
+- `DELETE /at/<path>`: remove a node
 
-示例：
+Examples:
 
 ```bash
 curl http://127.0.0.1:12000/at/ve/server
@@ -53,7 +53,7 @@ curl -X PUT "http://127.0.0.1:12000/at/test/tree?auto_remove=1" -H "Content-Type
 curl -X DELETE http://127.0.0.1:12000/at/test/tree
 ```
 
-`GET /at/<path>` 支持：
+`GET /at/<path>` supports:
 
 - `auto_ignore=0|1`
 - `depth=<n>`
@@ -61,7 +61,7 @@ curl -X DELETE http://127.0.0.1:12000/at/test/tree
 - `structure=1`
 - `meta=1`
 
-`PUT /at/<path>` 支持：
+`PUT /at/<path>` supports:
 
 - `auto_insert=0|1`
 - `auto_remove=0|1`
@@ -69,7 +69,7 @@ curl -X DELETE http://127.0.0.1:12000/at/test/tree
 
 ### `/cmd/<name>`
 
-用于人类友好地直接调用 command。
+Call a command directly using a simple HTTP request.
 
 ```bash
 curl -X POST http://127.0.0.1:12000/cmd/search \
@@ -83,7 +83,7 @@ curl -X POST "http://127.0.0.1:12000/cmd/save?context=ve/server&async=1" \
 
 ### `/ve`
 
-`POST /ve` 的 body 是统一 envelope：
+The `POST /ve` request body uses a shared envelope:
 
 ```json
 {
@@ -95,7 +95,7 @@ curl -X POST "http://127.0.0.1:12000/cmd/save?context=ve/server&async=1" \
 }
 ```
 
-常用 `op`：
+Common `op` values:
 
 - `node.get`
 - `node.list`
@@ -109,7 +109,7 @@ curl -X POST "http://127.0.0.1:12000/cmd/save?context=ve/server&async=1" \
 - `unsubscribe`
 - `batch`
 
-统一回复：
+Response envelopes:
 
 ```json
 {"ok":true,"id":1,"data":{...}}
@@ -121,7 +121,7 @@ curl -X POST "http://127.0.0.1:12000/cmd/save?context=ve/server&async=1" \
 
 ## `@ve/sdk`
 
-### 1. 本地路径引用
+### 1. Local Path Dependency
 
 ```json
 {
@@ -131,7 +131,7 @@ curl -X POST "http://127.0.0.1:12000/cmd/save?context=ve/server&async=1" \
 }
 ```
 
-然后先构建：
+Build the SDK before using it:
 
 ```bash
 cd ve/js/ve-sdk
@@ -139,7 +139,7 @@ npm install
 npm run build
 ```
 
-### 2. 最小示例
+### 2. Minimal Example
 
 ```ts
 import { VeHttpClient } from '@ve/sdk';
@@ -157,36 +157,36 @@ await ve.run('save', ['ve.json', '/ve']);
 
 ### 3. `VeHttpClient`
 
-`VeHttpClient` 的核心方法是：
+The core `VeHttpClient` method is:
 
-- `call(op, payload)` - 直接打 `/ve`
+- `call(op, payload)` - call `/ve` directly
 
-上层薄封装（三个客户端统一命名）：
+Convenience methods:
 
-- `get(path, depth?)` - 获取树（默认 depth=-1 完整树）
-- `set(path, tree)` - 设置树
-- `val(path)` / `val(path, value)` - 获取/设置单个值
-- `list(path)` - 列出子节点
-- `rm(path)` - 删除节点
-- `trigger(path)` - 触发信号
-- `run(name, args, wait?)` - 执行命令
-- `cmds()` - 列出命令
-- `batch(items)` - 批量操作
-- `exportTree(path, depth?)` - 导出为 JSON 字符串
-- `importTree(path, json)` - 从 JSON 导入（REST PUT）
+- `get(path, depth?)` - get a tree (`depth=-1` by default for the full tree)
+- `set(path, tree)` - set a tree
+- `val(path)` / `val(path, value)` - get or set a single value
+- `list(path)` - list child nodes
+- `rm(path)` - remove a node
+- `trigger(path)` - trigger a signal
+- `run(name, args, wait?)` - run a command
+- `cmds()` - list commands
+- `batch(items)` - perform a batch of operations
+- `exportTree(path, depth?)` - export a tree as a JSON string
+- `importTree(path, json)` - import a tree from JSON using REST PUT
 
-说明：
+Notes:
 
-- `runCommand()` 默认建议显式传 `wait`
-- 如果服务端返回 `accepted + task_id`，说明命令已经被受理，后续结果落在 `ve/server/tasks/<task_id>`
+- Pass `wait` explicitly when calling `runCommand()`.
+- If the server returns `accepted + task_id`, the command has been accepted and its result will be stored at `ve/server/tasks/<task_id>`.
 
 ---
 
 ## `VeWsClient`
 
-WebSocket 协议和 `/ve` 使用同一套 envelope，只是 transport 换成了 WS。
+The WebSocket protocol uses the same envelope as `/ve` over a WebSocket transport.
 
-请求示例：
+Request examples:
 
 ```json
 {"op":"node.get","path":"ve/server","id":1}
@@ -194,14 +194,14 @@ WebSocket 协议和 `/ve` 使用同一套 envelope，只是 transport 换成了 
 {"op":"subscribe","path":"ve/server/node/http/runtime/port","id":3}
 ```
 
-推送示例：
+Push notification examples:
 
 ```json
 {"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}
 {"event":"task.result","id":2,"task_id":"abcd1234","ok":true,"data":"Saved"}
 ```
 
-TypeScript 示例：
+TypeScript example:
 
 ```ts
 import { VeWsClient } from '@ve/sdk';
@@ -209,63 +209,61 @@ import { VeWsClient } from '@ve/sdk';
 const ws = new VeWsClient({ url: 'ws://127.0.0.1:12100' });
 ws.connect();
 
-// 获取完整树
+// Get the full tree.
 const tree = await ws.get('ve/server');
 
-// 获取/设置单个值
+// Get or set a single value.
 const port = await ws.val('ve/server/node/http/runtime/port');
 await ws.val('test/value', 42);
 
-// 订阅（默认 tree:true，推送完整子树）
+// Subscribe with tree:true by default to receive the full subtree.
 const stop = ws.watch('ve/server/node/http/runtime', (path, value) => {
   console.log(path, value);
 });
 
-// 执行命令
+// Run a command.
 await ws.run('save', ['ve.json', '/ve']);
 ```
 
-`VeWsClient` 提供的方法：
+`VeWsClient` methods:
 
-- `get(path, depth?)` - 获取树（默认 depth=-1 完整树）
-- `set(path, tree)` - 设置树
-- `val(path)` / `val(path, value)` - 获取/设置单个值
-- `list(path)` - 列出子节点
-- `rm(path)` - 删除节点
-- `trigger(path)` - 触发信号
-- `watch(path, handler, opts?)` - 订阅（默认 tree:true）
-- `unwatch(path)` - 取消订阅
-- `run(name, args, wait?)` - 执行命令
-- `cmds()` - 列出命令
-- `batch(items)` - 批量操作
-- `call(op, payload)` - 底层协议调用
-- `onConnectionChange(handler)` - 监听连接状态
-- `onMessage(handler)` - 监听所有消息
-
-```
+- `get(path, depth?)` - get a tree (`depth=-1` by default for the full tree)
+- `set(path, tree)` - set a tree
+- `val(path)` / `val(path, value)` - get or set a single value
+- `list(path)` - list child nodes
+- `rm(path)` - remove a node
+- `trigger(path)` - trigger a signal
+- `watch(path, handler, opts?)` - subscribe (`tree:true` by default)
+- `unwatch(path)` - unsubscribe
+- `run(name, args, wait?)` - run a command
+- `cmds()` - list commands
+- `batch(items)` - perform a batch of operations
+- `call(op, payload)` - make a low-level protocol call
+- `onConnectionChange(handler)` - listen for connection state changes
+- `onMessage(handler)` - listen for all messages
 
 ---
 
 ## `VeBinTcpClient`
 
-`VeBinTcpClient` 仍然走 MessagePack frame，但 payload 语义已经和 `/ve` / WS 对齐。
+`VeBinTcpClient` uses MessagePack frames with the same payload semantics as `/ve` and WebSocket.
 
-Frame：
+Frame format:
 
 ```text
 [flag:1][length:4 LE][payload: MessagePack]
 ```
 
-Flag：
+Flags:
 
 | Flag | Value | Direction |
 |------|-------|-----------|
-| REQUEST | `0x00` | client → server |
-| RESPONSE | `0x40` | server → client |
-| NOTIFY | `0x80` | server → client |
-| ERROR | `0xC0` | server → client |
+| REQUEST | `0x00` | client -> server |
+| RESPONSE | `0x40` | server -> client |
+| NOTIFY | `0x80` | server -> client |
+| ERROR | `0xC0` | server -> client |
 
-示例：
+Example:
 
 ```ts
 import { VeBinTcpClient } from '@ve/sdk';
@@ -285,46 +283,74 @@ const unsub = await client.subscribe('ve/server/node/http/runtime/port', (path, 
 
 ---
 
-## 只有浏览器脚本、不用打包器时
+## Browser Script Without a Bundler
 
-页面里直接引入：
+Include the script directly in the page:
 
 ```html
-<script src="path/to/veservice.js"></script>
 <script>
-  _ve_ws_url = 'ws://127.0.0.1:12100';
+  var _ve_ws_url = 'ws://127.0.0.1:12100';
+  function veServiceCallback(svc) {
+    svc.get('ve/server/node/ws/runtime/port').then(console.log);
+  }
 </script>
+<script src="path/to/veservice.js"></script>
 ```
 
-全局会有 `veService`，它使用新的 WS envelope，并提供：
+Define `_ve_ws_url` and `veServiceCallback` before loading or injecting the script.
+The script creates the global `veService` and starts connecting. After the first
+successful connection, it calls `veServiceCallback(svc)` once to initialize injected
+code. Automatic reconnections do not call it again; use `onConnectionChange(fn)`
+to observe connection state changes.
 
-- `get(path, depth?)` - 获取树（默认 depth=-1 完整树）
-- `set(path, tree)` - 设置树
-- `val(path)` / `val(path, value)` - 获取/设置单个值
-- `list(path)` - 列出子节点
-- `rm(path)` - 删除节点
-- `trigger(path)` - 触发信号
-- `watch(path, fn, opts?)` - 订阅（默认 tree:true）
-- `unwatch(path)` - 取消订阅
-- `run(name, args, wait?)` - 执行命令
-- `cmds()` - 列出命令
-- `batch(items)` - 批量操作
-- `call(op, payload)` - 底层协议调用
+You can also create `new VEService(url)` and call `connect()` explicitly. Repeated
+calls while connecting return the same Promise; calls while connected resolve
+immediately. Set `connectTimeout` for the connection timeout (5000 ms by default)
+and `timeout` for the request response timeout (3000 ms by default) on the instance.
+
+If the initial connection fails, the Promise is rejected and the caller decides
+whether to retry. After a successful connection, a dropped connection triggers
+automatic reconnection with delays of 1, 2, 4, and 8 seconds, capped at 8 seconds.
+Subscriptions are restored after reconnection. `disconnect()` cancels connection
+attempts and retries, rejects pending requests, and clears subscriptions. Calling
+`connect()` explicitly afterward reconnects and enables automatic reconnection.
+
+The browser script uses the `{op, id, params}` / `{cmd, id, params}` protocol and
+provides:
+
+- `get(path)` / `set(path, value)` - get or set a single value
+- `export(path, depth?)` / `import(path, tree, flags?)` - export or import a subtree
+- `children(path)` - list child node information
+- `erase(path)` - remove a node
+- `trigger(path)` - trigger a signal
+- `subscribe(path, fn, options?)` - subscribe with callback `fn(data, path)` and return an unsubscribe function
+- `unsubscribe(path, fn?)` - remove a specific callback or all subscriptions for the path
+- `run(name, args?)` - run a command and return the full response
+- `commands()` - list commands
+- `batch(items)` - perform a batch of operations
+- `send(message)` - make a low-level protocol call and return the full response
+- `onConnectionChange(fn)` / `onMessage(fn)` - register a listener and return a function to remove it
+
+Run the connection lifecycle regression tests (Node.js 18+, no dependencies required):
+
+```bash
+node --test ve/js/test/veservice.test.cjs
+```
 
 ---
 
-## 选型建议
+## Choosing an Interface
 
-- 只读/调试/curl：优先 `/at/<path>`
-- 业务 HTTP 集成：优先 `/ve`
-- 标准客户端：用 `/jsonrpc`
-- 浏览器实时订阅：用 `VeWsClient` 或 `veservice.js`
-- Node.js 高频通信：用 `VeBinTcpClient`
+- Read-only access, debugging, or curl: use `/at/<path>`
+- Application integration over HTTP: use `/ve`
+- Standard JSON-RPC clients: use `/jsonrpc`
+- Real-time browser subscriptions: use `VeWsClient` or `veservice.js`
+- High-frequency Node.js communication: use `VeBinTcpClient`
 
 ---
 
-## 与 `AGENTS.md` / MCP 的关系
+## `AGENTS.md` / MCP Integration
 
-- `ve-mcp` 通过 `POST /ve` 的 `command.list` / `command.run` 暴露 Cursor 工具
-- 健康检查仍然看 `/health`
-- 运行时端口与状态优先从 `GET /at/ve/server/...` 读取
+- `ve-mcp` exposes Cursor tools through `command.list` / `command.run` on `POST /ve`.
+- Use `/health` for health checks.
+- Read runtime ports and state through `GET /at/ve/server/...`.
