@@ -213,9 +213,9 @@ Common operations (all arguments go in `params`):
 |----|------------|-------------|
 | `get` | `path` | Read one node value |
 | `set` | `path`, `value` | Set raw node value |
-| `export` | `path`, `depth?` | Export subtree (`depth`: `-1` full, `0` value only, `N` levels) |
+| `export` | `path`, `depth?`, `format?` | Export subtree or format text (`depth`: negative full, `0` value only, `N` levels) |
 | `import` | `path`, `tree`, `flags?` | Import subtree (`flags` `9` merge / `11` replace) |
-| `children` | `path` | List direct children |
+| `children` | `path`, `offset?`, `limit?`, `values?` | Read direct children in insertion order |
 | `erase` | `path` | Remove node |
 | `trigger` | `path` | Fire `NODE_CHANGED` without changing value |
 | `commands` | none | List registered commands |
@@ -230,6 +230,25 @@ disables all four bits; update suppresses change signals for unchanged values.
 
 User commands use the `cmd` field instead of an `op`; batch uses the top-level
 `batch` array (each item is its own `op`/`cmd` request).
+
+`children` lists direct children in insertion order. `offset` (default `0`,
+negative counts from the end) and `limit` (default `-1` = all) select a range;
+`values:false` omits `value`. The reply has `total` and `children`; each entry
+has `index`, `key` (`name`, `name#N` or `#N`), `name`, `path`, `type`
+(`Var::typeName`), `child_count` and optional `value`. Continue paging with the
+last `index + 1`.
+
+```json
+{"op":"children","params":{"path":"items","offset":0,"limit":32,"values":false}}
+```
+
+`export` with `format` returns `data.format` and `data.text` from the schema
+registry (`json`, `xml`, `md`, `dump`, plugin formats; not `bin`). `params` is
+passed as the format's export options, so `depth`, `indent`, ... apply.
+
+```json
+{"op":"export","params":{"path":"docs","format":"md","depth":2}}
+```
 
 Examples:
 
@@ -687,7 +706,9 @@ curl -X POST http://localhost:12000/ve \
   -d '{"cmd":"load","params":{"path":"/config","file":"~/config.json"}}'
 ```
 
-Use `schema <format> [path]` to print serialized data, or `schema <format> [path] -i <data>` for inline imports.
+Use `schema <format> [path] [-d depth]` to print serialized data, or
+`schema <format> [path] -i <data>` for inline imports. `-d` sets the
+format's `depth`; negative (default) exports the full tree.
 
 ### Markdown Schema (MdS)
 

@@ -162,7 +162,7 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& o
     };
 
     // Depth limit reached: output truncation marker
-    if (options.max_depth >= 0 && currentDepth >= options.max_depth) {
+    if (options.depth >= 0 && currentDepth >= options.depth) {
         if (nch == 0) emitValue();
         else          out += "\"...\"";
         return;

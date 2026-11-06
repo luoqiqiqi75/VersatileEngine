@@ -295,6 +295,17 @@ template<typename Client, Wire Format = Wire::Json>
 void checkTransport(const char* name, uint16_t port, Gate& gate)
 {
     std::cout << "CHECK " << name << std::endl;
+    {
+        Peer<Client, Format> reader(port);
+        if constexpr (Format == Wire::Repl) {
+            reader.send(R"({"cmd":"schema xml /read_probe -d 1"})");
+        } else {
+            reader.send(R"({"op":"children","params":{"path":"read_probe","offset":1,"limit":1,"values":false}})");
+            reader.expect("item#1");
+            reader.send(R"({"op":"export","params":{"path":"read_probe","format":"xml","depth":1}})");
+        }
+        reader.expect("<item>second</item>");
+    }
     // Hold enough foreground commands to cover every shared session worker.
     std::vector<std::unique_ptr<Peer<Client, Format>>> busy;
     gate.reset();
@@ -566,6 +577,11 @@ int main(int argc, char** argv)
     entry::setup(&options);
     entry::init();
     n("probe")->set(424242);
+    Node* read_probe = n("read_probe");
+    read_probe->append("item")->set("first");
+    read_probe->append("item")->set("second");
+    read_probe->append()->set("anonymous");
+    read_probe->child(0)->append("nested")->set(42);
     std::atomic<bool> wrong_loop{false};
     auto execute = [&](Node* out) {
         gate.enter();

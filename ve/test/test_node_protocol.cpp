@@ -195,6 +195,71 @@ VE_TEST(node_dispatch_get_set_and_children) {
         Node* children = pipe.contextNode()->find("data/children");
         VE_ASSERT(children != nullptr);
         VE_ASSERT_EQ(children->count(), 1);
+        VE_ASSERT_EQ(children->child(0)->get("name").toString(), "value");
+        VE_ASSERT_EQ(children->child(0)->get("path").toString(), "a/value");
+        VE_ASSERT_EQ(children->child(0)->get("value").toInt(), 42);
+    }
+}
+
+VE_TEST(node_dispatch_children_range_uses_native_keys) {
+    Node root;
+    Node* parent = root.append("items");
+    parent->append("item")->set(10);
+    parent->append()->set("anonymous");
+    parent->append("item")->set(20);
+    parent->child(2)->append("nested");
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "children");
+    Node* params = pipe.contextNode()->at("params");
+    params->set("path", "items");
+    params->set("offset", 1);
+    params->set("limit", 2);
+    params->set("values", false);
+    runEnvelope(&session, pipe);
+
+    VE_ASSERT_EQ(pipe.contextNode()->get("data/total").toInt(), 3);
+    Node* list = pipe.contextNode()->find("data/children");
+    VE_ASSERT_EQ(list->count(), 2);
+    VE_ASSERT_EQ(list->child(0)->get("index").toInt(), 1);
+    VE_ASSERT_EQ(list->child(0)->get("key").toString(), "#1");
+    VE_ASSERT_EQ(list->child(0)->get("type").toString(), "String");
+    VE_ASSERT(list->child(0)->find("value") == nullptr);
+    VE_ASSERT_EQ(list->child(1)->get("path").toString(), "items/item#1");
+    VE_ASSERT_EQ(list->child(1)->get("child_count").toInt(), 1);
+}
+
+VE_TEST(node_dispatch_children_bounds) {
+    Node root;
+    root.append("first")->set(1);
+    root.append("second")->set(2);
+    root.append("third")->set(3);
+    service::Session session(&root, &root);
+    struct Range { int offset, limit, first, count; };
+    for (auto range : {Range{0, -1, 0, 3}, {-1, 1, 2, 1}, {0, 0, 0, 0}, {3, 1, 0, 0}}) {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "children");
+        pipe.contextNode()->at("params")->set("offset", range.offset);
+        pipe.contextNode()->at("params")->set("limit", range.limit);
+        runEnvelope(&session, pipe);
+        Node* list = pipe.contextNode()->find("data/children");
+        VE_ASSERT_EQ(list->count(), range.count);
+        if (range.count) VE_ASSERT_EQ(list->child(0)->get("index").toInt(), range.first);
+    }
+}
+
+VE_TEST(node_dispatch_read_options_do_not_create_missing_paths) {
+    Node root;
+    service::Session session(&root, &root);
+    for (const char* op : {"children", "export"}) {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", op);
+        pipe.contextNode()->at("params")->set("path", "missing/#5");
+        pipe.contextNode()->at("params")->set("format", "xml");
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(), service::ERR_NOT_FOUND);
+        VE_ASSERT_EQ(root.count(), 0);
     }
 }
 
@@ -272,6 +337,39 @@ VE_TEST(node_dispatch_export_depth) {
     // depth=1: "deep" child exists but "deep/z" not exported
     VE_ASSERT(tree->find("deep") != nullptr);
     VE_ASSERT(tree->find("deep/z") == nullptr);
+}
+
+VE_TEST(node_dispatch_export_native_text) {
+    Node root;
+    Node* doc = root.append("doc");
+    doc->append("item")->set("first");
+    doc->child(0)->append("nested")->set(42);
+    service::Session session(&root, &root);
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "export");
+    Node* params = pipe.contextNode()->at("params");
+    params->set("path", "doc");
+    params->set("format", "xml");
+    params->set("depth", 1);
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(), 0);
+    VE_ASSERT_EQ(pipe.contextNode()->get("data/format").toString(), "xml");
+    const std::string text = pipe.contextNode()->get("data/text").toString();
+    VE_ASSERT(text.find("<item>first</item>") != std::string::npos);
+    VE_ASSERT(text.find("nested") == std::string::npos);
+    VE_ASSERT(pipe.contextNode()->find("data/tree") == nullptr);
+}
+
+VE_TEST(node_dispatch_export_unknown_and_binary_text_format) {
+    Node root;
+    service::Session session(&root, &root);
+    for (const char* format : {"missing", "bin"}) {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "export");
+        pipe.contextNode()->at("params")->set("format", format);
+        runEnvelope(&session, pipe);
+        VE_ASSERT(pipe.contextNode()->get("code").toInt() < 0);
+    }
 }
 
 VE_TEST(node_dispatch_import) {

@@ -62,6 +62,24 @@ struct Var::SharedData {
     }
 };
 
+const char* Var::typeName(Type t)
+{
+    switch (t) {
+        case NONE:     return "Null";
+        case BOOL:     return "Bool";
+        case INT:      return "Int";
+        case DOUBLE:   return "Double";
+        case STRING:   return "String";
+        case BIN:      return "Bin";
+        case LIST:     return "List";
+        case DICT:     return "Dict";
+        case POINTER:  return "Pointer";
+        case CALLABLE: return "Callable";
+        case CUSTOM:   return "Custom";
+    }
+    return "?";
+}
+
 // construction
 
 Var::Var() : _type(NONE), _storage{} { _storage._int = 0; }

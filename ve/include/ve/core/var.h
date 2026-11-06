@@ -167,6 +167,7 @@ public:
 
     // type query
     Type type() const { return _type; }
+    static const char* typeName(Type t);
     bool isNull() const { return _type == NONE; }
     bool is(const Type t) const { return _type == t; }
 

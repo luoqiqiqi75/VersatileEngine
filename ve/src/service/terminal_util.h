@@ -14,23 +14,6 @@ using ve::parse::parseFlags;
 
 inline Var parseVar(const std::string& raw) { return parse::parseValue(raw); }
 
-inline const char* varTypeName(Var::Type t)
-{
-    switch (t) {
-        case Var::NONE:    return "Null";
-        case Var::BOOL:    return "Bool";
-        case Var::INT:     return "Int";
-        case Var::DOUBLE:  return "Double";
-        case Var::STRING:  return "String";
-        case Var::BIN:     return "Bin";
-        case Var::LIST:    return "List";
-        case Var::DICT:    return "Dict";
-        case Var::POINTER: return "Pointer";
-        case Var::CUSTOM:  return "Custom";
-        default:           return "?";
-    }
-}
-
 inline std::string varPreview(const Var& v, size_t max_len = 60)
 {
     std::string s = v.toString();

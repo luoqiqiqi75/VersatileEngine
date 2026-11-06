@@ -42,20 +42,23 @@
 
   "export": {
     "instruction": {
-      "description": "Export a subtree as a value tree.",
-      "usage": "export [path] [depth]",
+      "description": "Export a subtree as a value tree or native format text.",
+      "usage": "export [path] [depth] [format]",
       "input_schema": {
         "type": "object",
         "properties": {
           "path":  { "type": "string", "description": "subtree root; empty = root" },
-          "depth": { "type": "integer", "description": "max depth, -1 = unlimited" }
+          "depth": { "type": "integer", "description": "node depth: 0 = own value, 1 = direct children, negative = unlimited" },
+          "format": { "type": "string", "description": "omit for tree; json, xml, md, dump or a registered text format for text; other params named like its ExportOptions fields also apply" }
         },
         "required": []
       },
       "output_schema": {
         "type": "object",
         "properties": {
-          "tree": { "type": "object", "description": "the exported subtree" }
+          "tree": { "description": "the exported subtree when format is omitted" },
+          "format": { "type": "string", "description": "the requested text format" },
+          "text": { "type": "string", "description": "native format output when format is supplied; values are not shortened" }
         }
       }
     }
@@ -89,26 +92,33 @@
 
   "children": {
     "instruction": {
-      "description": "List a node's children.",
-      "usage": "children [path]",
+      "description": "Read direct children in insertion order, optionally selecting a range and omitting values.",
+      "usage": "children [path] [offset] [limit] [values]",
       "input_schema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "parent path; empty = root" }
+          "path": { "type": "string", "description": "parent path; empty = root" },
+          "offset": { "type": "integer", "description": "first child index, default 0; negative counts from the end; out of range returns an empty list" },
+          "limit": { "type": "integer", "description": "number of children, default -1; negative = all remaining, 0 = none" },
+          "values": { "type": "boolean", "description": "include non-null values, default true; false omits value from each entry" }
         },
         "required": []
       },
       "output_schema": {
         "type": "object",
         "properties": {
+          "total": { "type": "integer", "description": "total direct child count" },
           "children": {
             "type": "array",
             "description": "child entries",
             "items": {
               "type": "object",
               "properties": {
+                "index":       { "type": "integer", "description": "zero-based position among all direct children" },
+                "key":         { "type": "string", "description": "native name, name#N or #N" },
                 "name":        { "type": "string" },
                 "path":        { "type": "string" },
+                "type":        { "type": "string", "enum": ["Null", "Bool", "Int", "Double", "String", "Bin", "List", "Dict", "Pointer", "Callable", "Custom"] },
                 "value":       { "description": "child value if non-null" },
                 "child_count": { "type": "integer" }
               }

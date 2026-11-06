@@ -28,6 +28,20 @@ void Schema::build(Node* node) const
 
 namespace schema {
 
+JsonS::ExportOptions JsonS::ExportOptions::fromNode(const Node* opts)
+{
+    ExportOptions o;
+    if (!opts) return o;
+    o.indent         = opts->get("indent").toInt(o.indent);
+    o.auto_ignore    = opts->get("auto_ignore").toBool(o.auto_ignore);
+    o.newline        = opts->get("newline").toString(o.newline);
+    o.tail           = opts->get("tail").toString(o.tail);
+    o.depth          = opts->get("depth").toInt(o.depth);
+    o.decimal_places = opts->get("decimal_places").toInt(o.decimal_places);
+    o.zero_epsilon   = opts->get("zero_epsilon").toDouble(o.zero_epsilon);
+    return o;
+}
+
 std::string JsonS::fromNode(const Node* node, int indent)
 {
     ExportOptions o;
@@ -42,7 +56,7 @@ std::string JsonS::fromNode(const Node* node, const JsonS::ExportOptions& option
     o.auto_ignore = options.auto_ignore;
     o.newline     = options.newline;
     o.tail        = options.tail;
-    o.max_depth   = options.max_depth;
+    o.depth       = options.depth;
     o.decimal_places = options.decimal_places;
     o.zero_epsilon = options.zero_epsilon;
     return impl::json::exportTree(node, o);
@@ -86,6 +100,18 @@ bool BinS::toNode(Node* node, const uint8_t* data, size_t len, int copy_flags)
 // XmlS
 // ============================================================================
 
+XmlS::ExportOptions XmlS::ExportOptions::fromNode(const Node* opts)
+{
+    ExportOptions o;
+    if (!opts) return o;
+    o.indent      = opts->get("indent").toInt(o.indent);
+    o.auto_ignore = opts->get("auto_ignore").toBool(o.auto_ignore);
+    o.newline     = opts->get("newline").toString(o.newline);
+    o.tail        = opts->get("tail").toString(o.tail);
+    o.depth       = opts->get("depth").toInt(o.depth);
+    return o;
+}
+
 std::string XmlS::fromNode(const Node* node, int indent)
 {
     ExportOptions o;
@@ -100,6 +126,7 @@ std::string XmlS::fromNode(const Node* node, const XmlS::ExportOptions& options)
     o.auto_ignore = options.auto_ignore;
     o.newline     = options.newline;
     o.tail        = options.tail;
+    o.depth       = options.depth;
     return impl::xml::exportTree(node, o);
 }
 
@@ -287,6 +314,15 @@ bool VarS::toNode(Node* node, const Var& data, int copy_flags)
 // MdS
 // ============================================================================
 
+MdS::ExportOptions MdS::ExportOptions::fromNode(const Node* opts)
+{
+    ExportOptions o;
+    if (!opts) return o;
+    o.auto_ignore = opts->get("auto_ignore").toBool(o.auto_ignore);
+    o.depth       = opts->get("depth").toInt(o.depth);
+    return o;
+}
+
 std::string MdS::fromNode(const Node* node)
 {
     return fromNode(node, ExportOptions{});
@@ -294,7 +330,7 @@ std::string MdS::fromNode(const Node* node)
 
 std::string MdS::fromNode(const Node* node, const MdS::ExportOptions& options)
 {
-    return impl::md::exportTree(node, options.auto_ignore);
+    return impl::md::exportTree(node, options.auto_ignore, options.depth);
 }
 
 bool MdS::toNode(Node* node, const std::string& data)
@@ -322,22 +358,26 @@ static struct BuiltinFormatRegistrar {
     BuiltinFormatRegistrar() {
         // json
         registerSchemaFormat("json", {
-            [](const Node* n) { return impl::json::exportTree(n); },
+            [](const Node* n, const Node* o) { return JsonS::fromNode(n, JsonS::ExportOptions::fromNode(o)); },
             [](Node* n, const std::string& d) { return impl::json::importTree(n, d); }
         });
         // xml
         registerSchemaFormat("xml", {
-            [](const Node* n) { return impl::xml::exportTree(n); },
+            [](const Node* n, const Node* o) { return XmlS::fromNode(n, XmlS::ExportOptions::fromNode(o)); },
             [](Node* n, const std::string& d) { return impl::xml::importTree(n, d); }
         });
         // md
         registerSchemaFormat("md", {
-            [](const Node* n) { return impl::md::exportTree(n); },
+            [](const Node* n, const Node* o) { return MdS::fromNode(n, MdS::ExportOptions::fromNode(o)); },
             [](Node* n, const std::string& d) { return impl::md::importTree(n, d); }
+        });
+        registerSchemaFormat("dump", {
+            [](const Node* n, const Node* o) { return n->dump(o ? o->get("depth").toInt(-1) : -1); },
+            {}
         });
         // bin: raw bytes in std::string both ways
         registerSchemaFormat("bin", {
-            [](const Node* n) {
+            [](const Node* n, const Node*) {
                 auto bytes = impl::bin::exportTree(n);
                 return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             },
@@ -366,18 +406,18 @@ std::vector<std::string> schemaFormatNames()
     return names;
 }
 
-std::string schemaFromNode(const std::string& name, const Node* node)
+std::string schemaFromNode(const std::string& name, const Node* node, const Node* opts)
 {
     auto& reg = formatRegistry();
-    if (reg.count(name) == 0) return {};
-    return reg[name].fromNodeFn(node);
+    auto it = reg.find(name);
+    return it == reg.end() ? std::string() : it->second.fromNodeFn(node, opts);
 }
 
 bool schemaToNode(const std::string& name, Node* node, const std::string& data)
 {
     auto& reg = formatRegistry();
-    if (reg.count(name) == 0) return false;
-    return reg[name].toNodeFn(node, data);
+    auto it = reg.find(name);
+    return it != reg.end() && it->second.toNodeFn && it->second.toNodeFn(node, data);
 }
 
 } // namespace schema

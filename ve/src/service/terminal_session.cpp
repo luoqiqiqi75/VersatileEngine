@@ -30,7 +30,6 @@ namespace service {
 using detail::isInt;
 using detail::isDouble;
 using detail::nodeSummary;
-using detail::varTypeName;
 using detail::varPreview;
 using detail::parseVar;
 using detail::Flags;
@@ -452,7 +451,7 @@ static Result ls(Node* ctx, Node* in, Node* out)
         if (!t->get().isNull()) {
             const auto& v = t->get();
             text += "  " + c.dim + "value:" + c.reset + "     " + c.green + varPreview(v) + c.reset + "\n";
-            text += "  " + c.dim + "type:" + c.reset + "      " + c.yellow + varTypeName(v.type()) + c.reset + "\n";
+            text += "  " + c.dim + "type:" + c.reset + "      " + c.yellow + Var::typeName(v.type()) + c.reset + "\n";
         } else { text += "  " + c.dim + "value:" + c.reset + "     (none)\n"; }
         text += "  " + c.dim + "watching:" + c.reset + "  " + std::string(t->isWatching() ? "yes" : "no") + "\n";
         text += "  " + c.dim + "silent:" + c.reset + "    " + std::string(t->isSilent() ? "yes" : "no") + "\n";
@@ -493,12 +492,12 @@ static Result get(Node* ctx, Node* in, Node* out)
         return Result::fail("usage: get [path] [-t]");
     }
     if (f.has("type", 't')) {
-        setTextOut(out, t->get().isNull() ? "(none)\n" : c.yellow + std::string(varTypeName(t->get().type())) + c.reset + "\n");
+        setTextOut(out, c.yellow + std::string(Var::typeName(t->get().type())) + c.reset + "\n");
         return Result::ok();
     }
     if (t->get().isNull()) { setTextOut(out, "(none)\n"); return Result::ok(); }
     const auto& v = t->get();
-    setTextOut(out, c.green + varPreview(v, 256) + c.reset + "  " + c.dim + "(" + varTypeName(v.type()) + ")" + c.reset + "\n");
+    setTextOut(out, c.green + varPreview(v, 256) + c.reset + "  " + c.dim + "(" + Var::typeName(v.type()) + ")" + c.reset + "\n");
     return Result::ok();
 }
 
@@ -554,7 +553,7 @@ static Result set(Node* ctx, Node* in, Node* out)
 
     Var v = parseVar(valueRaw);
     t->set(std::move(v));
-    setTextOut(out, "set: " + c.green + varPreview(t->get()) + c.reset + "  " + c.dim + "(" + varTypeName(t->get().type()) + ")" + c.reset + "\n");
+    setTextOut(out, "set: " + c.green + varPreview(t->get()) + c.reset + "  " + c.dim + "(" + Var::typeName(t->get().type()) + ")" + c.reset + "\n");
     return Result::ok();
 }
 
@@ -732,12 +731,14 @@ static Result schema(Node* ctx, Node* in, Node* out)
         }
         bool ok = schema::schemaToNode(format, t, content);
         if (ok) setTextOut(out, file.empty() ? "imported\n" : "imported from " + file + "\n");
-        else return Result::fail("import failed (invalid " + format + ")");
+        else return Result::fail("import failed: " + format);
         return Result::ok();
     }
 
-    std::string result = schema::schemaFromNode(format, t);
-    if (result.empty()) return Result::fail("unknown format: " + format);
+    if (!schema::hasSchemaFormat(format)) return Result::fail("unknown format: " + format);
+    Node opts;
+    opts.set("depth", parse::parseValueAs(f.get("depth", 'd', "-1"), Var::INT).toInt(-1));
+    std::string result = schema::schemaFromNode(format, t, &opts);
 
     if (!file.empty()) {
         std::ofstream ofs(file, std::ios::binary);

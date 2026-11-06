@@ -206,14 +206,15 @@
 
   "schema": {
     "instruction": {
-      "description": "Import/export node tree in various formats (json, xml, bin, md, var).",
+      "description": "Import/export node tree in various formats (json, xml, bin, md, dump).",
       "category": "inspect",
-      "usage": "schema <format> [path] [-f file] [-i data]",
+      "usage": "schema <format> [path] [-d depth] [-f file] [-i data]",
       "input_schema": {
         "type": "object",
         "properties": {
           "format": { "type": "string",  "description": "serialization format" },
           "path":   { "type": "string",  "description": "target node (default: current)" },
+          "depth":  { "type": "integer", "short": "d", "description": "export node depth: 0 = own value, 1 = direct children, negative = unlimited" },
           "file":   { "type": "string",  "short": "f", "description": "read from / write to file" },
           "import": { "type": "string",  "short": "i", "description": "import data (inline or with -f)" }
         },

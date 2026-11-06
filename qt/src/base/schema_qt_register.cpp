@@ -9,7 +9,7 @@ namespace {
 const bool qt_schema_formats_registered = []() {
     // "qjson" — QJsonS via QJsonDocument string serialization (for runtime string-based registry)
     registerSchemaFormat("qjson", {
-        [](const Node* node) -> std::string {
+        [](const Node* node, const Node*) -> std::string {
             const QJsonValue jv = fromNode<QJsonS>(node);
             QJsonDocument doc;
             if (jv.isObject()) {
@@ -35,7 +35,7 @@ const bool qt_schema_formats_registered = []() {
 
     // "qvariant" — QVariantS via JSON string for runtime registry
     registerSchemaFormat("qvariant", {
-        [](const Node* node) -> std::string {
+        [](const Node* node, const Node*) -> std::string {
             // Export as JSON string (QVariant has no canonical string form)
             return fromNode<JsonS>(node);
         },

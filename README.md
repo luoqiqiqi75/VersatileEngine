@@ -407,8 +407,14 @@ Benchmarks run on Intel i7-12700K, Windows 11, MSVC 2022 Release build. See `ve/
 | `json` | `schema json /path` | Schema-oriented JSON |
 | `xml` | `schema xml /path` | pugixml-based XML |
 | `md` | `schema md /path` | Markdown (headings → Node hierarchy) |
+| `dump` | `schema dump /path` | Structural debug text (export only) |
 | `bin` | `schema bin /path` | CBS-compatible binary |
 | `var` | `schema var /path` | Var tree as JSON |
+
+`schema xml /path -d 1` limits export to direct children. Network `export`
+accepts `format` plus that format's export options such as `depth`.
+For bounded tree browsing, `children` accepts `offset`, `limit`, and `values`;
+see [Service Reference](docs/SERVICE.md) for request and reply fields.
 
 Port rule: **first three digits** = service family (fixed); **last two** increment on bind failure. See [docs/SERVICE.md](docs/SERVICE.md) (*Port numbering*).
 

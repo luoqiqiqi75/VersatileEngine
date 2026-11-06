@@ -16,7 +16,8 @@ namespace ve {
 namespace impl::xml {
 
 // Helper: recursive ve::Node -> pugixml node (reverse of xmlNodeToNode)
-static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node, bool auto_ignore)
+// depth: remaining element levels; attributes belong to the element and are always kept.
+static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node, bool auto_ignore, int depth)
 {
     if (!ve_node) return;
 
@@ -40,7 +41,7 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node, bool au
             if (attr_val.type() != Var::NONE && !attr_val.isNull()) {
                 xml_node.append_attribute(attr_name.c_str()) = attr_val.toString().c_str();
             }
-        } else {
+        } else if (depth != 0) {
             // Handle normal children
             if (child_name.empty()) child_name = "item";
 
@@ -52,7 +53,7 @@ static void nodeToXmlNode(const Node* ve_node, pugi::xml_node& xml_node, bool au
             }
 
             auto xml_child = xml_node.append_child(child_name.c_str());
-            nodeToXmlNode(child, xml_child, auto_ignore);
+            nodeToXmlNode(child, xml_child, auto_ignore, depth - 1);
         }
     }
 }
@@ -64,7 +65,7 @@ std::string exportTree(const Node* node, const ExportOpts& opts)
     pugi::xml_document doc;
     auto root = doc.append_child(node->name().empty() ? "root" : node->name().c_str());
 
-    nodeToXmlNode(node, root, opts.auto_ignore);
+    nodeToXmlNode(node, root, opts.auto_ignore, opts.depth);
 
     // pugixml only breaks lines in indent mode; format_raw emits a single line.
     const bool pretty = !opts.newline.empty();

@@ -497,3 +497,26 @@ VE_TEST(node_serialize_registry_roundtrip) {
     auto bytes = schema::fromNode<schema::BinS>(&src);
     VE_ASSERT_EQ(schema::schemaFromNode("bin", &src), std::string(bytes.begin(), bytes.end()));
 }
+
+VE_TEST(node_serialize_registry_opts_depth) {
+    Node src("catalog");
+    src.set("root body");
+    src.append("@id")->set("c1");
+    src.append("item")->set("first");
+    src.child("item")->append("deep")->set("nested body");
+
+    Node opts;
+    opts.set("depth", 1);
+    const auto xml = schema::schemaFromNode("xml", &src, &opts);
+    VE_ASSERT(xml.find("first") != std::string::npos);
+    VE_ASSERT(xml.find("nested body") == std::string::npos);
+    const auto md = schema::schemaFromNode("md", &src, &opts);
+    VE_ASSERT(md.find("first") != std::string::npos);
+    VE_ASSERT(md.find("nested body") == std::string::npos);
+    VE_ASSERT_EQ(schema::schemaFromNode("json", &src, &opts), schema::JsonS::fromNode(&src, schema::JsonS::ExportOptions::fromNode(&opts)));
+
+    opts.set("depth", 0);
+    VE_ASSERT_EQ(schema::schemaFromNode("xml", &src, &opts), "<?xml version=\"1.0\"?>\n<catalog id=\"c1\">root body</catalog>\n");
+    VE_ASSERT_EQ(schema::schemaFromNode("dump", &src, &opts), "= root body\n");
+    VE_ASSERT(!schema::schemaToNode("dump", &src, "ignored"));
+}

@@ -27,6 +27,7 @@ struct ExportOpts
     bool        auto_ignore = true;
     std::string newline     = "\n";
     std::string tail        = "\n";
+    int         depth       = -1;    // -1 = unlimited, 0 = value + attributes, 1 = direct children
 };
 
 VE_API std::string exportTree(const Node* node, const ExportOpts& opts = {});

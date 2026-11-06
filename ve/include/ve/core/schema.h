@@ -53,9 +53,12 @@ struct JsonS
         bool        auto_ignore = true;  // skip "_"-prefixed children
         std::string newline     = "\n";  // between lines; "" = single-line output
         std::string tail        = "\n";  // appended once after the document
-        int         max_depth   = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
+        int         depth       = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
         int         decimal_places = -1; // <0 = shortest roundtrip; otherwise fractional digits (capped at 324), trim zeros; abs>=1e15 stays shortest
         double      zero_epsilon = 0.0;  // finite >0: abs(double) <= epsilon exports as 0, before rounding
+
+        // Read fields from opts children by name; null = defaults.
+        VE_API static ExportOptions fromNode(const Node* opts);
     };
     // Single-line, no trailing newline: for framed transports.
     static ExportOptions compact() { return {0, true, "", "", -1}; }
@@ -84,8 +87,11 @@ struct XmlS
         bool        auto_ignore = true;
         std::string newline     = "\n";
         std::string tail        = "\n";
+        int         depth       = -1;    // -1 = unlimited, 0 = value only, 1 = direct children
+
+        VE_API static ExportOptions fromNode(const Node* opts);
     };
-    static ExportOptions compact() { return {0, true, "", ""}; }
+    static ExportOptions compact() { return {0, true, "", "", -1}; }
 
     VE_API static std::string fromNode(const Node* node, int indent = 2);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
@@ -105,7 +111,13 @@ struct VarS
 
 struct MdS
 {
-    struct ExportOptions { bool auto_ignore = true; };
+    struct ExportOptions
+    {
+        bool auto_ignore = true;
+        int  depth       = -1;  // -1 = unlimited, 0 = preamble only, 1 = top headings
+
+        VE_API static ExportOptions fromNode(const Node* opts);
+    };
 
     VE_API static std::string fromNode(const Node* node);
     VE_API static std::string fromNode(const Node* node, const ExportOptions& options);
@@ -128,18 +140,19 @@ bool toNode(Node* node, Args&&... args)
     return Format::toNode(node, std::forward<Args>(args)...);
 }
 
-// --- Runtime format registry for terminal commands ------------------------
+// --- Runtime format registry ---------------------------------------------
 
 struct VE_API SchemaFormatHandler
 {
-    std::function<std::string(const Node*)> fromNodeFn;
+    std::function<std::string(const Node* node, const Node* opts)> fromNodeFn;
     std::function<bool(Node*, const std::string&)> toNodeFn;
 };
 
 VE_API void registerSchemaFormat(const std::string& name, SchemaFormatHandler handler);
 VE_API bool hasSchemaFormat(const std::string& name);
 VE_API std::vector<std::string> schemaFormatNames();
-VE_API std::string schemaFromNode(const std::string& name, const Node* node);
+// opts: format-specific export options as child nodes; null = defaults.
+VE_API std::string schemaFromNode(const std::string& name, const Node* node, const Node* opts = nullptr);
 VE_API bool schemaToNode(const std::string& name, Node* node, const std::string& data);
 
 } // namespace schema

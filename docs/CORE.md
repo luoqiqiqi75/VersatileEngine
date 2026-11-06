@@ -192,6 +192,13 @@ Use:
 - `schema::fromNode<schema::JsonS>(node, schema::JsonS::ExportOptions{...})`
 - `schema::toNode<schema::JsonS>(node, text)`
 - `schema::toNode<schema::JsonS>(node, text, copy_flags)`
+- `schema::schemaFromNode("xml", node, opts)` for runtime format selection
+
+`opts` is a Node whose children name `ExportOptions` fields (e.g. `depth`,
+`indent`); `XxxS::ExportOptions::fromNode(opts)` converts it, null = defaults.
+`depth`: `0` = own value, `N` = N child levels, negative = unlimited. JsonS
+emits `"..."` at the boundary; XmlS keeps attributes and drops child elements;
+MdS drops deeper headings. `dump` reads `depth` and is export only.
 
 Important behavior:
 

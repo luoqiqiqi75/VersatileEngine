@@ -77,8 +77,15 @@ static Result export_(Node* ctx, Node* params, Node* data)
     std::string path = normalizePath(params->get("path").toString());
     Node* target = path.empty() ? r : r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
-    int depth = params->get("depth").toInt(-1);
-    data->at("tree")->copy(target, Node::COPY_DEFAULT, depth);
+    std::string format = params->get("format").toString();
+    if (!format.empty()) {
+        if (!schema::hasSchemaFormat(format)) return Result::fail(ERR_INVALID, "unknown format: " + format);
+        if (format == "bin") return Result::fail(ERR_UNSUPPORTED, "bin is not a text format");
+        data->set("format", format);
+        data->set("text", schema::schemaFromNode(format, target, params));
+        return Result::ok();
+    }
+    data->at("tree")->copy(target, Node::COPY_DEFAULT, params->get("depth").toInt(-1));
     return Result::ok();
 }
 
@@ -88,12 +95,26 @@ static Result children(Node* ctx, Node* params, Node* data)
     std::string path = normalizePath(params->get("path").toString());
     Node* target = path.empty() ? r : r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
+    const auto nodes = target->children();
+    const int total = nodes.sizeAsInt();
+    int offset = params->get("offset").toInt(0);
+    if (offset < 0) offset += total;
+    const int limit = params->get("limit").toInt(-1);
+    const bool values = params->get("values").toBool(true);
+    const std::string parent_path = target->path(r);
+    data->set("total", total);
     Node* list = data->at("children");
-    for (auto* child : target->children()) {
+    for (int i = offset; i >= 0 && i < total && (limit < 0 || i - offset < limit); ++i) {
+        Node* child = nodes[i];
+        const std::string key = target->keyOf(child, i);
+        Var value = child->get();
         Node* item = list->append();
+        item->set("index", i);
+        item->set("key", key);
         item->set("name", child->name());
-        item->set("path", child->path(r));
-        if (!child->get().isNull()) item->at("value")->set(child->get());
+        item->set("path", parent_path.empty() ? key : parent_path + VE_NODE_PATH_SEP + key);
+        item->set("type", Var::typeName(value.type()));
+        if (values && !value.isNull()) item->set("value", std::move(value));
         item->set("child_count", static_cast<int64_t>(child->count()));
     }
     return Result::ok();

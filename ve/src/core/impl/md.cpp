@@ -57,8 +57,9 @@ static std::string stripNodeNameSuffix(const std::string& name)
 // Export: Node → MD
 // ============================================================================
 
+// depth: remaining child levels below node.
 static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int parentLevel,
-                                bool auto_ignore)
+                                bool auto_ignore, int depth)
 {
     if (!node) {
         return;
@@ -105,6 +106,7 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int p
     }
 
     // Export children
+    if (depth == 0) return;
     for (const Node* child : node->children()) {
         if (!child) {
             continue;
@@ -116,11 +118,11 @@ static void exportNodeRecursive(const Node* node, std::ostringstream& oss, int p
             }
         }
 
-        exportNodeRecursive(child, oss, actualLevel, auto_ignore);
+        exportNodeRecursive(child, oss, actualLevel, auto_ignore, depth - 1);
     }
 }
 
-std::string exportTree(const Node* node, bool auto_ignore)
+std::string exportTree(const Node* node, bool auto_ignore, int depth)
 {
     if (!node) {
         return "";
@@ -141,6 +143,7 @@ std::string exportTree(const Node* node, bool auto_ignore)
     }
 
     // Export children as headings
+    if (depth == 0) return oss.str();
     for (const Node* child : node->children()) {
         if (!child) {
             continue;
@@ -152,7 +155,7 @@ std::string exportTree(const Node* node, bool auto_ignore)
             }
         }
 
-        exportNodeRecursive(child, oss, 0, auto_ignore);
+        exportNodeRecursive(child, oss, 0, auto_ignore, depth - 1);
     }
 
     return oss.str();

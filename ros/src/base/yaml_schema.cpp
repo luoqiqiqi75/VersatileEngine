@@ -151,7 +151,7 @@ namespace {
 
 const bool yaml_schema_registered = []() {
     registerSchemaFormat("yaml", {
-        [](const Node* node) -> std::string {
+        [](const Node* node, const Node*) -> std::string {
             return fromNode<YamlS>(node);
         },
         [](Node* node, const std::string& data) -> bool {
