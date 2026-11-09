@@ -465,7 +465,7 @@ static Result ls(Node* ctx, Node* in, Node* out)
         auto* ch = t->child(i);
         auto nm = ch->name().empty() ? "(anon)" : ch->name();
         text += "  " + c.dim + "[" + std::to_string(i) + "]" + c.reset + " " + c.cyan + nm + c.reset;
-        auto k = t->keyOf(ch);
+        auto k = t->keyOf(ch, i);
         if (k != nm && k != "(anon)") text += "  " + c.dim + "(key: " + k + ")" + c.reset;
         if (!ch->get().isNull()) text += "  = " + c.green + varPreview(ch->get()) + c.reset;
         text += "\n";

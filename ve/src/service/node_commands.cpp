@@ -95,17 +95,18 @@ static Result children(Node* ctx, Node* params, Node* data)
     std::string path = normalizePath(params->get("path").toString());
     Node* target = path.empty() ? r : r->find(path);
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
-    const auto nodes = target->children();
-    const int total = nodes.sizeAsInt();
+    const int total = target->count();
     int offset = params->get("offset").toInt(0);
     if (offset < 0) offset += total;
     const int limit = params->get("limit").toInt(-1);
     const bool values = params->get("values").toBool(true);
-    const std::string parent_path = target->path(r);
     data->set("total", total);
     Node* list = data->at("children");
-    for (int i = offset; i >= 0 && i < total && (limit < 0 || i - offset < limit); ++i) {
-        Node* child = nodes[i];
+    if (offset < 0) return Result::ok();
+    const int end = (limit < 0 || limit > total - offset) ? total : offset + limit;
+    const std::string parent_path = target->path(r);
+    for (int i = offset; i < end; ++i) {
+        Node* child = target->child(i);
         const std::string key = target->keyOf(child, i);
         Var value = child->get();
         Node* item = list->append();

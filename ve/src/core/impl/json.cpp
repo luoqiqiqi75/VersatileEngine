@@ -143,6 +143,20 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& o
     const std::string pad  = padding(depth);
     const std::string pad1 = padding(depth + 1);
 
+    auto emitValue = [&]() {
+        if (!node->get().isNull()) {
+            varToJson(node->get(), out, options);
+        } else {
+            out += "null";
+        }
+    };
+
+    // Depth limit reached: own value only, same as tree export
+    if (options.depth >= 0 && currentDepth >= options.depth) {
+        emitValue();
+        return;
+    }
+
     auto all_children = node->children();
     Vector<const Node*> visible_children;
     visible_children.reserve(all_children.sizeAsInt());
@@ -152,21 +166,6 @@ static void nodeToJsonImpl(const Node* node, std::string& out, const JsonOpts& o
     }
 
     const int nch = visible_children.sizeAsInt();
-
-    auto emitValue = [&]() {
-        if (!node->get().isNull()) {
-            varToJson(node->get(), out, options);
-        } else {
-            out += "null";
-        }
-    };
-
-    // Depth limit reached: output truncation marker
-    if (options.depth >= 0 && currentDepth >= options.depth) {
-        if (nch == 0) emitValue();
-        else          out += "\"...\"";
-        return;
-    }
 
     if (nch == 0) {
         emitValue();

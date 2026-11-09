@@ -88,6 +88,28 @@ VE_TEST(search_contains_matches_by_name) {
     VE_ASSERT_EQ(pipe.contextNode()->get("data/count").toInt(-1), 2);
 }
 
+VE_TEST(search_paths_use_native_keys) {
+    Node root("root");
+    Node* list = root.at("list");
+    list->append("item");
+    list->append();
+    Node* item1 = list->append("item");
+    item1->append();
+    item1->append()->at("hit")->set(1);
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("cmd", "search");
+    pipe.contextNode()->at("params")->set("pattern", "hit");
+    pipe.contextNode()->at("params")->set("mode", "exact");
+    runEnvelope(&session, pipe);
+
+    Node* m = pipe.contextNode()->find("data/matches");
+    VE_ASSERT(m && m->count() == 1);
+    VE_ASSERT_EQ(m->child(0)->getString(), std::string("list/item#1/#1/hit"));
+    VE_ASSERT_EQ(m->child(0)->getString(), root.find("list/item#1/#1/hit")->path(&root));
+}
+
 VE_TEST(search_contains_case_insensitive_by_default) {
     Node root("root");
     root.at("Config")->set(int64_t(0));

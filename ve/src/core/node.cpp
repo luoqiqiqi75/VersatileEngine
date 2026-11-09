@@ -103,6 +103,7 @@ int Node::indexOf(const Node* child_node, int guess) const
     const int sz = nodes.sizeAsInt();
 
     if (!child_node->name().empty()) {
+        if (nodes.value(guess, nullptr) == child_node) return guess;
         // named: search via indices map (fast)
         if (const auto* iv = _p->children->indices.ptr(child_node->name()); iv) {
             for (const int i : *iv)
@@ -541,10 +542,9 @@ std::string Node::keyOf(const Node* child, int guess) const
     auto* iv = _p->children->indices.ptr(nm);
     if (!iv || iv->sizeAsInt() <= 1) return nm;
 
-    for (uint32_t k = 0; k < iv->size(); ++k)
-        if ((*iv)[k] == gi) return toKey(nm, static_cast<int>(k));
-
-    return nm;
+    // indices stay sorted (insert uses lower_bound)
+    auto it = std::lower_bound(iv->begin(), iv->end(), gi);
+    return toKey(nm, static_cast<int>(it - iv->begin()));
 }
 
 // ============================================================================
@@ -830,7 +830,7 @@ static std::string dumpImpl(const Node* n, bool color, int depth, int indent, in
         auto* ch = n->child(i);
         if (!ch) continue;
         bool last = (i == total - 1);
-        auto key = n->keyOf(ch);
+        auto key = n->keyOf(ch, i);
         if (key.empty()) key = "(anon)";
 
         const std::string& conn = last ? connLast : connMid;

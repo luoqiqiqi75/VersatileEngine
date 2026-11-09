@@ -249,6 +249,30 @@ VE_TEST(node_dispatch_children_bounds) {
     }
 }
 
+VE_TEST(node_dispatch_children_same_name_window) {
+    Node root;
+    Node* parent = root.append("items");
+    for (int i = 0; i < 1000; ++i) parent->append(i % 2 ? "" : "item")->set(i);
+    service::Session session(&root, &root);
+    struct Range { int offset, limit, count; const char* key; };
+    for (auto range : {Range{-2, 2, 2, "item#499"}, {501, 1, 1, "#501"}, {0, 0, 0, nullptr}, {-1001, 1, 0, nullptr}}) {
+        Pipeline pipe;
+        pipe.contextNode()->set("op", "children");
+        Node* params = pipe.contextNode()->at("params");
+        params->set("path", "items");
+        params->set("offset", range.offset);
+        params->set("limit", range.limit);
+        runEnvelope(&session, pipe);
+        VE_ASSERT_EQ(pipe.contextNode()->get("data/total").toInt(), 1000);
+        Node* list = pipe.contextNode()->find("data/children");
+        VE_ASSERT_EQ(list ? list->count() : 0, range.count);
+        if (!range.key) continue;
+        VE_ASSERT_EQ(list->child(0)->get("key").toString(), range.key);
+        VE_ASSERT_EQ(list->child(0)->get("path").toString(), std::string("items/") + range.key);
+        VE_ASSERT(root.find(list->child(0)->get("path").toString()) == parent->child(list->child(0)->get("index").toInt()));
+    }
+}
+
 VE_TEST(node_dispatch_read_options_do_not_create_missing_paths) {
     Node root;
     service::Session session(&root, &root);

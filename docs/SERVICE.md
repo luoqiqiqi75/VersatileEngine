@@ -235,8 +235,9 @@ User commands use the `cmd` field instead of an `op`; batch uses the top-level
 negative counts from the end) and `limit` (default `-1` = all) select a range;
 `values:false` omits `value`. The reply has `total` and `children`; each entry
 has `index`, `key` (`name`, `name#N` or `#N`), `name`, `path`, `type`
-(`Var::typeName`), `child_count` and optional `value`. Continue paging with the
-last `index + 1`.
+(`Var::typeName`), `child_count` and optional `value`. An empty range (including
+`limit:0`, a cheap way to read `total`) may reply `children:null`. Continue
+paging with the last `index + 1`.
 
 ```json
 {"op":"children","params":{"path":"items","offset":0,"limit":32,"values":false}}
@@ -245,6 +246,10 @@ last `index + 1`.
 `export` with `format` returns `data.format` and `data.text` from the schema
 registry (`json`, `xml`, `md`, `dump`, plugin formats; not `bin`). `params` is
 passed as the format's export options, so `depth`, `indent`, ... apply.
+`depth` means the same in every format: nodes at the boundary keep their own
+value and drop children (`json` included; use `children` / `child_count` to
+see whether more exists). `tree` and `json` keep only the first of same-name
+siblings; read them with `children` (native keys) or `format:"dump"`.
 
 ```json
 {"op":"export","params":{"path":"docs","format":"md","depth":2}}

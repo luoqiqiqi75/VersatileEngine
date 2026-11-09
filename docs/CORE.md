@@ -197,7 +197,8 @@ Use:
 `opts` is a Node whose children name `ExportOptions` fields (e.g. `depth`,
 `indent`); `XxxS::ExportOptions::fromNode(opts)` converts it, null = defaults.
 `depth`: `0` = own value, `N` = N child levels, negative = unlimited. JsonS
-emits `"..."` at the boundary; XmlS keeps attributes and drops child elements;
+emits the boundary node's own value (`null` if none), like tree export; XmlS
+keeps attributes and drops child elements;
 MdS drops deeper headings. `dump` reads `depth` and is export only.
 
 Important behavior:
@@ -207,6 +208,9 @@ Important behavior:
 - export options are per format (nested in each `SchemaTraits` specialization);
   `auto_ignore` (JsonS/BinS/VarS) hides `_`-prefixed internal children and
   defaults to true — pass `auto_ignore = false` to export the full tree
+- fidelity differs per format: `bin` keeps the whole tree; `dump` shows every
+  key (`name#N`, `#N`) but is export only; JSON keeps only the first of
+  same-name siblings; XML drops binary values
 - `copy_flags` are `Node::CopyFlag` bits: `COPY_INSERT`, `COPY_REMOVE`,
   `COPY_UPDATE`, `COPY_REPLACE`, plus the presets `COPY_DEFAULT`
   (insert + replace) and `COPY_STRICT` (default + remove)

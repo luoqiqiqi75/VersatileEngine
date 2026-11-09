@@ -98,8 +98,8 @@
         "type": "object",
         "properties": {
           "path": { "type": "string", "description": "parent path; empty = root" },
-          "offset": { "type": "integer", "description": "first child index, default 0; negative counts from the end; out of range returns an empty list" },
-          "limit": { "type": "integer", "description": "number of children, default -1; negative = all remaining, 0 = none" },
+          "offset": { "type": "integer", "description": "first child index, default 0; negative counts from the end; out of range returns no entries" },
+          "limit": { "type": "integer", "description": "number of children, default -1; negative = all remaining, 0 = total only" },
           "values": { "type": "boolean", "description": "include non-null values, default true; false omits value from each entry" }
         },
         "required": []
@@ -110,7 +110,7 @@
           "total": { "type": "integer", "description": "total direct child count" },
           "children": {
             "type": "array",
-            "description": "child entries",
+            "description": "child entries; null or absent when the range is empty",
             "items": {
               "type": "object",
               "properties": {

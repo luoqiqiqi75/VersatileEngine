@@ -53,6 +53,21 @@ VE_TEST(node_keyOf_not_child) {
     VE_ASSERT_EQ(root.keyOf(&other), "");
 }
 
+VE_TEST(node_keyOf_duplicate_after_insert_with_guess) {
+    Node root("root");
+    Node* i0 = root.append("item");
+    Node* i2 = root.append("item");
+    Node* i1 = new Node("item");
+    root.insert(i1, 1);
+    root.insert(new Node(""), 0);
+
+    // guess = global index; a wrong guess still resolves
+    VE_ASSERT_EQ(root.keyOf(i0, 1), "item#0");
+    VE_ASSERT_EQ(root.keyOf(i1, 2), "item#1");
+    VE_ASSERT_EQ(root.keyOf(i2, 3), "item#2");
+    VE_ASSERT_EQ(root.keyOf(i2, 0), "item#2");
+}
+
 // ============================================================================
 // childAt (key parsing)
 // ============================================================================

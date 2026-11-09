@@ -514,6 +514,15 @@ VE_TEST(node_serialize_registry_opts_depth) {
     VE_ASSERT(md.find("first") != std::string::npos);
     VE_ASSERT(md.find("nested body") == std::string::npos);
     VE_ASSERT_EQ(schema::schemaFromNode("json", &src, &opts), schema::JsonS::fromNode(&src, schema::JsonS::ExportOptions::fromNode(&opts)));
+    // json boundary keeps the branch's own value, like tree export
+    Node json_opts;
+    json_opts.set("depth", 1);
+    json_opts.set("newline", "");
+    json_opts.set("tail", "");
+    VE_ASSERT_EQ(schema::schemaFromNode("json", &src, &json_opts), "{\"_value\": \"root body\",\"@id\": \"c1\",\"item\": \"first\"}");
+    json_opts.set("depth", 0);
+    VE_ASSERT_EQ(schema::schemaFromNode("json", &src, &json_opts), "\"root body\"");
+    VE_ASSERT_EQ(schema::schemaFromNode("json", src.child("item"), &json_opts), "\"first\"");
 
     opts.set("depth", 0);
     VE_ASSERT_EQ(schema::schemaFromNode("xml", &src, &opts), "<?xml version=\"1.0\"?>\n<catalog id=\"c1\">root body</catalog>\n");

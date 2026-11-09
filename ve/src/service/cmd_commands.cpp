@@ -122,16 +122,29 @@ static Result parseSearchOpts(Node* in, SearchOpts& o)
 // Stops early when out.size() == o.top.
 static void collect(Node* start, const SearchOpts& o, std::vector<std::string>& out)
 {
-    struct Frame { Node* n; Node::ChildIterator it, end; };
+    // next: index of *it, so the current child sits at next - 1
+    struct Frame { Node* n; Node::ChildIterator it, end; int next; };
     std::vector<Frame> stack;
     stack.reserve(16);
-    stack.push_back({start, start->begin(), start->end()});
+    stack.push_back({start, start->begin(), start->end(), 0});
+
+    // path from the stack: each key resolved with its known index (no sibling scan)
+    auto pathOf = [&stack](Node* child) {
+        std::string p;
+        for (std::size_t j = 0; j < stack.size(); ++j) {
+            Node* c = j + 1 < stack.size() ? stack[j + 1].n : child;
+            if (!p.empty()) p += VE_NODE_PATH_SEP;
+            p += stack[j].n->keyOf(c, stack[j].next - 1);
+        }
+        return p;
+    };
 
     while (!stack.empty() && (int)out.size() < o.top) {
         auto& top = stack.back();
         if (top.it == top.end) { stack.pop_back(); continue; }
         Node* child = *top.it;
         ++top.it;
+        ++top.next;
 
         bool hit = false;
         if (o.target == SearchOpts::Key) {
@@ -140,10 +153,10 @@ static void collect(Node* start, const SearchOpts& o, std::vector<std::string>& 
             auto v = child->get();
             if (!v.isNull()) hit = matchStr(o, v.toString());
         }
-        if (hit) out.push_back(child->path(start));
+        if (hit) out.push_back(pathOf(child));
 
         if ((int)out.size() >= o.top) break;
-        stack.push_back({child, child->begin(), child->end()});
+        stack.push_back({child, child->begin(), child->end(), 0});
     }
 }
 
