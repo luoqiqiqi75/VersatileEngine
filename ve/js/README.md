@@ -25,47 +25,42 @@ NodeHttpServer exposes the following endpoints:
 - `GET/POST/PUT/DELETE /at/<path>`
 - `POST /cmd/<name>`
 - `POST /ve`
-- `POST /jsonrpc`
 
 Endpoint responsibilities:
 
 - `/at/<path>`: read and write schema JSON directly from a browser or curl
 - `/cmd/<name>`: run commands directly from a browser or curl
 - `/ve`: main endpoint for the native VE protocol
-- `/jsonrpc`: endpoint for standard JSON-RPC clients
+
+`/jsonrpc` is no longer supported. Use `POST /ve` with the native VE envelope.
 
 ### `/at/<path>`
 
-- `GET /at/<path>`: export a node or subtree
-- `POST /at/<path>`: set a value, or trigger a signal with `?trigger=1`
-- `PUT /at/<path>`: import raw JSON as a subtree
+- `GET /at` or `GET /at/<path>`: export the root or a subtree as schema JSON
+- `PUT /at/<path>`: merge raw schema JSON into an existing node (`COPY_DEFAULT`), preserving children absent from the body
+- `POST /at/<path>`: strictly import raw schema JSON into an existing node (`COPY_STRICT`), removing children absent from the body
 - `DELETE /at/<path>`: remove a node
+
+Writes require an existing target (HTTP 404 otherwise). Successful writes return
+HTTP 200 with an empty body. PUT and POST require valid JSON; an empty body
+returns HTTP 400. Query parameters are ignored, including `auto_insert`,
+`auto_remove`, `auto_update` and `trigger`.
 
 Examples:
 
 ```bash
 curl http://127.0.0.1:12000/at/ve/server
-curl http://127.0.0.1:12000/at/ve/server?children=1
-curl http://127.0.0.1:12000/at/ve/server?structure=1
-curl -X POST http://127.0.0.1:12000/at/test/value -H "Content-Type: application/json" -d '42'
-curl -X POST "http://127.0.0.1:12000/at/test/value?trigger=1"
-curl -X PUT "http://127.0.0.1:12000/at/test/tree?auto_remove=1" -H "Content-Type: application/json" -d '{"a":1,"b":2}'
+curl -X POST http://127.0.0.1:12000/ve -H "Content-Type: application/json" -d '{"op":"set","params":{"path":"test/tree","value":null}}'
+curl -X PUT http://127.0.0.1:12000/at/test/tree -H "Content-Type: application/json" -d '{"a":1,"b":2}'
+curl -X POST http://127.0.0.1:12000/at/test/tree -H "Content-Type: application/json" -d '{"a":1}'
+curl -X POST http://127.0.0.1:12000/ve -H "Content-Type: application/json" -d '{"op":"trigger","params":{"path":"test/tree"}}'
 curl -X DELETE http://127.0.0.1:12000/at/test/tree
 ```
 
-`GET /at/<path>` supports:
-
-- `auto_ignore=0|1`
-- `depth=<n>`
-- `children=1`
-- `structure=1`
-- `meta=1`
-
-`PUT /at/<path>` supports:
-
-- `auto_insert=0|1`
-- `auto_remove=0|1`
-- `auto_update=0|1`
+Use `POST /ve` with `op:"set"` to set only a node's value, `op:"trigger"` to
+emit a signal, or `op:"import"` with `params.flags` to control import behavior
+and create missing paths. `VeHttpClient.importRest()` uses the merge PUT route
+and resolves without a value on success.
 
 ### `/cmd/<name>`
 
@@ -136,6 +131,7 @@ Build the SDK before using it:
 ```bash
 cd ve/js/ve-sdk
 npm install
+npm run typecheck
 npm run build
 ```
 
@@ -320,7 +316,8 @@ provides:
 
 - `get(path)` / `set(path, value)` - get or set a single value
 - `export(path, depth?)` / `import(path, tree, flags?)` - export or import a subtree
-- `children(path)` - list child node information
+- `meta(path)` - node `{type, count}` without the value
+- `children(path, {offset, limit, value, meta}?)` - child entries `{key}` plus requested `value` / `type`, `count`
 - `erase(path)` - remove a node
 - `trigger(path)` - trigger a signal
 - `subscribe(path, fn, options?)` - subscribe with callback `fn(data, path)` and return an unsubscribe function
@@ -343,7 +340,6 @@ node --test ve/js/test/veservice.test.cjs
 
 - Read-only access, debugging, or curl: use `/at/<path>`
 - Application integration over HTTP: use `/ve`
-- Standard JSON-RPC clients: use `/jsonrpc`
 - Real-time browser subscriptions: use `VeWsClient` or `veservice.js`
 - High-frequency Node.js communication: use `VeBinTcpClient`
 

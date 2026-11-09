@@ -38,7 +38,9 @@
  */
 
 import type {
+  ChildrenOptions,
   ChildrenResponse,
+  MetaResponse,
   CommandListResponse,
   CommandRunResponse,
   ExportResponse,
@@ -479,8 +481,12 @@ export class VeBinTcpClient {
     return this.unwrap(await this.call<PathResponse>('import', params));
   }
 
-  async children(path: string): Promise<ChildrenResponse> {
-    return this.unwrap(await this.call<ChildrenResponse>('children', { path }));
+  async meta(path: string): Promise<MetaResponse> {
+    return this.unwrap(await this.call<MetaResponse>('meta', { path }));
+  }
+
+  async children(path: string, opts: ChildrenOptions = {}): Promise<ChildrenResponse> {
+    return this.unwrap(await this.call<ChildrenResponse>('children', { ...opts, path }));
   }
 
   async erase(path: string): Promise<PathResponse> {

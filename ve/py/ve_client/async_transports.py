@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Callable
 
 from .transports import (
-    NotifyCallback, CODE_NOT_FOUND, RpcError, _UNSET,
+    NotifyCallback, CODE_NOT_FOUND, _UNSET,
     _normalize_path, _command_params, _ok, _reply_error,
 )
 
@@ -192,126 +192,6 @@ class AsyncHttpRestTransport(AsyncTransport):
         try:
             resp = await self._request("GET", "/health")
             return resp.json().get("status") == "ok"
-        except Exception:
-            return False
-
-    async def close(self):
-        await self.client.aclose()
-
-
-class AsyncJsonRpcTransport(AsyncTransport):
-    """Async JSON-RPC 2.0 transport using httpx.
-
-    The JSON-RPC `method` is the v2.1 op name (or a command name); the result
-    is the op's `data` payload.
-    """
-
-    def __init__(self, base_url: str, timeout: int = 30):
-        if httpx is None:
-            raise ImportError("httpx required: pip install httpx")
-        self.url = base_url.rstrip("/") + "/jsonrpc"
-        self.timeout = timeout
-        self._id = 0
-        self.client = httpx.AsyncClient(timeout=timeout)
-
-    async def _call(self, method: str, params: Optional[Dict] = None) -> Any:
-        self._id += 1
-        payload = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params or {},
-            "id": self._id
-        }
-
-        resp = await self.client.post(self.url, json=payload,
-                                       headers={"Content-Type": "application/json"})
-        resp.raise_for_status()
-        result = resp.json()
-
-        if "error" in result:
-            err = result["error"]
-            raise RpcError(err.get("code"), err.get("message"))
-
-        return result.get("result")
-
-    async def get(self, path: str, depth: int = -1) -> Any:
-        """Export node subtree or value (default depth=-1 returns full tree)."""
-        try:
-            data = await self._call("export", {"path": _normalize_path(path), "depth": depth})
-        except RpcError as exc:
-            if exc.code == CODE_NOT_FOUND:
-                return None
-            raise
-        if isinstance(data, dict):
-            return data.get("tree") if data.get("tree") is not None else data.get("value")
-        return data
-
-    async def set(self, path: str, tree: Any) -> bool:
-        """Import a subtree at path (merge)."""
-        try:
-            await self._call("import", {"path": _normalize_path(path), "tree": tree})
-            return True
-        except RpcError:
-            return False
-
-    async def val(self, path: str, value: Any = _UNSET) -> Any:
-        """Get or set a single node value."""
-        if value is _UNSET:
-            try:
-                data = await self._call("get", {"path": _normalize_path(path)})
-            except RpcError as exc:
-                if exc.code == CODE_NOT_FOUND:
-                    return None
-                raise
-            return data.get("value") if isinstance(data, dict) else data
-        else:
-            try:
-                await self._call("set", {"path": _normalize_path(path), "value": value})
-                return True
-            except RpcError:
-                return False
-
-    async def trigger(self, path: str) -> bool:
-        try:
-            await self._call("trigger", {"path": _normalize_path(path)})
-            return True
-        except RpcError:
-            return False
-
-    async def rm(self, path: str) -> bool:
-        try:
-            await self._call("erase", {"path": _normalize_path(path)})
-            return True
-        except RpcError:
-            return False
-
-    async def list(self, path: str) -> List[Dict]:
-        data = await self._call("children", {"path": _normalize_path(path)})
-        return data.get("children", []) if isinstance(data, dict) else []
-
-    async def tree(self, path: str) -> Dict:
-        data = await self._call("export", {"path": _normalize_path(path), "depth": -1})
-        if isinstance(data, dict):
-            return data.get("tree", data.get("value", {}))
-        return data
-
-    async def command(self, name: str, args: Optional[Dict] = None) -> Any:
-        return await self._call(name, _command_params(args))
-
-    async def cmds(self) -> List[Dict]:
-        data = await self._call("commands", {})
-        if isinstance(data, dict):
-            return data.get("commands", [])
-        return data if isinstance(data, list) else []
-
-    async def op(self, op: str, **params) -> Any:
-        # JSON-RPC method = op name; result is already the data payload.
-        return await self._call(op, params)
-
-    async def ping(self) -> bool:
-        try:
-            await self._call("get", {"path": "/"})
-            return True
         except Exception:
             return False
 

@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, List, Optional
 from .transports import (
-    Transport, HttpRestTransport, JsonRpcTransport,
+    Transport, HttpRestTransport,
     TcpJsonTransport, MsgPackTransport, NotifyCallback, _UNSET
 )
 
@@ -39,9 +39,6 @@ class VeClient:
 
         # HTTP native protocol (/ve + /at)
         client = VeClient("http://localhost:12000")
-
-        # JSON-RPC
-        client = VeClient("http://localhost:12000", transport="jsonrpc")
 
         # MessagePack (high-performance)
         client = VeClient("tcp://localhost:11000", transport="msgpack")
@@ -90,8 +87,7 @@ class VeClient:
             base_url = url if "://" in url else f"http://{url}"
             return HttpRestTransport(base_url, timeout)
         elif name == "jsonrpc":
-            base_url = url if "://" in url else f"http://{url}"
-            return JsonRpcTransport(base_url, timeout)
+            raise ValueError('JSON-RPC is no longer supported; use transport="http" (POST /ve)')
         else:
             raise ValueError(f"Unknown transport: {name!r}")
 

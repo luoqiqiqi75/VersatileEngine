@@ -157,11 +157,10 @@ async with AsyncVeClient("http://localhost:12000") as client:
 
 ### 4. 传输协议支持
 
-**Python支持4种传输协议：**
+**Python支持3种传输协议：**
 - `tcp` (TCP JSON, port 12200) - 默认，支持订阅
 - `msgpack` (MessagePack, port 11000) - 高性能，支持订阅
 - `http` (HTTP REST, port 12000) - 不支持订阅
-- `jsonrpc` (JSON-RPC 2.0, port 12000) - 不支持订阅
 
 **JS只支持WebSocket (port 12100)**
 
@@ -188,4 +187,4 @@ client.set("/config", {"port": 8080})  # 设置树结构
 ✓ 方法签名和语义完全对齐  
 ✓ 底层协议操作一致（Envelope v2.1：get/set/export/import/children/erase/trigger 等）  
 ✓ 支持同步和异步两种API风格  
-✓ 支持多种传输协议（TCP JSON、MsgPack、HTTP、JSON-RPC）
+✓ 支持多种传输协议（TCP JSON、MsgPack、HTTP）

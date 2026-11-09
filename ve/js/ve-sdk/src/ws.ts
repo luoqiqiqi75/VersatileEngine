@@ -1,5 +1,7 @@
 import type {
+  ChildrenOptions,
   ChildrenResponse,
+  MetaResponse,
   CommandListResponse,
   CommandRunResponse,
   ExportResponse,
@@ -133,8 +135,12 @@ export class VeWsClient {
 
   // ===== Structure operations =====
 
-  async children(path = ''): Promise<ChildrenResponse> {
-    return this.unwrap(await this.call<ChildrenResponse>('children', { path }));
+  async meta(path = ''): Promise<MetaResponse> {
+    return this.unwrap(await this.call<MetaResponse>('meta', { path }));
+  }
+
+  async children(path = '', opts: ChildrenOptions = {}): Promise<ChildrenResponse> {
+    return this.unwrap(await this.call<ChildrenResponse>('children', { ...opts, path }));
   }
 
   async erase(path: string): Promise<PathResponse> {

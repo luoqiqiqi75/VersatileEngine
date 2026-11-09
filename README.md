@@ -394,7 +394,7 @@ Benchmarks run on Intel i7-12700K, Windows 11, MSVC 2022 Release build. See `ve/
 | Terminal (AI/script) | 10100 | TCP text | REPL, bare output. **Default for scripts and AI agents.** |
 | Terminal (human) | 10000 | TCP text | REPL with banner/title/color. Human interactive only. |
 | Binary TCP | 11000 | MessagePack | High-performance IPC |
-| HTTP | 12000 | HTTP | `/at` + `/ve` + `/jsonrpc` + `/cmd` |
+| HTTP | 12000 | HTTP | `/at` + `/ve` + `/cmd` |
 | WebSocket | 12100 | WS JSON | Real-time Node change push |
 | TCP | 12200 | JSON newline | Scripts, embedded tools |
 | UDP | 12300 | JSON datagram | Fire-and-forget |
@@ -413,7 +413,7 @@ Benchmarks run on Intel i7-12700K, Windows 11, MSVC 2022 Release build. See `ve/
 
 `schema xml /path -d 1` limits export to direct children. Network `export`
 accepts `format` plus that format's export options such as `depth`.
-For bounded tree browsing, `children` accepts `offset`, `limit`, and `values`;
+For bounded tree browsing, `meta` reads type and child count, `children` pages keys with `offset`, `limit`, `value`, `meta`;
 see [Service Reference](docs/SERVICE.md) for request and reply fields.
 
 Port rule: **first three digits** = service family (fixed); **last two** increment on bind failure. See [docs/SERVICE.md](docs/SERVICE.md) (*Port numbering*).

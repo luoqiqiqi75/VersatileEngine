@@ -22,7 +22,7 @@ Always read `runtime/port` from the node tree if the configured base port might 
 
 | Service | Transport | Port | Protocol | Subscribe | Use Case |
 |---------|-----------|------|----------|-----------|----------|
-| NodeHttpServer | HTTP | 12000 | `/at` + `/cmd` + `/ve` + `/jsonrpc` | No | Browser, curl, service integration |
+| NodeHttpServer | HTTP | 12000 | `/at` + `/cmd` + `/ve` | No | Browser, curl, service integration |
 | NodeWsServer | WebSocket | 12100 | JSON envelope | Yes | Real-time web apps |
 | NodeTcpServer | TCP | 12200 | JSON envelope + newline | Yes | Scripts, embedded tools |
 | NodeUdpServer | UDP | 12300 | JSON envelope datagram | No | Fire-and-forget |
@@ -89,13 +89,14 @@ Run only the async connection shutdown regressions with
 
 ## NodeHttpServer
 
-Port `12000`. This server now has **four** API surfaces:
+Port `12000`. This server has **four** API surfaces:
 
 - `GET /health`
 - `GET/POST/PUT/DELETE /at/<path>`
 - `POST /cmd/<name>`
 - `POST /ve`
-- `POST /jsonrpc`
+
+`/jsonrpc` is no longer supported. Use `POST /ve` with the native VE envelope.
 
 ### `GET /health`
 
@@ -108,53 +109,46 @@ curl http://localhost:12000/health
 
 `/at` is the convenience layer for browser / curl users.
 
-- `GET /at/<path>` — export node or subtree as schema JSON
-- `POST /at/<path>` — set node value; empty body or `?trigger=1` triggers without changing value
-- `PUT /at/<path>` — import subtree from raw JSON body
+- `GET /at` or `GET /at/<path>` — export the root or a subtree as schema JSON
+- `PUT /at/<path>` — merge raw schema JSON into an existing node (`COPY_DEFAULT`), preserving children absent from the body
+- `POST /at/<path>` — strictly import raw schema JSON into an existing node (`COPY_STRICT`), removing children absent from the body
 - `DELETE /at/<path>` — remove a node
+
+Writes require an existing target node; a missing path returns HTTP 404. Successful
+PUT, POST and DELETE requests return HTTP 200 with an empty body. PUT and POST
+require valid JSON; an empty body returns HTTP 400.
+
+`/at` does not read query parameters, including `auto_insert`, `auto_remove`,
+`auto_update` and `trigger`. Use `POST /ve` with `op:"set"` to set only a node's
+value, `op:"trigger"` to emit a signal, or `op:"import"` with `params.flags` to
+control import behavior and create missing paths.
 
 Examples:
 
 ```bash
 curl http://localhost:12000/at/ve/server
 
-curl http://localhost:12000/at/ve/server?depth=1
-curl http://localhost:12000/at/ve/server?children=1
-curl http://localhost:12000/at/ve/server/node/http?meta=1
-curl http://localhost:12000/at/ve/server?structure=1
-curl http://localhost:12000/at/ve/server?auto_ignore=0
-
-curl -X POST http://localhost:12000/at/test/value \
+curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '42'
+  -d '{"op":"set","params":{"path":"test/tree","value":null}}'
 
-curl -X POST "http://localhost:12000/at/test/value?trigger=1"
+# Merge: preserve any other children of test/tree.
 
 curl -X PUT http://localhost:12000/at/test/tree \
   -H "Content-Type: application/json" \
   -d '{"a":1,"b":2}'
 
-curl -X PUT "http://localhost:12000/at/test/tree?auto_remove=1" \
+# Strict import: remove b and any other children absent from the body.
+curl -X POST http://localhost:12000/at/test/tree \
   -H "Content-Type: application/json" \
   -d '{"a":1}'
 
+curl -X POST http://localhost:12000/ve \
+  -H "Content-Type: application/json" \
+  -d '{"op":"trigger","params":{"path":"test/tree"}}'
+
 curl -X DELETE http://localhost:12000/at/test/tree
 ```
-
-Supported query parameters:
-
-- `GET /at/<path>`
-  - `auto_ignore=0|1`
-  - `depth=<n>`
-  - `children=1`
-  - `structure=1`
-  - `meta=1`
-- `PUT /at/<path>`
-  - `auto_insert=0|1`
-  - `auto_remove=0|1`
-  - `auto_update=0|1`
-- `POST /at/<path>`
-  - `trigger=1`
 
 ### `POST /cmd/<name>`
 
@@ -215,7 +209,8 @@ Common operations (all arguments go in `params`):
 | `set` | `path`, `value` | Set raw node value |
 | `export` | `path`, `depth?`, `format?` | Export subtree or format text (`depth`: negative full, `0` value only, `N` levels) |
 | `import` | `path`, `tree`, `flags?` | Import subtree (`flags` `9` merge / `11` replace) |
-| `children` | `path`, `offset?`, `limit?`, `values?` | Read direct children in insertion order |
+| `meta` | `path` | Node `type` and child `count`, no value |
+| `children` | `path`, `offset?`, `limit?`, `value?`, `meta?` | Direct children keys in insertion order |
 | `erase` | `path` | Remove node |
 | `trigger` | `path` | Fire `NODE_CHANGED` without changing value |
 | `commands` | none | List registered commands |
@@ -231,24 +226,27 @@ disables all four bits; update suppresses change signals for unchanged values.
 User commands use the `cmd` field instead of an `op`; batch uses the top-level
 `batch` array (each item is its own `op`/`cmd` request).
 
-`children` lists direct children in insertion order. `offset` (default `0`,
-negative counts from the end) and `limit` (default `-1` = all) select a range;
-`values:false` omits `value`. The reply has `total` and `children`; each entry
-has `index`, `key` (`name`, `name#N` or `#N`), `name`, `path`, `type`
-(`Var::typeName`), `child_count` and optional `value`. An empty range (including
-`limit:0`, a cheap way to read `total`) may reply `children:null`. Continue
-paging with the last `index + 1`.
+`get` reads the value, `meta` reads the structure (`type` = `Var::typeName`,
+`count` = direct children) without transferring the value. `children` lists
+direct children in insertion order; `offset` (default `0`, negative counts from
+the end) and `limit` (default `-1` = all) select a range. Each entry is
+`{key}` (`name`, `name#N` or `#N`); `value:true` adds `value` as `get` does,
+`meta:true` adds `type` and `count` as `meta` does. An empty range replies
+`children:null`. Read `meta` first for the child count, then page `children`.
 
 ```json
-{"op":"children","params":{"path":"items","offset":0,"limit":32,"values":false}}
+{"op":"meta","params":{"path":"items"}}
+→ {"code":0,"data":{"type":"Null","count":1000}}
+
+{"op":"children","params":{"path":"items","offset":0,"limit":32,"value":true,"meta":true}}
+→ {"code":0,"data":{"children":[{"key":"item#0","value":1,"type":"Int","count":0}, ...]}}
 ```
 
 `export` with `format` returns `data.format` and `data.text` from the schema
 registry (`json`, `xml`, `md`, `dump`, plugin formats; not `bin`). `params` is
 passed as the format's export options, so `depth`, `indent`, ... apply.
 `depth` means the same in every format: nodes at the boundary keep their own
-value and drop children (`json` included; use `children` / `child_count` to
-see whether more exists). `tree` and `json` keep only the first of same-name
+value and drop children (`json` included; `meta` tells whether more exists). `tree` and `json` keep only the first of same-name
 siblings; read them with `children` (native keys) or `format:"dump"`.
 
 ```json
@@ -277,31 +275,6 @@ curl -X POST http://localhost:12000/ve \
 curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
   -d '{"batch":[{"op":"get","params":{"path":"one"}},{"op":"get","params":{"path":"two"}}],"id":5}'
-```
-
-### `POST /jsonrpc`
-
-JSON-RPC remains for standard clients that do not want to speak the VE native envelope directly. Internally it maps onto the same dispatcher as `/ve`.
-
-Supported methods (same names as the `/ve` ops):
-
-- `get`
-- `set`
-- `export`
-- `import`
-- `children`
-- `erase`
-- `trigger`
-- `commands`
-
-User commands are called by their registered name as the JSON-RPC `method`.
-
-Example:
-
-```bash
-curl -X POST http://localhost:12000/jsonrpc \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"get","params":{"path":"ve/server"},"id":1}'
 ```
 
 ---
@@ -573,9 +546,9 @@ Proxy targets support live updates via the node tree. When `ServerModule` starts
 set ve/server/static/config/mounts/#0/proxy/#0/target http://10.0.0.5:9090/v2
 
 # HTTP
-curl -X POST http://localhost:12000/at/ve/server/static/config/mounts/%230/proxy/%230/target \
+curl -X POST http://localhost:12000/ve \
   -H "Content-Type: application/json" \
-  -d '"http://10.0.0.5:9090/v2"'
+  -d '{"op":"set","params":{"path":"ve/server/static/config/mounts/#0/proxy/#0/target","value":"http://10.0.0.5:9090/v2"}}'
 
 # WebSocket
 {"op":"set","id":1,"params":{"path":"ve/server/static/config/mounts/#0/proxy/#0/target","value":"http://10.0.0.5:9090/v2"}}
@@ -623,7 +596,6 @@ client = VeClient("http://localhost:12000", transport="http")
 client.get("ve/server/node/http/runtime/port")
 client.tree("ve/server")
 
-client = VeClient("http://localhost:12000", transport="jsonrpc")
 client = VeClient("tcp://localhost:12200")
 client = VeClient("tcp://localhost:11000", transport="msgpack")
 ```
@@ -636,7 +608,7 @@ client = VeClient("tcp://localhost:11000", transport="msgpack")
 |------|---------|----------|
 | 10000 | TerminalReplServer | Text REPL |
 | 11000 | BinTcpServer | MessagePack envelope |
-| 12000 | NodeHttpServer | `/at` + `/ve` + `/jsonrpc` |
+| 12000 | NodeHttpServer | `/at` + `/cmd` + `/ve` |
 | 12100 | NodeWsServer | WebSocket envelope |
 | 12200 | NodeTcpServer | TCP JSON envelope |
 | 12300 | NodeUdpServer | UDP JSON envelope |

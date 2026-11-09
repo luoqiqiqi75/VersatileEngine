@@ -195,18 +195,35 @@ VE_TEST(node_dispatch_get_set_and_children) {
         Node* children = pipe.contextNode()->find("data/children");
         VE_ASSERT(children != nullptr);
         VE_ASSERT_EQ(children->count(), 1);
-        VE_ASSERT_EQ(children->child(0)->get("name").toString(), "value");
-        VE_ASSERT_EQ(children->child(0)->get("path").toString(), "a/value");
-        VE_ASSERT_EQ(children->child(0)->get("value").toInt(), 42);
+        VE_ASSERT_EQ(children->child(0)->count(), 1); // key only by default
+        VE_ASSERT_EQ(children->child(0)->get("key").toString(), "value");
     }
 }
 
-VE_TEST(node_dispatch_children_range_uses_native_keys) {
+VE_TEST(node_dispatch_meta) {
+    Node root;
+    root.at("items")->set(7);
+    root.at("items")->append("a");
+    root.at("items")->append();
+    service::Session session(&root, &root);
+
+    Pipeline pipe;
+    pipe.contextNode()->set("op", "meta");
+    pipe.contextNode()->at("params")->set("path", "items");
+    runEnvelope(&session, pipe);
+    VE_ASSERT_EQ(pipe.contextNode()->get("code").toInt(-1), 0);
+    Node* data = pipe.contextNode()->find("data");
+    VE_ASSERT_EQ(data->count(), 2);
+    VE_ASSERT_EQ(data->get("type").toString(), "Int");
+    VE_ASSERT_EQ(data->get("count").toInt(), 2);
+}
+
+VE_TEST(node_dispatch_children_value_meta_match_get_meta) {
     Node root;
     Node* parent = root.append("items");
     parent->append("item")->set(10);
     parent->append()->set("anonymous");
-    parent->append("item")->set(20);
+    parent->append("item");
     parent->child(2)->append("nested");
     service::Session session(&root, &root);
 
@@ -214,20 +231,23 @@ VE_TEST(node_dispatch_children_range_uses_native_keys) {
     pipe.contextNode()->set("op", "children");
     Node* params = pipe.contextNode()->at("params");
     params->set("path", "items");
-    params->set("offset", 1);
-    params->set("limit", 2);
-    params->set("values", false);
+    params->set("value", true);
+    params->set("meta", true);
     runEnvelope(&session, pipe);
 
-    VE_ASSERT_EQ(pipe.contextNode()->get("data/total").toInt(), 3);
     Node* list = pipe.contextNode()->find("data/children");
-    VE_ASSERT_EQ(list->count(), 2);
-    VE_ASSERT_EQ(list->child(0)->get("index").toInt(), 1);
-    VE_ASSERT_EQ(list->child(0)->get("key").toString(), "#1");
-    VE_ASSERT_EQ(list->child(0)->get("type").toString(), "String");
-    VE_ASSERT(list->child(0)->find("value") == nullptr);
-    VE_ASSERT_EQ(list->child(1)->get("path").toString(), "items/item#1");
-    VE_ASSERT_EQ(list->child(1)->get("child_count").toInt(), 1);
+    VE_ASSERT_EQ(list->count(), 3);
+    const char* keys[] = {"item#0", "#1", "item#1"};
+    for (int i = 0; i < 3; ++i) {
+        Node* e = list->child(i);
+        VE_ASSERT_EQ(e->count(), 4);
+        VE_ASSERT_EQ(e->get("key").toString(), keys[i]);
+        Node* child = parent->child(i);
+        VE_ASSERT(e->get("value") == child->get());
+        VE_ASSERT_EQ(e->get("type").toString(), Var::typeName(child->get().type()));
+        VE_ASSERT_EQ(e->get("count").toInt(), child->count());
+    }
+    VE_ASSERT(list->child(2)->find("value") != nullptr); // null value still present when requested
 }
 
 VE_TEST(node_dispatch_children_bounds) {
@@ -236,16 +256,17 @@ VE_TEST(node_dispatch_children_bounds) {
     root.append("second")->set(2);
     root.append("third")->set(3);
     service::Session session(&root, &root);
-    struct Range { int offset, limit, first, count; };
-    for (auto range : {Range{0, -1, 0, 3}, {-1, 1, 2, 1}, {0, 0, 0, 0}, {3, 1, 0, 0}}) {
+    struct Range { int offset, limit, count; const char* key; };
+    for (auto range : {Range{0, -1, 3, "first"}, {-1, 1, 1, "third"}, {1, 9, 2, "second"},
+                       {0, 0, 0, nullptr}, {3, 1, 0, nullptr}, {-4, 1, 0, nullptr}}) {
         Pipeline pipe;
         pipe.contextNode()->set("op", "children");
         pipe.contextNode()->at("params")->set("offset", range.offset);
         pipe.contextNode()->at("params")->set("limit", range.limit);
         runEnvelope(&session, pipe);
         Node* list = pipe.contextNode()->find("data/children");
-        VE_ASSERT_EQ(list->count(), range.count);
-        if (range.count) VE_ASSERT_EQ(list->child(0)->get("index").toInt(), range.first);
+        VE_ASSERT_EQ(list ? list->count() : 0, range.count);
+        if (range.key) VE_ASSERT_EQ(list->child(0)->get("key").toString(), range.key);
     }
 }
 
@@ -263,20 +284,19 @@ VE_TEST(node_dispatch_children_same_name_window) {
         params->set("offset", range.offset);
         params->set("limit", range.limit);
         runEnvelope(&session, pipe);
-        VE_ASSERT_EQ(pipe.contextNode()->get("data/total").toInt(), 1000);
         Node* list = pipe.contextNode()->find("data/children");
         VE_ASSERT_EQ(list ? list->count() : 0, range.count);
         if (!range.key) continue;
         VE_ASSERT_EQ(list->child(0)->get("key").toString(), range.key);
-        VE_ASSERT_EQ(list->child(0)->get("path").toString(), std::string("items/") + range.key);
-        VE_ASSERT(root.find(list->child(0)->get("path").toString()) == parent->child(list->child(0)->get("index").toInt()));
+        const int index = range.offset < 0 ? range.offset + 1000 : range.offset;
+        VE_ASSERT(parent->find(range.key) == parent->child(index));
     }
 }
 
 VE_TEST(node_dispatch_read_options_do_not_create_missing_paths) {
     Node root;
     service::Session session(&root, &root);
-    for (const char* op : {"children", "export"}) {
+    for (const char* op : {"meta", "children", "export"}) {
         Pipeline pipe;
         pipe.contextNode()->set("op", op);
         pipe.contextNode()->at("params")->set("path", "missing/#5");

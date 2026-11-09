@@ -89,6 +89,23 @@ static Result export_(Node* ctx, Node* params, Node* data)
     return Result::ok();
 }
 
+// meta fields, shared by meta and children(meta:true)
+static void setMeta(Node* out, const Node* n)
+{
+    out->set("type", Var::typeName(n->get().type()));
+    out->set("count", n->count());
+}
+
+static Result meta(Node* ctx, Node* params, Node* data)
+{
+    Node* r = root(ctx);
+    std::string path = normalizePath(params->get("path").toString());
+    Node* target = path.empty() ? r : r->find(path);
+    if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
+    setMeta(data, target);
+    return Result::ok();
+}
+
 static Result children(Node* ctx, Node* params, Node* data)
 {
     Node* r = root(ctx);
@@ -99,24 +116,17 @@ static Result children(Node* ctx, Node* params, Node* data)
     int offset = params->get("offset").toInt(0);
     if (offset < 0) offset += total;
     const int limit = params->get("limit").toInt(-1);
-    const bool values = params->get("values").toBool(true);
-    data->set("total", total);
+    const bool with_value = params->get("value").toBool(false);
+    const bool with_meta  = params->get("meta").toBool(false);
     Node* list = data->at("children");
     if (offset < 0) return Result::ok();
     const int end = (limit < 0 || limit > total - offset) ? total : offset + limit;
-    const std::string parent_path = target->path(r);
     for (int i = offset; i < end; ++i) {
         Node* child = target->child(i);
-        const std::string key = target->keyOf(child, i);
-        Var value = child->get();
         Node* item = list->append();
-        item->set("index", i);
-        item->set("key", key);
-        item->set("name", child->name());
-        item->set("path", parent_path.empty() ? key : parent_path + VE_NODE_PATH_SEP + key);
-        item->set("type", Var::typeName(value.type()));
-        if (values && !value.isNull()) item->set("value", std::move(value));
-        item->set("child_count", static_cast<int64_t>(child->count()));
+        item->set("key", target->keyOf(child, i));
+        if (with_value) item->at("value")->set(child->get());
+        if (with_meta) setMeta(item, child);
     }
     return Result::ok();
 }
@@ -236,6 +246,7 @@ VE_API void registerNodeCommands(Factory& op_f)
     R("set",         op::set);
     R("export",      op::export_);
     R("import",      op::import_);
+    R("meta",        op::meta);
     R("children",    op::children);
     R("erase",       op::erase);
     R("trigger",     op::trigger);

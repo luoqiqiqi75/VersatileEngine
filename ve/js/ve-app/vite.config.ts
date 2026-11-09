@@ -15,10 +15,6 @@ export default defineConfig({
         target: 'http://localhost:12000',
         changeOrigin: true,
       },
-      '/jsonrpc': {
-        target: 'http://localhost:12000',
-        changeOrigin: true,
-      },
       '/health': {
         target: 'http://localhost:12000',
         changeOrigin: true,

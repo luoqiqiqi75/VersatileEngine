@@ -269,10 +269,18 @@ var VEService = function(wsUrl) {
             .then(this._unwrapReply);
     };
 
-    this.children = function(path) {
-        return this.send({ op: "children", params: { path: this._normalizePath(path) } })
+    // {type, count} without the value
+    this.meta = function(path) {
+        return this.send({ op: "meta", params: { path: this._normalizePath(path) } })
+            .then(this._unwrapReply);
+    };
+
+    // opts: {offset, limit, value, meta}; entries are {key} plus requested fields
+    this.children = function(path, opts) {
+        var params = Object.assign({}, opts || {}, { path: this._normalizePath(path) });
+        return this.send({ op: "children", params: params })
             .then(this._unwrapReply)
-            .then(function(data) { return data ? data.children : []; });
+            .then(function(data) { return (data && data.children) || []; });
     };
 
     this.erase = function(path) {

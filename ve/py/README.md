@@ -8,7 +8,7 @@ Python client library for VE with multiple transports.
 # Default (TCP JSON, pure stdlib)
 pip install ve-client
 
-# HTTP / JSON-RPC (sync)
+# HTTP (sync)
 pip install ve-client[http]
 
 # Async support (for FastAPI, asyncio apps)
@@ -69,22 +69,15 @@ client = VeClient("tcp://localhost:12200")
 ### HTTP
 
 - Port: `12000`
-- Protocol: `POST /ve` + convenience `GET/PUT /at/*`
+- Protocol: `POST /ve` + convenience `GET /at/*`
 - Features: stateless, curl-friendly
 
 ```python
 client = VeClient("http://localhost:12000", transport="http")
 ```
 
-### JSON-RPC 2.0
-
-- Port: `12000`
-- Protocol: `POST /jsonrpc`
-- Features: standard JSON-RPC clients
-
-```python
-client = VeClient("http://localhost:12000", transport="jsonrpc")
-```
+`/jsonrpc` and `transport="jsonrpc"` are no longer supported. Use
+`transport="http"` for the native VE envelope over `POST /ve`.
 
 ### MessagePack Binary
 
@@ -117,7 +110,7 @@ HTTP transport internally maps these calls to the VE native protocol (Envelope v
 - `val()` -> `get` / `set`
 - `set()` -> `import`
 - `trigger()` -> `trigger`
-- `list()` -> `children`
+- `list()` -> `children` (entries `{key}`)
 - `rm()` -> `erase`
 - `tree()` -> `GET /at/<path>`
 - `command()` -> `cmd` field

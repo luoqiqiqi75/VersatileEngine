@@ -31,15 +31,27 @@ export interface VeErrorReply {
 
 export type VeReply<T = VarValue> = VeOkReply<T> | VeErrorReply;
 
-export interface ChildEntry {
-  name: string;
-  path: string;
+/** Response of `meta`: structure without the value. */
+export interface MetaResponse {
+  type: string;   // Var::typeName
+  count: number;  // direct children
+}
+
+export interface ChildrenOptions {
+  offset?: number;  // negative counts from the end
+  limit?: number;   // -1 = all remaining
+  value?: boolean;  // add value, as get
+  meta?: boolean;   // add type/count, as meta
+}
+
+/** key always; value with `value`, type/count with `meta`. */
+export interface ChildEntry extends Partial<MetaResponse> {
+  key: string;
   value?: VarValue;
-  child_count: number;
 }
 
 export interface ChildrenResponse {
-  children: ChildEntry[];
+  children: ChildEntry[] | null;  // null when the range is empty
 }
 
 export interface ExportResponse {
@@ -51,10 +63,6 @@ export interface GetResponse {
 }
 
 export interface PathResponse {
-  path: string;
-}
-
-export interface TreeImportResponse {
   path: string;
 }
 

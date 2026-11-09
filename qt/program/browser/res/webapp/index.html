@@ -144,33 +144,34 @@ function unwatchAll() {
   watchedLeaves = {};
 }
 
-// One tree row. info comes from children: {name, path, value?, child_count}.
-function makeNodeLi(info, value) {
+// One tree row. info comes from children(value, meta): {key, value, type, count}.
+function makeNodeLi(parentPath, info) {
+  var path = parentPath ? parentPath + '/' + info.key : info.key;
   var li = document.createElement('li');
   var row = document.createElement('div');
   row.className = 'row';
 
   var caret = document.createElement('span');
   caret.className = 'caret';
-  var expandable = info.child_count > 0;
+  var expandable = info.count > 0;
   caret.textContent = expandable ? '▶' : '·';
   if (!expandable) caret.classList.add('leaf');
   row.appendChild(caret);
 
   var name = document.createElement('span');
-  name.className = 'name' + (info.name ? '' : ' anon');
-  name.textContent = info.name || info.path.split('/').pop();
+  name.className = 'name' + (info.key.charAt(0) === '#' ? ' anon' : '');
+  name.textContent = info.key;
   row.appendChild(name);
 
   var val = document.createElement('span');
   val.className = 'val';
-  if (value !== undefined) val.textContent = fmtValue(value);
+  if (info.type !== 'Null') val.textContent = fmtValue(info.value);
   row.appendChild(val);
 
   if (expandable) {
     var badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = info.child_count;
+    badge.textContent = info.count;
     row.appendChild(badge);
   }
 
@@ -186,39 +187,28 @@ function makeNodeLi(info, value) {
       if (open) {
         ul.style.display = 'none';
         caret.textContent = '▶';
-        unwatchPrefix(info.path);
+        unwatchPrefix(path);
         return;
       }
       ul.style.display = '';
       caret.textContent = '▼';
       if (!loaded) {
         loaded = true;
-        loadChildren(info.path, ul);
+        loadChildren(path, ul);
       }
     };
-  } else if ('value' in info) {
+  } else if (info.type !== 'Null') {
     // Leaf with value: watch it for live updates
-    watchLeaf(info.path, val);
+    watchLeaf(path, val);
   }
 
   return li;
 }
 
-// Lazy-load one level: children() for structure, export(path,1) for values.
+// Lazy-load one level: one children() call carries keys, values and counts.
 function loadChildren(path, ul) {
   ul.textContent = '';
-  Promise.all([
-    veService.children(path),
-    veService.export(path, 1)
-  ]).then(function(results) {
-    var children = results[0] || [];
-    var tree = results[1];
-
-    var nameCount = {};
-    children.forEach(function(c) {
-      if (c.name) nameCount[c.name] = (nameCount[c.name] || 0) + 1;
-    });
-
+  veService.children(path, { value: true, meta: true }).then(function(children) {
     if (children.length === 0) {
       var li = document.createElement('li');
       li.className = 'empty';
@@ -226,14 +216,8 @@ function loadChildren(path, ul) {
       ul.appendChild(li);
       return;
     }
-
     children.forEach(function(c) {
-      var value;
-      if (c.child_count === 0 && ('value' in c) && c.name && nameCount[c.name] === 1
-          && tree && typeof tree === 'object' && !Array.isArray(tree)) {
-        value = tree[c.name];
-      }
-      ul.appendChild(makeNodeLi(c, value));
+      ul.appendChild(makeNodeLi(path, c));
     });
   }).catch(function(err) {
     log('Load ' + (path || '/') + ' failed: ' + err.message);

@@ -1,12 +1,13 @@
 import type {
+  ChildrenOptions,
   ChildrenResponse,
+  MetaResponse,
   CommandListResponse,
   CommandRunResponse,
   ExportResponse,
   GetResponse,
   HealthResponse,
   PathResponse,
-  TreeImportResponse,
   VarValue,
   VeErrorReply,
   VeReply,
@@ -98,8 +99,12 @@ export class VeHttpClient {
 
   // ===== Structure operations =====
 
-  async children(path = ''): Promise<ChildrenResponse> {
-    return this.unwrap(await this.call<ChildrenResponse>('children', { path }));
+  async meta(path = ''): Promise<MetaResponse> {
+    return this.unwrap(await this.call<MetaResponse>('meta', { path }));
+  }
+
+  async children(path = '', opts: ChildrenOptions = {}): Promise<ChildrenResponse> {
+    return this.unwrap(await this.call<ChildrenResponse>('children', { ...opts, path }));
   }
 
   async erase(path: string): Promise<PathResponse> {
@@ -126,14 +131,15 @@ export class VeHttpClient {
     return this.unwrap(await this.send<VarValue>({ batch: items }));
   }
 
-  // ===== Legacy REST endpoints (unchanged, use /at/* directly) =====
+  // ===== Schema JSON convenience endpoints =====
 
   async exportRest(path = ''): Promise<string> {
     return this.requestText(this.atUrl(path));
   }
 
-  async importRest(path: string, json: string): Promise<TreeImportResponse> {
-    return this.requestJson<TreeImportResponse>(this.atUrl(path), {
+  // Merge into an existing node. PUT /at/* returns an empty body on success.
+  async importRest(path: string, json: string): Promise<void> {
+    await this.requestText(this.atUrl(path), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: json,

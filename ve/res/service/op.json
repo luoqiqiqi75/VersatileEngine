@@ -90,37 +90,55 @@
     }
   },
 
-  "children": {
+  "meta": {
     "instruction": {
-      "description": "Read direct children in insertion order, optionally selecting a range and omitting values.",
-      "usage": "children [path] [offset] [limit] [values]",
+      "description": "Read a node's structure without its value.",
+      "usage": "meta [path]",
       "input_schema": {
         "type": "object",
         "properties": {
-          "path": { "type": "string", "description": "parent path; empty = root" },
-          "offset": { "type": "integer", "description": "first child index, default 0; negative counts from the end; out of range returns no entries" },
-          "limit": { "type": "integer", "description": "number of children, default -1; negative = all remaining, 0 = total only" },
-          "values": { "type": "boolean", "description": "include non-null values, default true; false omits value from each entry" }
+          "path": { "type": "string", "description": "node path; empty = root" }
         },
         "required": []
       },
       "output_schema": {
         "type": "object",
         "properties": {
-          "total": { "type": "integer", "description": "total direct child count" },
+          "type":  { "type": "string", "enum": ["Null", "Bool", "Int", "Double", "String", "Bin", "List", "Dict", "Pointer", "Callable", "Custom"] },
+          "count": { "type": "integer", "description": "direct child count" }
+        }
+      }
+    }
+  },
+
+  "children": {
+    "instruction": {
+      "description": "List direct children in insertion order; each entry is its key plus requested get/meta fields.",
+      "usage": "children [path] [offset] [limit] [value] [meta]",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path":   { "type": "string", "description": "parent path; empty = root" },
+          "offset": { "type": "integer", "description": "first child index, default 0; negative counts from the end" },
+          "limit":  { "type": "integer", "description": "max entries, default -1 = all remaining" },
+          "value":  { "type": "boolean", "description": "add value, as get; default false" },
+          "meta":   { "type": "boolean", "description": "add type and count, as meta; default false" }
+        },
+        "required": []
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
           "children": {
             "type": "array",
-            "description": "child entries; null or absent when the range is empty",
+            "description": "entries in range; null when empty",
             "items": {
               "type": "object",
               "properties": {
-                "index":       { "type": "integer", "description": "zero-based position among all direct children" },
-                "key":         { "type": "string", "description": "native name, name#N or #N" },
-                "name":        { "type": "string" },
-                "path":        { "type": "string" },
-                "type":        { "type": "string", "enum": ["Null", "Bool", "Int", "Double", "String", "Bin", "List", "Dict", "Pointer", "Callable", "Custom"] },
-                "value":       { "description": "child value if non-null" },
-                "child_count": { "type": "integer" }
+                "key":   { "type": "string", "description": "name, name#N or #N" },
+                "value": { "description": "with value" },
+                "type":  { "type": "string", "description": "with meta" },
+                "count": { "type": "integer", "description": "with meta" }
               }
             }
           }

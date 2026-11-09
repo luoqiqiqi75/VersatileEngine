@@ -2,7 +2,6 @@
 
 Compares performance of different transports:
 - HTTP /ve (12000)
-- JSON-RPC (12000/jsonrpc)
 - TCP JSON (12200) - default
 - MessagePack (11000) - fastest
 
@@ -89,7 +88,6 @@ def main():
 
     transports = [
         ("HTTP /ve", "http://localhost:12000", "http"),
-        ("JSON-RPC", "http://localhost:12000", "jsonrpc"),
         ("TCP JSON", "tcp://localhost:12200", "tcp"),
         ("MessagePack", "tcp://localhost:11000", "msgpack"),
     ]

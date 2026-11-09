@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, List, Optional
 from .async_transports import (
-    AsyncTransport, AsyncHttpRestTransport, AsyncJsonRpcTransport, _UNSET
+    AsyncTransport, AsyncHttpRestTransport, _UNSET
 )
 
 
@@ -35,9 +35,6 @@ class AsyncVeClient:
         # HTTP native protocol (/ve + /at)
         client = AsyncVeClient()
         client = AsyncVeClient("http://localhost:12000")
-
-        # JSON-RPC
-        client = AsyncVeClient("http://localhost:12000", transport="jsonrpc")
 
         # Operations (aligned with JS veservice.js)
         tree = await client.get("/config")           # Get tree (depth=-1)
@@ -76,8 +73,7 @@ class AsyncVeClient:
             base_url = url if "://" in url else f"http://{url}"
             return AsyncHttpRestTransport(base_url, timeout)
         elif name == "jsonrpc":
-            base_url = url if "://" in url else f"http://{url}"
-            return AsyncJsonRpcTransport(base_url, timeout)
+            raise ValueError('JSON-RPC is no longer supported; use transport="http" (POST /ve)')
         else:
             raise ValueError(f"Unknown async transport: {name!r}")
 

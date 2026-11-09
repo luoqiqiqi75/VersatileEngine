@@ -132,16 +132,7 @@ def main():
         print(f"  HTTP: ERROR - {e}")
         results["HTTP"] = False
 
-    # 3. JSON-RPC
-    try:
-        client = VeClient("http://localhost:12000", transport="jsonrpc")
-        results["JSON-RPC"] = test_transport("JSON-RPC (http://localhost:12000/jsonrpc)", client)
-        client.close()
-    except Exception as e:
-        print(f"  JSON-RPC: ERROR - {e}")
-        results["JSON-RPC"] = False
-
-    # 4. MessagePack
+    # 3. MessagePack
     try:
         client = VeClient("tcp://localhost:11000", transport="msgpack")
         results["MessagePack"] = test_transport("MessagePack (tcp://localhost:11000)", client)
@@ -150,7 +141,7 @@ def main():
         print(f"  MessagePack: ERROR - {e}")
         results["MessagePack"] = False
 
-    # 5. Subscribe test
+    # 4. Subscribe test
     try:
         results["Subscribe"] = test_subscribe_tcp()
     except Exception as e:

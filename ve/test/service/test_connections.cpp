@@ -300,8 +300,10 @@ void checkTransport(const char* name, uint16_t port, Gate& gate)
         if constexpr (Format == Wire::Repl) {
             reader.send(R"({"cmd":"schema xml /read_probe -d 1"})");
         } else {
-            reader.send(R"({"op":"children","params":{"path":"read_probe","offset":1,"limit":1,"values":false}})");
+            reader.send(R"({"op":"children","params":{"path":"read_probe","offset":1,"limit":1}})");
             reader.expect("item#1");
+            reader.send(R"({"op":"meta","params":{"path":"read_probe"}})");
+            reader.expect("\"count\": 3");
             reader.send(R"({"op":"export","params":{"path":"read_probe","format":"xml","depth":1}})");
         }
         reader.expect("<item>second</item>");
