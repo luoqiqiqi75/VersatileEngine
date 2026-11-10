@@ -77,6 +77,14 @@ export interface CommandListResponse {
   commands: CommandInfo[];
 }
 
+export interface CommandDescription {
+  name: string;
+  description?: string;
+  usage?: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+}
+
 export type CommandRunResponse = VeReply<VarValue>;
 
 export interface NodeChangedEvent {

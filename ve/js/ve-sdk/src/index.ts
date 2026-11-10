@@ -1,8 +1,14 @@
-export { VeHttpClient } from './http';
+export { VeHttpClient, VeResponseSizeError } from './http';
+export type { VeHttpClientOptions, VeHttpRequestOptions } from './http';
 export { VeWsClient } from './ws';
 export { VeBinTcpClient } from './bin';
 export type { WsNotifyHandler, WsStateHandler, WsMessageHandler, VeWsClientOptions } from './ws';
-export type { NotifyHandler, ConnectionHandler, MessageHandler, VeBinTcpClientOptions } from './bin';
+export type {
+  NotifyHandler,
+  ConnectionHandler,
+  MessageHandler,
+  VeBinTcpClientOptions,
+} from './bin';
 export type {
   VarType,
   VarValue,
@@ -23,5 +29,6 @@ export type {
   CommandListResponse,
   CommandInfo,
   CommandRunResponse,
+  CommandDescription,
   NodeChangedEvent,
 } from './types';

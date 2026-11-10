@@ -8,12 +8,12 @@ This directory contains JavaScript / TypeScript clients and tools for the VE run
 
 ## Packages
 
-| Path | Description |
-|------|------|
-| `ve-sdk/` | TypeScript SDK: `VeHttpClient`, `VeWsClient`, `VeBinTcpClient` |
-| `veservice.js` | Standalone WebSocket client for browsers |
-| `ve-mcp/` | Cursor MCP adapter that calls VE through `POST /ve` |
-| `ve-app/` | React administration interface |
+| Path           | Description                                                    |
+| -------------- | -------------------------------------------------------------- |
+| `ve-sdk/`      | TypeScript SDK: `VeHttpClient`, `VeWsClient`, `VeBinTcpClient` |
+| `veservice.js` | Standalone WebSocket client for browsers                       |
+| `ve-mcp/`      | Cursor MCP adapter that calls VE through `POST /ve`            |
+| `ve-app/`      | React administration interface                                 |
 
 ---
 
@@ -82,34 +82,30 @@ The `POST /ve` request body uses a shared envelope:
 
 ```json
 {
-  "op": "node.get",
+  "op": "get",
   "id": 1,
-  "path": "ve/server/node/http",
-  "depth": 1,
-  "meta": true
+  "params": { "path": "ve/server/node/http" }
 }
 ```
 
 Common `op` values:
 
-- `node.get`
-- `node.list`
-- `node.set`
-- `node.put`
-- `node.remove`
-- `node.trigger`
-- `command.list`
-- `command.run`
+- `get` / `set`
+- `export` / `import`
+- `children`
+- `erase`
+- `trigger`
+- `commands` / `describe`
 - `subscribe`
 - `unsubscribe`
-- `batch`
+
+User commands use `{cmd, params}`. Batches use a top-level `{batch: [...]}` envelope, not an `op:"batch"` request.
 
 Response envelopes:
 
 ```json
-{"ok":true,"id":1,"data":{...}}
-{"ok":true,"id":1,"accepted":true,"task_id":"abcd1234"}
-{"ok":false,"id":1,"code":"not_found","error":"node not found: foo/bar"}
+{"id":1,"code":0,"data":{"value":12000}}
+{"id":1,"code":-3,"message":"not found: foo/bar"}
 ```
 
 ---
@@ -144,37 +140,38 @@ const ve = new VeHttpClient('http://127.0.0.1:12000');
 
 await ve.health();
 
-const tree = await ve.get('ve/server');
-const port = await ve.val('ve/server/node/http/runtime/port');
-const commands = await ve.cmds();
-
-await ve.run('save', ['ve.json', '/ve']);
+const value = await ve.get('config/value');
+const tree = await ve.export('config', 2);
+const metadata = await ve.meta('config');
+const children = await ve.children('config', { limit: 8, meta: true });
+const operation = await ve.describe('children');
 ```
 
 ### 3. `VeHttpClient`
 
 The core `VeHttpClient` method is:
 
-- `call(op, payload)` - call `/ve` directly
+- `call(op, params, options?)` - call `/ve` and return the full reply
+- `send(message, options?)` - send an op, cmd or batch envelope
+- `sendRaw(message, options?)` - return the response envelope as unparsed text
 
 Convenience methods:
 
-- `get(path, depth?)` - get a tree (`depth=-1` by default for the full tree)
-- `set(path, tree)` - set a tree
-- `val(path)` / `val(path, value)` - get or set a single value
-- `list(path)` - list child nodes
-- `rm(path)` - remove a node
-- `trigger(path)` - trigger a signal
-- `run(name, args, wait?)` - run a command
-- `cmds()` - list commands
-- `batch(items)` - perform a batch of operations
-- `exportTree(path, depth?)` - export a tree as a JSON string
-- `importTree(path, json)` - import a tree from JSON using REST PUT
+- `get(path, options?)` / `set(path, value, options?)` - read or write a value
+- `export(path, depth?, options?)` / `import(path, tree, flags?, options?)` - export or import a subtree
+- `meta(path, options?)` - read the native node type and direct child count without transferring its value
+- `children(path, childrenOptions?, options?)` - read key windows; `childrenOptions` contains `offset/limit/value/meta`, while final `options` controls the HTTP request
+- `erase(path, options?)` / `trigger(path, options?)` - erase a node or trigger a signal
+- `run(name, args?, options?)` - run a user command with named arguments
+- `commands(options?)` / `describe(name, options?)` - list user commands or inspect an operation signature
+- `batch(items, options?)` - perform a batch of operations
+- `exportRest(path, options?)` / `importRest(path, json, options?)` - use the existing REST endpoints
 
 Notes:
 
-- Pass `wait` explicitly when calling `runCommand()`.
-- If the server returns `accepted + task_id`, the command has been accepted and its result will be stored at `ve/server/tasks/<task_id>`.
+- Optional per-request cancellation, deadlines, response limits and numeric precision are documented in the [HTTP client guide](ve-sdk/README.md).
+- Existing calls keep their defaults. `get` and `export` parse JSON numbers as JavaScript Number; `sendRaw` keeps their original tokens.
+- Capability signatures describe advertised behavior. They do not prove that a remote service has been upgraded or that its runtime behavior has been verified.
 
 ---
 
@@ -185,16 +182,15 @@ The WebSocket protocol uses the same envelope as `/ve` over a WebSocket transpor
 Request examples:
 
 ```json
-{"op":"node.get","path":"ve/server","id":1}
-{"op":"command.run","name":"save","args":["ve.json","/ve"],"wait":false,"id":2}
-{"op":"subscribe","path":"ve/server/node/http/runtime/port","id":3}
+{"op":"get","params":{"path":"config/value"},"id":1}
+{"cmd":"search","params":{"pattern":"port","root":"config"},"id":2}
+{"op":"subscribe","params":{"path":"config/value","depth":0,"immediate":true},"id":3}
 ```
 
 Push notification examples:
 
 ```json
-{"event":"node.changed","path":"ve/server/node/http/runtime/port","value":12000}
-{"event":"task.result","id":2,"task_id":"abcd1234","ok":true,"data":"Saved"}
+{ "event": "node.changed", "path": "config/value", "data": 12000 }
 ```
 
 TypeScript example:
@@ -205,36 +201,30 @@ import { VeWsClient } from '@ve/sdk';
 const ws = new VeWsClient({ url: 'ws://127.0.0.1:12100' });
 ws.connect();
 
-// Get the full tree.
-const tree = await ws.get('ve/server');
+const value = await ws.get('config/value');
+const tree = await ws.export('config', 2);
 
-// Get or set a single value.
-const port = await ws.val('ve/server/node/http/runtime/port');
-await ws.val('test/value', 42);
-
-// Subscribe with tree:true by default to receive the full subtree.
-const stop = ws.watch('ve/server/node/http/runtime', (path, value) => {
+const stop = ws.subscribe('config/value', (path, value) => {
   console.log(path, value);
 });
 
 // Run a command.
-await ws.run('save', ['ve.json', '/ve']);
+await ws.run('save', { file: 'config.json', path: 'config' });
 ```
 
 `VeWsClient` methods:
 
-- `get(path, depth?)` - get a tree (`depth=-1` by default for the full tree)
-- `set(path, tree)` - set a tree
-- `val(path)` / `val(path, value)` - get or set a single value
-- `list(path)` - list child nodes
-- `rm(path)` - remove a node
+- `get(path)` / `set(path, value)` - read or write a value
+- `export(path, depth?)` / `import(path, tree, flags?)` - export or import a subtree
+- `meta(path)` - read node type/count without transferring the value
+- `children(path, {offset, limit, value, meta}?)` - read child key windows with optional value/type/count
+- `erase(path)` - remove a node
 - `trigger(path)` - trigger a signal
-- `watch(path, handler, opts?)` - subscribe (`tree:true` by default)
-- `unwatch(path)` - unsubscribe
-- `run(name, args, wait?)` - run a command
-- `cmds()` - list commands
+- `subscribe(path, handler, opts?)` / `unsubscribe(path)` - subscribe or unsubscribe
+- `run(name, args?)` - run a command with named arguments
+- `commands()` - list user commands
 - `batch(items)` - perform a batch of operations
-- `call(op, payload)` - make a low-level protocol call
+- `call(op, params)` - make a low-level protocol call
 - `onConnectionChange(handler)` - listen for connection state changes
 - `onMessage(handler)` - listen for all messages
 
@@ -252,12 +242,12 @@ Frame format:
 
 Flags:
 
-| Flag | Value | Direction |
-|------|-------|-----------|
-| REQUEST | `0x00` | client -> server |
+| Flag     | Value  | Direction        |
+| -------- | ------ | ---------------- |
+| REQUEST  | `0x00` | client -> server |
 | RESPONSE | `0x40` | server -> client |
-| NOTIFY | `0x80` | server -> client |
-| ERROR | `0xC0` | server -> client |
+| NOTIFY   | `0x80` | server -> client |
+| ERROR    | `0xC0` | server -> client |
 
 Example:
 
@@ -270,7 +260,7 @@ await client.connect();
 const port = await client.get('ve/server/node/http/runtime/port');
 await client.set('test/value', 42);
 
-const run = await client.command('save', ['ve.json', '/ve'], true);
+const run = await client.run('save', { file: 'config.json', path: 'config' });
 
 const unsub = await client.subscribe('ve/server/node/http/runtime/port', (path, value) => {
   console.log(path, value);
