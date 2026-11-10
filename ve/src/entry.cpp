@@ -1,7 +1,8 @@
 // ----------------------------------------------------------------------------
-// entry.cpp - ve::entry, ve::version, ve::plugin implementations
+// entry.cpp - process and module lifecycle
 // ----------------------------------------------------------------------------
 #include "ve/entry.h"
+#include "ve/core/plugin.h"
 #include "ve/core/loop.h"
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
@@ -13,15 +14,6 @@
 #include <queue>
 #include <filesystem>
 #include <thread>
-
-#ifdef _WIN32
-#  define WIN32_LEAN_AND_MEAN
-#  include <windows.h>
-#else
-#  include <dlfcn.h>
-#endif
-
-#define VE_MIN_API 0
 
 namespace ve {
 
@@ -353,32 +345,7 @@ void init()
     const bool verbose = g.verbose;
     Node* entry_n = n("ve/entry");
 
-    // Load configured plugins in declaration order.
-    if (Node* plugins = entry_n->find("plugins")) {
-        auto load_plugin = [verbose](Node* spec) {
-            Node* path_node = spec->find("path");
-            if (!path_node || !spec->get("enabled").toBool(true)) return;
-
-            std::string path = path_node->getString();
-            if (path.empty() || !plugin::load(path, verbose)) return;
-
-            int min_api = spec->get("min_api").toInt(0);
-            if (min_api <= VE_MIN_API) return;
-
-            std::string name = spec->get("name").toString();
-            if (name.empty()) name = path;
-            if (!version::check(name, min_api)) {
-                veLogE << "[ve/entry] Plugin " << name
-                       << " version check failed (min_api=" << min_api << ")";
-            }
-        };
-
-        if (plugins->find("path")) {
-            load_plugin(plugins);
-        } else {
-            for (Node* spec : plugins->children()) load_plugin(spec);
-        }
-    }
+    if (Node* plugins = entry_n->find("plugins")) plugin::load(plugins, nullptr, verbose);
 
     auto& module_factory = module::factory();
     Node* modules_config = entry_n->at("modules");
@@ -584,6 +551,10 @@ void init()
 
     // Configuration has been applied; remove the staging area.
     root->erase("ve/entry");
+    for (const char* key : {"plugin.load", "plugin.unload"}) {
+        auto* command = std::as_const(factory::at("cmd")).node(key, VE_FACTORY_KEY_SEP);
+        if (command && command->get().isCallable()) command->set("loop", Var::ptr(loop::main()));
+    }
     if (verbose) veLogI << "[ve/entry] " << g.modules.size() << " modules ready";
 }
 
@@ -674,111 +645,5 @@ const std::string& appName() { return G().app_name; }
 bool   verbose() { return G().verbose; }
 
 } // namespace entry
-
-// ============================================================================
-// ve::plugin - cross-platform dynamic library loading
-// ============================================================================
-
-namespace plugin {
-
-static Vector<Info>& pluginList()
-{
-    static Vector<Info> list;
-    return list;
-}
-
-#ifdef _WIN32
-static std::string dirnameOfHostExe()
-{
-    char buf[MAX_PATH];
-    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    if (!n || n >= MAX_PATH) {
-        return {};
-    }
-    std::string p(buf, buf + n);
-    size_t slash = p.find_last_of("\\/");
-    if (slash == std::string::npos) {
-        return {};
-    }
-    return p.substr(0, slash);
-}
-#endif
-
-bool load(const std::string& path, bool verbose)
-{
-    void* handle = nullptr;
-
-#ifdef _WIN32
-    HMODULE mod = LoadLibraryA(path.c_str());
-    DWORD err = mod ? 0 : GetLastError();
-    if (!mod && path.find_first_of("/\\") == std::string::npos) {
-        std::string dir = dirnameOfHostExe();
-        if (!dir.empty()) {
-            std::string full = dir + '\\' + path;
-            mod = LoadLibraryA(full.c_str());
-            if (mod) {
-                err = 0;
-            }
-        }
-    }
-    if (!mod) {
-        veLogE << "[ve/plugin] LoadLibrary failed: " << path
-               << " (error " << err << ")";
-        return false;
-    }
-    handle = (void*)mod;
-#else
-    handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    if (!handle) {
-        veLogE << "[ve/plugin] dlopen failed: " << path
-               << " (" << dlerror() << ")";
-        return false;
-    }
-#endif
-
-    // Extract name from path
-    std::string name = path;
-    auto slash = name.find_last_of("/\\");
-    if (slash != std::string::npos) name = name.substr(slash + 1);
-    auto dot = name.rfind('.');
-    if (dot != std::string::npos) name = name.substr(0, dot);
-
-    Info info;
-    info.path   = path;
-    info.name   = name;
-    info.handle = handle;
-    info.api_version = version::number(name);
-
-    pluginList().push_back(std::move(info));
-    if (verbose) veLogI << "[ve/plugin] Loaded: " << path;
-    return true;
-}
-
-bool unload(const std::string& name, bool verbose)
-{
-    auto& list = pluginList();
-    for (auto it = list.begin(); it != list.end(); ++it) {
-        if (it->name == name) {
-            if (it->handle) {
-#ifdef _WIN32
-                FreeLibrary((HMODULE)it->handle);
-#else
-                dlclose(it->handle);
-#endif
-            }
-            if (verbose) veLogI << "[ve/plugin] Unloaded: " << name;
-            list.erase(it);
-            return true;
-        }
-    }
-    return false;
-}
-
-const Vector<Info>& loaded()
-{
-    return pluginList();
-}
-
-} // namespace plugin
 
 } // namespace ve

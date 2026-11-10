@@ -336,6 +336,7 @@ The reserved top-level keys are the only ones VE interprets:
 | `version` | Minimum VE version this config needs; `setup()` fails if it exceeds `VE_ENTRY_VERSION` |
 | `blacklist` | Module keys to skip. `"a.b"` also skips `a.b.*` |
 | `plugins` | Loaded in order at the top of `init()` |
+| `plugin_commands` | Register `plugin.load` and `plugin.unload`; default `true` |
 | `modules` | Per-module config, keyed by node path |
 
 Everything a module reads lives under `modules`, keyed by node path:
@@ -344,6 +345,31 @@ Everything a module reads lives under `modules`, keyed by node path:
 Subtrees matching no loaded module are dropped. Because module config is nested
 under `modules`, a module can be named anything without colliding with a
 reserved key.
+
+#### Plugin loading
+
+Entry and `plugin.load` both call `ve::plugin::load` from `ve/core/plugin.h`.
+Input is one plugin specification or a list of anonymous specification nodes,
+using the same fields as `plugins`: `path`, `enabled` (default true), `name`,
+and `min_api` (default 0). The default name is the filename stem without a
+leading `lib`; `/opt/libdriver.so` becomes `driver`. `plugin.unload` takes
+`name`, or derives the default name from `path`. Both accept lists and return
+an object containing `plugins` (name, path, loaded, skipped) and `count`.
+
+```text
+plugin load /opt/libdriver.so --min_api 2
+plugin unload driver
+```
+
+```json
+{"cmd":"plugin.load","params":[{"path":"libdriver.so"},{"path":"liboptional.so","enabled":false}]}
+```
+
+Set top-level `"plugin_commands": false` to omit both commands. This does not
+disable configured startup plugins. The common implementation is
+`ve/src/core/plugin.cpp`; system handle operations live in the platform
+`plugin.cpp` files. These APIs manage library handles; module instances and
+factory registrations remain under their existing mechanisms.
 
 #### Thread pool and logging
 

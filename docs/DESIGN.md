@@ -335,6 +335,12 @@ Initialization and deinitialization run synchronously on the entry caller's
 thread. Native event-loop execution returns before deinitialization starts;
 remaining command work can still be dispatched during service cleanup.
 
+Entry's `plugins` configuration and the `plugin.load` command share the same
+core plugin loader and specification defaults. `plugin.unload` releases a
+loaded library handle. Platform library APIs live in `ve/platform`, with the
+shared declarations in `ve/core/plugin.h`. Commands register in the service
+command implementation and can be disabled with `plugin_commands`.
+
 ## What To Avoid
 
 - Do not create parallel hidden state models when a node subtree would do.

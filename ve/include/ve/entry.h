@@ -52,7 +52,7 @@
 //   }
 //
 // Reserved top-level keys are app / log / version / blacklist / plugins /
-// modules. Everything a module reads lives under "modules", keyed by node path
+// plugin_commands / modules. Module settings live under "modules", keyed by node path
 // — /ve/entry/modules/ve/server is copied to /ve/server. Module keys use '.'
 // ("ve.server"), node paths use '/' ("ve/server"); they name the same thing.
 // Subtrees under "modules" that match no loaded module are dropped with the
@@ -72,6 +72,7 @@
 //   plugins    list     [{ path, enabled?, min_api?, name? }, ...], loaded in
 //                       order at the top of init(). File entries come first;
 //                       CLI plugin paths (bare .dll/.so/.dylib) append.
+//   plugin_commands bool Register plugin.load/unload (default true).
 //   modules    node     Per-module config, keyed by node path.
 //   argv       list     Every argv token, verbatim — including the ones VE did
 //                       not consume. Apps with their own flags parse this (or
@@ -178,24 +179,5 @@ VE_API bool   verbose();
 VE_API const std::string& appName();
 
 } // namespace entry
-
-// ============================================================================
-// ve::plugin - cross-platform dynamic library loading
-// ============================================================================
-
-namespace plugin {
-
-struct Info {
-    std::string path;
-    std::string name;
-    int         api_version = 0;
-    void*       handle      = nullptr;
-};
-
-VE_API bool load(const std::string& path, bool verbose = false);
-VE_API bool unload(const std::string& name, bool verbose = false);
-VE_API const Vector<Info>& loaded();
-
-} // namespace plugin
 
 } // namespace ve

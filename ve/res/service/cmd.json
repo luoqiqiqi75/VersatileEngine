@@ -73,5 +73,60 @@
         }
       }
     }
+  },
+
+  "plugin": {
+    "load": {
+      "instruction": {
+        "description": "Load a plugin spec or an anonymous list using the same method as entry plugins.",
+        "usage": "plugin load <path> [--enabled true|false] [--name <name>] [--min_api N]",
+        "input_schema": {
+          "type": ["object", "array"],
+          "properties": {
+            "path": { "type": "string" },
+            "enabled": { "type": "boolean", "default": true },
+            "name": { "type": "string", "description": "Default: filename stem without leading lib" },
+            "min_api": { "type": "integer", "minimum": 0, "default": 0 }
+          },
+          "required": ["path"],
+          "items": { "type": "object", "required": ["path"] }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "plugins": { "type": "array", "items": { "type": "object", "properties": {
+              "name": { "type": "string" }, "path": { "type": "string" },
+              "loaded": { "type": "boolean" }, "skipped": { "type": "boolean" }
+            } } },
+            "count": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "unload": {
+      "instruction": {
+        "description": "Release a plugin library by name, or derive its default name from path. Also accepts an anonymous list.",
+        "usage": "plugin unload <name> | plugin unload --path <path>",
+        "input_schema": {
+          "type": ["object", "array"],
+          "properties": {
+            "name": { "type": "string" },
+            "path": { "type": "string" },
+            "enabled": { "type": "boolean", "default": true }
+          },
+          "items": { "type": "object" }
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "plugins": { "type": "array", "items": { "type": "object", "properties": {
+              "name": { "type": "string" }, "path": { "type": "string" },
+              "loaded": { "type": "boolean" }, "skipped": { "type": "boolean" }
+            } } },
+            "count": { "type": "integer" }
+          }
+        }
+      }
+    }
   }
 }
