@@ -1,9 +1,14 @@
-#include "ve/core/plugin.h"
-#include "ve/core/factory.h"
+#include "plugin.h"
 #include "ve/core/log.h"
 
 namespace ve::plugin {
 namespace {
+
+struct Info {
+    std::string path;
+    std::string name;
+    void* handle = nullptr;
+};
 
 Vector<Info>& plugins() { static Vector<Info> list; return list; }
 
@@ -13,87 +18,70 @@ std::string defaultName(const std::string& path)
     std::string name = path.substr(slash == std::string::npos ? 0 : slash + 1);
     auto dot = name.rfind('.');
     if (dot != std::string::npos) name.resize(dot);
-    if (name.compare(0, 3, "lib") == 0) name.erase(0, 3);
+    if (name.size() > 3 && name.compare(0, 3, "lib") == 0) name.erase(0, 3);
     return name;
 }
 
-bool process(Node* specs, Node* out, bool loading, bool verbose, std::string* error_out)
+} // namespace
+
+// Entries are independent: a failed one is logged and the rest still load.
+// Returns false if any entry failed; error gets the first message.
+bool load(Node* specs, Node* out, bool verbose, std::string* error)
 {
-    if (error_out) error_out->clear();
-    auto fail = [&](const std::string& error) {
-        if (error_out) *error_out = error;
-        veLogE << "[ve/plugin] " << error;
-        return false;
+    std::string first_error;
+    auto fail = [&](const std::string& message) {
+        if (first_error.empty()) first_error = message;
+        veLogE << "[ve/plugin] " << message;
     };
-    if (!specs) return fail("plugin specification required");
     Node* results = out ? out->at("plugins") : nullptr;
     if (results) { results->clear(); results->set(Var::ListV{}); }
-    int count = 0;
-    auto process_one = [&](Node* spec) {
+    auto load_one = [&](Node* spec) {
         std::string path = spec->get("path").toString();
         std::string name = spec->get("name").toString();
         if (name.empty()) name = defaultName(path);
-        bool enabled = spec->get("enabled").toBool(true);
-        if (enabled) {
-            if (name.empty() || (loading && path.empty())) {
-                return fail(loading ? "plugin path required" : "plugin name or path required");
-            }
-            auto& list = plugins();
-            auto found = std::find_if(list.begin(), list.end(), [&](const Info& info) { return info.name == name; });
-            std::string error;
-            if (loading) {
-                if (found != list.end()) return fail("plugin is already loaded: " + name);
-                int min_api = spec->get("min_api").toInt(0);
-                if (min_api < 0) return fail("min_api must be nonnegative");
-                void* handle = impl::open(path, error);
-                if (!handle) return fail(error);
-                int api = version::number(name);
-                if (api < min_api) {
-                    std::string close_error;
-                    if (!impl::close(handle, close_error)) list.push_back({path, name, api, handle});
-                    return fail("plugin version check failed: " + name
-                        + (close_error.empty() ? "" : "; " + close_error));
+        bool loaded = false;
+        if (!spec->get("enabled").toBool(true)) {
+        } else if (name.empty()) {
+            fail("plugin name or path required");
+        } else if (std::any_of(plugins().begin(), plugins().end(), [&](const Info& info) { return info.name == name; })) {
+            fail("plugin already loaded: " + name);
+        } else {
+            Strings candidates;
+            if (!path.empty()) candidates = {path};
+            else candidates = {"lib" + name + impl::suffix(), name + impl::suffix()};
+            std::string errors;
+            for (const auto& candidate : candidates) {
+                std::string open_error;
+                if (void* handle = impl::open(candidate, open_error)) {
+                    path = candidate;
+                    plugins().push_back({path, name, handle});
+                    loaded = true;
+                    if (verbose) veLogI << "[ve/plugin] Loaded: " << name << " (" << path << ")";
+                    break;
                 }
-                list.push_back({path, name, api, handle});
-            } else {
-                if (found == list.end()) return fail("plugin is not loaded: " + name);
-                path = found->path;
-                if (!impl::close(found->handle, error)) return fail(error);
-                list.erase(found);
+                errors += (errors.empty() ? "" : "; ") + open_error;
             }
-            ++count;
-            if (verbose) veLogI << "[ve/plugin] " << (loading ? "Loaded: " : "Unloaded: ") << name;
+            if (!loaded) fail(errors);
         }
         if (results) {
             Node* item = results->append();
             item->set("name", name);
             item->set("path", path);
-            item->set("skipped", !enabled);
-            item->set("loaded", std::any_of(plugins().begin(), plugins().end(),
-                [&](const Info& info) { return info.name == name; }));
+            item->set("loaded", loaded);
         }
-        return true;
     };
-    if (specs->count() && specs->child(0)->name().empty()) {
+    if (!specs) {
+        fail("plugin specification required");
+    } else if (specs->count() && specs->child(0)->name().empty()) {
         for (Node* spec : *specs) {
-            if (!spec->name().empty()) return fail("plugin list entries must be anonymous");
-            if (!process_one(spec)) return false;
+            if (spec->name().empty()) load_one(spec);
+            else fail("plugin list entries must be anonymous");
         }
-    } else if (specs->count() || (!specs->get().isNull() && !specs->get().isList())) {
-        if (!process_one(specs)) return false;
+    } else if (specs->count()) {
+        load_one(specs);
     }
-    if (out) out->set("count", count);
-    return true;
+    if (error) *error = first_error;
+    return first_error.empty();
 }
-
-} // namespace
-
-bool load(Node* specs, Node* out, bool verbose, std::string* error)
-{ return process(specs, out, true, verbose, error); }
-
-bool unload(Node* specs, Node* out, bool verbose, std::string* error)
-{ return process(specs, out, false, verbose, error); }
-
-const Vector<Info>& loaded() { return plugins(); }
 
 } // namespace ve::plugin

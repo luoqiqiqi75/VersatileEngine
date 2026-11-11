@@ -4,8 +4,8 @@
   "version": 2,
 
   "plugins": [
-    { "path": "libveqt.dll" },
-    { "path": "veqtbrowser.dll" }
+    { "name": "veqt" },
+    { "name": "veqtbrowser" }
   ],
 
   "modules": {

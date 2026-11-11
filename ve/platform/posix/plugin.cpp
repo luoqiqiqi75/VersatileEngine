@@ -1,8 +1,17 @@
-#include "ve/core/plugin.h"
+#include "../../src/core/plugin.h"
 
 #include <dlfcn.h>
 
 namespace ve::plugin::impl {
+
+const char* suffix()
+{
+#ifdef __APPLE__
+    return ".dylib";
+#else
+    return ".so";
+#endif
+}
 
 void* open(const std::string& path, std::string& error)
 {
@@ -12,14 +21,6 @@ void* open(const std::string& path, std::string& error)
         error = "dlopen failed: " + path + (detail ? " (" + std::string(detail) + ")" : "");
     }
     return handle;
-}
-
-bool close(void* handle, std::string& error)
-{
-    if (dlclose(handle) == 0) return true;
-    const char* detail = dlerror();
-    error = detail ? detail : "dlclose failed";
-    return false;
 }
 
 } // namespace ve::plugin::impl

@@ -2,7 +2,7 @@
 // entry.cpp - process and module lifecycle
 // ----------------------------------------------------------------------------
 #include "ve/entry.h"
-#include "ve/core/plugin.h"
+#include "core/plugin.h"
 #include "ve/core/loop.h"
 #include "ve/core/schema.h"
 #include "ve/core/impl/json.h"
@@ -551,10 +551,6 @@ void init()
 
     // Configuration has been applied; remove the staging area.
     root->erase("ve/entry");
-    for (const char* key : {"plugin.load", "plugin.unload"}) {
-        auto* command = std::as_const(factory::at("cmd")).node(key, VE_FACTORY_KEY_SEP);
-        if (command && command->get().isCallable()) command->set("loop", Var::ptr(loop::main()));
-    }
     if (verbose) veLogI << "[ve/entry] " << g.modules.size() << " modules ready";
 }
 

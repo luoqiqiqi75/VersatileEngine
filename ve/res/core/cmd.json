@@ -1,0 +1,23 @@
+{
+  "plugin": {
+    "instruction": {
+      "description": "Load a plugin library by base name (veqt tries libveqt then veqt with the platform suffix, via the system library search) or explicit path. Stays loaded until exit.",
+      "usage": "plugin <name> | plugin --path <path>",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "library base name; default: path stem without lib" },
+          "path": { "type": "string", "description": "default: platform file for name" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "plugins": { "type": "array", "items": { "type": "object", "properties": {
+            "name": { "type": "string" }, "path": { "type": "string" }, "loaded": { "type": "boolean" }
+          } } }
+        }
+      }
+    }
+  }
+}

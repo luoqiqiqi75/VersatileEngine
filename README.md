@@ -100,9 +100,11 @@ int main(int argc, char* argv[]) {
 `ve::entry` loads configuration into the node tree, loads plugins, creates modules, enters the main loop, and shuts everything down in reverse order.
 Shutdown runs on the entry caller's thread after native loop execution returns.
 The loop remains available for command cleanup until modules have been destroyed.
-`plugin load` and `plugin unload` use the same plugin loader as startup.
-Set `"plugin_commands": false` to disable both commands; startup plugins still
-load. See [plugin loading](docs/CORE.md#plugin-loading).
+Plugins can also be loaded at runtime with the `plugin` command, using the
+same loader as startup. This is off by default: `ve.core` config
+`plugin/fixed` (default `true`) keeps the startup set; set it to `false` to
+allow it. See
+[plugin loading](docs/CORE.md#plugin-loading).
 
 ## Getting Started
 

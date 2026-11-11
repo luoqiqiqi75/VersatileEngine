@@ -1,4 +1,4 @@
-#include "ve/core/plugin.h"
+#include "../../src/core/plugin.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -7,6 +7,8 @@
 #include <filesystem>
 
 namespace ve::plugin::impl {
+
+const char* suffix() { return ".dll"; }
 
 void* open(const std::string& path, std::string& error)
 {
@@ -24,13 +26,6 @@ void* open(const std::string& path, std::string& error)
     }
     if (!handle) error = "LoadLibrary failed: " + path + " (error " + std::to_string(code) + ")";
     return handle;
-}
-
-bool close(void* handle, std::string& error)
-{
-    if (FreeLibrary(static_cast<HMODULE>(handle))) return true;
-    error = "FreeLibrary failed (error " + std::to_string(GetLastError()) + ")";
-    return false;
 }
 
 } // namespace ve::plugin::impl

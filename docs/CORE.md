@@ -318,7 +318,7 @@ meaning — `leo.json` and `ve.json` behave identically.
   "log":       { "level": "info", "dir": "", "async": false },
   "version":   2,
   "blacklist": [ "ve.service.x" ],
-  "plugins":   [ { "path": "veqt.dll", "enabled": true, "min_api": 0 } ],
+  "plugins":   [ { "name": "veqt" } ],
 
   "modules": {
     "ve":  { "server": { "node": { "http": { "config": { "port": 12000 } } } } },
@@ -336,7 +336,6 @@ The reserved top-level keys are the only ones VE interprets:
 | `version` | Minimum VE version this config needs; `setup()` fails if it exceeds `VE_ENTRY_VERSION` |
 | `blacklist` | Module keys to skip. `"a.b"` also skips `a.b.*` |
 | `plugins` | Loaded in order at the top of `init()` |
-| `plugin_commands` | Register `plugin.load` and `plugin.unload`; default `true` |
 | `modules` | Per-module config, keyed by node path |
 
 Everything a module reads lives under `modules`, keyed by node path:
@@ -348,28 +347,34 @@ reserved key.
 
 #### Plugin loading
 
-Entry and `plugin.load` both call `ve::plugin::load` from `ve/core/plugin.h`.
-Input is one plugin specification or a list of anonymous specification nodes,
-using the same fields as `plugins`: `path`, `enabled` (default true), `name`,
-and `min_api` (default 0). The default name is the filename stem without a
-leading `lib`; `/opt/libdriver.so` becomes `driver`. `plugin.unload` takes
-`name`, or derives the default name from `path`. Both accept lists and return
-an object containing `plugins` (name, path, loaded, skipped) and `count`.
+Entry's `plugins` and the `plugin` command both call internal `ve::plugin::load`
+(`ve/src/core/plugin.h`, not public API). A `plugins` entry has `name`, `path`
+and `enabled` (default true). Prefer `name`: it is the library base name and
+stays the same on every platform. `veqt` tries `libveqt` then `veqt` with the
+platform suffix (`.dll`, `.so`, `.dylib`), opened by file name so the normal
+system search applies: exe directory and `PATH` on Windows; rpath,
+`LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH` elsewhere. Use `path` for a specific
+file; its name defaults to the file stem without `lib`.
+Entries are independent: a failed entry is logged and the rest still load. The
+command takes `name` or `path` and returns `plugins` (name, path, loaded).
+There is no unload: libraries stay loaded until process exit, because their
+registrations and static objects outlive the call.
 
 ```text
-plugin load /opt/libdriver.so --min_api 2
-plugin unload driver
+plugin veqt
+plugin --path /opt/libdriver.so
 ```
 
 ```json
-{"cmd":"plugin.load","params":[{"path":"libdriver.so"},{"path":"liboptional.so","enabled":false}]}
+{"cmd":"plugin","params":{"name":"veqt"}}
 ```
 
-Set top-level `"plugin_commands": false` to omit both commands. This does not
-disable configured startup plugins. The common implementation is
-`ve/src/core/plugin.cpp`; system handle operations live in the platform
-`plugin.cpp` files. These APIs manage library handles; module instances and
-factory registrations remain under their existing mechanisms.
+Runtime loading is off by default: `ve.core` config `plugin/fixed` (default
+`true`) keeps the plugin set fixed at startup, and the `plugin` command is
+registered only when it is `false`, since it lets a client load
+arbitrary libraries. Startup plugins are unaffected. The common implementation
+is `ve/src/core/plugin.cpp`; the system call lives in the platform `plugin.cpp`
+files.
 
 #### Thread pool and logging
 

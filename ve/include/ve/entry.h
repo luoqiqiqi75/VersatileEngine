@@ -43,7 +43,7 @@
 //     "log":       { "level": "info", "dir": "", "async": false },
 //     "version":   2,                              // minimum VE version required
 //     "blacklist": [ "ve.service.x" ],             // module keys to skip
-//     "plugins":   [ { "path": "veqt.dll", "enabled": true, "min_api": 0 } ],
+//     "plugins":   [ { "name": "veqt" } ],          // [lib]veqt.dll/.so/.dylib
 //
 //     "modules": {                                 // copied onto the node tree
 //       "ve":  { "server": { "node": { "http": { "config": { "port": 12000 } } } } },
@@ -52,7 +52,7 @@
 //   }
 //
 // Reserved top-level keys are app / log / version / blacklist / plugins /
-// plugin_commands / modules. Module settings live under "modules", keyed by node path
+// modules. Everything a module reads lives under "modules", keyed by node path
 // — /ve/entry/modules/ve/server is copied to /ve/server. Module keys use '.'
 // ("ve.server"), node paths use '/' ("ve/server"); they name the same thing.
 // Subtrees under "modules" that match no loaded module are dropped with the
@@ -69,10 +69,9 @@
 //                       if it exceeds VE_ENTRY_VERSION.
 //   blacklist  list     Module keys to skip. An entry "a.b" also skips every
 //                       descendant "a.b.*". Order-independent.
-//   plugins    list     [{ path, enabled?, min_api?, name? }, ...], loaded in
+//   plugins    list     [{ name?, path?, enabled? }, ...], loaded in
 //                       order at the top of init(). File entries come first;
 //                       CLI plugin paths (bare .dll/.so/.dylib) append.
-//   plugin_commands bool Register plugin.load/unload (default true).
 //   modules    node     Per-module config, keyed by node path.
 //   argv       list     Every argv token, verbatim — including the ones VE did
 //                       not consume. Apps with their own flags parse this (or

@@ -2,8 +2,6 @@
 #include "node_commands.h"
 #include "ve/core/command.h"
 #include "ve/core/schema.h"
-#include "ve/entry.h"
-#include "ve/core/plugin.h"
 
 #include <fstream>
 #include <filesystem>
@@ -287,33 +285,6 @@ static Result search(Node* ctx, Node* in, Node* out)
     return Result::ok();
 }
 
-static Result bindPluginInput(const char* key, Node* in)
-{
-    if (Node* args = in->find("args")) {
-        Strings tokens;
-        for (Node* token : *args) tokens.push_back(token->getString());
-        std::string error;
-        if (!command::bind(command::factory(), key, tokens, in, &error)) return Result::fail(error);
-    }
-    return Result::ok();
-}
-
-Result pluginLoad(Node*, Node* in, Node* out)
-{
-    Result result = bindPluginInput("plugin.load", in);
-    if (result.isError()) return result;
-    std::string error;
-    return plugin::load(in, out, entry::verbose(), &error) ? Result::ok() : Result::fail(error);
-}
-
-Result pluginUnload(Node*, Node* in, Node* out)
-{
-    Result result = bindPluginInput("plugin.unload", in);
-    if (result.isError()) return result;
-    std::string error;
-    return plugin::unload(in, out, entry::verbose(), &error) ? Result::ok() : Result::fail(error);
-}
-
 } // namespace cmd
 
 void registerCmdCommands(Factory& f)
@@ -321,10 +292,6 @@ void registerCmdCommands(Factory& f)
     f.reg("save", Var::callable(Proc(cmd::save)));
     f.reg("load", Var::callable(Proc(cmd::load)));
     f.reg("search", Var::callable(Proc(cmd::search)));
-    if (n("ve/entry")->get("plugin_commands").toBool(true)) {
-        if (!f.has("plugin.load")) f.reg("plugin.load", Var::callable(Proc(cmd::pluginLoad)), loop::main());
-        if (!f.has("plugin.unload")) f.reg("plugin.unload", Var::callable(Proc(cmd::pluginUnload)), loop::main());
-    }
 }
 
 } // namespace service

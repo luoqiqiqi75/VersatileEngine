@@ -22,7 +22,6 @@
   },
   "version": 2,
   "verbose": false,
-  "plugin_commands": true,
   "blacklist": [],
   "plugins": [],
   "modules": {
@@ -31,6 +30,9 @@
         "config": {
           "rescue": {
             "enabled": true
+          },
+          "plugin": {
+            "fixed": true
           }
         }
       },
