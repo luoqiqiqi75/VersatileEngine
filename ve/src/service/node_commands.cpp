@@ -162,7 +162,8 @@ static Result subscribe(Node* ctx, Node* params, Node* data)
     if (!target) return Result::fail(ERR_NOT_FOUND, "not found: " + path);
     int depth = params->get("depth").toInt(-1);
 
-    auto emit = [s, r, target, depth](const Var& new_v, const Var&) {
+    // In-flight signals may outlive Session cleanup on another thread.
+    auto emit = [send = s->send, r, target, depth](const Var& new_v, const Var&) {
         Node event;
         event.set("event", "node.changed");
         event.set("path", target->path(r));
@@ -170,7 +171,7 @@ static Result subscribe(Node* ctx, Node* params, Node* data)
             event.at("data")->set(new_v);
         else
             event.at("data")->copy(target, Node::COPY_DEFAULT, depth);
-        s->send(toJson(event));
+        send(toJson(event));
     };
 
     if (params->get("once").toBool(false)) {
