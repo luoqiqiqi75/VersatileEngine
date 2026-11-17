@@ -523,16 +523,20 @@ class TcpJsonTransport(Transport):
                     pass
 
         def unsub():
+            should_unsubscribe = False
             with self._sub_lock:
                 cbs = self._subscriptions.get(path)
                 if cbs:
                     cbs.discard(callback)
                     if not cbs:
                         del self._subscriptions[path]
-                        try:
-                            self._send({"op": "unsubscribe", "params": {"path": path}})
-                        except Exception:
-                            pass
+                        should_unsubscribe = True
+            # The receiver needs _sub_lock to process pushes before the reply.
+            if should_unsubscribe:
+                try:
+                    self._send({"op": "unsubscribe", "params": {"path": path}})
+                except Exception:
+                    pass
         return unsub
 
     def unsubscribe(self, path: str) -> None:
@@ -845,16 +849,20 @@ class MsgPackTransport(Transport):
                     pass
 
         def unsub():
+            should_unsubscribe = False
             with self._sub_lock:
                 cbs = self._subscriptions.get(path)
                 if cbs:
                     cbs.discard(callback)
                     if not cbs:
                         del self._subscriptions[path]
-                        try:
-                            self._send_message({"op": "unsubscribe", "params": {"path": path}})
-                        except Exception:
-                            pass
+                        should_unsubscribe = True
+            # The receiver needs _sub_lock to process pushes before the reply.
+            if should_unsubscribe:
+                try:
+                    self._send_message({"op": "unsubscribe", "params": {"path": path}})
+                except Exception:
+                    pass
         return unsub
 
     def unsubscribe(self, path: str) -> None:
